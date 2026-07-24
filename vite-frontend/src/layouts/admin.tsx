@@ -68,7 +68,7 @@ export default function AdminLayout({
     },
     {
       path: '/tunnel',
-      label: '隧道管理',
+      label: '隧道组建',
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clipRule="evenodd" />
@@ -78,7 +78,7 @@ export default function AdminLayout({
     },
     {
       path: '/node',
-      label: '节点监控',
+      label: '添加节点',
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 0l-2 2a1 1 0 101.414 1.414L8 10.414l1.293 1.293a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
@@ -108,14 +108,29 @@ export default function AdminLayout({
     },
     {
       path: '/config',
-      label: '网站配置',
+      label: '网站设置',
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
         </svg>
       ),
       adminOnly: true
+    },
+    {
+      path: '/update',
+      label: '检查更新',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M20 11a8.1 8.1 0 00-14.8-4.3L3 9m0 0V4m0 5h5M4 13a8.1 8.1 0 0014.8 4.3L21 15m0 0v5m0-5h-5" />
+        </svg>
+      )
     }
+  ];
+
+  const menuGroups = [
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward'] },
+    { label: '系统管理', paths: ['/limit', '/user', '/config'] },
+    { label: '版本维护', paths: ['/update'] }
   ];
 
   // 检查移动端
@@ -237,9 +252,15 @@ export default function AdminLayout({
   };
 
   // 过滤菜单项（根据权限）
-  const filteredMenuItems = menuItems.filter(item => 
-    !item.adminOnly || isAdmin
-  );
+  const filteredMenuGroups = menuGroups
+    .map(group => ({
+      ...group,
+      items: group.paths
+        .map(path => menuItems.find(item => item.path === path))
+        .filter((item): item is MenuItem => Boolean(item))
+        .filter(item => !item.adminOnly || isAdmin)
+    }))
+    .filter(group => group.items.length > 0);
 
   return (
           <div className={`flex ${isMobile ? 'min-h-screen' : 'h-screen'} bg-gray-100 dark:bg-black`}>
@@ -278,13 +299,19 @@ export default function AdminLayout({
 
                  {/* 菜单导航 */}
          <nav className="flex-1 px-4 py-6 overflow-y-auto">
-           <ul className="space-y-1">
-            {filteredMenuItems.map((item) => {
-              const isActive = location.pathname === item.path;
-              return (
-                <li key={item.path}>
+           <div className="space-y-6">
+            {filteredMenuGroups.map((group) => (
+              <section key={group.label} aria-label={group.label}>
+                <h2 className="px-4 mb-2 text-[11px] font-semibold tracking-wide text-gray-400 dark:text-gray-500">
+                  {group.label}
+                </h2>
+                <ul className="space-y-1">
+                  {group.items.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <li key={item.path}>
                                      <button
-                     onClick={() => handleMenuClick(item.path)}
+                       onClick={() => handleMenuClick(item.path)}
                      className={`
                        w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left
                        transition-colors duration-200 min-h-[44px]
@@ -297,12 +324,15 @@ export default function AdminLayout({
                      <div className="flex-shrink-0">
                        {item.icon}
                      </div>
-                     <span className="font-medium text-sm">{item.label}</span>
+                   <span className="font-medium text-sm">{item.label}</span>
                    </button>
-                </li>
-              );
-            })}
-          </ul>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
         </nav>
 
                 {/* 底部版权信息 */}
@@ -459,4 +489,4 @@ export default function AdminLayout({
       </Modal>
     </div>
   );
-} 
+}

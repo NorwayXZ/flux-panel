@@ -4,8 +4,9 @@ export type SiteConfig = typeof siteConfig;
 
 // 缓存相关常量
 const CACHE_PREFIX = 'vite_config_';
-const VERSION = "1.4.3";
-const APP_VERSION = "1.0.3";
+const VERSION = "1.4.4";
+const APP_VERSION = "1.0.4";
+const UPDATE_REPOSITORY = "NorwayXZ/flux-panel";
 
 const getInitialConfig = () => {
   if (typeof window === 'undefined') {
@@ -13,6 +14,7 @@ const getInitialConfig = () => {
       name: "flux",
       version: VERSION,
       app_version: APP_VERSION,
+      updateRepository: UPDATE_REPOSITORY,
     };
   }
 
@@ -22,12 +24,14 @@ const getInitialConfig = () => {
         name: cachedAppName,
         version: VERSION,
         app_version: APP_VERSION,
+        updateRepository: UPDATE_REPOSITORY,
       };
     }
   return {
     name: "flux",
     version: VERSION,
     app_version: APP_VERSION,
+    updateRepository: UPDATE_REPOSITORY,
   };
 };
 
