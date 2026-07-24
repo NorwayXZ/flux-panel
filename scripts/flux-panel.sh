@@ -26,12 +26,24 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+host_architecture() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'amd64\n' ;;
+    aarch64|arm64) printf 'arm64\n' ;;
+    *) fail "unsupported architecture: $(uname -m); supported architectures: amd64, arm64" ;;
+  esac
+}
+
+default_mysql_image() {
+  case "$(host_architecture)" in
+    amd64) printf 'mysql:5.7\n' ;;
+    arm64) printf 'mysql:8.0\n' ;;
+  esac
+}
+
 check_host() {
   [[ "$(uname -s)" == "Linux" ]] || fail "only Linux panel hosts are supported"
-  case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) fail "the bundled MySQL 5.7 deployment currently requires an x86_64 host" ;;
-  esac
+  host_architecture >/dev/null
 
   require_command curl
   require_command tar
@@ -70,6 +82,8 @@ download_source() {
 ensure_environment() {
   local frontend_port="${FLUX_PANEL_FRONTEND_PORT:-6366}"
   local backend_port="${FLUX_PANEL_BACKEND_PORT:-6365}"
+  local mysql_image
+  mysql_image="$(default_mysql_image)"
 
   validate_port FLUX_PANEL_FRONTEND_PORT "${frontend_port}"
   validate_port FLUX_PANEL_BACKEND_PORT "${backend_port}"
@@ -77,6 +91,10 @@ ensure_environment() {
 
   mkdir -p "${CONFIG_DIR}"
   if [[ -f "${ENV_FILE}" ]]; then
+    if ! grep -q '^MYSQL_IMAGE=' "${ENV_FILE}"; then
+      printf '\nMYSQL_IMAGE=%s\n' "${mysql_image}" >> "${ENV_FILE}"
+      log "pinned database image for $(host_architecture): ${mysql_image}"
+    fi
     log "reusing existing configuration: ${ENV_FILE}"
     return
   fi
@@ -90,11 +108,13 @@ DB_NAME=flux_panel
 DB_USER=flux_panel
 DB_PASSWORD=$(random_secret)
 JWT_SECRET=$(random_secret)
+MYSQL_IMAGE=${mysql_image}
 FRONTEND_PORT=${frontend_port}
 BACKEND_PORT=${backend_port}
 EOF
   chmod 600 "${ENV_FILE}"
   log "created protected configuration: ${ENV_FILE}"
+  log "selected database image for $(host_architecture): ${mysql_image}"
 }
 
 wait_for_services() {

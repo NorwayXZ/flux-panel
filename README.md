@@ -28,7 +28,7 @@
 | --- | --- | ---: | --- |
 | Web 前端 | React、TypeScript、Vite、HeroUI | `6366` | 管理界面 |
 | 后端 | Spring Boot、MyBatis-Plus | `6365` | API、节点连接与任务调度 |
-| 数据库 | MySQL 5.7 | 不对公网开放 | 保存节点、隧道、转发和用户数据 |
+| 数据库 | MySQL 5.7（amd64）/ MySQL 8.0（arm64） | 不对公网开放 | 保存节点、隧道、转发和用户数据 |
 | 节点端 | go-gost/gost、go-gost/x | 按节点配置 | 执行隧道和端口转发 |
 
 ## 面板服务器要求
@@ -36,7 +36,7 @@
 ### 最低配置
 
 - 操作系统：64 位 Linux，推荐 Ubuntu 22.04/24.04 或 Debian 12
-- 架构：`x86_64/amd64`
+- 架构：`x86_64/amd64` 或 `aarch64/arm64`
 - CPU：2 核
 - 内存：2 GB，首次源码构建建议至少配置 2 GB Swap
 - 磁盘：10 GB 可用空间
@@ -51,7 +51,12 @@
 - 磁盘：20 GB SSD 或更多
 - 使用独立公网 IP 或域名，并通过 Nginx/Caddy 配置 HTTPS
 
-当前源码部署使用 MySQL 5.7 官方镜像，因此一键安装脚本仅接受 `x86_64` 面板服务器。ARM64 面板服务器暂未列入正式支持范围。
+一键安装脚本正式支持 `amd64` 和 `arm64`。新安装会按服务器架构选择数据库镜像：
+
+- `amd64` 使用 `mysql:5.7`
+- `arm64` 使用 `mysql:8.0`
+
+所选镜像会写入 `/etc/flux-panel/flux-panel.env` 的 `MYSQL_IMAGE`，后续更新和重新安装都会复用该值。已有 amd64 安装未配置 `MYSQL_IMAGE` 时仍默认使用 MySQL 5.7，不会因代码更新自动升级数据库版本。
 
 ### 端口与防火墙
 
@@ -102,7 +107,7 @@ curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/fl
 
 1. 检查操作系统、架构、Docker 和 Compose 环境。
 2. 下载本仓库 `main` 分支源码到 `/opt/flux-panel`。
-3. 在 `/etc/flux-panel/flux-panel.env` 生成数据库密码和 JWT 密钥。
+3. 在 `/etc/flux-panel/flux-panel.env` 生成数据库密码、JWT 密钥，并固定与服务器架构匹配的数据库镜像。
 4. 从源码构建前端与后端镜像。
 5. 启动 MySQL、后端和前端，并等待健康检查通过。
 
@@ -254,6 +259,12 @@ sudo cp .env.example /etc/flux-panel/flux-panel.env
 sudo editor /etc/flux-panel/flux-panel.env
 docker compose --env-file /etc/flux-panel/flux-panel.env \
   -f docker-compose-source.yml up -d --build
+```
+
+手动部署到 ARM64 时，将环境文件中的数据库镜像改为：
+
+```dotenv
+MYSQL_IMAGE=mysql:8.0
 ```
 
 也可以分别构建：
