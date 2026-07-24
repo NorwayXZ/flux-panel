@@ -80,6 +80,14 @@ interface DiagnosisResult {
   }>;
 }
 
+interface TunnelLevelGroup {
+  key: string;
+  title: string;
+  description: string;
+  level: number;
+  tunnels: Tunnel[];
+}
+
 export default function TunnelPage() {
   const [loading, setLoading] = useState(true);
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
@@ -590,8 +598,38 @@ export default function TunnelPage() {
   const offlineTunnels = tunnels.filter(isTunnelNodeOffline).sort(compareCreatedTimeDesc);
   const onlineTunnels = tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel)).sort(compareCreatedTimeDesc);
 
+  const groupTunnelsByLevel = (tunnelList: Tunnel[]): TunnelLevelGroup[] => {
+    const groupMap = new Map<string, TunnelLevelGroup>();
+
+    tunnelList.forEach(tunnel => {
+      const isPortForward = tunnel.type === 1;
+      const level = isPortForward ? 1 : Math.max(getTunnelNodePath(tunnel).length, 2);
+      const key = isPortForward ? 'port-forward' : `tunnel-level-${level}`;
+
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          key,
+          title: isPortForward ? '端口转发' : `${level}级隧道`,
+          description: isPortForward
+            ? '入口与出口位于同一节点'
+            : `由 ${level} 个节点组成的隧道链路`,
+          level,
+          tunnels: []
+        });
+      }
+
+      groupMap.get(key)!.tunnels.push(tunnel);
+    });
+
+    return Array.from(groupMap.values()).sort((a, b) => {
+      if (a.key === 'port-forward') return -1;
+      if (b.key === 'port-forward') return 1;
+      return a.level - b.level;
+    });
+  };
+
   const renderTunnelGrid = (tunnelList: Tunnel[]) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 items-start gap-4">
       {tunnelList.map((tunnel) => {
         const statusDisplay = getStatusDisplay(tunnel.status);
         const typeDisplay = getTypeDisplay(tunnel.type);
@@ -602,8 +640,8 @@ export default function TunnelPage() {
           <Card
             key={tunnel.id}
             className={tunnelOffline
-              ? "shadow-sm border border-danger-300 dark:border-danger-800 overflow-hidden hover:shadow-md transition-shadow duration-200"
-              : "shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
+              ? "w-full self-start shadow-sm border border-danger-300 dark:border-danger-800 overflow-hidden hover:shadow-md transition-shadow duration-200"
+              : "w-full self-start shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
           >
             {tunnelOffline && <div className="h-1 bg-danger" />}
             <CardHeader className="pb-2">
@@ -750,6 +788,40 @@ export default function TunnelPage() {
     </div>
   );
 
+  const renderTunnelLevelGroups = (tunnelList: Tunnel[], offline: boolean) => (
+    <div className="space-y-6">
+      {groupTunnelsByLevel(tunnelList).map(group => (
+        <section key={group.key} className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className={offline
+                ? "text-sm font-semibold text-danger-700 dark:text-danger-300"
+                : "text-sm font-semibold text-foreground"}
+              >
+                {group.title}
+              </h3>
+              <p className={offline
+                ? "text-xs text-danger-600 dark:text-danger-300"
+                : "text-xs text-default-500"}
+              >
+                {group.description}
+              </p>
+            </div>
+            <Chip
+              color={offline ? 'danger' : (group.key === 'port-forward' ? 'primary' : 'secondary')}
+              variant="flat"
+              size="sm"
+              className="text-xs flex-shrink-0"
+            >
+              {group.tunnels.length} 条
+            </Chip>
+          </div>
+          {renderTunnelGrid(group.tunnels)}
+        </section>
+      ))}
+    </div>
+  );
+
   if (loading) {
     return (
 
@@ -791,13 +863,13 @@ export default function TunnelPage() {
                 <div className="flex items-center justify-between border-b border-divider pb-2">
                   <div>
                     <h2 className="text-sm font-semibold text-foreground">链路正常</h2>
-                    <p className="text-xs text-default-500">入口和出口节点都正常的隧道</p>
+                    <p className="text-xs text-default-500">路径中的所有节点均正常</p>
                   </div>
                   <Chip color="success" variant="flat" size="sm" className="text-xs">
                     {onlineTunnels.length} 条
                   </Chip>
                 </div>
-                {renderTunnelGrid(onlineTunnels)}
+                {renderTunnelLevelGroups(onlineTunnels, false)}
               </section>
             )}
 
@@ -806,13 +878,13 @@ export default function TunnelPage() {
                 <div className="flex items-center justify-between border-b border-danger-200 dark:border-danger-800 pb-2">
                   <div>
                     <h2 className="text-sm font-semibold text-danger-700 dark:text-danger-300">链路异常</h2>
-                    <p className="text-xs text-danger-600 dark:text-danger-300">入口或出口节点不正常的隧道</p>
+                    <p className="text-xs text-danger-600 dark:text-danger-300">路径中存在离线或连接异常节点</p>
                   </div>
                   <Chip color="danger" variant="flat" size="sm" className="text-xs">
                     {offlineTunnels.length} 条
                   </Chip>
                 </div>
-                {renderTunnelGrid(offlineTunnels)}
+                {renderTunnelLevelGroups(offlineTunnels, true)}
               </section>
             )}
           </div>
