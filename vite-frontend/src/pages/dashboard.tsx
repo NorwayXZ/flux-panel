@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 
-import { getUserPackageInfo } from "@/api";
+import { getNodeList, getUserPackageInfo } from "@/api";
 
 interface UserInfo {
   flow: number;
@@ -26,6 +26,18 @@ interface UserTunnel {
   expTime?: string;
   flowResetTime?: number;
   tunnelFlow: number;
+}
+
+interface SharedNode {
+  id: number;
+  name: string;
+  ip?: string;
+  portSta?: number;
+  portEnd?: number;
+  version?: string;
+  status: number;
+  accessType?: 'admin' | 'owned' | 'shared';
+  ownerUserName?: string;
 }
 
 interface Forward {
@@ -52,6 +64,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo>({} as UserInfo);
   const [userTunnels, setUserTunnels] = useState<UserTunnel[]>([]);
+  const [sharedNodes, setSharedNodes] = useState<SharedNode[]>([]);
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -151,6 +164,7 @@ export default function DashboardPage() {
     setLoading(true);
     setUserInfo({} as UserInfo);
     setUserTunnels([]);
+    setSharedNodes([]);
     setForwardList([]);
     setStatisticsFlows([]);
 
@@ -165,7 +179,12 @@ export default function DashboardPage() {
   const loadPackageData = async () => {
     setLoading(true);
     try {
-      const res = await getUserPackageInfo();
+      const shouldLoadSharedNodes = localStorage.getItem('admin') !== 'true';
+      const [res, nodeRes] = await Promise.all([
+        getUserPackageInfo(),
+        shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null)
+      ]);
+
       if (res.code === 0) {
         const data = res.data;
         setUserInfo(data.userInfo || {});
@@ -177,6 +196,18 @@ export default function DashboardPage() {
         checkExpirationNotifications(data.userInfo, data.tunnelPermissions || []);
       } else {
         toast.error(res.msg || '获取套餐信息失败');
+      }
+
+      if (nodeRes?.code === 0) {
+        const shared = (nodeRes.data || [])
+          .filter((node: SharedNode) => node.accessType === 'shared')
+          .sort((a: SharedNode, b: SharedNode) => {
+            const statusDifference = (b.status || 0) - (a.status || 0);
+            return statusDifference !== 0 ? statusDifference : b.id - a.id;
+          });
+        setSharedNodes(shared);
+      } else if (nodeRes) {
+        toast.error(nodeRes.msg || '获取节点权限失败');
       }
     } catch (error) {
       console.error('获取套餐信息失败:', error);
@@ -580,7 +611,86 @@ export default function DashboardPage() {
            </CardBody>
          </Card>
 
-                 {/* 隧道权限 - 管理员不显示 */}
+         {/* 节点权限 - 管理员不显示 */}
+         {!isAdmin && (
+          <Card className="mb-6 lg:mb-8 border border-gray-200 dark:border-default-200 shadow-md">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <svg className="w-5 h-5 text-primary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 12h14M5 6h14M5 18h14M7 6v.01M7 12v.01M7 18v.01" />
+                </svg>
+                <h2 className="text-lg lg:text-xl font-semibold text-foreground">节点权限</h2>
+                <span className="px-2 py-1 bg-default-100 dark:bg-default-50 text-default-600 rounded-full text-xs">
+                  {sharedNodes.length}
+                </span>
+              </div>
+            </CardHeader>
+            <CardBody className="pt-0">
+              {sharedNodes.length === 0 ? (
+                <div className="text-center py-10">
+                  <svg className="w-10 h-10 text-default-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 12h14M5 6h14M5 18h14M7 6v.01M7 12v.01M7 18v.01" />
+                  </svg>
+                  <p className="text-default-500">暂无节点权限</p>
+                </div>
+              ) : (
+                <div className="border border-gray-200 dark:border-default-100 rounded-lg divide-y divide-gray-200 dark:divide-default-100 overflow-hidden">
+                  {sharedNodes.map((node) => {
+                    const online = node.status === 1;
+                    const entranceIp = node.ip?.split(',')[0]?.trim() || '-';
+                    const additionalIpCount = Math.max((node.ip?.split(',').length || 1) - 1, 0);
+                    const portRange = node.portSta && node.portEnd ? `${node.portSta}-${node.portEnd}` : '-';
+
+                    return (
+                      <div key={node.id} className="p-3 lg:p-4 bg-content1 hover:bg-default-50/70 dark:hover:bg-default-100/40 transition-colors">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className={`w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0 ${online ? 'bg-success-100 dark:bg-success-500/15 text-success-600 dark:text-success-400' : 'bg-danger-100/70 dark:bg-danger-500/10 text-danger-600 dark:text-danger-300'}`}>
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M5 12h14M5 6h14M5 18h14M7 6v.01M7 12v.01M7 18v.01" />
+                              </svg>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="font-semibold text-foreground truncate" title={node.name}>{node.name}</h3>
+                                <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-secondary-100 dark:bg-secondary-500/15 text-secondary-700 dark:text-secondary-300">
+                                  共享 · {node.ownerUserName || '管理员'}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${online ? 'bg-success-100 dark:bg-success-500/15 text-success-700 dark:text-success-300' : 'bg-danger-100/70 dark:bg-danger-500/10 text-danger-700 dark:text-danger-300'}`}>
+                                  {online ? '在线' : '离线'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-default-500 mt-1">节点 ID: {node.id} · 只读共享</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2 lg:min-w-[480px]">
+                            <div className="min-w-0">
+                              <p className="text-xs text-default-500 mb-0.5">入口 IP</p>
+                              <p className="text-sm font-mono text-foreground truncate" title={node.ip || '-'}>
+                                {entranceIp}{additionalIpCount > 0 ? ` +${additionalIpCount}` : ''}
+                              </p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs text-default-500 mb-0.5">端口范围</p>
+                              <p className="text-sm font-mono text-foreground truncate" title={portRange}>{portRange}</p>
+                            </div>
+                            <div className="min-w-0 col-span-2 sm:col-span-1">
+                              <p className="text-xs text-default-500 mb-0.5">节点版本</p>
+                              <p className="text-sm text-foreground truncate" title={node.version || '未知'}>{node.version || '未知'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardBody>
+          </Card>
+         )}
+
+         {/* 隧道权限 - 管理员不显示 */}
          {!isAdmin && (
           <Card className="mb-6 lg:mb-8 border border-gray-200 dark:border-default-200 shadow-md">
            <CardHeader className="pb-3">
