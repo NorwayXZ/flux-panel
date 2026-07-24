@@ -594,6 +594,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
                     .intValue());
             User owner = userMapper.selectById(node.getOwnerUserId());
             node.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+            node.setOwnerRoleId(owner == null ? null : owner.getRoleId());
             if (Objects.equals(roleId, 0)) {
                 node.setAccessType("admin");
                 node.setEditable(true);

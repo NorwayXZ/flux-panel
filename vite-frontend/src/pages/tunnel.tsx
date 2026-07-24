@@ -41,6 +41,7 @@ interface Tunnel {
   createdTime: string | number;
   ownerUserId?: number;
   ownerUserName?: string;
+  ownerRoleId?: number;
   accessType?: 'admin' | 'owned' | 'shared';
   editable?: boolean;
   deletable?: boolean;
@@ -92,6 +93,23 @@ interface TunnelLevelGroup {
   level: number;
   tunnels: Tunnel[];
 }
+
+const getTunnelOwnerBadge = (tunnel: Tunnel) => {
+  const ownerName = tunnel.ownerUserName || '未知用户';
+  if (tunnel.accessType === 'shared') {
+    return { label: `共享 · ${ownerName}`, title: `管理员共享的隧道，所有者：${ownerName}`, color: 'secondary' as const };
+  }
+  if (tunnel.accessType === 'owned') {
+    return { label: '我的', title: `当前用户创建的隧道：${ownerName}`, color: 'primary' as const };
+  }
+  if (tunnel.ownerRoleId === 1) {
+    return { label: `用户 · ${ownerName}`, title: `普通用户创建，所有者：${ownerName}`, color: 'warning' as const };
+  }
+  if (tunnel.ownerRoleId === 0) {
+    return { label: '管理员', title: `管理员资源，所有者：${ownerName}`, color: 'default' as const };
+  }
+  return { label: `归属 · ${ownerName}`, title: `资源所有者：${ownerName}`, color: 'default' as const };
+};
 
 export default function TunnelPage() {
   const [loading, setLoading] = useState(true);
@@ -640,6 +658,7 @@ export default function TunnelPage() {
         const typeDisplay = getTypeDisplay(tunnel.type);
         const tunnelOffline = isTunnelNodeOffline(tunnel);
         const pathNodes = getTunnelPathNodes(tunnel);
+        const ownerBadge = getTunnelOwnerBadge(tunnel);
 
         return (
           <Card
@@ -653,9 +672,15 @@ export default function TunnelPage() {
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <h3 className="font-semibold text-foreground truncate text-sm">{tunnel.name}</h3>
-                    <Chip size="sm" variant="flat" color={tunnel.accessType === 'shared' ? 'secondary' : tunnel.accessType === 'owned' ? 'primary' : 'default'} className="text-[10px] h-5 flex-shrink-0">
-                      {tunnel.accessType === 'shared' ? '共享' : tunnel.accessType === 'owned' ? '我的' : '系统'}
+                    <h3 className="font-semibold text-foreground truncate text-sm flex-1 min-w-0">{tunnel.name}</h3>
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      color={ownerBadge.color}
+                      className="text-[10px] h-5 flex-shrink-0 max-w-[116px]"
+                      title={ownerBadge.title}
+                    >
+                      <span className="truncate max-w-[98px]">{ownerBadge.label}</span>
                     </Chip>
                   </div>
                   <p className={tunnelOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate mt-0.5" : "text-xs text-default-500 truncate mt-0.5"}>

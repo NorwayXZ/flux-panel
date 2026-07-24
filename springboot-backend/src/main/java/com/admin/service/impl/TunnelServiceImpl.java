@@ -379,6 +379,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         for (Tunnel tunnel : tunnels) {
             User owner = userMapper.selectById(tunnel.getOwnerUserId());
             tunnel.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+            tunnel.setOwnerRoleId(owner == null ? null : owner.getRoleId());
             if (Objects.equals(roleId, ADMIN_ROLE_ID)) {
                 tunnel.setAccessType("admin");
                 tunnel.setEditable(true);
@@ -813,6 +814,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         dto.setType(tunnel.getType());
         dto.setProtocol(tunnel.getProtocol());
         dto.setOwnerUserId(tunnel.getOwnerUserId());
+        dto.setOwnerUserName(tunnel.getOwnerUserName());
+        dto.setOwnerRoleId(tunnel.getOwnerRoleId());
         dto.setAccessType(tunnel.getAccessType());
         
         // 获取入口节点的端口范围信息

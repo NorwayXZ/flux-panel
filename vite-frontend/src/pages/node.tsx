@@ -36,6 +36,7 @@ interface Node {
   status: number; // 1: 在线, 0: 离线
   ownerUserId?: number;
   ownerUserName?: string;
+  ownerRoleId?: number;
   accessType?: 'admin' | 'owned' | 'shared';
   editable?: boolean;
   deletable?: boolean;
@@ -65,6 +66,23 @@ interface NodeForm {
   tls: number;  // 0 关 1 开
   socks: number; // 0 关 1 开
 }
+
+const getNodeOwnerBadge = (node: Node) => {
+  const ownerName = node.ownerUserName || '未知用户';
+  if (node.accessType === 'shared') {
+    return { label: `共享 · ${ownerName}`, title: `管理员共享的节点，所有者：${ownerName}`, color: 'secondary' as const };
+  }
+  if (node.accessType === 'owned') {
+    return { label: '我的', title: `当前用户创建的节点：${ownerName}`, color: 'primary' as const };
+  }
+  if (node.ownerRoleId === 1) {
+    return { label: `用户 · ${ownerName}`, title: `普通用户创建，所有者：${ownerName}`, color: 'warning' as const };
+  }
+  if (node.ownerRoleId === 0) {
+    return { label: '管理员', title: `管理员资源，所有者：${ownerName}`, color: 'default' as const };
+  }
+  return { label: `归属 · ${ownerName}`, title: `资源所有者：${ownerName}`, color: 'default' as const };
+};
 
 export default function NodePage() {
   const [nodeList, setNodeList] = useState<Node[]>([]);
@@ -654,6 +672,7 @@ export default function NodePage() {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
       {nodes.map((node) => {
         const nodeOffline = node.connectionStatus !== 'online';
+        const ownerBadge = getNodeOwnerBadge(node);
 
         return (
           <Card
@@ -666,9 +685,15 @@ export default function NodePage() {
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <h3 className={nodeOffline ? "font-semibold text-rose-800 dark:text-rose-200 truncate text-sm" : "font-semibold text-foreground truncate text-sm"}>{node.name}</h3>
-                    <Chip size="sm" variant="flat" color={node.accessType === 'shared' ? 'secondary' : node.accessType === 'owned' ? 'primary' : 'default'} className="text-[10px] h-5 flex-shrink-0">
-                      {node.accessType === 'shared' ? '共享' : node.accessType === 'owned' ? '我的' : '系统'}
+                    <h3 className={nodeOffline ? "font-semibold text-rose-800 dark:text-rose-200 truncate text-sm flex-1 min-w-0" : "font-semibold text-foreground truncate text-sm flex-1 min-w-0"}>{node.name}</h3>
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      color={ownerBadge.color}
+                      className="text-[10px] h-5 flex-shrink-0 max-w-[116px]"
+                      title={ownerBadge.title}
+                    >
+                      <span className="truncate max-w-[98px]">{ownerBadge.label}</span>
                     </Chip>
                   </div>
                   <p className={nodeOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate" : "text-xs text-default-500 truncate"}>{node.serverIp}</p>

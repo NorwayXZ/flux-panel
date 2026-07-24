@@ -45,6 +45,9 @@ public class Node extends BaseEntity {
     private String ownerUserName;
 
     @TableField(exist = false)
+    private Integer ownerRoleId;
+
+    @TableField(exist = false)
     private String accessType;
 
     @TableField(exist = false)

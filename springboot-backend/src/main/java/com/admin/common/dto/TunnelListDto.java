@@ -43,5 +43,9 @@ public class TunnelListDto {
 
     private Integer ownerUserId;
 
+    private String ownerUserName;
+
+    private Integer ownerRoleId;
+
     private String accessType;
 }
