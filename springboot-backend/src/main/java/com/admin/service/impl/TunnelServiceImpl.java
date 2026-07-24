@@ -198,6 +198,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             tunnelList = this.list(query);
         }
         enrichTunnelAccess(tunnelList, userId, roleId);
+        enrichTunnelPathDetails(tunnelList);
         return R.ok(tunnelList);
     }
 
@@ -393,6 +394,32 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                 tunnel.setEditable(false);
                 tunnel.setDeletable(false);
             }
+        }
+    }
+
+    private void enrichTunnelPathDetails(List<Tunnel> tunnels) {
+        Set<Long> nodeIds = tunnels.stream()
+                .flatMap(tunnel -> TunnelRouteUtil.parseNodePath(tunnel).stream())
+                .collect(Collectors.toSet());
+        if (nodeIds.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Node> nodesById = nodeService.listByIds(nodeIds).stream()
+                .collect(Collectors.toMap(Node::getId, node -> node));
+
+        for (Tunnel tunnel : tunnels) {
+            List<TunnelPathNodeDto> details = TunnelRouteUtil.parseNodePath(tunnel).stream()
+                    .map(nodeId -> {
+                        Node node = nodesById.get(nodeId);
+                        TunnelPathNodeDto detail = new TunnelPathNodeDto();
+                        detail.setNodeId(nodeId);
+                        detail.setName(node == null ? "节点" + nodeId : node.getName());
+                        detail.setStatus(WebSocketServer.isNodeOnline(nodeId) ? NODE_STATUS_ONLINE : 0);
+                        return detail;
+                    })
+                    .collect(Collectors.toList());
+            tunnel.setPathNodeDetails(details);
         }
     }
 

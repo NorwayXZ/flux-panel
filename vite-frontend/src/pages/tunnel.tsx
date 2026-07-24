@@ -45,6 +45,11 @@ interface Tunnel {
   accessType?: 'admin' | 'owned' | 'shared';
   editable?: boolean;
   deletable?: boolean;
+  pathNodeDetails?: Array<{
+    nodeId: number;
+    name: string;
+    status: number;
+  }>;
 }
 
 interface Node {
@@ -452,17 +457,27 @@ export default function TunnelPage() {
     return [tunnel.inNodeId, tunnel.outNodeId].filter((nodeId): nodeId is number => !!nodeId);
   };
 
-  const getTunnelPathNodes = (tunnel: Tunnel) => getTunnelNodePath(tunnel).map((nodeId, index, path) => ({
-    nodeId,
-    label: tunnel.type === 1
-      ? (index === 0 ? '入口/出口节点' : '节点')
-      : (index === 0 ? '入口节点' : index === path.length - 1 ? '出口节点' : `中转节点 ${index}`),
-    status: getNodeStatus(
-      nodeId,
-      index === 0 ? tunnel.inNodeStatus : (index === path.length - 1 ? tunnel.outNodeStatus : undefined)
-    ),
-    ip: index === 0 ? tunnel.inIp : (index === path.length - 1 ? tunnel.outIp : undefined)
-  }));
+  const getTunnelPathNodes = (tunnel: Tunnel) => {
+    const detailByNodeId = new Map(
+      (tunnel.pathNodeDetails || []).map(detail => [detail.nodeId, detail])
+    );
+
+    return getTunnelNodePath(tunnel).map((nodeId, index, path) => {
+      const detail = detailByNodeId.get(nodeId);
+      return {
+        nodeId,
+        name: detail?.name || getNodeName(nodeId),
+        label: tunnel.type === 1
+          ? (index === 0 ? '入口/出口节点' : '节点')
+          : (index === 0 ? '入口节点' : index === path.length - 1 ? '出口节点' : `中转节点 ${index}`),
+        status: getNodeStatus(
+          nodeId,
+          detail?.status ?? (index === 0 ? tunnel.inNodeStatus : (index === path.length - 1 ? tunnel.outNodeStatus : undefined))
+        ),
+        ip: index === 0 ? tunnel.inIp : (index === path.length - 1 ? tunnel.outIp : undefined)
+      };
+    });
+  };
 
   const isTunnelNodeOffline = (tunnel: Tunnel): boolean => {
     return getTunnelPathNodes(tunnel).some(item => item.status !== 1);
@@ -737,7 +752,7 @@ export default function TunnelPage() {
                             </Chip>
                           </div>
                           <code className={nodeOffline ? "text-xs font-mono text-danger-800 dark:text-danger-200 block truncate" : "text-xs font-mono text-foreground block truncate"}>
-                            {getNodeName(pathNode.nodeId)}
+                            {pathNode.name}
                           </code>
                           <code className={nodeOffline ? "text-xs font-mono text-danger-600 dark:text-danger-300 block truncate" : "text-xs font-mono text-default-500 block truncate"}>
                             {getDisplayIp(pathNode.ip)}

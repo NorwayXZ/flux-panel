@@ -2,6 +2,8 @@ package com.admin.entity;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.List;
+import com.admin.common.dto.TunnelPathNodeDto;
 import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -93,4 +95,7 @@ public class Tunnel extends BaseEntity {
 
     @TableField(exist = false)
     private Boolean deletable;
+
+    @TableField(exist = false)
+    private List<TunnelPathNodeDto> pathNodeDetails;
 }
