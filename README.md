@@ -1,90 +1,86 @@
-# flux-panel转发面板 哆啦A梦转发面板
+# Flux Panel Enhanced
 
-## 项目更新说明
-由于一些个人原因，**flux-panel** 将暂停更新一段时间，**恢复更新时间暂不确定**。
+这是基于 [bqlpfy/flux-panel](https://github.com/bqlpfy/flux-panel) 持续维护的增强版本。
 
-在此期间，项目不会继续推进新功能或修复问题，对可能带来的不便表示抱歉。当前已有功能仍可正常使用，也欢迎大家继续 Fork 或自行维护。
+项目保留原有 Flux Panel 的用户、节点、隧道、转发、限速和流量统计能力，并重点改善节点失效后的运维体验，以及多节点链路的管理与诊断。
 
-如后续恢复更新，我会第一时间在仓库中说明。  
-感谢大家的理解与支持。
+## 当前增强
 
+- 支持 `A-B-C`、`A-B-C-D-E` 等多跳隧道，不再限制为单一 `A-B` 链路
+- 隧道和转发诊断显示每段延迟、丢包率及总延迟
+- 节点离线时，关联隧道和转发卡片同步显示为异常状态
+- 节点监控和隧道管理按状态分区，正常项目在前、异常项目在后
+- 节点、隧道和转发在各自分区或分组内按创建时间倒序显示
+- 转发管理按隧道归纳，隧道下集中展示对应转发
+- 转发状态同时考虑服务状态和完整链路状态，避免链路异常时仍显示“正常”
+- 删除失效节点时可级联清理关联隧道、转发、授权和限速数据
+- 删除隧道时自动删除该隧道下的转发及关联数据
+- 在线节点仍受删除保护，避免误删正常节点并连带清理业务
+- 日志中的令牌、密钥和敏感参数会进行脱敏处理
 
-本项目基于 [go-gost/gost](https://github.com/go-gost/gost) 和 [go-gost/x](https://github.com/go-gost/x) 两个开源库，实现了转发面板。
----
-## 特性
+## 技术组件
 
-- 支持按 **隧道账号级别** 管理流量转发数量，可用于用户/隧道配额控制
-- 支持 **TCP** 和 **UDP** 协议的转发
-- 支持两种转发模式：**端口转发** 与 **隧道转发**
-- 可针对 **指定用户的指定隧道进行限速** 设置
-- 支持配置 **单向或双向流量计费方式**，灵活适配不同计费模型
-- 提供灵活的转发策略配置，适用于多种网络场景
+- 前端：React、TypeScript、Vite、HeroUI
+- 后端：Spring Boot、MyBatis-Plus、MySQL
+- 节点：基于 go-gost/gost 与 go-gost/x
+- 部署：Docker Compose
 
+## 构建
 
-## 部署流程
----
-### Docker Compose部署
-#### 快速部署
-面板端(稳定版)：
+前端：
+
 ```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/main/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
-```
-节点端(稳定版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
-
-```
-
-面板端(开发版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/beta/panel_install.sh -o panel_install.sh && chmod +x panel_install.sh && ./panel_install.sh
-```
-节点端(开发版)：
-```bash
-curl -L https://raw.githubusercontent.com/bqlpfy/flux-panel/refs/heads/beta/install.sh -o install.sh && chmod +x install.sh && ./install.sh
-
+cd vite-frontend
+npm ci
+npm run build
 ```
 
-#### 默认管理员账号
+后端：
 
-- **账号**: admin_user
-- **密码**: admin_user
+```bash
+docker build -t flux-panel-backend:local ./springboot-backend
+```
 
-> ⚠️ 首次登录后请立即修改默认密码！
+节点：
 
+```bash
+cd go-gost
+go test ./...
+go build -o gost
+```
 
-## 免责声明
+前端镜像：
 
-本项目仅供个人学习与研究使用，基于开源项目进行二次开发。  
+```bash
+docker build -t flux-panel-frontend:local ./vite-frontend
+```
 
-使用本项目所带来的任何风险均由使用者自行承担，包括但不限于：  
+## 数据库说明
 
-- 配置不当或使用错误导致的服务异常或不可用；  
-- 使用本项目引发的网络攻击、封禁、滥用等行为；  
-- 服务器因使用本项目被入侵、渗透、滥用导致的数据泄露、资源消耗或损失；  
-- 因违反当地法律法规所产生的任何法律责任。  
+全新安装可直接使用仓库根目录的 `gost.sql`。
 
-本项目为开源的流量转发工具，仅限合法、合规用途。  
-使用者必须确保其使用行为符合所在国家或地区的法律法规。  
+从旧版升级时，需要先备份数据库，并为现有表补充以下字段：
 
-**作者不对因使用本项目导致的任何法律责任、经济损失或其他后果承担责任。**  
-**禁止将本项目用于任何违法或未经授权的行为，包括但不限于网络攻击、数据窃取、非法访问等。**  
+```sql
+ALTER TABLE `tunnel` ADD COLUMN `node_path` LONGTEXT DEFAULT NULL AFTER `out_ip`;
+ALTER TABLE `forward` ADD COLUMN `hop_ports` LONGTEXT DEFAULT NULL AFTER `out_port`;
+```
 
-如不同意上述条款，请立即停止使用本项目。  
+生产升级前请同时备份数据库、Docker Compose 配置和当前镜像标签，以便回滚。
 
-作者对因使用本项目所造成的任何直接或间接损失概不负责，亦不提供任何形式的担保、承诺或技术支持。  
+## 默认账号
 
+- 用户名：`admin_user`
+- 密码：`admin_user`
 
-请务必在合法、合规、安全的前提下使用本项目。  
+首次登录后请立即修改默认密码。
 
----
-## ⭐ 喝杯咖啡！（USDT）
+## 上游与许可
 
-| 网络       | 地址                                                                 |
-|------------|----------------------------------------------------------------------|
-| BNB(BEP20) | `0x755492c03728851bbf855daa28a1e089f9aca4d1`                          |
-| TRC20      | `TYh2L3xxXpuJhAcBWnt3yiiADiCSJLgUm7`                                  |
-| Aptos      | `0xf2f9fb14749457748506a8281628d556e8540d1eb586d202cd8b02b99d369ef8`  |
+本项目基于以下开源项目：
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bqlpfy/flux-panel&type=Date)](https://www.star-history.com/#bqlpfy/flux-panel&Date)
+- [bqlpfy/flux-panel](https://github.com/bqlpfy/flux-panel)
+- [go-gost/gost](https://github.com/go-gost/gost)
+- [go-gost/x](https://github.com/go-gost/x)
 
+许可证见 [LICENSE](LICENSE)。使用本项目时请遵守所在地法律法规，仅用于合法、合规的网络管理和转发用途。

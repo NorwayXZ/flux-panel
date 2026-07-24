@@ -5,7 +5,6 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.entity.*;
 import com.admin.service.*;
-import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
@@ -43,7 +42,13 @@ public class CheckGostConfigAsync {
      */
     @Async
     public void cleanNodeConfigs(String node_id, GostConfigDto gostConfig) {
-        System.out.println(JSONObject.toJSONString(gostConfig));
+        log.info(
+            "收到节点 {} Gost配置: services={}, chains={}, limiters={}",
+            node_id,
+            gostConfig.getServices() == null ? 0 : gostConfig.getServices().size(),
+            gostConfig.getChains() == null ? 0 : gostConfig.getChains().size(),
+            gostConfig.getLimiters() == null ? 0 : gostConfig.getLimiters().size()
+        );
         Node node = nodeService.getById(node_id);
         if (node != null) {
             cleanOrphanedServices(gostConfig, node);

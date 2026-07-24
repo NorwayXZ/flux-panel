@@ -30,6 +30,11 @@ public class Forward extends BaseEntity{
 
     private Integer outPort;
 
+    /**
+     * 隧道转发每一跳的监听端口，按 tunnel.nodePath[1..] 顺序逗号分隔。
+     */
+    private String hopPorts;
+
     private String remoteAddr;
 
     private String interfaceName;

@@ -13,6 +13,11 @@ public class TunnelListDto {
      * 入口IP
      */
     private String ip;
+
+    /**
+     * 节点路径，逗号分隔
+     */
+    private String nodePath;
     
     /**
      * 入口节点端口起始范围

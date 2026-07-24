@@ -11,6 +11,7 @@
             f.tunnel_id AS tunnelId,
             f.in_port AS inPort,
             f.out_port AS outPort,
+            f.hop_ports AS hopPorts,
             f.remote_addr AS remoteAddr,
             f.status,
             f.created_time AS createdTime,
@@ -24,13 +25,22 @@
             t.name AS tunnelName,
             t.in_ip AS inIp,
             t.out_ip AS outIp,
+            t.node_path AS nodePath,
+            t.in_node_id AS inNodeId,
+            t.out_node_id AS outNodeId,
             t.type,
-            t.protocol
-        FROM 
+            t.protocol,
+            in_node.status AS inNodeStatus,
+            out_node.status AS outNodeStatus
+        FROM
             forward f
-        LEFT JOIN 
+        LEFT JOIN
             tunnel t ON f.tunnel_id = t.id
-        ORDER BY 
+        LEFT JOIN
+            node in_node ON t.in_node_id = in_node.id
+        LEFT JOIN
+            node out_node ON t.out_node_id = out_node.id
+        ORDER BY
             f.created_time DESC
     </select>
 
@@ -43,6 +53,7 @@
             f.tunnel_id AS tunnelId,
             f.in_port AS inPort,
             f.out_port AS outPort,
+            f.hop_ports AS hopPorts,
             f.remote_addr AS remoteAddr,
             f.status,
             f.created_time AS createdTime,
@@ -56,13 +67,22 @@
             t.name AS tunnelName,
             t.in_ip AS inIp,
             t.out_ip AS outIp,
+            t.node_path AS nodePath,
+            t.in_node_id AS inNodeId,
+            t.out_node_id AS outNodeId,
             t.type,
-            t.protocol
-        FROM 
+            t.protocol,
+            in_node.status AS inNodeStatus,
+            out_node.status AS outNodeStatus
+        FROM
             forward f
-        LEFT JOIN 
+        LEFT JOIN
             tunnel t ON f.tunnel_id = t.id
-        WHERE 
+        LEFT JOIN
+            node in_node ON t.in_node_id = in_node.id
+        LEFT JOIN
+            node out_node ON t.out_node_id = out_node.id
+        WHERE
             f.user_id = #{userId}
         ORDER BY 
             f.created_time DESC

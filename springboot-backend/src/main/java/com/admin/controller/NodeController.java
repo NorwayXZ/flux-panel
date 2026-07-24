@@ -56,6 +56,17 @@ public class NodeController extends BaseController {
 
     @LogAnnotation
     @RequireRole
+    @PostMapping("/check-status")
+    public R checkStatus(@RequestBody(required = false) Map<String, Object> params) {
+        Long id = null;
+        if (params != null && params.get("nodeId") != null) {
+            id = Long.valueOf(params.get("nodeId").toString());
+        }
+        return nodeService.checkNodeStatus(id);
+    }
+
+    @LogAnnotation
+    @RequireRole
     @PostMapping("/install")
     public R getInstallCommand(@RequestBody Map<String, Object> params) {
         Long id = Long.valueOf(params.get("id").toString());

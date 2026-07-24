@@ -31,6 +31,11 @@ public class ForwardWithTunnelDto {
     private Integer inPort;
 
     /**
+     * 隧道转发每一跳端口
+     */
+    private String hopPorts;
+
+    /**
      * 远程地址
      */
     private String remoteAddr;
@@ -61,6 +66,51 @@ public class ForwardWithTunnelDto {
      * 入口IP
      */
     private String inIp;
+
+    /**
+     * 出口IP
+     */
+    private String outIp;
+
+    /**
+     * 隧道节点路径，逗号分隔
+     */
+    private String nodePath;
+
+    /**
+     * 入口节点ID
+     */
+    private Long inNodeId;
+
+    /**
+     * 出口节点ID
+     */
+    private Long outNodeId;
+
+    /**
+     * 入口节点状态
+     */
+    private Integer inNodeStatus;
+
+    /**
+     * 出口节点状态
+     */
+    private Integer outNodeStatus;
+
+    /**
+     * 隧道关联节点是否有离线
+     */
+    private Boolean nodeOffline;
+
+    /**
+     * 隧道类型
+     */
+    private Integer type;
+
+    /**
+     * 隧道协议
+     */
+    private String protocol;
 
     private String userName;
 

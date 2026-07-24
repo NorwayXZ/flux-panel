@@ -6,14 +6,21 @@ import com.admin.common.dto.GostDto;
 import com.admin.common.dto.NodeDto;
 import com.admin.common.dto.NodeUpdateDto;
 import com.admin.common.lang.R;
+import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.common.utils.WebSocketServer;
+import com.admin.entity.Forward;
 import com.admin.entity.Node;
+import com.admin.entity.SpeedLimit;
 import com.admin.entity.Tunnel;
+import com.admin.entity.UserTunnel;
 import com.admin.entity.ViteConfig;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.TunnelMapper;
+import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
+import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
+import com.admin.service.UserTunnelService;
 import com.admin.service.ViteConfigService;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -22,9 +29,14 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -56,6 +68,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_UPDATE_MSG = "节点更新失败";
     private static final String ERROR_DELETE_MSG = "节点删除失败";
     private static final String ERROR_NODE_NOT_FOUND = "节点不存在";
+    private static final String ERROR_ONLINE_NODE_HAS_TUNNELS = "节点当前在线，并且还有 %d 个关联隧道。请在隧道管理中删除需要清理的失效隧道，或确认节点离线后再删除节点。";
     
     /** 隧道使用检查相关消息 */
     private static final String ERROR_IN_NODE_IN_USE = "该节点还有 %d 个隧道作为入口节点在使用，请先删除相关隧道";
@@ -75,6 +88,18 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     @Resource
     @Lazy
     private TunnelService tunnelService;
+
+    @Resource
+    @Lazy
+    private ForwardService forwardService;
+
+    @Resource
+    @Lazy
+    private UserTunnelService userTunnelService;
+
+    @Resource
+    @Lazy
+    private SpeedLimitService speedLimitService;
 
     @Resource
     ViteConfigService viteConfigService;
@@ -174,12 +199,13 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
 
     /**
      * 删除节点
-     * 删除前会检查是否有隧道正在使用该节点
+     * 在线节点仍有隧道关联时不允许级联删除；离线节点允许清理依赖该节点的转发、隧道、用户隧道权限和限速规则
      * 
      * @param id 节点ID
      * @return 删除结果响应
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public R deleteNode(Long id) {
         // 1. 验证节点是否存在
         Node node = this.getById(id);
@@ -187,15 +213,45 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             return R.err(ERROR_NODE_NOT_FOUND);
         }
 
-        // 2. 检查节点使用情况
-        R usageCheckResult = checkNodeUsage(id);
-        if (usageCheckResult.getCode() != 0) {
-            return usageCheckResult;
+        try {
+            long relatedTunnelCount = countNodeTunnels(id);
+            if (isNodeOnlineForDeletion(node) && relatedTunnelCount > 0) {
+                return R.err(String.format(ERROR_ONLINE_NODE_HAS_TUNNELS, relatedTunnelCount));
+            }
+
+            Map<String, Object> cleanupSummary = cleanupNodeDependencies(id);
+
+            // 3. 执行删除操作
+            boolean result = this.removeById(id);
+            if (!result) {
+                throw new IllegalStateException(ERROR_DELETE_MSG);
+            }
+
+            cleanupSummary.put("nodeId", id);
+            cleanupSummary.put("nodeName", node.getName());
+            cleanupSummary.put("message", SUCCESS_DELETE_MSG);
+            return R.ok(cleanupSummary);
+        } catch (RuntimeException e) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return R.err(e.getMessage());
+        }
+    }
+
+    @Override
+    public R checkNodeStatus(Long id) {
+        if (id != null) {
+            Node node = this.getById(id);
+            if (node == null) {
+                return R.err(ERROR_NODE_NOT_FOUND);
+            }
+            return R.ok(syncNodeStatus(node));
         }
 
-        // 3. 执行删除操作
-        boolean result = this.removeById(id);
-        return result ? R.ok(SUCCESS_DELETE_MSG) : R.err(ERROR_DELETE_MSG);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Node node : this.list()) {
+            result.add(syncNodeStatus(node));
+        }
+        return R.ok(result);
     }
 
     /**
@@ -237,8 +293,107 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         long currentTime = System.currentTimeMillis();
         node.setCreatedTime(currentTime);
         node.setUpdatedTime(currentTime);
-        
+
         return node;
+    }
+
+    private Map<String, Object> syncNodeStatus(Node node) {
+        int status = WebSocketServer.isNodeOnline(node.getId()) ? 1 : 0;
+        if (!Objects.equals(node.getStatus(), status)) {
+            Node updateNode = new Node();
+            updateNode.setId(node.getId());
+            updateNode.setStatus(status);
+            updateNode.setUpdatedTime(System.currentTimeMillis());
+            this.updateById(updateNode);
+        }
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", node.getId());
+        item.put("status", status);
+        item.put("online", status == 1);
+        item.put("checkedTime", System.currentTimeMillis());
+        return item;
+    }
+
+    private boolean isNodeOnlineForDeletion(Node node) {
+        int currentStatus = WebSocketServer.isNodeOnline(node.getId()) ? 1 : 0;
+        if (!Objects.equals(node.getStatus(), currentStatus)) {
+            Node updateNode = new Node();
+            updateNode.setId(node.getId());
+            updateNode.setStatus(currentStatus);
+            updateNode.setUpdatedTime(System.currentTimeMillis());
+            this.updateById(updateNode);
+        }
+        return currentStatus == 1;
+    }
+
+    private long countNodeTunnels(Long nodeId) {
+        return findTunnelsByNodePath(nodeId).size();
+    }
+
+    private Map<String, Object> cleanupNodeDependencies(Long nodeId) {
+        List<Tunnel> relatedTunnels = findTunnelsByNodePath(nodeId);
+
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("tunnelCount", relatedTunnels.size());
+        summary.put("forwardCount", 0L);
+        summary.put("userTunnelCount", 0L);
+        summary.put("speedLimitCount", 0L);
+
+        if (relatedTunnels.isEmpty()) {
+            return summary;
+        }
+
+        List<Long> tunnelIds = new ArrayList<>();
+        List<Integer> tunnelIdInts = new ArrayList<>();
+        for (Tunnel tunnel : relatedTunnels) {
+            tunnelIds.add(tunnel.getId());
+            tunnelIdInts.add(tunnel.getId().intValue());
+        }
+
+        long forwardCount = forwardService.count(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
+        if (forwardCount > 0) {
+            boolean removed = forwardService.remove(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
+            if (!removed) {
+                throw new IllegalStateException("关联转发删除失败");
+            }
+        }
+
+        long userTunnelCount = userTunnelService.count(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
+        if (userTunnelCount > 0) {
+            boolean removed = userTunnelService.remove(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
+            if (!removed) {
+                throw new IllegalStateException("关联用户隧道权限删除失败");
+            }
+        }
+
+        long speedLimitCount = speedLimitService.count(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
+        if (speedLimitCount > 0) {
+            boolean removed = speedLimitService.remove(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
+            if (!removed) {
+                throw new IllegalStateException("关联限速规则删除失败");
+            }
+        }
+
+        boolean tunnelsRemoved = tunnelService.removeByIds(tunnelIds);
+        if (!tunnelsRemoved) {
+            throw new IllegalStateException("关联隧道删除失败");
+        }
+
+        summary.put("forwardCount", forwardCount);
+        summary.put("userTunnelCount", userTunnelCount);
+        summary.put("speedLimitCount", speedLimitCount);
+        return summary;
+    }
+
+    private List<Tunnel> findTunnelsByNodePath(Long nodeId) {
+        List<Tunnel> relatedTunnels = new ArrayList<>();
+        for (Tunnel tunnel : tunnelService.list()) {
+            if (TunnelRouteUtil.parseNodePath(tunnel).contains(nodeId)) {
+                relatedTunnels.add(tunnel);
+            }
+        }
+        return relatedTunnels;
     }
 
     /**

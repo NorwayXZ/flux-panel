@@ -433,6 +433,19 @@ public class WebSocketServer extends TextWebSocketHandler {
         }
     }
 
+    public static boolean isNodeOnline(Long nodeId) {
+        WebSocketSession nodeSession = nodeSessions.get(nodeId);
+        if (nodeSession == null) {
+            return false;
+        }
+        if (nodeSession.isOpen()) {
+            return true;
+        }
+        nodeSessions.remove(nodeId);
+        sessionLocks.remove(nodeSession.getId());
+        return false;
+    }
+
 
 
     public static GostDto send_msg(Long node_id, Object msg, String type) {

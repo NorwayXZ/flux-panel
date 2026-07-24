@@ -11,10 +11,10 @@ import { Alert } from "@heroui/alert";
 import toast from 'react-hot-toast';
 
 
-import { 
-  createTunnel, 
-  getTunnelList, 
-  updateTunnel, 
+import {
+  createTunnel,
+  getTunnelList,
+  updateTunnel,
   deleteTunnel,
   getNodeList,
   diagnoseTunnel
@@ -26,8 +26,11 @@ interface Tunnel {
   type: number; // 1: 端口转发, 2: 隧道转发
   inNodeId: number;
   outNodeId?: number;
+  inNodeStatus?: number;
+  outNodeStatus?: number;
   inIp: string;
   outIp?: string;
+  nodePath?: string;
   protocol?: string;
   tcpListenAddr: string;
   udpListenAddr: string;
@@ -35,7 +38,7 @@ interface Tunnel {
   flow: number; // 1: 单向, 2: 双向
   trafficRatio: number;
   status: number;
-  createdTime: string;
+  createdTime: string | number;
 }
 
 interface Node {
@@ -50,6 +53,7 @@ interface TunnelForm {
   type: number;
   inNodeId: number | null;
   outNodeId?: number | null;
+  nodePath: Array<number | null>;
   protocol: string;
   tcpListenAddr: string;
   udpListenAddr: string;
@@ -80,7 +84,7 @@ export default function TunnelPage() {
   const [loading, setLoading] = useState(true);
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
-  
+
   // 模态框状态
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -92,13 +96,14 @@ export default function TunnelPage() {
   const [tunnelToDelete, setTunnelToDelete] = useState<Tunnel | null>(null);
   const [currentDiagnosisTunnel, setCurrentDiagnosisTunnel] = useState<Tunnel | null>(null);
   const [diagnosisResult, setDiagnosisResult] = useState<DiagnosisResult | null>(null);
-  
+
   // 表单状态
   const [form, setForm] = useState<TunnelForm>({
     name: '',
     type: 1,
     inNodeId: null,
     outNodeId: null,
+    nodePath: [null, null],
     protocol: 'tls',
     tcpListenAddr: '[::]',
     udpListenAddr: '[::]',
@@ -107,7 +112,7 @@ export default function TunnelPage() {
     trafficRatio: 1.0,
     status: 1
   });
-  
+
   // 表单验证错误
   const [errors, setErrors] = useState<{[key: string]: string}>({});
 
@@ -123,13 +128,13 @@ export default function TunnelPage() {
         getTunnelList(),
         getNodeList()
       ]);
-      
+
       if (tunnelsRes.code === 0) {
         setTunnels(tunnelsRes.data || []);
       } else {
         toast.error(tunnelsRes.msg || '获取隧道列表失败');
       }
-      
+
       if (nodesRes.code === 0) {
         setNodes(nodesRes.data || []);
       } else {
@@ -146,42 +151,44 @@ export default function TunnelPage() {
   // 表单验证
   const validateForm = (): boolean => {
     const newErrors: {[key: string]: string} = {};
-    
+
     if (!form.name.trim()) {
       newErrors.name = '请输入隧道名称';
     } else if (form.name.length < 2 || form.name.length > 50) {
       newErrors.name = '隧道名称长度应在2-50个字符之间';
     }
-    
+
     if (!form.inNodeId) {
       newErrors.inNodeId = '请选择入口节点';
     }
-    
+
     if (!form.tcpListenAddr.trim()) {
       newErrors.tcpListenAddr = '请输入TCP监听地址';
     }
-    
+
     if (!form.udpListenAddr.trim()) {
       newErrors.udpListenAddr = '请输入UDP监听地址';
     }
-    
+
     if (form.trafficRatio < 0.0 || form.trafficRatio > 100.0) {
       newErrors.trafficRatio = '流量倍率必须在0.0-100.0之间';
     }
-    
+
     // 隧道转发时的验证
     if (form.type === 2) {
-      if (!form.outNodeId) {
-        newErrors.outNodeId = '请选择出口节点';
-      } else if (form.inNodeId === form.outNodeId) {
-        newErrors.outNodeId = '隧道转发模式下，入口和出口不能是同一个节点';
+      const path = normalizeFormPath(form.inNodeId, form.nodePath, form.outNodeId);
+      const filledPath = path.filter((nodeId): nodeId is number => nodeId !== null);
+      if (path.some(nodeId => nodeId === null) || filledPath.length < 2) {
+        newErrors.nodePath = '请至少选择入口和出口两个节点';
+      } else if (new Set(filledPath).size !== filledPath.length) {
+        newErrors.nodePath = '节点路径不能包含重复节点';
       }
-      
+
       if (!form.protocol) {
         newErrors.protocol = '请选择协议类型';
       }
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -194,6 +201,7 @@ export default function TunnelPage() {
       type: 1,
       inNodeId: null,
       outNodeId: null,
+      nodePath: [null, null],
       protocol: 'tls',
       tcpListenAddr: '[::]',
       udpListenAddr: '[::]',
@@ -215,6 +223,7 @@ export default function TunnelPage() {
       type: tunnel.type,
       inNodeId: tunnel.inNodeId,
       outNodeId: tunnel.outNodeId || null,
+      nodePath: getTunnelNodePath(tunnel).length > 0 ? getTunnelNodePath(tunnel) : [tunnel.inNodeId, tunnel.outNodeId || null],
       protocol: tunnel.protocol || 'tls',
       tcpListenAddr: tunnel.tcpListenAddr || '[::]',
       udpListenAddr: tunnel.udpListenAddr || '[::]',
@@ -235,12 +244,23 @@ export default function TunnelPage() {
 
   const confirmDelete = async () => {
     if (!tunnelToDelete) return;
-    
+
     setDeleteLoading(true);
     try {
       const response = await deleteTunnel(tunnelToDelete.id);
       if (response.code === 0) {
-        toast.success('删除成功');
+        const summary = response.data || {};
+        const forwardCount = Number(summary.forwardCount || 0);
+        const forwardGostCleanupFailCount = Number(summary.forwardGostCleanupFailCount || 0);
+        const userTunnelCount = Number(summary.userTunnelCount || 0);
+        const speedLimitCount = Number(summary.speedLimitCount || 0);
+        const cleanupText = forwardCount + userTunnelCount + speedLimitCount > 0
+          ? `，已清理 ${forwardCount} 个转发、${userTunnelCount} 个授权、${speedLimitCount} 个限速规则`
+          : '';
+        const remoteCleanupText = forwardGostCleanupFailCount > 0
+          ? `，其中 ${forwardGostCleanupFailCount} 个转发未能通知节点清理远端服务`
+          : '';
+        toast.success(`隧道删除成功${cleanupText}${remoteCleanupText}`);
         setDeleteModalOpen(false);
         setTunnelToDelete(null);
         loadData();
@@ -261,6 +281,9 @@ export default function TunnelPage() {
       ...prev,
       type,
       outNodeId: type === 1 ? null : prev.outNodeId,
+      nodePath: type === 1
+        ? [prev.inNodeId]
+        : normalizeFormPath(prev.inNodeId, prev.nodePath, prev.outNodeId),
       protocol: type === 1 ? 'tls' : prev.protocol
     }));
   };
@@ -268,15 +291,21 @@ export default function TunnelPage() {
   // 提交表单
   const handleSubmit = async () => {
     if (!validateForm()) return;
-    
+
     setSubmitLoading(true);
     try {
-      const data = { ...form };
-      
-      const response = isEdit 
+      const path = normalizeFormPath(form.inNodeId, form.nodePath, form.outNodeId)
+        .filter((nodeId): nodeId is number => nodeId !== null);
+      const data = {
+        ...form,
+        nodePath: form.type === 2 ? path : [form.inNodeId],
+        outNodeId: form.type === 2 ? path[path.length - 1] : form.inNodeId
+      };
+
+      const response = isEdit
         ? await updateTunnel(data)
         : await createTunnel(data);
-        
+
       if (response.code === 0) {
         toast.success(isEdit ? '更新成功' : '创建成功');
         setModalOpen(false);
@@ -345,12 +374,12 @@ export default function TunnelPage() {
   // 获取显示的IP（处理多IP）
   const getDisplayIp = (ipString?: string): string => {
     if (!ipString) return '-';
-    
+
     const ips = ipString.split(',').map(ip => ip.trim()).filter(ip => ip);
-    
+
     if (ips.length === 0) return '-';
     if (ips.length === 1) return ips[0];
-    
+
     return `${ips[0]} 等${ips.length}个`;
   };
 
@@ -359,6 +388,71 @@ export default function TunnelPage() {
     if (!nodeId) return '-';
     const node = nodes.find(n => n.id === nodeId);
     return node ? node.name : `节点${nodeId}`;
+  };
+
+  const getNodeStatus = (nodeId?: number, fallbackStatus?: number): number | undefined => {
+    if (!nodeId) return fallbackStatus;
+    const node = nodes.find(n => n.id === nodeId);
+    return node ? node.status : fallbackStatus;
+  };
+
+  const normalizeFormPath = (
+    inNodeId: number | null,
+    nodePath: Array<number | null> = [],
+    outNodeId?: number | null
+  ): Array<number | null> => {
+    const path = nodePath.length > 0 ? [...nodePath] : [inNodeId, outNodeId ?? null];
+    path[0] = inNodeId;
+    if (path.length < 2) {
+      path.push(outNodeId ?? null);
+    }
+    return path;
+  };
+
+  const getTunnelNodePath = (tunnel: Tunnel): number[] => {
+    if (tunnel.nodePath) {
+      const path = tunnel.nodePath
+        .split(',')
+        .map(item => Number(item.trim()))
+        .filter(nodeId => Number.isFinite(nodeId) && nodeId > 0);
+      if (path.length > 0) return path;
+    }
+    if (tunnel.type === 1) return [tunnel.inNodeId];
+    return [tunnel.inNodeId, tunnel.outNodeId].filter((nodeId): nodeId is number => !!nodeId);
+  };
+
+  const getTunnelPathNodes = (tunnel: Tunnel) => getTunnelNodePath(tunnel).map((nodeId, index, path) => ({
+    nodeId,
+    label: tunnel.type === 1
+      ? (index === 0 ? '入口/出口节点' : '节点')
+      : (index === 0 ? '入口节点' : index === path.length - 1 ? '出口节点' : `中转节点 ${index}`),
+    status: getNodeStatus(
+      nodeId,
+      index === 0 ? tunnel.inNodeStatus : (index === path.length - 1 ? tunnel.outNodeStatus : undefined)
+    ),
+    ip: index === 0 ? tunnel.inIp : (index === path.length - 1 ? tunnel.outIp : undefined)
+  }));
+
+  const isTunnelNodeOffline = (tunnel: Tunnel): boolean => {
+    return getTunnelPathNodes(tunnel).some(item => item.status !== 1);
+  };
+
+  const getNodeBlockClassName = (offline: boolean): string => {
+    return offline
+      ? "p-2 bg-danger-100/90 dark:bg-danger-900/35 rounded border border-danger-300 dark:border-danger-700"
+      : "p-2 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300";
+  };
+
+  const getNodeStatusChip = (offline: boolean) => ({
+    color: offline ? 'danger' : 'success',
+    text: offline ? '离线' : '在线'
+  });
+
+  const getLinkStatusText = (tunnel: Tunnel): string => {
+    const pathNodes = getTunnelPathNodes(tunnel);
+    const offlineCount = pathNodes.filter(item => item.status !== 1).length;
+    if (offlineCount > 0) return `${offlineCount} 个节点离线`;
+    return tunnel.type === 1 ? '入口节点正常' : `${pathNodes.length} 跳链路正常`;
   };
 
   // 获取状态显示
@@ -397,11 +491,65 @@ export default function TunnelPage() {
     }
   };
 
+  const updateFormPathNode = (index: number, nodeId: number | null) => {
+    setForm(prev => {
+      const nextPath = normalizeFormPath(prev.inNodeId, prev.nodePath, prev.outNodeId);
+      nextPath[index] = nodeId;
+      const nextInNodeId = index === 0 ? nodeId : nextPath[0];
+      const nextOutNodeId = nextPath.length > 1 ? nextPath[nextPath.length - 1] : null;
+      return {
+        ...prev,
+        inNodeId: nextInNodeId,
+        outNodeId: nextOutNodeId,
+        nodePath: nextPath
+      };
+    });
+  };
+
+  const addTransitNode = () => {
+    setForm(prev => {
+      const nextPath = normalizeFormPath(prev.inNodeId, prev.nodePath, prev.outNodeId);
+      nextPath.splice(Math.max(1, nextPath.length - 1), 0, null);
+      return { ...prev, nodePath: nextPath };
+    });
+  };
+
+  const removePathNode = (index: number) => {
+    setForm(prev => {
+      const nextPath = normalizeFormPath(prev.inNodeId, prev.nodePath, prev.outNodeId);
+      if (index > 0 && index < nextPath.length && nextPath.length > 2) {
+        nextPath.splice(index, 1);
+      }
+      return {
+        ...prev,
+        outNodeId: nextPath[nextPath.length - 1] ?? null,
+        nodePath: nextPath
+      };
+    });
+  };
+
+  const renderNodeSelectItems = () => nodes.map((node) => (
+    <SelectItem
+      key={node.id}
+      textValue={`${node.name} (${node.status === 1 ? '在线' : '离线'})`}
+    >
+      <div className="flex items-center justify-between">
+        <span>{node.name}</span>
+        <Chip
+          color={node.status === 1 ? 'success' : 'danger'}
+          variant="flat"
+          size="sm"
+        >
+          {node.status === 1 ? '在线' : '离线'}
+        </Chip>
+      </div>
+    </SelectItem>
+  ));
 
   // 获取连接质量
   const getQualityDisplay = (averageTime?: number, packetLoss?: number) => {
     if (averageTime === undefined || packetLoss === undefined) return null;
-    
+
     if (averageTime < 30 && packetLoss === 0) return { text: '🚀 优秀', color: 'success' };
     if (averageTime < 50 && packetLoss === 0) return { text: '✨ 很好', color: 'success' };
     if (averageTime < 100 && packetLoss < 1) return { text: '👍 良好', color: 'primary' };
@@ -410,21 +558,213 @@ export default function TunnelPage() {
     return { text: '😵 很差', color: 'danger' };
   };
 
+  const getDiagnosisLatencySummary = (diagnosis: DiagnosisResult) => {
+    const results = diagnosis.results || [];
+    const successfulResults = results.filter(result =>
+      result.success && typeof result.averageTime === 'number' && Number.isFinite(result.averageTime)
+    );
+    const totalLatency = successfulResults.reduce((sum, result) => sum + (result.averageTime || 0), 0);
+    const failedCount = results.length - successfulResults.length;
+    const averagePacketLoss = successfulResults.length > 0
+      ? successfulResults.reduce((sum, result) => sum + (result.packetLoss || 0), 0) / successfulResults.length
+      : undefined;
+    const quality = successfulResults.length > 0
+      ? getQualityDisplay(totalLatency, averagePacketLoss)
+      : null;
+
+    return {
+      totalLatency,
+      successfulCount: successfulResults.length,
+      totalCount: results.length,
+      failedCount,
+      quality
+    };
+  };
+
+  const compareCreatedTimeDesc = (a: Tunnel, b: Tunnel): number => {
+    const createdTimeCompare = Number(b.createdTime || 0) - Number(a.createdTime || 0);
+    if (createdTimeCompare !== 0) return createdTimeCompare;
+    return (b.id || 0) - (a.id || 0);
+  };
+
+  const offlineTunnels = tunnels.filter(isTunnelNodeOffline).sort(compareCreatedTimeDesc);
+  const onlineTunnels = tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel)).sort(compareCreatedTimeDesc);
+
+  const renderTunnelGrid = (tunnelList: Tunnel[]) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+      {tunnelList.map((tunnel) => {
+        const statusDisplay = getStatusDisplay(tunnel.status);
+        const typeDisplay = getTypeDisplay(tunnel.type);
+        const tunnelOffline = isTunnelNodeOffline(tunnel);
+        const pathNodes = getTunnelPathNodes(tunnel);
+
+        return (
+          <Card
+            key={tunnel.id}
+            className={tunnelOffline
+              ? "shadow-sm border border-danger-300 dark:border-danger-800 overflow-hidden hover:shadow-md transition-shadow duration-200"
+              : "shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
+          >
+            {tunnelOffline && <div className="h-1 bg-danger" />}
+            <CardHeader className="pb-2">
+              <div className="flex justify-between items-start w-full">
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-foreground truncate text-sm">{tunnel.name}</h3>
+                  <p className={tunnelOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate mt-0.5" : "text-xs text-default-500 truncate mt-0.5"}>
+                    {getLinkStatusText(tunnel)}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {tunnelOffline && (
+                      <Chip
+                        color="danger"
+                        variant="flat"
+                        size="sm"
+                        className="text-xs"
+                      >
+                        链路异常
+                      </Chip>
+                    )}
+                    <Chip
+                      color={typeDisplay.color as any}
+                      variant="flat"
+                      size="sm"
+                      className="text-xs"
+                    >
+                      {typeDisplay.text}
+                    </Chip>
+                    <Chip
+                      color={statusDisplay.color as any}
+                      variant="flat"
+                      size="sm"
+                      className="text-xs"
+                    >
+                      {statusDisplay.text}
+                    </Chip>
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardBody className="pt-0 pb-3">
+              <div className="space-y-2">
+                {/* 流程展示 */}
+                <div className="space-y-1.5">
+                  {pathNodes.map((pathNode, index) => {
+                    const nodeOffline = pathNode.status !== 1;
+                    const nodeChip = getNodeStatusChip(nodeOffline);
+                    return (
+                      <div key={`${tunnel.id}-${pathNode.nodeId}-${index}`} className="space-y-1.5">
+                        <div className={getNodeBlockClassName(nodeOffline)}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className={nodeOffline ? "text-xs font-medium text-danger-700 dark:text-danger-300" : "text-xs font-medium text-default-600"}>
+                              {pathNode.label}
+                            </span>
+                            <Chip color={nodeChip.color as any} variant="flat" size="sm" className="text-xs">
+                              {nodeChip.text}
+                            </Chip>
+                          </div>
+                          <code className={nodeOffline ? "text-xs font-mono text-danger-800 dark:text-danger-200 block truncate" : "text-xs font-mono text-foreground block truncate"}>
+                            {getNodeName(pathNode.nodeId)}
+                          </code>
+                          <code className={nodeOffline ? "text-xs font-mono text-danger-600 dark:text-danger-300 block truncate" : "text-xs font-mono text-default-500 block truncate"}>
+                            {getDisplayIp(pathNode.ip)}
+                          </code>
+                        </div>
+                        {index < pathNodes.length - 1 && (
+                          <div className="text-center py-0.5">
+                            <svg className="w-3 h-3 text-default-400 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                            </svg>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 配置信息 */}
+                <div className={tunnelOffline ? "flex justify-between items-center pt-2 border-t border-danger-200 dark:border-danger-800" : "flex justify-between items-center pt-2 border-t border-divider"}>
+                  <div className="text-left">
+                    <div className="text-xs font-medium text-foreground">
+                      {getFlowDisplay(tunnel.flow)}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs font-medium text-foreground">
+                      {tunnel.trafficRatio}x
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="flex gap-1.5 mt-3">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="primary"
+                  onPress={() => handleEdit(tunnel)}
+                  className="flex-1 min-h-8"
+                  startContent={
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                    </svg>
+                  }
+                >
+                  编辑
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="warning"
+                  onPress={() => handleDiagnose(tunnel)}
+                  className="flex-1 min-h-8"
+                  startContent={
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  }
+                >
+                  诊断
+                </Button>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="danger"
+                  onPress={() => handleDelete(tunnel)}
+                  className="flex-1 min-h-8"
+                  startContent={
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clipRule="evenodd" />
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z" clipRule="evenodd" />
+                    </svg>
+                  }
+                >
+                  删除
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        );
+      })}
+    </div>
+  );
+
   if (loading) {
     return (
-      
+
         <div className="flex items-center justify-center h-64">
           <div className="flex items-center gap-3">
             <Spinner size="sm" />
             <span className="text-default-600">正在加载...</span>
           </div>
         </div>
-      
+
     );
   }
 
   return (
-    
+
       <div className="px-3 lg:px-6 py-8">
         {/* 页面头部 */}
         <div className="flex items-center justify-between mb-6">
@@ -436,150 +776,45 @@ export default function TunnelPage() {
               variant="flat"
               color="primary"
               onPress={handleAdd}
-             
+
             >
               新增
             </Button>
-     
+
         </div>
 
         {/* 隧道卡片网格 */}
         {tunnels.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {tunnels.map((tunnel) => {
-              const statusDisplay = getStatusDisplay(tunnel.status);
-              const typeDisplay = getTypeDisplay(tunnel.type);
-              
-              return (
-                <Card key={tunnel.id} className="shadow-sm border border-divider hover:shadow-md transition-shadow duration-200">
-                  <CardHeader className="pb-2">
-                    <div className="flex justify-between items-start w-full">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-foreground truncate text-sm">{tunnel.name}</h3>
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <Chip 
-                            color={typeDisplay.color as any} 
-                            variant="flat" 
-                            size="sm"
-                            className="text-xs"
-                          >
-                            {typeDisplay.text}
-                          </Chip>
-                          <Chip 
-                            color={statusDisplay.color as any} 
-                            variant="flat" 
-                            size="sm"
-                            className="text-xs"
-                          >
-                            {statusDisplay.text}
-                          </Chip>
-                        </div>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  
-                  <CardBody className="pt-0 pb-3">
-                    <div className="space-y-2">
-                      {/* 流程展示 */}
-                      <div className="space-y-1.5">
-                        <div className="p-2 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-default-600">入口节点</span>
-                          </div>
-                          <code className="text-xs font-mono text-foreground block truncate">
-                            {getNodeName(tunnel.inNodeId)}
-                          </code>
-                          <code className="text-xs font-mono text-default-500 block truncate">
-                            {getDisplayIp(tunnel.inIp)}
-                          </code>
-                        </div>
-                        
-                        <div className="text-center py-0.5">
-                          <svg className="w-3 h-3 text-default-400 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                          </svg>
-                        </div>
-                        
-                        <div className="p-2 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300">
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-default-600">
-                              {tunnel.type === 1 ? '出口节点（同入口）' : '出口节点'}
-                            </span>
-                          </div>
-                          <code className="text-xs font-mono text-foreground block truncate">
-                            {tunnel.type === 1 ? getNodeName(tunnel.inNodeId) : getNodeName(tunnel.outNodeId)}
-                          </code>
-                          <code className="text-xs font-mono text-default-500 block truncate">
-                            {tunnel.type === 1 ? getDisplayIp(tunnel.inIp) : getDisplayIp(tunnel.outIp)}
-                          </code>
-                        </div>
-                      </div>
+          <div className="space-y-8">
+            {onlineTunnels.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between border-b border-divider pb-2">
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">链路正常</h2>
+                    <p className="text-xs text-default-500">入口和出口节点都正常的隧道</p>
+                  </div>
+                  <Chip color="success" variant="flat" size="sm" className="text-xs">
+                    {onlineTunnels.length} 条
+                  </Chip>
+                </div>
+                {renderTunnelGrid(onlineTunnels)}
+              </section>
+            )}
 
-                      {/* 配置信息 */}
-                      <div className="flex justify-between items-center pt-2 border-t border-divider">
-                        <div className="text-left">
-                          <div className="text-xs font-medium text-foreground">
-                            {getFlowDisplay(tunnel.flow)}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-xs font-medium text-foreground">
-                            {tunnel.trafficRatio}x
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-                    
-                    <div className="flex gap-1.5 mt-3">
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="primary"
-                        onPress={() => handleEdit(tunnel)}
-                        className="flex-1 min-h-8"
-                        startContent={
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                          </svg>
-                        }
-                      >
-                        编辑
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="warning"
-                        onPress={() => handleDiagnose(tunnel)}
-                        className="flex-1 min-h-8"
-                        startContent={
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                          </svg>
-                        }
-                      >
-                        诊断
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="danger"
-                        onPress={() => handleDelete(tunnel)}
-                        className="flex-1 min-h-8"
-                        startContent={
-                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clipRule="evenodd" />
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z" clipRule="evenodd" />
-                          </svg>
-                        }
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </CardBody>
-                </Card>
-              );
-            })}
+            {offlineTunnels.length > 0 && (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between border-b border-danger-200 dark:border-danger-800 pb-2">
+                  <div>
+                    <h2 className="text-sm font-semibold text-danger-700 dark:text-danger-300">链路异常</h2>
+                    <p className="text-xs text-danger-600 dark:text-danger-300">入口或出口节点不正常的隧道</p>
+                  </div>
+                  <Chip color="danger" variant="flat" size="sm" className="text-xs">
+                    {offlineTunnels.length} 条
+                  </Chip>
+                </div>
+                {renderTunnelGrid(offlineTunnels)}
+              </section>
+            )}
           </div>
         ) : (
           /* 空状态 */
@@ -601,7 +836,7 @@ export default function TunnelPage() {
         )}
 
         {/* 新增/编辑模态框 */}
-        <Modal 
+        <Modal
           isOpen={modalOpen}
           onOpenChange={setModalOpen}
           size="2xl"
@@ -631,7 +866,7 @@ export default function TunnelPage() {
                       errorMessage={errors.name}
                       variant="bordered"
                     />
-                    
+
                     <Select
                       label="隧道类型"
                       placeholder="请选择隧道类型"
@@ -675,8 +910,8 @@ export default function TunnelPage() {
                         placeholder="请输入流量倍率"
                         type="number"
                         value={form.trafficRatio.toString()}
-                        onChange={(e) => setForm(prev => ({ 
-                          ...prev, 
+                        onChange={(e) => setForm(prev => ({
+                          ...prev,
                           trafficRatio: parseFloat(e.target.value) || 0
                         }))}
                         isInvalid={!!errors.trafficRatio}
@@ -700,7 +935,11 @@ export default function TunnelPage() {
                       onSelectionChange={(keys) => {
                         const selectedKey = Array.from(keys)[0] as string;
                         if (selectedKey) {
-                          setForm(prev => ({ ...prev, inNodeId: parseInt(selectedKey) }));
+                          const nodeId = parseInt(selectedKey);
+                          setForm(prev => {
+                            const nextPath = normalizeFormPath(nodeId, prev.nodePath, prev.outNodeId);
+                            return { ...prev, inNodeId: nodeId, nodePath: nextPath };
+                          });
                         }
                       }}
                       isInvalid={!!errors.inNodeId}
@@ -708,23 +947,7 @@ export default function TunnelPage() {
                       variant="bordered"
                       isDisabled={isEdit}
                     >
-                      {nodes.map((node) => (
-                        <SelectItem 
-                          key={node.id}
-                          textValue={`${node.name} (${node.status === 1 ? '在线' : '离线'})`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>{node.name}</span>
-                            <Chip 
-                              color={node.status === 1 ? 'success' : 'danger'} 
-                              variant="flat" 
-                              size="sm"
-                            >
-                              {node.status === 1 ? '在线' : '离线'}
-                            </Chip>
-                          </div>
-                        </SelectItem>
-                      ))}
+                      {renderNodeSelectItems()}
                     </Select>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -800,46 +1023,53 @@ export default function TunnelPage() {
                           <SelectItem key="mtcp">MTCP</SelectItem>
                         </Select>
 
-                        <Select
-                          label="出口节点"
-                          placeholder="请选择出口节点"
-                          selectedKeys={form.outNodeId ? [form.outNodeId.toString()] : []}
-                          onSelectionChange={(keys) => {
-                            const selectedKey = Array.from(keys)[0] as string;
-                            if (selectedKey) {
-                              setForm(prev => ({ ...prev, outNodeId: parseInt(selectedKey) }));
-                            }
-                          }}
-                          isInvalid={!!errors.outNodeId}
-                          errorMessage={errors.outNodeId}
-                          variant="bordered"
-                          isDisabled={isEdit}
-                        >
-                          {nodes.map((node) => (
-                            <SelectItem 
-                              key={node.id}
-                              textValue={`${node.name} (${node.status === 1 ? '在线' : '离线'})`}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <h4 className="text-sm font-semibold text-foreground">节点路径</h4>
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              color="primary"
+                              onPress={addTransitNode}
+                              isDisabled={isEdit}
                             >
-                              <div className="flex items-center justify-between">
-                                <span>{node.name}</span>
-                                <div className="flex items-center gap-2">
-                                  <Chip 
-                                    color={node.status === 1 ? 'success' : 'danger'} 
-                                    variant="flat" 
-                                    size="sm"
-                                  >
-                                    {node.status === 1 ? '在线' : '离线'}
-                                  </Chip>
-                                  {form.inNodeId === node.id && (
-                                    <Chip color="warning" variant="flat" size="sm">
-                                      已选为入口
-                                    </Chip>
-                                  )}
-                                </div>
+                              添加中转节点
+                            </Button>
+                          </div>
+                          {normalizeFormPath(form.inNodeId, form.nodePath, form.outNodeId).slice(1).map((nodeId, offset, tail) => {
+                            const pathIndex = offset + 1;
+                            const isLast = offset === tail.length - 1;
+                            return (
+                              <div key={`path-${pathIndex}`} className="grid grid-cols-[1fr_auto] gap-2 items-start">
+                                <Select
+                                  label={isLast ? "出口节点" : `中转节点 ${pathIndex}`}
+                                  placeholder={isLast ? "请选择出口节点" : "请选择中转节点"}
+                                  selectedKeys={nodeId ? [nodeId.toString()] : []}
+                                  onSelectionChange={(keys) => {
+                                    const selectedKey = Array.from(keys)[0] as string;
+                                    updateFormPathNode(pathIndex, selectedKey ? parseInt(selectedKey) : null);
+                                  }}
+                                  isInvalid={!!errors.nodePath}
+                                  errorMessage={isLast ? errors.nodePath : undefined}
+                                  variant="bordered"
+                                  isDisabled={isEdit}
+                                >
+                                  {renderNodeSelectItems()}
+                                </Select>
+                                <Button
+                                  size="sm"
+                                  variant="flat"
+                                  color="danger"
+                                  className="mt-6 min-w-10 px-0"
+                                  onPress={() => removePathNode(pathIndex)}
+                                  isDisabled={isEdit || normalizeFormPath(form.inNodeId, form.nodePath, form.outNodeId).length <= 2}
+                                >
+                                  ×
+                                </Button>
                               </div>
-                            </SelectItem>
-                          ))}
-                        </Select>
+                            );
+                          })}
+                        </div>
                       </>
                     )}
 
@@ -863,8 +1093,8 @@ export default function TunnelPage() {
                   <Button variant="light" onPress={onClose}>
                     取消
                   </Button>
-                  <Button 
-                    color="primary" 
+                  <Button
+                    color="primary"
                     onPress={handleSubmit}
                     isLoading={submitLoading}
                   >
@@ -877,7 +1107,7 @@ export default function TunnelPage() {
         </Modal>
 
         {/* 删除确认模态框 */}
-        <Modal 
+        <Modal
           isOpen={deleteModalOpen}
           onOpenChange={setDeleteModalOpen}
           size="2xl"
@@ -893,14 +1123,16 @@ export default function TunnelPage() {
                 </ModalHeader>
                 <ModalBody>
                   <p>确定要删除隧道 <strong>"{tunnelToDelete?.name}"</strong> 吗？</p>
-                  <p className="text-small text-default-500">此操作不可恢复，请谨慎操作。</p>
+                  <p className="text-small text-default-500">
+                    此操作会同时删除使用该隧道的转发、用户隧道授权和限速规则，且不可恢复。
+                  </p>
                 </ModalBody>
                 <ModalFooter>
                   <Button variant="light" onPress={onClose}>
                     取消
                   </Button>
-                  <Button 
-                    color="danger" 
+                  <Button
+                    color="danger"
                     onPress={confirmDelete}
                     isLoading={deleteLoading}
                   >
@@ -913,7 +1145,7 @@ export default function TunnelPage() {
         </Modal>
 
         {/* 诊断结果模态框 */}
-        <Modal 
+        <Modal
           isOpen={diagnosisModalOpen}
           onOpenChange={setDiagnosisModalOpen}
           size="2xl"
@@ -929,9 +1161,9 @@ export default function TunnelPage() {
                   {currentDiagnosisTunnel && (
                     <div className="flex items-center gap-2">
                       <span className="text-small text-default-500">{currentDiagnosisTunnel.name}</span>
-                      <Chip 
-                        color={currentDiagnosisTunnel.type === 1 ? 'primary' : 'secondary'} 
-                        variant="flat" 
+                      <Chip
+                        color={currentDiagnosisTunnel.type === 1 ? 'primary' : 'secondary'}
+                        variant="flat"
                         size="sm"
                       >
                         {currentDiagnosisTunnel.type === 1 ? '端口转发' : '隧道转发'}
@@ -949,9 +1181,48 @@ export default function TunnelPage() {
                     </div>
                   ) : diagnosisResult ? (
                     <div className="space-y-4">
+                      {(() => {
+                        const summary = getDiagnosisLatencySummary(diagnosisResult);
+                        const canShowLatency = summary.successfulCount > 0;
+
+                        return (
+                          <Card className={`shadow-sm border ${summary.failedCount > 0 ? 'border-warning' : 'border-primary'}`}>
+                            <CardBody>
+                              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <div className="text-small text-default-500">隧道总延迟</div>
+                                  <div className="flex items-end gap-2">
+                                    <span className={summary.failedCount > 0 ? "text-3xl font-bold text-warning" : "text-3xl font-bold text-primary"}>
+                                      {canShowLatency ? summary.totalLatency.toFixed(0) : '-'}
+                                    </span>
+                                    <span className="text-small text-default-500 mb-1">ms</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Chip color={summary.failedCount > 0 ? 'warning' : 'success'} variant="flat">
+                                    {summary.failedCount > 0
+                                      ? `成功 ${summary.successfulCount}/${summary.totalCount} 段`
+                                      : `完整 ${summary.totalCount} 段`}
+                                  </Chip>
+                                  {summary.quality && (
+                                    <Chip color={summary.quality.color as any} variant="flat">
+                                      {summary.quality.text}
+                                    </Chip>
+                                  )}
+                                </div>
+                              </div>
+                              {summary.failedCount > 0 && (
+                                <p className="text-small text-warning-600 dark:text-warning-400 mt-3">
+                                  有 {summary.failedCount} 段链路诊断失败，当前总延迟只统计成功链路。
+                                </p>
+                              )}
+                            </CardBody>
+                          </Card>
+                        );
+                      })()}
                       {diagnosisResult.results.map((result, index) => {
                         const quality = getQualityDisplay(result.averageTime, result.packetLoss);
-                        
+
                         return (
                           <Card key={index} className={`shadow-sm border ${result.success ? 'border-success' : 'border-danger'}`}>
                             <CardHeader className="pb-2">
@@ -967,8 +1238,8 @@ export default function TunnelPage() {
                                     <p className="text-small text-default-500">{result.nodeName}</p>
                                   </div>
                                 </div>
-                                <Chip 
-                                  color={result.success ? 'success' : 'danger'} 
+                                <Chip
+                                  color={result.success ? 'success' : 'danger'}
                                   variant="flat"
                                 >
                                   {result.success ? '成功' : '失败'}
@@ -1036,8 +1307,8 @@ export default function TunnelPage() {
                     关闭
                   </Button>
                   {currentDiagnosisTunnel && (
-                    <Button 
-                      color="primary" 
+                    <Button
+                      color="primary"
                       onPress={() => handleDiagnose(currentDiagnosisTunnel)}
                       isLoading={diagnosisLoading}
                     >
@@ -1050,6 +1321,6 @@ export default function TunnelPage() {
           </ModalContent>
         </Modal>
       </div>
-    
+
   );
-} 
+}

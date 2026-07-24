@@ -6,9 +6,11 @@ import com.admin.common.dto.*;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
+import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.Forward;
 import com.admin.entity.Node;
+import com.admin.entity.SpeedLimit;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserTunnel;
@@ -16,6 +18,7 @@ import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserTunnelMapper;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
+import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
 import com.admin.service.UserTunnelService;
 import com.alibaba.fastjson.JSONObject;
@@ -24,7 +27,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import lombok.Data;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import javax.annotation.Resource;
 import java.math.BigDecimal;
@@ -73,6 +79,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     private static final String ERROR_OUT_NODE_REQUIRED = "出口节点不能为空";
     private static final String ERROR_OUT_PORT_REQUIRED = "出口端口不能为空";
     private static final String ERROR_SAME_NODE_NOT_ALLOWED = "隧道转发模式下，入口和出口不能是同一个节点";
+    private static final String ERROR_NODE_PATH_REQUIRED = "隧道转发路径至少需要两个节点";
+    private static final String ERROR_NODE_PATH_DUPLICATED = "隧道转发路径不能包含重复节点";
     private static final String ERROR_IN_PORT_RANGE_INVALID = "入口端口开始不能大于结束端口";
     private static final String ERROR_OUT_PORT_RANGE_INVALID = "出口端口开始不能大于结束端口";
     private static final String ERROR_NO_AVAILABLE_TUNNELS = "暂无可用隧道";
@@ -96,6 +104,10 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     
     @Resource
     UserTunnelService userTunnelService;
+
+    @Resource
+    @Lazy
+    SpeedLimitService speedLimitService;
 
     // ========== 公共接口实现 ==========
 
@@ -223,27 +235,37 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
     /**
      * 删除隧道
-     * 删除前会检查是否有转发或用户权限在使用该隧道
+     * 删除隧道时同步清理该隧道下的转发、用户权限和限速规则
      * 
      * @param id 隧道ID
      * @return 删除结果响应
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public R deleteTunnel(Long id) {
         // 1. 验证隧道是否存在
-        if (!isTunnelExists(id)) {
+        Tunnel tunnel = this.getById(id);
+        if (tunnel == null) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
         }
 
-        // 2. 检查隧道使用情况
-        R usageCheckResult = checkTunnelUsage(id);
-        if (usageCheckResult.getCode() != 0) {
-            return usageCheckResult;
-        }
+        try {
+            Map<String, Object> cleanupSummary = cleanupTunnelDependencies(id);
 
-        // 3. 执行删除操作
-        boolean result = this.removeById(id);
-        return result ? R.ok(SUCCESS_DELETE_MSG) : R.err(ERROR_DELETE_MSG);
+            // 3. 执行删除操作
+            boolean result = this.removeById(id);
+            if (!result) {
+                throw new IllegalStateException(ERROR_DELETE_MSG);
+            }
+
+            cleanupSummary.put("tunnelId", id);
+            cleanupSummary.put("tunnelName", tunnel.getName());
+            cleanupSummary.put("message", SUCCESS_DELETE_MSG);
+            return R.ok(cleanupSummary);
+        } catch (RuntimeException e) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return R.err(e.getMessage());
+        }
     }
 
     /**
@@ -318,9 +340,15 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      * @return 验证结果响应
      */
     private R validateTunnelForwardCreate(TunnelDto tunnelDto) {
-        // 验证出口节点不能为空
-        if (tunnelDto.getOutNodeId() == null) {
+        List<Long> nodePath = resolveCreateNodePath(tunnelDto);
+        if (nodePath.size() < 2) {
             return R.err(ERROR_OUT_NODE_REQUIRED);
+        }
+        if (!Objects.equals(nodePath.get(0), tunnelDto.getInNodeId())) {
+            return R.err("节点路径第一个节点必须等于入口节点");
+        }
+        if (new HashSet<>(nodePath).size() != nodePath.size()) {
+            return R.err(ERROR_NODE_PATH_DUPLICATED);
         }
         return R.ok();
     }
@@ -417,6 +445,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     private R setupPortForwardOutParameters(Tunnel tunnel, TunnelDto tunnelDto, String server_ip) {
         tunnel.setOutNodeId(tunnelDto.getInNodeId());
         tunnel.setOutIp(server_ip);
+        tunnel.setNodePath(TunnelRouteUtil.joinNodePath(Collections.singletonList(tunnelDto.getInNodeId())));
         return R.ok();
     }
 
@@ -428,37 +457,59 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      * @return 设置结果响应
      */
     private R setupTunnelForwardOutParameters(Tunnel tunnel, TunnelDto tunnelDto) {
-        // 验证出口节点不能为空
-        if (tunnelDto.getOutNodeId() == null) {
-            return R.err(ERROR_OUT_NODE_REQUIRED);
+        List<Long> nodePath = resolveCreateNodePath(tunnelDto);
+        if (nodePath.size() < 2) {
+            return R.err(ERROR_NODE_PATH_REQUIRED);
         }
-        
-        // 验证入口和出口不能是同一个节点
-        if (tunnelDto.getInNodeId().equals(tunnelDto.getOutNodeId())) {
-            return R.err(ERROR_SAME_NODE_NOT_ALLOWED);
-        }
-        
+
         // 验证协议类型
         String protocol = tunnelDto.getProtocol();
         if (StrUtil.isBlank(protocol)) {
             return R.err("协议类型必选");
         }
         
-        // 验证出口节点是否存在
-        Node outNode = nodeService.getById(tunnelDto.getOutNodeId());
+        List<Node> pathNodes = new ArrayList<>();
+        for (Long nodeId : nodePath) {
+            Node node = nodeService.getById(nodeId);
+            if (node == null) {
+                return R.err("节点路径中存在不存在的节点：" + nodeId);
+            }
+            if (node.getStatus() != NODE_STATUS_ONLINE) {
+                return R.err("节点路径中的节点离线：" + node.getName());
+            }
+            pathNodes.add(node);
+        }
+
+        Node firstNode = pathNodes.get(0);
+        Node outNode = pathNodes.get(pathNodes.size() - 1);
         if (outNode == null) {
             return R.err(ERROR_OUT_NODE_NOT_FOUND);
         }
-        
-        // 验证出口节点是否在线
-        if (outNode.getStatus() != NODE_STATUS_ONLINE) {
-            return R.err(ERROR_OUT_NODE_OFFLINE);
-        }
+
         // 设置出口参数
-        tunnel.setOutNodeId(tunnelDto.getOutNodeId());
+        tunnel.setInNodeId(firstNode.getId());
+        tunnel.setInIp(firstNode.getIp());
+        tunnel.setOutNodeId(outNode.getId());
         tunnel.setOutIp(outNode.getServerIp());
-        
+        tunnel.setNodePath(TunnelRouteUtil.joinNodePath(nodePath));
+
         return R.ok();
+    }
+
+    private List<Long> resolveCreateNodePath(TunnelDto tunnelDto) {
+        if (tunnelDto.getNodePath() != null && !tunnelDto.getNodePath().isEmpty()) {
+            return tunnelDto.getNodePath().stream()
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+        }
+        List<Long> path = new ArrayList<>();
+        if (tunnelDto.getInNodeId() != null) {
+            path.add(tunnelDto.getInNodeId());
+        }
+        if (tunnelDto.getOutNodeId() != null) {
+            path.add(tunnelDto.getOutNodeId());
+        }
+        return path;
     }
 
     /**
@@ -481,6 +532,56 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      */
     private boolean isTunnelExists(Long tunnelId) {
         return this.getById(tunnelId) != null;
+    }
+
+    private Map<String, Object> cleanupTunnelDependencies(Long tunnelId) {
+        Integer tunnelIdInt = tunnelId.intValue();
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("forwardCount", 0L);
+        summary.put("userTunnelCount", 0L);
+        summary.put("speedLimitCount", 0L);
+
+        List<Forward> relatedForwards = forwardService.list(new QueryWrapper<Forward>().eq("tunnel_id", tunnelIdInt));
+        long forwardCount = relatedForwards.size();
+        long forwardGostCleanupFailCount = 0L;
+        if (forwardCount > 0) {
+            for (Forward forward : relatedForwards) {
+                R deleteResult = forwardService.deleteForward(forward.getId());
+                if (deleteResult.getCode() != 0) {
+                    forwardGostCleanupFailCount++;
+                }
+            }
+
+            long remainingForwardCount = forwardService.count(new QueryWrapper<Forward>().eq("tunnel_id", tunnelIdInt));
+            if (remainingForwardCount > 0) {
+                boolean removed = forwardService.remove(new QueryWrapper<Forward>().eq("tunnel_id", tunnelIdInt));
+                if (!removed) {
+                    throw new IllegalStateException("关联转发删除失败");
+                }
+            }
+        }
+
+        long userTunnelCount = userTunnelService.count(new QueryWrapper<UserTunnel>().eq("tunnel_id", tunnelIdInt));
+        if (userTunnelCount > 0) {
+            boolean removed = userTunnelService.remove(new QueryWrapper<UserTunnel>().eq("tunnel_id", tunnelIdInt));
+            if (!removed) {
+                throw new IllegalStateException("关联用户隧道权限删除失败");
+            }
+        }
+
+        long speedLimitCount = speedLimitService.count(new QueryWrapper<SpeedLimit>().eq("tunnel_id", tunnelId));
+        if (speedLimitCount > 0) {
+            boolean removed = speedLimitService.remove(new QueryWrapper<SpeedLimit>().eq("tunnel_id", tunnelId));
+            if (!removed) {
+                throw new IllegalStateException("关联限速规则删除失败");
+            }
+        }
+
+        summary.put("forwardCount", forwardCount);
+        summary.put("forwardGostCleanupFailCount", forwardGostCleanupFailCount);
+        summary.put("userTunnelCount", userTunnelCount);
+        summary.put("speedLimitCount", speedLimitCount);
+        return summary;
     }
 
     /**
@@ -610,6 +711,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         dto.setId(tunnel.getId().intValue());
         dto.setName(tunnel.getName());
         dto.setIp(tunnel.getInIp());
+        dto.setNodePath(TunnelRouteUtil.joinNodePath(TunnelRouteUtil.parseNodePath(tunnel)));
         dto.setType(tunnel.getType());
         dto.setProtocol(tunnel.getProtocol());
         
@@ -661,12 +763,20 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             DiagnosisResult inResult = performTcpPingDiagnosisWithConnectionCheck(inNode, "www.google.com", 443, "入口->外网");
             results.add(inResult);
         } else {
-            // 隧道转发：入口TCP ping出口，出口TCP ping谷歌443端口
-            int outNodePort = getOutNodeTcpPort(tunnel.getId());
-            DiagnosisResult inToOutResult = performTcpPingDiagnosisWithConnectionCheck(inNode, outNode.getServerIp(), outNodePort, "入口->出口");
-            results.add(inToOutResult);
+            List<Node> pathNodes = getTunnelPathNodes(tunnel);
+            List<Integer> hopPorts = getTunnelSampleHopPorts(tunnel, pathNodes.size() - 1);
+            for (int i = 0; i < pathNodes.size() - 1; i++) {
+                Node fromNode = pathNodes.get(i);
+                Node toNode = pathNodes.get(i + 1);
+                DiagnosisResult segmentResult = performTcpPingDiagnosisWithConnectionCheck(
+                        fromNode,
+                        toNode.getServerIp(),
+                        hopPorts.get(i),
+                        fromNode.getName() + "->" + toNode.getName()
+                );
+                results.add(segmentResult);
+            }
 
-            // 先检查出口节点的真实连接状态，然后再进行诊断
             DiagnosisResult outToExternalResult = performTcpPingDiagnosisWithConnectionCheck(outNode, "www.google.com", 443, "出口->外网");
             results.add(outToExternalResult);
         }
@@ -696,6 +806,36 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         }
         // 如果没有转发服务，使用默认SSH端口22
         return 22;
+    }
+
+    private List<Node> getTunnelPathNodes(Tunnel tunnel) {
+        List<Node> pathNodes = new ArrayList<>();
+        for (Long nodeId : TunnelRouteUtil.parseNodePath(tunnel)) {
+            Node node = nodeService.getById(nodeId);
+            if (node != null) {
+                pathNodes.add(node);
+            }
+        }
+        return pathNodes;
+    }
+
+    private List<Integer> getTunnelSampleHopPorts(Tunnel tunnel, int expectedHopCount) {
+        List<Forward> forwards = forwardService.list(new QueryWrapper<Forward>().eq("tunnel_id", tunnel.getId()).eq("status", TUNNEL_STATUS_ACTIVE));
+        if (!forwards.isEmpty()) {
+            Forward forward = forwards.get(0);
+            List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(forward.getHopPorts());
+            if (hopPorts.size() == expectedHopCount) {
+                return hopPorts;
+            }
+            if (expectedHopCount == 1 && forward.getOutPort() != null) {
+                return Collections.singletonList(forward.getOutPort());
+            }
+        }
+        List<Integer> fallbackPorts = new ArrayList<>();
+        for (int i = 0; i < expectedHopCount; i++) {
+            fallbackPorts.add(22);
+        }
+        return fallbackPorts;
     }
 
     /**

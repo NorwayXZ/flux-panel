@@ -45,6 +45,11 @@ public class Tunnel extends BaseEntity {
     private String outIp;
 
     /**
+     * 节点路径，逗号分隔。隧道转发示例：1,2,3,4
+     */
+    private String nodePath;
+
+    /**
      * 隧道类型（1-端口转发，2-隧道转发）
      */
     private Integer type;
