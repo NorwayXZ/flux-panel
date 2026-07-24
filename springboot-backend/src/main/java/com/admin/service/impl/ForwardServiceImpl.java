@@ -9,10 +9,12 @@ import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
+import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
+import com.admin.mapper.PortAllocationLockMapper;
 import com.admin.service.*;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -25,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.util.*;
@@ -77,9 +80,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Resource
     NodeService nodeService;
 
+    @Resource
+    PortAllocationLockMapper portAllocationLockMapper;
+
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public R createForward(ForwardDto forwardDto) {
+        portAllocationLockMapper.lockForUpdate();
         if (forwardDto.getBatchEndPort() != null) {
             return createBatchForwards(forwardDto);
         }
@@ -276,7 +284,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public R updateForward(ForwardUpdateDto forwardUpdateDto) {
+        portAllocationLockMapper.lockForUpdate();
         // 1. 获取当前用户信息
         UserInfo currentUser = getCurrentUserInfo();
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
@@ -319,16 +329,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
                     // 检查原用户是否有新隧道权限
                     UserTunnel userTunnel = getUserTunnel(existForward.getUserId(), tunnel.getId().intValue());
-                    if (userTunnel == null) {
+                    boolean ownedTunnel = Objects.equals(tunnel.getOwnerUserId(), existForward.getUserId());
+                    if (!ownedTunnel && userTunnel == null) {
                         return R.err("用户没有该隧道权限");
                     }
 
-                    if (userTunnel.getStatus() != 1) {
+                    if (!ownedTunnel && userTunnel.getStatus() != 1) {
                         return R.err("隧道被禁用");
                     }
 
                     // 检查隧道权限到期时间
-                    if (userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
+                    if (!ownedTunnel && userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
                         return R.err("用户的该隧道权限已到期");
                     }
 
@@ -338,7 +349,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                         return R.err("用户" + quotaCheckResult.getMsg());
                     }
 
-                    permissionResult = UserPermissionResult.success(userTunnel.getSpeedId(), userTunnel);
+                    permissionResult = UserPermissionResult.success(ownedTunnel ? null : userTunnel.getSpeedId(), ownedTunnel ? null : userTunnel);
                 }
             } else {
                 // 普通用户检查自己的权限
@@ -357,7 +368,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         UserTunnel userTunnel = null;
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-            if (userTunnel == null) {
+            if (userTunnel == null && !Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
                 return R.err("你没有该隧道权限");
             }
         } else {
@@ -439,7 +450,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         UserTunnel activeUserTunnel = null;
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-            if (activeUserTunnel == null) {
+            if (activeUserTunnel == null && !Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
                 return R.err("你没有该隧道权限");
             }
         }
@@ -540,11 +551,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 }
 
                 activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-                if (activeUserTunnel == null) {
+                if (activeUserTunnel == null && !Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
                     return R.err("你没有该隧道权限");
                 }
 
-                if (activeUserTunnel.getStatus() != 1) {
+                if (activeUserTunnel != null && activeUserTunnel.getStatus() != 1) {
                     return R.err("隧道被禁用");
                 }
             }
@@ -553,7 +564,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         // 5. 权限检查（仅普通用户需要）
         if (currentUser.getRoleId() != ADMIN_ROLE_ID && activeUserTunnel == null) {
             activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-            if (activeUserTunnel == null) {
+            if (activeUserTunnel == null && !Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
                 return R.err("你没有该隧道权限");
             }
         }
@@ -978,18 +989,20 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return UserPermissionResult.error("当前账号已到期");
         }
 
-        // 检查用户隧道权限
+        boolean ownedTunnel = Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId());
+
+        // 自建隧道直接使用用户套餐限制；共享隧道继续使用管理员分配的隧道配额。
         UserTunnel userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-        if (userTunnel == null) {
+        if (!ownedTunnel && userTunnel == null) {
             return UserPermissionResult.error("你没有该隧道权限");
         }
 
-        if (userTunnel.getStatus() != 1) {
+        if (!ownedTunnel && userTunnel.getStatus() != 1) {
             return UserPermissionResult.error("隧道被禁用");
         }
 
         // 检查隧道权限到期时间
-        if (userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
+        if (!ownedTunnel && userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
             return UserPermissionResult.error("该隧道权限已到期");
         }
 
@@ -997,7 +1010,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (userInfo.getFlow() <= 0) {
             return UserPermissionResult.error("用户总流量已用完");
         }
-        if (userTunnel.getFlow() <= 0) {
+        if (!ownedTunnel && userTunnel.getFlow() <= 0) {
             return UserPermissionResult.error("该隧道流量已用完");
         }
 
@@ -1007,7 +1020,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return UserPermissionResult.error(quotaCheckResult.getMsg());
         }
 
-        return UserPermissionResult.success(userTunnel.getSpeedId(), userTunnel);
+        return UserPermissionResult.success(ownedTunnel ? null : userTunnel.getSpeedId(), ownedTunnel ? null : userTunnel);
     }
 
     /**
@@ -1030,7 +1043,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         long tunnelForwardCount = this.count(tunnelQuery);
-        if (tunnelForwardCount >= userTunnel.getNum()) {
+        if (userTunnel != null && tunnelForwardCount >= userTunnel.getNum()) {
             return R.err("该隧道转发数量已达上限，当前限制：" + userTunnel.getNum() + "个");
         }
 
@@ -1047,12 +1060,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         UserTunnel userTunnel = getUserTunnel(userId, tunnel.getId().intValue());
-        if (userTunnel == null) {
+        boolean ownedTunnel = Objects.equals(tunnel.getOwnerUserId(), userId);
+        if (!ownedTunnel && userTunnel == null) {
             return R.err("你没有该隧道权限");
         }
 
         // 检查隧道权限到期时间
-        if (userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
+        if (!ownedTunnel && userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
             return R.err("该隧道权限已到期，无法恢复服务");
         }
 
@@ -1063,9 +1077,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 检查隧道流量限制
         // 数据库中的流量已按计费类型处理，直接使用总和
-        long tunnelFlow = userTunnel.getInFlow() + userTunnel.getOutFlow();
+        long tunnelFlow = ownedTunnel ? 0L : userTunnel.getInFlow() + userTunnel.getOutFlow();
 
-        if (userTunnel.getFlow() * BYTES_TO_GB <= tunnelFlow) {
+        if (!ownedTunnel && userTunnel.getFlow() * BYTES_TO_GB <= tunnelFlow) {
             return R.err("该隧道流量已用完，无法恢复服务");
         }
 
@@ -1110,6 +1124,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             if (Objects.equals(tunnel.getId().intValue(), primaryTunnelId)) {
                 continue;
             }
+            if (Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
+                continue;
+            }
             UserTunnel userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
             if (userTunnel == null) {
                 return R.err("你没有候选隧道权限：" + tunnel.getName());
@@ -1143,7 +1160,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     private RouteAllocationResult allocateRouteConfigs(List<Tunnel> tunnels, PortAllocation primaryAllocation, Long excludeForwardId) {
         List<ForwardRouteDto> routes = new ArrayList<>();
-        Map<Long, Set<Integer>> reservedPorts = new HashMap<>();
+        Map<String, Set<Integer>> reservedPorts = new HashMap<>();
 
         Tunnel primaryTunnel = tunnels.get(0);
         ForwardRouteDto primaryRoute = buildRouteDto(primaryTunnel, 0, primaryAllocation);
@@ -1172,7 +1189,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return route;
     }
 
-    private PortAllocation allocateRoutePorts(Tunnel tunnel, Long excludeForwardId, Map<Long, Set<Integer>> reservedPorts) {
+    private PortAllocation allocateRoutePorts(Tunnel tunnel, Long excludeForwardId, Map<String, Set<Integer>> reservedPorts) {
         Integer outPort = null;
         List<Integer> hopPorts = new ArrayList<>();
         if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
@@ -1182,22 +1199,31 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             }
             for (int i = 1; i < nodePath.size(); i++) {
                 Long nodeId = nodePath.get(i);
-                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(nodeId));
+                Node node = nodeService.getById(nodeId);
+                if (node == null) {
+                    return PortAllocation.error("节点不存在：" + nodeId);
+                }
+                String namespace = PortNamespaceUtil.fromNode(node);
+                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(namespace));
                 if (hopPort == null) {
                     return PortAllocation.error("节点 " + nodeId + " 端口已满，无法为线路 " + tunnel.getName() + " 分配端口");
                 }
                 hopPorts.add(hopPort);
                 outPort = hopPort;
-                reservedPorts.computeIfAbsent(nodeId, key -> new HashSet<>()).add(hopPort);
+                reservedPorts.computeIfAbsent(namespace, key -> new HashSet<>()).add(hopPort);
             }
         }
         return PortAllocation.success(null, outPort, hopPorts);
     }
 
-    private void reserveRoutePorts(Tunnel tunnel, List<Integer> hopPorts, Map<Long, Set<Integer>> reservedPorts) {
+    private void reserveRoutePorts(Tunnel tunnel, List<Integer> hopPorts, Map<String, Set<Integer>> reservedPorts) {
         List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
         for (int i = 1; i < nodePath.size() && i - 1 < hopPorts.size(); i++) {
-            reservedPorts.computeIfAbsent(nodePath.get(i), key -> new HashSet<>()).add(hopPorts.get(i - 1));
+            Node node = nodeService.getById(nodePath.get(i));
+            if (node != null) {
+                reservedPorts.computeIfAbsent(PortNamespaceUtil.fromNode(node), key -> new HashSet<>())
+                        .add(hopPorts.get(i - 1));
+            }
         }
     }
 
@@ -1248,16 +1274,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         List<Integer> hopPorts = new ArrayList<>();
         if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
             List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
+            Map<String, Set<Integer>> reservedPorts = new HashMap<>();
             if (nodePath.size() < 2) {
                 return PortAllocation.error("隧道节点路径无效，至少需要入口和出口两个节点");
             }
             for (int i = 1; i < nodePath.size(); i++) {
-                Integer hopPort = allocatePortForNode(nodePath.get(i), excludeForwardId);
+                Long nodeId = nodePath.get(i);
+                Node node = nodeService.getById(nodeId);
+                if (node == null) {
+                    return PortAllocation.error("节点不存在：" + nodeId);
+                }
+                String namespace = PortNamespaceUtil.fromNode(node);
+                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(namespace));
                 if (hopPort == null) {
-                    return PortAllocation.error("节点 " + nodePath.get(i) + " 端口已满，无法分配新端口");
+                    return PortAllocation.error("节点 " + nodeId + " 端口已满，无法分配新端口");
                 }
                 hopPorts.add(hopPort);
                 outPort = hopPort;
+                reservedPorts.computeIfAbsent(namespace, key -> new HashSet<>()).add(hopPort);
             }
         }
 
@@ -1413,7 +1447,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 删除主服务（使用原隧道的入口节点）
         if (!oldNodeInfo.isHasError() && oldNodeInfo.getInNode() != null) {
-            GostDto serviceResult = GostUtil.DeleteService(oldNodeInfo.getInNode().getId(), serviceName);
+            GostDto serviceResult = GostUtil.DeleteService(
+                    oldNodeInfo.getInNode().getId(),
+                    serviceName,
+                    normalizeProtocolMode(forward.getProtocolMode())
+            );
             if (!isGostOperationSuccess(serviceResult)) {
                 log.info("删除主服务失败: {}", gostMessage(serviceResult));
             }
@@ -1451,7 +1489,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
 
         // 删除主服务
-        GostDto serviceResult = GostUtil.DeleteService(nodeInfo.getInNode().getId(), serviceName, PROTOCOL_MODE_TCP_UDP);
+        GostDto serviceResult = GostUtil.DeleteService(
+                nodeInfo.getInNode().getId(),
+                serviceName,
+                normalizeProtocolMode(forward.getProtocolMode())
+        );
         if (!isGostOperationSuccess(serviceResult)) {
             log.warn("删除转发 {} 的入口服务失败：{}", forward.getId(), gostMessage(serviceResult));
         }
@@ -1558,7 +1600,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R updateMainService(Node inNode, String serviceName, Forward forward, ForwardRouteDto route, Integer limiter, Tunnel tunnel) {
-        GostUtil.DeleteService(inNode.getId(), serviceName, PROTOCOL_MODE_TCP_UDP);
+        GostUtil.DeleteService(inNode.getId(), serviceName, normalizeProtocolMode(forward.getProtocolMode()));
         return createMainService(inNode, serviceName, forward, route, limiter, tunnel);
     }
 
@@ -1633,7 +1675,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String mainServiceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
         Node inNode = nodeService.getById(primaryTunnel.getInNodeId());
         if (inNode != null) {
-            GostUtil.DeleteService(inNode.getId(), mainServiceName, PROTOCOL_MODE_TCP_UDP);
+            GostUtil.DeleteService(
+                    inNode.getId(),
+                    mainServiceName,
+                    normalizeProtocolMode(forward.getProtocolMode())
+            );
         }
         deleteRouteInfrastructureBestEffort(forward, getForwardRoutes(forward), mainServiceName);
     }
@@ -2191,6 +2237,16 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private Set<Integer> getAllUsedPortsOnNode(Long nodeId, Long excludeForwardId) {
         Set<Integer> usedPorts = new HashSet<>();
+        Node requestedNode = nodeService.getById(nodeId);
+        if (requestedNode == null) {
+            return usedPorts;
+        }
+
+        String requestedNamespace = PortNamespaceUtil.fromNode(requestedNode);
+        Set<Long> namespaceNodeIds = nodeService.list().stream()
+                .filter(node -> Objects.equals(PortNamespaceUtil.fromNode(node), requestedNamespace))
+                .map(Node::getId)
+                .collect(Collectors.toSet());
         List<Tunnel> allTunnels = tunnelService.list();
         Map<Integer, Tunnel> tunnelMap = allTunnels.stream()
                 .collect(Collectors.toMap(t -> t.getId().intValue(), t -> t, (a, b) -> a));
@@ -2206,7 +2262,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 continue;
             }
 
-            if (Objects.equals(primaryTunnel.getInNodeId(), nodeId) && forward.getInPort() != null) {
+            if (namespaceNodeIds.contains(primaryTunnel.getInNodeId()) && forward.getInPort() != null) {
                 usedPorts.add(forward.getInPort());
             }
 
@@ -2221,7 +2277,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     hopPorts = Collections.singletonList(route.getOutPort());
                 }
                 for (int i = 1; i < nodePath.size() && i - 1 < hopPorts.size(); i++) {
-                    if (Objects.equals(nodePath.get(i), nodeId)) {
+                    if (namespaceNodeIds.contains(nodePath.get(i))) {
                         usedPorts.add(hopPorts.get(i - 1));
                     }
                 }

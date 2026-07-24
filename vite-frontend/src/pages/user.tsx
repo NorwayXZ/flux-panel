@@ -46,7 +46,11 @@ import {
   removeUserTunnel,
   updateUserTunnel,
   getSpeedLimitList,
-  resetUserFlow
+  resetUserFlow,
+  getNodeList,
+  assignUserNode,
+  getUserNodeList,
+  removeUserNode
 } from '@/api';
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon, SettingsIcon } from '@/components/icons';
 import { parseDate } from "@internationalized/date";
@@ -170,12 +174,17 @@ export default function UserPage() {
   // 其他数据
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
   const [speedLimits, setSpeedLimits] = useState<SpeedLimit[]>([]);
+  const [nodes, setNodes] = useState<any[]>([]);
+  const [userNodes, setUserNodes] = useState<any[]>([]);
+  const [nodeToShare, setNodeToShare] = useState<number | null>(null);
+  const [nodeShareLoading, setNodeShareLoading] = useState(false);
 
   // 生命周期
   useEffect(() => {
     loadUsers();
     loadTunnels();
     loadSpeedLimits();
+    loadNodes();
   }, [pagination.current, pagination.size, searchKeyword]);
 
   // 数据加载函数
@@ -220,6 +229,15 @@ export default function UserPage() {
       }
     } catch (error) {
       console.error('获取限速规则列表失败:', error);
+    }
+  };
+
+  const loadNodes = async () => {
+    try {
+      const response = await getNodeList();
+      if (response.code === 0) setNodes(response.data || []);
+    } catch (error) {
+      console.error('获取节点列表失败:', error);
     }
   };
 
@@ -344,6 +362,44 @@ export default function UserPage() {
     });
     onTunnelModalOpen();
     loadUserTunnels(user.id);
+    loadUserNodes(user.id);
+  };
+
+  const loadUserNodes = async (userId: number) => {
+    try {
+      const response = await getUserNodeList(userId);
+      if (response.code === 0) setUserNodes(response.data || []);
+    } catch (error) {
+      toast.error('获取节点共享列表失败');
+    }
+  };
+
+  const handleAssignNode = async () => {
+    if (!currentUser || !nodeToShare) return;
+    setNodeShareLoading(true);
+    try {
+      const response = await assignUserNode({ userId: currentUser.id, nodeId: nodeToShare });
+      if (response.code === 0) {
+        toast.success('节点共享成功');
+        setNodeToShare(null);
+        loadUserNodes(currentUser.id);
+      } else {
+        toast.error(response.msg || '节点共享失败');
+      }
+    } finally {
+      setNodeShareLoading(false);
+    }
+  };
+
+  const handleRemoveNode = async (nodeId: number) => {
+    if (!currentUser) return;
+    const response = await removeUserNode({ userId: currentUser.id, nodeId });
+    if (response.code === 0) {
+      toast.success('节点共享已取消');
+      loadUserNodes(currentUser.id);
+    } else {
+      toast.error(response.msg || '取消共享失败');
+    }
   };
 
   const handleAssignTunnel = async () => {
@@ -874,6 +930,47 @@ export default function UserPage() {
           </ModalHeader>
           <ModalBody>
             <div className="space-y-6">
+              {/* 节点共享：共享节点只允许使用，不能修改节点配置或获取安装密钥 */}
+              <section className="border border-divider rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">节点共享</h3>
+                    <p className="text-xs text-default-500 mt-1">用户可以用共享节点组建自己的隧道，但节点本身保持只读。</p>
+                  </div>
+                  <Chip size="sm" variant="flat" color="secondary">{userNodes.length} 个共享节点</Chip>
+                </div>
+                <div className="flex gap-2">
+                  <Select
+                    className="flex-1"
+                    label="选择节点"
+                    selectedKeys={nodeToShare ? [nodeToShare.toString()] : []}
+                    onSelectionChange={(keys) => setNodeToShare(Number(Array.from(keys)[0]) || null)}
+                  >
+                    {nodes.map(node => (
+                      <SelectItem key={node.id.toString()} textValue={node.name}>
+                        {node.name} · {node.serverIp}
+                      </SelectItem>
+                    ))}
+                  </Select>
+                  <Button color="secondary" className="self-end" onPress={handleAssignNode} isLoading={nodeShareLoading}>
+                    共享节点
+                  </Button>
+                </div>
+                {userNodes.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {userNodes.map(node => (
+                      <div key={node.nodeId} className="flex items-center justify-between gap-2 rounded-md border border-divider px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{node.nodeName}</p>
+                          <p className="text-xs text-default-500 truncate">{node.serverIp}</p>
+                        </div>
+                        <Button size="sm" variant="light" color="danger" onPress={() => handleRemoveNode(node.nodeId)}>取消</Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
               {/* 分配新权限部分 */}
               <div>
                 <h3 className="text-lg font-semibold mb-4">分配新权限</h3>
@@ -1450,4 +1547,4 @@ export default function UserPage() {
       </div>
     
   );
-} 
+}

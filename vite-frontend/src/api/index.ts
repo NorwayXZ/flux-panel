@@ -33,6 +33,9 @@ export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
   return Network.post("/node/check-status", params);
 };
+export const assignUserNode = (data: { userId: number; nodeId: number }) => Network.post("/node/user/assign", data);
+export const getUserNodeList = (userId: number) => Network.post("/node/user/list", { userId });
+export const removeUserNode = (data: { userId: number; nodeId: number }) => Network.post("/node/user/remove", data);
 
 // 隧道CRUD操作 - 全部使用POST请求
 export const createTunnel = (data: any) => Network.post("/tunnel/create", data);
@@ -88,4 +91,4 @@ export const updateConfig = (name: string, value: string) => Network.post("/conf
 // 验证码相关接口
 export const checkCaptcha = () => Network.post("/captcha/check");
 export const generateCaptcha = () => Network.post(`/captcha/generate`);
-export const verifyCaptcha = (data: { captchaId: string; trackData: string }) => Network.post("/captcha/verify", data); 
+export const verifyCaptcha = (data: { captchaId: string; trackData: string }) => Network.post("/captcha/verify", data);

@@ -1,6 +1,7 @@
 package com.admin.entity;
 
 import java.io.Serializable;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -20,6 +21,8 @@ public class Node extends BaseEntity {
 
     private String name;
 
+    private Integer ownerUserId;
+
     private String secret;
 
     private String ip;
@@ -37,5 +40,20 @@ public class Node extends BaseEntity {
     private Integer tls;
 
     private Integer socks;
+
+    @TableField(exist = false)
+    private String ownerUserName;
+
+    @TableField(exist = false)
+    private String accessType;
+
+    @TableField(exist = false)
+    private Boolean editable;
+
+    @TableField(exist = false)
+    private Boolean deletable;
+
+    @TableField(exist = false)
+    private Integer portPoolGroupSize;
 
 }

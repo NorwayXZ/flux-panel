@@ -15,6 +15,9 @@ public class BaseController {
     UserTunnelService userTunnelService;
 
     @Autowired
+    UserNodeService userNodeService;
+
+    @Autowired
     TunnelService tunnelService;
 
     @Autowired

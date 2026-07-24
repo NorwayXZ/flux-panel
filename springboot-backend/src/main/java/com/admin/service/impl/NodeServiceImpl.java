@@ -7,15 +7,21 @@ import com.admin.common.dto.NodeDto;
 import com.admin.common.dto.NodeUpdateDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.TunnelRouteUtil;
+import com.admin.common.utils.JwtUtil;
+import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.Forward;
 import com.admin.entity.Node;
 import com.admin.entity.SpeedLimit;
 import com.admin.entity.Tunnel;
 import com.admin.entity.UserTunnel;
+import com.admin.entity.UserNode;
+import com.admin.entity.User;
 import com.admin.entity.ViteConfig;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.TunnelMapper;
+import com.admin.mapper.UserNodeMapper;
+import com.admin.mapper.UserMapper;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
@@ -38,6 +44,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 
@@ -102,6 +109,12 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private SpeedLimitService speedLimitService;
 
     @Resource
+    private UserNodeMapper userNodeMapper;
+
+    @Resource
+    private UserMapper userMapper;
+
+    @Resource
     ViteConfigService viteConfigService;
 
 
@@ -130,7 +143,22 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
      */
     @Override
     public R getAllNodes() {
-        List<Node> nodeList = this.list();
+        Integer userId = JwtUtil.getUserIdFromToken();
+        Integer roleId = JwtUtil.getRoleIdFromToken();
+        List<Node> nodeList;
+        if (Objects.equals(roleId, 0)) {
+            nodeList = this.list();
+        } else {
+            List<Integer> sharedIds = userNodeMapper.selectList(
+                    new QueryWrapper<UserNode>().eq("user_id", userId))
+                    .stream().map(UserNode::getNodeId).collect(Collectors.toList());
+            QueryWrapper<Node> query = new QueryWrapper<Node>().eq("owner_user_id", userId);
+            if (!sharedIds.isEmpty()) {
+                query.or().in("id", sharedIds);
+            }
+            nodeList = this.list(query);
+        }
+        enrichNodeAccess(nodeList, userId, roleId);
         hideNodeSecrets(nodeList);
         return R.ok(nodeList);
     }
@@ -147,6 +175,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         Node node = this.getById(nodeUpdateDto.getId());
         if (node == null) {
             return R.err(ERROR_NODE_NOT_FOUND);
+        }
+
+        if (!canEdit(node)) {
+            return R.err("共享节点为只读，不能修改");
         }
 
         //1.1 如果节点在线 且传入更新的 http/tls/socks 任意一项与数据库不一致，则通过 WS 通知节点更新设置
@@ -212,6 +244,9 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         if (node == null) {
             return R.err(ERROR_NODE_NOT_FOUND);
         }
+        if (!canEdit(node)) {
+            return R.err("共享节点为只读，不能修改");
+        }
 
         try {
             long relatedTunnelCount = countNodeTunnels(id);
@@ -241,14 +276,16 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     public R checkNodeStatus(Long id) {
         if (id != null) {
             Node node = this.getById(id);
-            if (node == null) {
+            if (node == null || !canAccess(node)) {
                 return R.err(ERROR_NODE_NOT_FOUND);
             }
             return R.ok(syncNodeStatus(node));
         }
 
         List<Map<String, Object>> result = new ArrayList<>();
-        for (Node node : this.list()) {
+        @SuppressWarnings("unchecked")
+        List<Node> accessibleNodes = (List<Node>) getAllNodes().getData();
+        for (Node node : accessibleNodes) {
             result.add(syncNodeStatus(node));
         }
         return R.ok(result);
@@ -288,6 +325,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         // 设置默认属性
         node.setSecret(IdUtil.simpleUUID());
         node.setStatus(NODE_STATUS_ACTIVE);
+        node.setOwnerUserId(JwtUtil.getUserIdFromToken());
         
         // 设置时间戳
         long currentTime = System.currentTimeMillis();
@@ -340,10 +378,6 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("userTunnelCount", 0L);
         summary.put("speedLimitCount", 0L);
 
-        if (relatedTunnels.isEmpty()) {
-            return summary;
-        }
-
         List<Long> tunnelIds = new ArrayList<>();
         List<Integer> tunnelIdInts = new ArrayList<>();
         for (Tunnel tunnel : relatedTunnels) {
@@ -351,7 +385,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             tunnelIdInts.add(tunnel.getId().intValue());
         }
 
-        long forwardCount = forwardService.count(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
+        long forwardCount = tunnelIdInts.isEmpty() ? 0L : forwardService.count(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
         if (forwardCount > 0) {
             boolean removed = forwardService.remove(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
             if (!removed) {
@@ -359,7 +393,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             }
         }
 
-        long userTunnelCount = userTunnelService.count(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
+        long userTunnelCount = tunnelIdInts.isEmpty() ? 0L : userTunnelService.count(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
         if (userTunnelCount > 0) {
             boolean removed = userTunnelService.remove(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
             if (!removed) {
@@ -367,7 +401,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             }
         }
 
-        long speedLimitCount = speedLimitService.count(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
+        long speedLimitCount = tunnelIds.isEmpty() ? 0L : speedLimitService.count(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
         if (speedLimitCount > 0) {
             boolean removed = speedLimitService.remove(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
             if (!removed) {
@@ -375,7 +409,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             }
         }
 
-        boolean tunnelsRemoved = tunnelService.removeByIds(tunnelIds);
+        boolean tunnelsRemoved = tunnelIds.isEmpty() || tunnelService.removeByIds(tunnelIds);
         if (!tunnelsRemoved) {
             throw new IllegalStateException("关联隧道删除失败");
         }
@@ -383,6 +417,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("forwardCount", forwardCount);
         summary.put("userTunnelCount", userTunnelCount);
         summary.put("speedLimitCount", speedLimitCount);
+        userNodeMapper.delete(new QueryWrapper<UserNode>().eq("node_id", nodeId));
         return summary;
     }
 
@@ -501,6 +536,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             return R.err(ERROR_NODE_NOT_FOUND);
         }
 
+        if (!canEdit(node)) {
+            return R.err("共享节点不提供安装密钥");
+        }
+
         // 2. 构建安装命令
         return buildInstallCommand(node);
     }
@@ -530,6 +569,45 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
                .append(" -s ").append(node.getSecret());    // 节点密钥
         
         return R.ok(command.toString());
+    }
+
+    private boolean canAccess(Node node) {
+        Integer userId = JwtUtil.getUserIdFromToken();
+        if (Objects.equals(JwtUtil.getRoleIdFromToken(), 0) || Objects.equals(node.getOwnerUserId(), userId)) {
+            return true;
+        }
+        return userNodeMapper.selectCount(new QueryWrapper<UserNode>()
+                .eq("user_id", userId).eq("node_id", node.getId())) > 0;
+    }
+
+    private boolean canEdit(Node node) {
+        return Objects.equals(JwtUtil.getRoleIdFromToken(), 0)
+                || Objects.equals(node.getOwnerUserId(), JwtUtil.getUserIdFromToken());
+    }
+
+    private void enrichNodeAccess(List<Node> nodes, Integer userId, Integer roleId) {
+        Map<String, Long> portPoolGroupSizes = this.list().stream()
+                .collect(Collectors.groupingBy(PortNamespaceUtil::fromNode, Collectors.counting()));
+        for (Node node : nodes) {
+            node.setPortPoolGroupSize(portPoolGroupSizes
+                    .getOrDefault(PortNamespaceUtil.fromNode(node), 1L)
+                    .intValue());
+            User owner = userMapper.selectById(node.getOwnerUserId());
+            node.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+            if (Objects.equals(roleId, 0)) {
+                node.setAccessType("admin");
+                node.setEditable(true);
+                node.setDeletable(true);
+            } else if (Objects.equals(node.getOwnerUserId(), userId)) {
+                node.setAccessType("owned");
+                node.setEditable(true);
+                node.setDeletable(true);
+            } else {
+                node.setAccessType("shared");
+                node.setEditable(false);
+                node.setDeletable(false);
+            }
+        }
     }
 
     /**

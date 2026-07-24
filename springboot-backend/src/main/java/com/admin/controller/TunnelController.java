@@ -37,28 +37,24 @@ public class TunnelController extends BaseController {
     private UserTunnelService userTunnelService;
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/create")
     public R create(@Validated @RequestBody TunnelDto tunnelDto) {
         return tunnelService.createTunnel(tunnelDto);
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/list")
     public R readAll() {
         return tunnelService.getAllTunnels();
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/update")
     public R update(@Validated @RequestBody TunnelUpdateDto tunnelUpdateDto) {
         return tunnelService.updateTunnel(tunnelUpdateDto);
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/delete")
     public R delete(@RequestBody Map<String, Object> params) {
         Long id = Long.valueOf(params.get("id").toString());
@@ -130,7 +126,6 @@ public class TunnelController extends BaseController {
      * @return 诊断结果
      */
     @LogAnnotation
-    @RequireRole
     @PostMapping("/diagnose")
     public R diagnoseTunnel(@RequestBody Map<String, Object> params) {
         Long tunnelId = Long.valueOf(params.get("tunnelId").toString());

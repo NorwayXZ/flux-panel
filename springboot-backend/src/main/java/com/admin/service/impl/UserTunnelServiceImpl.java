@@ -12,6 +12,7 @@ import com.admin.service.TunnelService;
 import com.admin.service.UserTunnelService;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
+import com.admin.service.UserService;
 import com.admin.common.utils.GostUtil;
 import com.admin.entity.Forward;
 import com.admin.entity.Tunnel;
@@ -71,6 +72,10 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
     @Autowired
     private NodeService nodeService;
 
+    @Autowired
+    @Lazy
+    private UserService userService;
+
     // ========== 公共接口实现 ==========
 
     /**
@@ -82,6 +87,14 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
      */
     @Override
     public R assignUserTunnel(UserTunnelDto userTunnelDto) {
+        Tunnel tunnel = tunnelService.getById(userTunnelDto.getTunnelId());
+        if (tunnel == null) {
+            return R.err("隧道不存在");
+        }
+        if (tunnel.getOwnerUserId() == null || userService.getById(tunnel.getOwnerUserId()) == null
+                || userService.getById(tunnel.getOwnerUserId()).getRoleId() != 0) {
+            return R.err("只能共享管理员创建的隧道");
+        }
         // 1. 检查权限是否已存在
         if (isUserTunnelPermissionExists(userTunnelDto.getUserId(), userTunnelDto.getTunnelId())) {
             return R.err(ERROR_PERMISSION_EXISTS);

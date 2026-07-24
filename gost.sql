@@ -61,6 +61,7 @@ CREATE TABLE `forward` (
 
 CREATE TABLE `node` (
   `id` int(10) NOT NULL,
+  `owner_user_id` int(10) NOT NULL DEFAULT '1',
   `name` varchar(100) NOT NULL,
   `secret` varchar(100) NOT NULL,
   `ip` longtext,
@@ -75,6 +76,24 @@ CREATE TABLE `node` (
   `updated_time` bigint(20) DEFAULT NULL,
   `status` int(10) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+
+--
+-- 表的结构 `port_allocation_lock`
+--
+
+CREATE TABLE `port_allocation_lock` (
+  `id` tinyint(3) unsigned NOT NULL,
+  `updated_time` bigint(20) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+--
+-- 转存表中的数据 `port_allocation_lock`
+--
+
+INSERT INTO `port_allocation_lock` (`id`, `updated_time`) VALUES
+(1, 0);
 
 -- --------------------------------------------------------
 
@@ -116,6 +135,7 @@ CREATE TABLE `statistics_flow` (
 
 CREATE TABLE `tunnel` (
   `id` int(10) NOT NULL,
+  `owner_user_id` int(10) NOT NULL DEFAULT '1',
   `name` varchar(100) NOT NULL,
   `traffic_ratio` decimal(10,1) NOT NULL DEFAULT '1.0',
   `in_node_id` int(10) NOT NULL,
@@ -185,6 +205,15 @@ CREATE TABLE `user_tunnel` (
 
 -- --------------------------------------------------------
 
+CREATE TABLE `user_node` (
+  `id` int(10) NOT NULL,
+  `user_id` int(10) NOT NULL,
+  `node_id` int(10) NOT NULL,
+  `created_time` bigint(20) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+
 --
 -- 表的结构 `vite_config`
 --
@@ -220,6 +249,12 @@ ALTER TABLE `node`
   ADD PRIMARY KEY (`id`);
 
 --
+-- 表的索引 `port_allocation_lock`
+--
+ALTER TABLE `port_allocation_lock`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- 表的索引 `speed_limit`
 --
 ALTER TABLE `speed_limit`
@@ -248,6 +283,11 @@ ALTER TABLE `user`
 --
 ALTER TABLE `user_tunnel`
   ADD PRIMARY KEY (`id`);
+
+ALTER TABLE `user_node`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_user_node` (`user_id`,`node_id`),
+  ADD KEY `idx_user_node_node_id` (`node_id`);
 
 --
 -- 表的索引 `vite_config`
@@ -300,6 +340,9 @@ ALTER TABLE `user`
 -- 使用表AUTO_INCREMENT `user_tunnel`
 --
 ALTER TABLE `user_tunnel`
+  MODIFY `id` int(10) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=1;
+
+ALTER TABLE `user_node`
   MODIFY `id` int(10) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=1;
 
 --

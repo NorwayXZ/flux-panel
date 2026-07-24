@@ -14,8 +14,11 @@ import com.admin.entity.SpeedLimit;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserTunnel;
+import com.admin.entity.UserNode;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserTunnelMapper;
+import com.admin.mapper.UserNodeMapper;
+import com.admin.mapper.UserMapper;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
@@ -97,6 +100,12 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     UserTunnelMapper userTunnelMapper;
 
     @Resource
+    UserNodeMapper userNodeMapper;
+
+    @Resource
+    UserMapper userMapper;
+
+    @Resource
     NodeService nodeService;
     
     @Resource
@@ -126,6 +135,15 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             return nameValidationResult;
         }
 
+        if (!canUseNode(tunnelDto.getInNodeId())) {
+            return R.err(ERROR_IN_NODE_NOT_FOUND);
+        }
+        for (Long nodeId : resolveCreateNodePath(tunnelDto)) {
+            if (!canUseNode(nodeId)) {
+                return R.err("节点不可用或没有权限使用：" + nodeId);
+            }
+        }
+
         // 2. 验证隧道转发类型的必要参数
         if (tunnelDto.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
             R tunnelForwardValidationResult = validateTunnelForwardCreate(tunnelDto);
@@ -151,6 +169,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
         // 6. 设置默认属性并保存
         setDefaultTunnelProperties(tunnel);
+        tunnel.setOwnerUserId(JwtUtil.getUserIdFromToken());
         boolean result = this.save(tunnel);
         
         return result ? R.ok(SUCCESS_CREATE_MSG) : R.err(ERROR_CREATE_MSG);
@@ -163,7 +182,22 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      */
     @Override
     public R getAllTunnels() {
-        List<Tunnel> tunnelList = this.list();
+        Integer userId = JwtUtil.getUserIdFromToken();
+        Integer roleId = JwtUtil.getRoleIdFromToken();
+        List<Tunnel> tunnelList;
+        if (Objects.equals(roleId, ADMIN_ROLE_ID)) {
+            tunnelList = this.list();
+        } else {
+            List<Integer> sharedIds = userTunnelMapper.selectList(
+                    new QueryWrapper<UserTunnel>().eq("user_id", userId))
+                    .stream().map(UserTunnel::getTunnelId).collect(Collectors.toList());
+            QueryWrapper<Tunnel> query = new QueryWrapper<Tunnel>().eq("owner_user_id", userId);
+            if (!sharedIds.isEmpty()) {
+                query.or().in("id", sharedIds);
+            }
+            tunnelList = this.list(query);
+        }
+        enrichTunnelAccess(tunnelList, userId, roleId);
         return R.ok(tunnelList);
     }
 
@@ -179,6 +213,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         Tunnel existingTunnel = this.getById(tunnelUpdateDto.getId());
         if (existingTunnel == null) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
+        }
+        if (!canEdit(existingTunnel)) {
+            return R.err("共享隧道为只读，不能修改");
         }
 
         // 2. 验证隧道名称唯一性（排除自身）
@@ -248,6 +285,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         if (tunnel == null) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
         }
+        if (!canEdit(tunnel)) {
+            return R.err("共享隧道为只读，不能删除");
+        }
 
         try {
             Map<String, Object> cleanupSummary = cleanupTunnelDependencies(id);
@@ -280,6 +320,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         
         // 根据用户角色获取隧道列表
         List<Tunnel> tunnelEntities = getUserAccessibleTunnels(currentUser);
+        enrichTunnelAccess(tunnelEntities, currentUser.getUserId(), currentUser.getRoleId());
         
         // 转换为DTO并返回
         List<TunnelListDto> tunnelDtos = convertToTunnelListDtos(tunnelEntities);
@@ -297,6 +338,61 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         Integer roleId = JwtUtil.getRoleIdFromToken();
         Integer userId = JwtUtil.getUserIdFromToken();
         return new UserInfo(userId, roleId);
+    }
+
+    private boolean canUseNode(Long nodeId) {
+        if (nodeId == null) {
+            return false;
+        }
+        UserInfo current = getCurrentUserInfo();
+        if (Objects.equals(current.getRoleId(), ADMIN_ROLE_ID)) {
+            return true;
+        }
+        Node node = nodeService.getById(nodeId);
+        if (node == null) {
+            return false;
+        }
+        if (Objects.equals(node.getOwnerUserId(), current.getUserId())) {
+            return true;
+        }
+        return userNodeMapper.selectCount(new QueryWrapper<UserNode>()
+                .eq("user_id", current.getUserId()).eq("node_id", nodeId)) > 0;
+    }
+
+    private boolean canAccessTunnel(Tunnel tunnel) {
+        UserInfo current = getCurrentUserInfo();
+        if (Objects.equals(current.getRoleId(), ADMIN_ROLE_ID)
+                || Objects.equals(tunnel.getOwnerUserId(), current.getUserId())) {
+            return true;
+        }
+        return userTunnelMapper.selectCount(new QueryWrapper<UserTunnel>()
+                .eq("user_id", current.getUserId()).eq("tunnel_id", tunnel.getId())) > 0;
+    }
+
+    private boolean canEdit(Tunnel tunnel) {
+        UserInfo current = getCurrentUserInfo();
+        return Objects.equals(current.getRoleId(), ADMIN_ROLE_ID)
+                || Objects.equals(tunnel.getOwnerUserId(), current.getUserId());
+    }
+
+    private void enrichTunnelAccess(List<Tunnel> tunnels, Integer userId, Integer roleId) {
+        for (Tunnel tunnel : tunnels) {
+            User owner = userMapper.selectById(tunnel.getOwnerUserId());
+            tunnel.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+            if (Objects.equals(roleId, ADMIN_ROLE_ID)) {
+                tunnel.setAccessType("admin");
+                tunnel.setEditable(true);
+                tunnel.setDeletable(true);
+            } else if (Objects.equals(tunnel.getOwnerUserId(), userId)) {
+                tunnel.setAccessType("owned");
+                tunnel.setEditable(true);
+                tunnel.setDeletable(true);
+            } else {
+                tunnel.setAccessType("shared");
+                tunnel.setEditable(false);
+                tunnel.setDeletable(false);
+            }
+        }
     }
 
     /**
@@ -362,7 +458,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     private NodeValidationResult validateInNode(TunnelDto tunnelDto) {
         // 验证入口节点是否存在
         Node inNode = nodeService.getById(tunnelDto.getInNodeId());
-        if (inNode == null) {
+        if (inNode == null || !canUseNode(inNode.getId())) {
             return NodeValidationResult.error(ERROR_IN_NODE_NOT_FOUND);
         }
 
@@ -471,7 +567,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         List<Node> pathNodes = new ArrayList<>();
         for (Long nodeId : nodePath) {
             Node node = nodeService.getById(nodeId);
-            if (node == null) {
+            if (node == null || !canUseNode(node.getId())) {
                 return R.err("节点路径中存在不存在的节点：" + nodeId);
             }
             if (node.getStatus() != NODE_STATUS_ONLINE) {
@@ -675,17 +771,18 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             new QueryWrapper<UserTunnel>().eq("user_id", userId)
         );
         
-        if (userTunnels.isEmpty()) {
-            return java.util.Collections.emptyList(); // 返回空列表
-        }
-        
         List<Integer> tunnelIds = userTunnels.stream()
                 .map(UserTunnel::getTunnelId)
                 .collect(Collectors.toList());
-                
-        return this.list(new QueryWrapper<Tunnel>()
-                .in("id", tunnelIds)
-                .eq("status", TUNNEL_STATUS_ACTIVE));
+
+        QueryWrapper<Tunnel> query = new QueryWrapper<Tunnel>().eq("status", TUNNEL_STATUS_ACTIVE)
+                .and(wrapper -> {
+                    wrapper.eq("owner_user_id", userId);
+                    if (!tunnelIds.isEmpty()) {
+                        wrapper.or().in("id", tunnelIds);
+                    }
+                });
+        return this.list(query);
     }
 
     /**
@@ -715,6 +812,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         dto.setNodePath(TunnelRouteUtil.joinNodePath(TunnelRouteUtil.parseNodePath(tunnel)));
         dto.setType(tunnel.getType());
         dto.setProtocol(tunnel.getProtocol());
+        dto.setOwnerUserId(tunnel.getOwnerUserId());
+        dto.setAccessType(tunnel.getAccessType());
         
         // 获取入口节点的端口范围信息
         if (tunnel.getInNodeId() != null) {
@@ -738,7 +837,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     public R diagnoseTunnel(Long tunnelId) {
         // 1. 验证隧道是否存在
         Tunnel tunnel = this.getById(tunnelId);
-        if (tunnel == null) {
+        if (tunnel == null || !canAccessTunnel(tunnel)) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
         }
 

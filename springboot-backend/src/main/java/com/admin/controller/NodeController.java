@@ -25,7 +25,6 @@ import java.util.Map;
 public class NodeController extends BaseController {
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/create")
     public R create(@Validated @RequestBody NodeDto nodeDto) {
         return nodeService.createNode(nodeDto);
@@ -33,21 +32,18 @@ public class NodeController extends BaseController {
 
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/list")
     public R list() {
         return nodeService.getAllNodes();
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/update")
     public R update(@Validated @RequestBody NodeUpdateDto nodeUpdateDto) {
         return nodeService.updateNode(nodeUpdateDto);
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/delete")
     public R delete(@RequestBody Map<String, Object> params) {
         Long id = Long.valueOf(params.get("id").toString());
@@ -55,7 +51,6 @@ public class NodeController extends BaseController {
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/check-status")
     public R checkStatus(@RequestBody(required = false) Map<String, Object> params) {
         Long id = null;
@@ -66,11 +61,36 @@ public class NodeController extends BaseController {
     }
 
     @LogAnnotation
-    @RequireRole
     @PostMapping("/install")
     public R getInstallCommand(@RequestBody Map<String, Object> params) {
         Long id = Long.valueOf(params.get("id").toString());
         return nodeService.getInstallCommand(id);
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/user/assign")
+    public R assignUserNode(@RequestBody Map<String, Object> params) {
+        Integer userId = Integer.valueOf(params.get("userId").toString());
+        Integer nodeId = Integer.valueOf(params.get("nodeId").toString());
+        return userNodeService.assign(userId, nodeId);
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/user/list")
+    public R listUserNodes(@RequestBody Map<String, Object> params) {
+        Integer userId = Integer.valueOf(params.get("userId").toString());
+        return userNodeService.listByUser(userId);
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/user/remove")
+    public R removeUserNode(@RequestBody Map<String, Object> params) {
+        Integer userId = Integer.valueOf(params.get("userId").toString());
+        Integer nodeId = Integer.valueOf(params.get("nodeId").toString());
+        return userNodeService.removeAccess(userId, nodeId);
     }
 
 }

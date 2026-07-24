@@ -2,6 +2,7 @@ package com.admin.entity;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -23,6 +24,8 @@ public class Tunnel extends BaseEntity {
      * 隧道名称
      */
     private String name;
+
+    private Integer ownerUserId;
 
     /**
      * 入口节点ID
@@ -75,4 +78,16 @@ public class Tunnel extends BaseEntity {
     private String udpListenAddr;
 
     private String interfaceName;
+
+    @TableField(exist = false)
+    private String ownerUserName;
+
+    @TableField(exist = false)
+    private String accessType;
+
+    @TableField(exist = false)
+    private Boolean editable;
+
+    @TableField(exist = false)
+    private Boolean deletable;
 }

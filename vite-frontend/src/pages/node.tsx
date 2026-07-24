@@ -34,6 +34,12 @@ interface Node {
   tls?: number;  // 0 关 1 开
   socks?: number; // 0 关 1 开
   status: number; // 1: 在线, 0: 离线
+  ownerUserId?: number;
+  ownerUserName?: string;
+  accessType?: 'admin' | 'owned' | 'shared';
+  editable?: boolean;
+  deletable?: boolean;
+  portPoolGroupSize?: number;
   createdTime?: string | number;
   connectionStatus: 'online' | 'offline';
   systemInfo?: {
@@ -652,14 +658,19 @@ export default function NodePage() {
         return (
           <Card
             key={node.id}
-            className={nodeOffline
-              ? "offline-card shadow-sm border border-danger-300 bg-danger-50/80 hover:shadow-md transition-shadow duration-200"
+              className={nodeOffline
+              ? "offline-card shadow-sm border border-rose-300/70 bg-rose-50/70 dark:border-rose-900/80 dark:bg-rose-950/35 hover:shadow-md transition-shadow duration-200"
               : "shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"}
           >
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
-                  <h3 className={nodeOffline ? "font-semibold text-danger-700 dark:text-danger-300 truncate text-sm" : "font-semibold text-foreground truncate text-sm"}>{node.name}</h3>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h3 className={nodeOffline ? "font-semibold text-rose-800 dark:text-rose-200 truncate text-sm" : "font-semibold text-foreground truncate text-sm"}>{node.name}</h3>
+                    <Chip size="sm" variant="flat" color={node.accessType === 'shared' ? 'secondary' : node.accessType === 'owned' ? 'primary' : 'default'} className="text-[10px] h-5 flex-shrink-0">
+                      {node.accessType === 'shared' ? '共享' : node.accessType === 'owned' ? '我的' : '系统'}
+                    </Chip>
+                  </div>
                   <p className={nodeOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate" : "text-xs text-default-500 truncate"}>{node.serverIp}</p>
                 </div>
                 <div className="flex items-center gap-1.5 ml-2">
@@ -696,7 +707,20 @@ export default function NodePage() {
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>端口</span>
-                  <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.portSta}-{node.portEnd}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {(node.portPoolGroupSize || 1) > 1 && (
+                      <Chip
+                        size="sm"
+                        variant="flat"
+                        color="warning"
+                        className="h-5 text-[10px] flex-shrink-0"
+                        title={`相同服务器地址的 ${node.portPoolGroupSize} 个节点共用此端口池`}
+                      >
+                        共池x{node.portPoolGroupSize}
+                      </Chip>
+                    )}
+                    <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.portSta}-{node.portEnd}</span>
+                  </div>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>版本</span>
@@ -805,7 +829,7 @@ export default function NodePage() {
               {/* 操作按钮 */}
               <div className="space-y-1.5">
                 <div className="flex gap-1.5">
-                  <Button
+                  {node.editable !== false && <Button
                     size="sm"
                     variant="flat"
                     color="success"
@@ -814,8 +838,8 @@ export default function NodePage() {
                     className="flex-1 min-h-8"
                   >
                     安装
-                  </Button>
-                  <Button
+                  </Button>}
+                  {node.editable !== false && <Button
                     size="sm"
                     variant="flat"
                     color="primary"
@@ -823,8 +847,8 @@ export default function NodePage() {
                     className="flex-1 min-h-8"
                   >
                     编辑
-                  </Button>
-                  <Button
+                  </Button>}
+                  {node.deletable !== false && <Button
                     size="sm"
                     variant="flat"
                     color="danger"
@@ -832,7 +856,8 @@ export default function NodePage() {
                     className="flex-1 min-h-8"
                   >
                     删除
-                  </Button>
+                  </Button>}
+                  {node.accessType === 'shared' && <div className="flex-1 flex items-center justify-center text-xs text-default-500 border border-divider rounded-medium min-h-8">只读共享节点</div>}
                 </div>
               </div>
             </CardBody>

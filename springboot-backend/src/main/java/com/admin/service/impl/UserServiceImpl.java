@@ -13,6 +13,7 @@ import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserTunnelMapper;
+import com.admin.mapper.UserNodeMapper;
 import com.admin.service.*;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -97,6 +98,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     
     @Resource
     private UserTunnelMapper userTunnelMapper;
+
+    @Resource
+    private UserNodeMapper userNodeMapper;
     
     @Resource
     @Lazy
@@ -529,6 +533,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         
         // 2. 删除用户隧道权限
         deleteUserTunnelPermissions(userId);
+
+        // 3. 删除其他用户对其自建隧道的历史共享记录
+        List<Tunnel> ownedTunnels = tunnelService.list(new QueryWrapper<Tunnel>().eq("owner_user_id", userId));
+        for (Tunnel tunnel : ownedTunnels) {
+            userTunnelMapper.delete(new QueryWrapper<UserTunnel>().eq("tunnel_id", tunnel.getId()));
+        }
+
+        // 4. 删除用户自己创建的隧道和节点；管理员共享的资源不受影响
+        tunnelService.remove(new QueryWrapper<Tunnel>().eq("owner_user_id", userId));
+        nodeService.remove(new QueryWrapper<Node>().eq("owner_user_id", userId));
+        userNodeMapper.delete(new QueryWrapper<UserNode>().eq("user_id", userId));
     }
 
     /**
@@ -570,9 +585,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         // 获取用户隧道关系
         UserTunnel userTunnel = getUserTunnelRelation(userId, tunnel.getId());
-        if (userTunnel == null) return;
-
-        String serviceName = buildServiceName(forward.getId(), userId, userTunnel.getId());
+        Integer userTunnelId = userTunnel == null ? 0 : userTunnel.getId();
+        String serviceName = buildServiceName(forward.getId(), userId, userTunnelId);
 
         // 删除主服务
         GostUtil.DeleteService(inNode.getId(), serviceName);

@@ -40,4 +40,8 @@ public class TunnelListDto {
      * 协议类型
      */
     private String protocol;
+
+    private Integer ownerUserId;
+
+    private String accessType;
 }

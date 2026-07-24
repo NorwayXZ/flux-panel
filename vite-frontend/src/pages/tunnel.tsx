@@ -39,6 +39,11 @@ interface Tunnel {
   trafficRatio: number;
   status: number;
   createdTime: string | number;
+  ownerUserId?: number;
+  ownerUserName?: string;
+  accessType?: 'admin' | 'owned' | 'shared';
+  editable?: boolean;
+  deletable?: boolean;
 }
 
 interface Node {
@@ -647,7 +652,12 @@ export default function TunnelPage() {
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-foreground truncate text-sm">{tunnel.name}</h3>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h3 className="font-semibold text-foreground truncate text-sm">{tunnel.name}</h3>
+                    <Chip size="sm" variant="flat" color={tunnel.accessType === 'shared' ? 'secondary' : tunnel.accessType === 'owned' ? 'primary' : 'default'} className="text-[10px] h-5 flex-shrink-0">
+                      {tunnel.accessType === 'shared' ? '共享' : tunnel.accessType === 'owned' ? '我的' : '系统'}
+                    </Chip>
+                  </div>
                   <p className={tunnelOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate mt-0.5" : "text-xs text-default-500 truncate mt-0.5"}>
                     {getLinkStatusText(tunnel)}
                   </p>
@@ -737,7 +747,7 @@ export default function TunnelPage() {
               </div>
 
               <div className="flex gap-1.5 mt-3">
-                <Button
+                {tunnel.editable !== false && <Button
                   size="sm"
                   variant="flat"
                   color="primary"
@@ -750,7 +760,7 @@ export default function TunnelPage() {
                   }
                 >
                   编辑
-                </Button>
+                </Button>}
                 <Button
                   size="sm"
                   variant="flat"
@@ -765,7 +775,7 @@ export default function TunnelPage() {
                 >
                   诊断
                 </Button>
-                <Button
+                {tunnel.deletable !== false && <Button
                   size="sm"
                   variant="flat"
                   color="danger"
@@ -779,7 +789,8 @@ export default function TunnelPage() {
                   }
                 >
                   删除
-                </Button>
+                </Button>}
+                {tunnel.accessType === 'shared' && <div className="flex-1 flex items-center justify-center text-xs text-default-500 border border-divider rounded-medium min-h-8">只读共享隧道</div>}
               </div>
             </CardBody>
           </Card>
