@@ -432,16 +432,8 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
 
         // 5. 批量更新该用户在该隧道下所有转发的限速配置（只更新入口节点）
         for (Forward forward : userTunnelForwards) {
-            String serviceName = buildServiceName(forward.getId(), Long.valueOf(userId), userTunnel.getId());
-
-            String interfaceName = null;
-            // 创建主服务
-            if (tunnel.getType() != 2) { // 不是隧道转发服务才会存在网络接口
-                interfaceName = forward.getInterfaceName();
-            }
-
-            // 6. 更新入口节点的主服务限速配置（使用批量UpdateService接口）
-            GostUtil.UpdateService(inNode.getId(), serviceName, forward.getInPort(), speedId, forward.getRemoteAddr(), tunnel.getType(), tunnel, forward.getStrategy(), interfaceName);
+            // 由转发服务按当前实际线路和协议模式更新入口配置。
+            forwardService.updateForwardA(forward);
         }
     }
 }

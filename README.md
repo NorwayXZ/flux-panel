@@ -66,6 +66,20 @@ ALTER TABLE `tunnel` ADD COLUMN `node_path` LONGTEXT DEFAULT NULL AFTER `out_ip`
 ALTER TABLE `forward` ADD COLUMN `hop_ports` LONGTEXT DEFAULT NULL AFTER `out_port`;
 ```
 
+升级到线路组、主动健康检查和协议模式版本时，再执行：
+
+```bash
+mysql -u root -p gost < migrations/20260724_forward_routing.sql
+```
+
+本次升级增加：
+
+- 单线路、主备切换和低延迟选路
+- 候选线路与目标地址主动健康检查
+- TCP、UDP、TCP + UDP 入口协议
+- 端口段批量映射
+- 当前实际线路、线路延迟和健康目标状态
+
 生产升级前请同时备份数据库、Docker Compose 配置和当前镜像标签，以便回滚。
 
 ## 默认账号

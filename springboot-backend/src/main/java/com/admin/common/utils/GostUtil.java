@@ -34,30 +34,41 @@ public class GostUtil {
     }
 
     public static GostDto AddService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName) {
+        return AddService(node_id, name, in_port, limiter, remoteAddr, fow_type, tunnel, strategy, interfaceName, "tcp_udp", name);
+    }
+
+    public static GostDto AddService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String protocolMode, String chainName) {
         JSONArray services = new JSONArray();
-        String[] protocols = {"tcp", "udp"};
-        for (String protocol : protocols) {
-            JSONObject service = createServiceConfig(name, in_port, limiter, remoteAddr, protocol, fow_type, tunnel, strategy, interfaceName);
+        for (String protocol : protocolsForMode(protocolMode)) {
+            JSONObject service = createServiceConfig(name, in_port, limiter, remoteAddr, protocol, fow_type, tunnel, strategy, interfaceName, chainName);
             services.add(service);
         }
         return WebSocketServer.send_msg(node_id, services, "AddService");
     }
 
     public static GostDto UpdateService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName) {
+        return UpdateService(node_id, name, in_port, limiter, remoteAddr, fow_type, tunnel, strategy, interfaceName, "tcp_udp", name);
+    }
+
+    public static GostDto UpdateService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String protocolMode, String chainName) {
         JSONArray services = new JSONArray();
-        String[] protocols = {"tcp", "udp"};
-        for (String protocol : protocols) {
-            JSONObject service = createServiceConfig(name, in_port, limiter, remoteAddr, protocol, fow_type, tunnel, strategy, interfaceName);
+        for (String protocol : protocolsForMode(protocolMode)) {
+            JSONObject service = createServiceConfig(name, in_port, limiter, remoteAddr, protocol, fow_type, tunnel, strategy, interfaceName, chainName);
             services.add(service);
         }
         return WebSocketServer.send_msg(node_id, services, "UpdateService");
     }
 
     public static GostDto DeleteService(Long node_id, String name) {
+        return DeleteService(node_id, name, "tcp_udp");
+    }
+
+    public static GostDto DeleteService(Long node_id, String name, String protocolMode) {
         JSONObject data = new JSONObject();
         JSONArray services = new JSONArray();
-        services.add(name + "_tcp");
-        services.add(name + "_udp");
+        for (String protocol : protocolsForMode(protocolMode)) {
+            services.add(name + "_" + protocol);
+        }
         data.put("services", services);
         return WebSocketServer.send_msg(node_id, data, "DeleteService");
     }
@@ -119,19 +130,29 @@ public class GostUtil {
     }
 
     public static GostDto PauseService(Long node_id, String name) {
+        return PauseService(node_id, name, "tcp_udp");
+    }
+
+    public static GostDto PauseService(Long node_id, String name, String protocolMode) {
         JSONObject data = new JSONObject();
         JSONArray services = new JSONArray();
-        services.add(name + "_tcp");
-        services.add(name + "_udp");
+        for (String protocol : protocolsForMode(protocolMode)) {
+            services.add(name + "_" + protocol);
+        }
         data.put("services", services);
         return WebSocketServer.send_msg(node_id, data, "PauseService");
     }
 
     public static GostDto ResumeService(Long node_id, String name) {
+        return ResumeService(node_id, name, "tcp_udp");
+    }
+
+    public static GostDto ResumeService(Long node_id, String name, String protocolMode) {
         JSONObject data = new JSONObject();
         JSONArray services = new JSONArray();
-        services.add(name + "_tcp");
-        services.add(name + "_udp");
+        for (String protocol : protocolsForMode(protocolMode)) {
+            services.add(name + "_" + protocol);
+        }
         data.put("services", services);
         return WebSocketServer.send_msg(node_id, data, "ResumeService");
     }
@@ -231,7 +252,7 @@ public class GostUtil {
         return data;
     }
 
-    private static JSONObject createServiceConfig(String name, Integer in_port, Integer limiter, String remoteAddr, String protocol, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName) {
+    private static JSONObject createServiceConfig(String name, Integer in_port, Integer limiter, String remoteAddr, String protocol, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String chainName) {
         JSONObject service = new JSONObject();
         service.put("name", name + "_" + protocol);
         if (Objects.equals(protocol, "tcp")){
@@ -253,7 +274,7 @@ public class GostUtil {
         }
 
         // 配置处理器
-        JSONObject handler = createHandler(protocol, name, fow_type);
+        JSONObject handler = createHandler(protocol, chainName, fow_type);
         service.put("handler", handler);
 
         // 配置监听器
@@ -268,13 +289,13 @@ public class GostUtil {
         return service;
     }
 
-    private static JSONObject createHandler(String protocol, String name, Integer fow_type) {
+    private static JSONObject createHandler(String protocol, String chainName, Integer fow_type) {
         JSONObject handler = new JSONObject();
         handler.put("type", protocol);
 
         // 隧道转发需要添加链配置
         if (isTunnelForwarding(fow_type)) {
-            handler.put("chain", name + "_chains");
+            handler.put("chain", chainName + "_chains");
         }
 
         return handler;
@@ -325,6 +346,16 @@ public class GostUtil {
 
     private static boolean isTunnelForwarding(Integer fow_type) {
         return fow_type != null && fow_type != 1;
+    }
+
+    private static String[] protocolsForMode(String protocolMode) {
+        if (Objects.equals(protocolMode, "tcp")) {
+            return new String[]{"tcp"};
+        }
+        if (Objects.equals(protocolMode, "udp")) {
+            return new String[]{"udp"};
+        }
+        return new String[]{"tcp", "udp"};
     }
 
 }

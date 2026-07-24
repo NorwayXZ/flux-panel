@@ -1,6 +1,8 @@
 package com.admin.service.impl;
 
 import com.admin.common.dto.ForwardDto;
+import com.admin.common.dto.ForwardRouteDto;
+import com.admin.common.dto.ForwardTargetHealthDto;
 import com.admin.common.dto.ForwardUpdateDto;
 import com.admin.common.dto.ForwardWithTunnelDto;
 import com.admin.common.dto.GostDto;
@@ -14,6 +16,7 @@ import com.admin.mapper.ForwardMapper;
 import com.admin.service.*;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +24,7 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import javax.annotation.Resource;
 import java.util.*;
@@ -48,6 +52,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final int FORWARD_STATUS_PAUSED = 0;
     private static final int FORWARD_STATUS_ERROR = -1;
     private static final int TUNNEL_STATUS_ACTIVE = 1;
+    private static final String ROUTE_MODE_SINGLE = "single";
+    private static final String ROUTE_MODE_FAILOVER = "failover";
+    private static final String ROUTE_MODE_LATENCY = "latency";
+    private static final String ROUTE_STATUS_HEALTHY = "healthy";
+    private static final String ROUTE_STATUS_UNHEALTHY = "unhealthy";
+    private static final String PROTOCOL_MODE_TCP_UDP = "tcp_udp";
+    private static final int ROUTE_FAILURE_THRESHOLD = 2;
+    private static final double ROUTE_SWITCH_LATENCY_GAP_MS = 15.0;
+    private static final int MAX_BATCH_FORWARD_COUNT = 200;
 
     private static final long BYTES_TO_GB = 1024L * 1024L * 1024L;
 
@@ -67,22 +80,34 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     @Override
     public R createForward(ForwardDto forwardDto) {
+        if (forwardDto.getBatchEndPort() != null) {
+            return createBatchForwards(forwardDto);
+        }
+        return createSingleForward(forwardDto);
+    }
+
+    private R createSingleForward(ForwardDto forwardDto) {
         // 1. 获取当前用户信息
         UserInfo currentUser = getCurrentUserInfo();
 
-        // 2. 检查隧道是否存在和可用
-        Tunnel tunnel = validateTunnel(forwardDto.getTunnelId());
-        if (tunnel == null) {
-            return R.err("隧道不存在");
+        RouteValidationResult routeValidation = validateRouteTunnels(
+                forwardDto.getTunnelId(),
+                forwardDto.getRouteTunnelIds(),
+                forwardDto.getRouteMode()
+        );
+        if (routeValidation.isHasError()) {
+            return R.err(routeValidation.getErrorMessage());
         }
-        if (tunnel.getStatus() != TUNNEL_STATUS_ACTIVE) {
-            return R.err("隧道已禁用，无法创建转发");
-        }
+        Tunnel tunnel = routeValidation.getTunnels().get(0);
 
         // 3. 普通用户权限和限制检查
         UserPermissionResult permissionResult = checkUserPermissions(currentUser, tunnel, null);
         if (permissionResult.isHasError()) {
             return R.err(permissionResult.getErrorMessage());
+        }
+        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue());
+        if (candidatePermission.getCode() != 0) {
+            return candidatePermission;
         }
 
         // 4. 分配端口
@@ -90,9 +115,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (portAllocation.isHasError()) {
             return R.err(portAllocation.getErrorMessage());
         }
+        RouteAllocationResult routeAllocation = allocateRouteConfigs(
+                routeValidation.getTunnels(),
+                portAllocation,
+                null
+        );
+        if (routeAllocation.isHasError()) {
+            return R.err(routeAllocation.getErrorMessage());
+        }
 
         // 5. 创建并保存Forward对象
-        Forward forward = createForwardEntity(forwardDto, currentUser, portAllocation);
+        Forward forward = createForwardEntity(forwardDto, currentUser, portAllocation, routeAllocation.getRoutes());
         if (!this.save(forward)) {
             return R.err("端口转发创建失败");
         }
@@ -115,6 +148,65 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return R.ok();
     }
 
+    private R createBatchForwards(ForwardDto source) {
+        if (source.getInPort() == null) {
+            return R.err("批量创建需要填写入口起始端口");
+        }
+        if (source.getBatchEndPort() < source.getInPort()) {
+            return R.err("批量结束端口不能小于入口起始端口");
+        }
+        int count = source.getBatchEndPort() - source.getInPort() + 1;
+        if (count > MAX_BATCH_FORWARD_COUNT) {
+            return R.err("单次最多批量创建 " + MAX_BATCH_FORWARD_COUNT + " 条转发");
+        }
+
+        int sourceTargetPort = source.getTargetStartPort() != null
+                ? source.getTargetStartPort()
+                : extractPortFromAddress(source.getRemoteAddr().split(",")[0]);
+        if (sourceTargetPort < 1) {
+            return R.err("无法识别目标起始端口");
+        }
+        if (sourceTargetPort + count - 1 > 65535) {
+            return R.err("目标端口范围超过 65535");
+        }
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        int successCount = 0;
+        for (int offset = 0; offset < count; offset++) {
+            ForwardDto item = new ForwardDto();
+            BeanUtils.copyProperties(source, item);
+            int inPort = source.getInPort() + offset;
+            int targetPort = sourceTargetPort + offset;
+            item.setName(count == 1 ? source.getName() : source.getName() + "-" + inPort);
+            item.setInPort(inPort);
+            item.setRemoteAddr(replaceAddressPorts(source.getRemoteAddr(), targetPort));
+            item.setBatchEndPort(null);
+            item.setTargetStartPort(null);
+
+            R result = createSingleForward(item);
+            Map<String, Object> itemResult = new LinkedHashMap<>();
+            itemResult.put("inPort", inPort);
+            itemResult.put("targetPort", targetPort);
+            itemResult.put("success", result.getCode() == 0);
+            itemResult.put("message", result.getCode() == 0 ? "创建成功" : result.getMsg());
+            results.add(itemResult);
+            if (result.getCode() == 0) {
+                successCount++;
+            } else {
+                break;
+            }
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("successCount", successCount);
+        summary.put("requestedCount", count);
+        summary.put("results", results);
+        if (successCount == count) {
+            return R.ok(summary);
+        }
+        return R.err("已创建 " + successCount + " 条，第 " + (successCount + 1) + " 条失败：" + results.get(results.size() - 1).get("message"));
+    }
+
     @Override
     public R getAllForwards() {
         UserInfo currentUser = getCurrentUserInfo();
@@ -131,6 +223,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private void markForwardNodeOffline(ForwardWithTunnelDto forward) {
+        Forward persisted = this.getById(forward.getId());
+        if (persisted != null && persisted.getActiveTunnelId() != null
+                && !Objects.equals(persisted.getActiveTunnelId(), forward.getTunnelId())) {
+            Tunnel activeTunnel = validateTunnel(persisted.getActiveTunnelId());
+            if (activeTunnel != null) {
+                forward.setInIp(activeTunnel.getInIp());
+                forward.setOutIp(activeTunnel.getOutIp());
+                forward.setNodePath(activeTunnel.getNodePath());
+                forward.setInNodeId(activeTunnel.getInNodeId());
+                forward.setOutNodeId(activeTunnel.getOutNodeId());
+                forward.setType(activeTunnel.getType());
+                forward.setProtocol(activeTunnel.getProtocol());
+                Node inNode = nodeService.getById(activeTunnel.getInNodeId());
+                Node outNode = nodeService.getById(activeTunnel.getOutNodeId());
+                forward.setInNodeStatus(inNode == null ? 0 : inNode.getStatus());
+                forward.setOutNodeStatus(outNode == null ? 0 : outNode.getStatus());
+            }
+        }
         boolean nodeOffline = !Objects.equals(forward.getInNodeStatus(), 1);
         List<Long> nodePath = parseNodePath(forward.getNodePath(), forward.getInNodeId(), forward.getOutNodeId(), forward.getType());
         if (Objects.equals(forward.getType(), TUNNEL_TYPE_PORT_FORWARD)) {
@@ -151,7 +261,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             Node outNode = nodeService.getById(forward.getOutNodeId());
             forward.setOutNodeStatus(outNode == null ? 0 : outNode.getStatus());
         }
-        forward.setNodeOffline(nodeOffline);
+        boolean routeUnhealthy = persisted != null
+                && ROUTE_STATUS_UNHEALTHY.equals(getActiveRoute(persisted, getForwardRoutes(persisted)).getStatus());
+        forward.setNodeOffline(nodeOffline || routeUnhealthy);
     }
 
     private List<Long> parseNodePath(String nodePath, Long inNodeId, Long outNodeId, Integer type) {
@@ -180,14 +292,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err("转发不存在");
         }
 
-        // 3. 检查隧道是否存在和可用
-        Tunnel tunnel = validateTunnel(forwardUpdateDto.getTunnelId());
-        if (tunnel == null) {
-            return R.err("隧道不存在");
+        RouteValidationResult routeValidation = validateRouteTunnels(
+                forwardUpdateDto.getTunnelId(),
+                forwardUpdateDto.getRouteTunnelIds(),
+                forwardUpdateDto.getRouteMode()
+        );
+        if (routeValidation.isHasError()) {
+            return R.err(routeValidation.getErrorMessage());
         }
-        if (tunnel.getStatus() != TUNNEL_STATUS_ACTIVE) {
-            return R.err("隧道已禁用，无法更新转发");
-        }
+        Tunnel tunnel = routeValidation.getTunnels().get(0);
         boolean tunnelChanged = isTunnelChanged(existForward, forwardUpdateDto);
         // 4. 检查权限和限制
         UserPermissionResult permissionResult = null;
@@ -235,6 +348,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 }
             }
         }
+        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue());
+        if (candidatePermission.getCode() != 0) {
+            return candidatePermission;
+        }
 
         // 5. 获取UserTunnel（即使隧道未变化也需要获取，用于构建服务名称）
         UserTunnel userTunnel = null;
@@ -249,8 +366,29 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             userTunnel = getUserTunnel(existForward.getUserId(), tunnel.getId().intValue());
         }
 
+        Integer specifiedInPort = forwardUpdateDto.getInPort() == null
+                ? existForward.getInPort()
+                : forwardUpdateDto.getInPort();
+        PortAllocation primaryAllocation = allocatePorts(tunnel, specifiedInPort, forwardUpdateDto.getId());
+        if (primaryAllocation.isHasError()) {
+            return R.err(primaryAllocation.getErrorMessage());
+        }
+        RouteAllocationResult routeAllocation = allocateRouteConfigs(
+                routeValidation.getTunnels(),
+                primaryAllocation,
+                forwardUpdateDto.getId()
+        );
+        if (routeAllocation.isHasError()) {
+            return R.err(routeAllocation.getErrorMessage());
+        }
+
         // 6. 更新Forward对象
-        Forward updatedForward = updateForwardEntity(forwardUpdateDto, existForward, tunnel);
+        Forward updatedForward = updateForwardEntity(
+                forwardUpdateDto,
+                existForward,
+                primaryAllocation,
+                routeAllocation.getRoutes()
+        );
 
         // 7. 获取所需的节点信息
         NodeInfo nodeInfo = getRequiredNodes(tunnel);
@@ -258,15 +396,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err(nodeInfo.getErrorMessage());
         }
 
-        // 8. 调用Gost服务更新转发
-        R gostResult;
-        if (tunnelChanged) {
-            // 隧道变化时：先删除原配置，再创建新配置
-            gostResult = updateGostServicesWithTunnelChange(existForward, updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
-        } else {
-            // 隧道未变化时：直接更新配置
-            gostResult = updateGostServices(updatedForward, tunnel, permissionResult != null ? permissionResult.getLimiter() : null, nodeInfo, userTunnel);
-        }
+        // 8. 候选线路、协议或端口可能同时变化，统一替换整组配置
+        R gostResult = replaceGostServices(
+                existForward,
+                updatedForward,
+                tunnel,
+                permissionResult != null ? permissionResult.getLimiter() : null,
+                nodeInfo,
+                userTunnel
+        );
 
         if (gostResult.getCode() != 0) {
             return gostResult;
@@ -288,23 +426,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err("端口转发不存在");
         }
 
-        // 3. 获取隧道信息
-        Tunnel tunnel = validateTunnel(forward.getTunnelId());
+        List<ForwardRouteDto> forwardRoutes = getForwardRoutes(forward);
+        ForwardRouteDto activeRoute = getActiveRoute(forward, forwardRoutes);
+
+        // 3. 获取当前实际线路信息
+        Tunnel tunnel = validateTunnel(activeRoute.getTunnelId());
         if (tunnel == null) {
             return R.err("隧道不存在");
         }
 
         // 4. 权限检查（仅普通用户需要）
-        UserTunnel userTunnel = null;
+        UserTunnel activeUserTunnel = null;
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
-            userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-            if (userTunnel == null) {
+            activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
+            if (activeUserTunnel == null) {
                 return R.err("你没有该隧道权限");
             }
-        } else {
-            // 管理员删除用户记录时，需要获取对应的UserTunnel用于构建正确的服务名称
-            userTunnel = getUserTunnel(forward.getUserId(), tunnel.getId().intValue());
         }
+        UserTunnel serviceUserTunnel = getPrimaryUserTunnel(forward);
 
         // 5. 获取所需的节点信息
         NodeInfo nodeInfo = getRequiredNodes(tunnel);
@@ -313,7 +452,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 6. 调用Gost服务删除转发
-        R gostResult = deleteGostServices(forward, tunnel, nodeInfo, userTunnel);
+        R gostResult = deleteGostServices(forward, tunnel, nodeInfo, serviceUserTunnel);
         if (gostResult.getCode() != 0) {
             return gostResult;
         }
@@ -377,14 +516,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err("转发不存在");
         }
 
-        // 3. 获取隧道信息
-        Tunnel tunnel = validateTunnel(forward.getTunnelId());
+        List<ForwardRouteDto> forwardRoutes = getForwardRoutes(forward);
+        ForwardRouteDto activeRoute = getActiveRoute(forward, forwardRoutes);
+
+        // 3. 获取当前实际线路信息
+        Tunnel tunnel = validateTunnel(activeRoute.getTunnelId());
         if (tunnel == null) {
             return R.err("隧道不存在");
         }
 
         // 4. 恢复服务时需要额外检查
-        UserTunnel userTunnel = null;
+        UserTunnel activeUserTunnel = null;
         if (targetStatus == FORWARD_STATUS_ACTIVE) {
             if (tunnel.getStatus() != TUNNEL_STATUS_ACTIVE) {
                 return R.err("隧道已禁用，无法恢复服务");
@@ -397,30 +539,27 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     return flowCheckResult;
                 }
 
-                userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-                if (userTunnel == null) {
+                activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
+                if (activeUserTunnel == null) {
                     return R.err("你没有该隧道权限");
                 }
 
-                if (userTunnel.getStatus() != 1) {
+                if (activeUserTunnel.getStatus() != 1) {
                     return R.err("隧道被禁用");
                 }
             }
         }
 
         // 5. 权限检查（仅普通用户需要）
-        if (currentUser.getRoleId() != ADMIN_ROLE_ID && userTunnel == null) {
-            userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
-            if (userTunnel == null) {
+        if (currentUser.getRoleId() != ADMIN_ROLE_ID && activeUserTunnel == null) {
+            activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
+            if (activeUserTunnel == null) {
                 return R.err("你没有该隧道权限");
             }
         }
 
-        // 6. 确保获取UserTunnel用于构建服务名称（包括管理员用户）
-        if (userTunnel == null) {
-            // 通过forward记录获取原始的用户ID来查找UserTunnel
-            userTunnel = getUserTunnel(forward.getUserId(), tunnel.getId().intValue());
-        }
+        // 服务名由主线路的用户隧道关系决定，自动切线后也必须保持不变。
+        UserTunnel serviceUserTunnel = getPrimaryUserTunnel(forward);
 
         // 7. 获取所需的节点信息
         NodeInfo nodeInfo = getRequiredNodes(tunnel);
@@ -429,27 +568,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 8. 调用Gost服务
-        String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+        String serviceName = buildServiceName(forward.getId(), forward.getUserId(), serviceUserTunnel);
         GostDto gostResult;
+        List<ForwardRouteDto> routes = getForwardRoutes(forward);
 
         if ("PauseService".equals(gostMethod)) {
-            gostResult = GostUtil.PauseService(nodeInfo.getInNode().getId(), serviceName);
-
-            if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-                R remoteResult = pauseTunnelHopServices(nodeInfo, serviceName);
-                if (remoteResult.getCode() != 0) {
-                    return R.err(operation + "远端服务失败：" + remoteResult.getMsg());
-                }
-            }
+            gostResult = GostUtil.PauseService(
+                    nodeInfo.getInNode().getId(),
+                    serviceName,
+                    normalizeProtocolMode(forward.getProtocolMode())
+            );
+            changeRouteInfrastructureStatus(forward, routes, serviceName, true);
         } else {
-            gostResult = GostUtil.ResumeService(nodeInfo.getInNode().getId(), serviceName);
-
-            if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-                R remoteResult = resumeTunnelHopServices(nodeInfo, serviceName);
-                if (remoteResult.getCode() != 0) {
-                    return R.err(operation + "远端服务失败：" + remoteResult.getMsg());
-                }
-            }
+            gostResult = GostUtil.ResumeService(
+                    nodeInfo.getInNode().getId(),
+                    serviceName,
+                    normalizeProtocolMode(forward.getProtocolMode())
+            );
+            changeRouteInfrastructureStatus(forward, routes, serviceName, false);
         }
 
         if (!isGostOperationSuccess(gostResult)) {
@@ -475,11 +611,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return R.err("转发不存在");
         }
 
-        // 3. 获取隧道信息
-        Tunnel tunnel = validateTunnel(forward.getTunnelId());
+        List<ForwardRouteDto> forwardRoutes = getForwardRoutes(forward);
+        ForwardRouteDto activeRoute = getActiveRoute(forward, forwardRoutes);
+
+        // 3. 使用当前实际线路诊断
+        Tunnel tunnel = validateTunnel(activeRoute.getTunnelId());
         if (tunnel == null) {
             return R.err("隧道不存在");
         }
+        Forward diagnosticForward = forwardForRoute(forward, activeRoute);
 
         // 4. 获取入口节点信息
         Node inNode = nodeService.getById(tunnel.getInNodeId());
@@ -489,7 +629,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
 
         List<DiagnosisResult> results = new ArrayList<>();
-        String[] remoteAddresses = forward.getRemoteAddr().split(",");
+        String[] remoteAddresses = diagnosticForward.getRemoteAddr().split(",");
         // 6. 根据隧道类型执行不同的诊断策略
         if (tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD) {
             // 端口转发：入口节点直接TCP ping目标地址
@@ -509,7 +649,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             if (nodeInfo.isHasError()) {
                 return R.err(nodeInfo.getErrorMessage());
             }
-            List<Integer> hopPorts = getForwardHopPorts(forward, tunnel);
+            List<Integer> hopPorts = getForwardHopPorts(diagnosticForward, tunnel);
             List<Node> pathNodes = nodeInfo.getPathNodes();
             for (int i = 0; i < pathNodes.size() - 1; i++) {
                 Node fromNode = pathNodes.get(i);
@@ -540,6 +680,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         Map<String, Object> diagnosisReport = new HashMap<>();
         diagnosisReport.put("forwardId", id);
         diagnosisReport.put("forwardName", forward.getName());
+        diagnosisReport.put("activeTunnelId", activeRoute.getTunnelId());
+        diagnosisReport.put("activeTunnelName", activeRoute.getTunnelName());
         diagnosisReport.put("tunnelType", tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD ? "端口转发" : "隧道转发");
         diagnosisReport.put("results", results);
         diagnosisReport.put("timestamp", System.currentTimeMillis());
@@ -930,6 +1072,151 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return R.ok();
     }
 
+    private RouteValidationResult validateRouteTunnels(Integer primaryTunnelId, List<Integer> requestedTunnelIds, String requestedMode) {
+        LinkedHashSet<Integer> tunnelIds = new LinkedHashSet<>();
+        tunnelIds.add(primaryTunnelId);
+        if (requestedTunnelIds != null) {
+            tunnelIds.addAll(requestedTunnelIds);
+        }
+        if (ROUTE_MODE_SINGLE.equals(normalizeRouteMode(requestedMode, tunnelIds.size()))) {
+            tunnelIds = new LinkedHashSet<>(Collections.singletonList(primaryTunnelId));
+        }
+
+        List<Tunnel> tunnels = new ArrayList<>();
+        Long entryNodeId = null;
+        for (Integer tunnelId : tunnelIds) {
+            Tunnel tunnel = validateTunnel(tunnelId);
+            if (tunnel == null) {
+                return RouteValidationResult.error("隧道不存在：" + tunnelId);
+            }
+            if (!Objects.equals(tunnel.getStatus(), TUNNEL_STATUS_ACTIVE)) {
+                return RouteValidationResult.error("隧道已禁用：" + tunnel.getName());
+            }
+            if (entryNodeId == null) {
+                entryNodeId = tunnel.getInNodeId();
+            } else if (!Objects.equals(entryNodeId, tunnel.getInNodeId())) {
+                return RouteValidationResult.error("候选线路必须使用同一个入口节点");
+            }
+            tunnels.add(tunnel);
+        }
+        return RouteValidationResult.success(tunnels);
+    }
+
+    private R checkCandidateTunnelPermissions(UserInfo currentUser, List<Tunnel> tunnels, Integer primaryTunnelId) {
+        if (currentUser.getRoleId() == ADMIN_ROLE_ID) {
+            return R.ok();
+        }
+        for (Tunnel tunnel : tunnels) {
+            if (Objects.equals(tunnel.getId().intValue(), primaryTunnelId)) {
+                continue;
+            }
+            UserTunnel userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
+            if (userTunnel == null) {
+                return R.err("你没有候选隧道权限：" + tunnel.getName());
+            }
+            if (!Objects.equals(userTunnel.getStatus(), 1)) {
+                return R.err("候选隧道已禁用：" + tunnel.getName());
+            }
+            if (userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
+                return R.err("候选隧道权限已到期：" + tunnel.getName());
+            }
+        }
+        return R.ok();
+    }
+
+    private String normalizeRouteMode(String routeMode, int routeCount) {
+        if (routeCount <= 1) {
+            return ROUTE_MODE_SINGLE;
+        }
+        if (ROUTE_MODE_FAILOVER.equals(routeMode) || ROUTE_MODE_LATENCY.equals(routeMode)) {
+            return routeMode;
+        }
+        return ROUTE_MODE_FAILOVER;
+    }
+
+    private String normalizeProtocolMode(String protocolMode) {
+        if (Objects.equals(protocolMode, "tcp") || Objects.equals(protocolMode, "udp")) {
+            return protocolMode;
+        }
+        return PROTOCOL_MODE_TCP_UDP;
+    }
+
+    private RouteAllocationResult allocateRouteConfigs(List<Tunnel> tunnels, PortAllocation primaryAllocation, Long excludeForwardId) {
+        List<ForwardRouteDto> routes = new ArrayList<>();
+        Map<Long, Set<Integer>> reservedPorts = new HashMap<>();
+
+        Tunnel primaryTunnel = tunnels.get(0);
+        ForwardRouteDto primaryRoute = buildRouteDto(primaryTunnel, 0, primaryAllocation);
+        routes.add(primaryRoute);
+        reserveRoutePorts(primaryTunnel, primaryAllocation.getHopPorts(), reservedPorts);
+
+        for (int i = 1; i < tunnels.size(); i++) {
+            Tunnel tunnel = tunnels.get(i);
+            PortAllocation routePorts = allocateRoutePorts(tunnel, excludeForwardId, reservedPorts);
+            if (routePorts.isHasError()) {
+                return RouteAllocationResult.error(routePorts.getErrorMessage());
+            }
+            routes.add(buildRouteDto(tunnel, i, routePorts));
+            reserveRoutePorts(tunnel, routePorts.getHopPorts(), reservedPorts);
+        }
+        return RouteAllocationResult.success(routes);
+    }
+
+    private ForwardRouteDto buildRouteDto(Tunnel tunnel, int priority, PortAllocation allocation) {
+        ForwardRouteDto route = new ForwardRouteDto();
+        route.setTunnelId(tunnel.getId().intValue());
+        route.setTunnelName(tunnel.getName());
+        route.setPriority(priority);
+        route.setOutPort(allocation.getOutPort());
+        route.setHopPorts(TunnelRouteUtil.joinHopPorts(allocation.getHopPorts()));
+        return route;
+    }
+
+    private PortAllocation allocateRoutePorts(Tunnel tunnel, Long excludeForwardId, Map<Long, Set<Integer>> reservedPorts) {
+        Integer outPort = null;
+        List<Integer> hopPorts = new ArrayList<>();
+        if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
+            List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
+            if (nodePath.size() < 2) {
+                return PortAllocation.error("隧道节点路径无效：" + tunnel.getName());
+            }
+            for (int i = 1; i < nodePath.size(); i++) {
+                Long nodeId = nodePath.get(i);
+                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(nodeId));
+                if (hopPort == null) {
+                    return PortAllocation.error("节点 " + nodeId + " 端口已满，无法为线路 " + tunnel.getName() + " 分配端口");
+                }
+                hopPorts.add(hopPort);
+                outPort = hopPort;
+                reservedPorts.computeIfAbsent(nodeId, key -> new HashSet<>()).add(hopPort);
+            }
+        }
+        return PortAllocation.success(null, outPort, hopPorts);
+    }
+
+    private void reserveRoutePorts(Tunnel tunnel, List<Integer> hopPorts, Map<Long, Set<Integer>> reservedPorts) {
+        List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
+        for (int i = 1; i < nodePath.size() && i - 1 < hopPorts.size(); i++) {
+            reservedPorts.computeIfAbsent(nodePath.get(i), key -> new HashSet<>()).add(hopPorts.get(i - 1));
+        }
+    }
+
+    private String replaceAddressPorts(String remoteAddr, int targetPort) {
+        return Arrays.stream(remoteAddr.split("[,\\n]"))
+                .map(String::trim)
+                .filter(address -> !address.isEmpty())
+                .map(address -> {
+                    String host = extractIpFromAddress(address);
+                    if (host == null) {
+                        return address;
+                    }
+                    return host.contains(":")
+                            ? "[" + host + "]:" + targetPort
+                            : host + ":" + targetPort;
+                })
+                .collect(Collectors.joining(","));
+    }
+
     /**
      * 分配端口
      */
@@ -980,7 +1267,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 创建Forward实体对象
      */
-    private Forward createForwardEntity(ForwardDto forwardDto, UserInfo currentUser, PortAllocation portAllocation) {
+    private Forward createForwardEntity(ForwardDto forwardDto, UserInfo currentUser, PortAllocation portAllocation, List<ForwardRouteDto> routes) {
         Forward forward = new Forward();
         // 先复制DTO的属性，再设置其他属性，避免被覆盖
         BeanUtils.copyProperties(forwardDto, forward);
@@ -988,6 +1275,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setInPort(portAllocation.getInPort());
         forward.setOutPort(portAllocation.getOutPort());
         forward.setHopPorts(TunnelRouteUtil.joinHopPorts(portAllocation.getHopPorts()));
+        forward.setRouteMode(normalizeRouteMode(forwardDto.getRouteMode(), routes.size()));
+        forward.setRouteConfig(JSON.toJSONString(routes));
+        forward.setActiveTunnelId(routes.get(0).getTunnelId());
+        forward.setProtocolMode(normalizeProtocolMode(forwardDto.getProtocolMode()));
         forward.setUserId(currentUser.getUserId());
         forward.setUserName(currentUser.getUserName());
         forward.setCreatedTime(System.currentTimeMillis());
@@ -998,37 +1289,18 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 更新Forward实体对象
      */
-    private Forward updateForwardEntity(ForwardUpdateDto forwardUpdateDto, Forward existForward, Tunnel tunnel) {
+    private Forward updateForwardEntity(ForwardUpdateDto forwardUpdateDto, Forward existForward, PortAllocation portAllocation, List<ForwardRouteDto> routes) {
         Forward forward = new Forward();
         BeanUtils.copyProperties(forwardUpdateDto, forward);
-
-        // 处理端口分配逻辑
-        boolean tunnelChanged = !existForward.getTunnelId().equals(forwardUpdateDto.getTunnelId());
-        boolean inPortChanged = forwardUpdateDto.getInPort() != null &&
-                !Objects.equals(forwardUpdateDto.getInPort(), existForward.getInPort());
-
-        if (tunnelChanged || inPortChanged) {
-            // 隧道变化或入口端口变化时需要重新分配
-            Integer specifiedInPort = forwardUpdateDto.getInPort();
-            // 如果没有指定新端口但隧道未变化，保持原端口
-            if (specifiedInPort == null && !tunnelChanged) {
-                specifiedInPort = existForward.getInPort();
-            }
-
-            PortAllocation portAllocation = allocatePorts(tunnel, specifiedInPort, forwardUpdateDto.getId());
-            if (portAllocation.isHasError()) {
-                throw new RuntimeException(portAllocation.getErrorMessage());
-            }
-            forward.setInPort(portAllocation.getInPort());
-            forward.setOutPort(portAllocation.getOutPort());
-            forward.setHopPorts(TunnelRouteUtil.joinHopPorts(portAllocation.getHopPorts()));
-        } else {
-            // 隧道和端口都未变化，保持原端口
-            forward.setInPort(existForward.getInPort());
-            forward.setOutPort(existForward.getOutPort());
-            forward.setHopPorts(existForward.getHopPorts());
-        }
-
+        forward.setInPort(portAllocation.getInPort());
+        forward.setOutPort(portAllocation.getOutPort());
+        forward.setHopPorts(TunnelRouteUtil.joinHopPorts(portAllocation.getHopPorts()));
+        forward.setRouteMode(normalizeRouteMode(forwardUpdateDto.getRouteMode(), routes.size()));
+        forward.setRouteConfig(JSON.toJSONString(routes));
+        forward.setActiveTunnelId(routes.get(0).getTunnelId());
+        forward.setProtocolMode(normalizeProtocolMode(forwardUpdateDto.getProtocolMode()));
+        forward.setTargetHealth(existForward.getTargetHealth());
+        forward.setLastHealthCheck(existForward.getLastHealthCheck());
         forward.setUpdatedTime(System.currentTimeMillis());
         return forward;
     }
@@ -1038,35 +1310,27 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private R createGostServices(Forward forward, Tunnel tunnel, Integer limiter, NodeInfo nodeInfo, UserTunnel userTunnel) {
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+        List<ForwardRouteDto> routes = getForwardRoutes(forward);
 
-        // 隧道转发需要创建链和远程服务
-        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-            List<Integer> hopPorts = getForwardHopPorts(forward, tunnel);
-            R chainResult = createChainService(nodeInfo, serviceName, hopPorts, tunnel.getProtocol(), tunnel.getInterfaceName());
-            if (chainResult.getCode() != 0) {
-                GostUtil.DeleteChains(nodeInfo.getInNode().getId(), serviceName);
-                return chainResult;
+        for (ForwardRouteDto route : routes) {
+            Tunnel routeTunnel = validateTunnel(route.getTunnelId());
+            if (routeTunnel == null) {
+                deleteRouteInfrastructureBestEffort(forward, routes, serviceName);
+                return R.err("候选隧道不存在：" + route.getTunnelId());
             }
-
-            R hopResult = createTunnelHopServices(nodeInfo, serviceName, forward, tunnel.getProtocol(), hopPorts);
-            if (hopResult.getCode() != 0) {
-                GostUtil.DeleteChains(nodeInfo.getInNode().getId(), serviceName);
-                deleteTunnelHopServices(nodeInfo, serviceName);
-                return hopResult;
+            R routeResult = createRouteInfrastructure(forward, route, routeTunnel, serviceName);
+            if (routeResult.getCode() != 0) {
+                deleteRouteInfrastructureBestEffort(forward, routes, serviceName);
+                return routeResult;
             }
         }
 
-        String interfaceName = null;
-        // 创建主服务
-        if (tunnel.getType() != TUNNEL_TYPE_TUNNEL_FORWARD) { // 不是隧道转发服务才会存在网络接口
-            interfaceName = forward.getInterfaceName();
-        }
-
-
-        R serviceResult = createMainService(nodeInfo.getInNode(), serviceName, forward, limiter, tunnel.getType(), tunnel, forward.getStrategy(), interfaceName);
+        ForwardRouteDto activeRoute = getActiveRoute(forward, routes);
+        Tunnel activeTunnel = validateTunnel(activeRoute.getTunnelId());
+        Node activeInNode = nodeService.getById(activeTunnel.getInNodeId());
+        R serviceResult = createMainService(activeInNode, serviceName, forward, activeRoute, limiter, activeTunnel);
         if (serviceResult.getCode() != 0) {
-            GostUtil.DeleteChains(nodeInfo.getInNode().getId(), serviceName);
-            deleteTunnelHopServices(nodeInfo, serviceName);
+            deleteRouteInfrastructureBestEffort(forward, routes, serviceName);
             return serviceResult;
         }
         return R.ok();
@@ -1077,35 +1341,36 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private R updateGostServices(Forward forward, Tunnel tunnel, Integer limiter, NodeInfo nodeInfo, UserTunnel userTunnel) {
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
-
-        // 隧道转发需要更新链和远程服务
-        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-            List<Integer> hopPorts = getForwardHopPorts(forward, tunnel);
-            R chainResult = updateChainService(nodeInfo, serviceName, hopPorts, tunnel.getProtocol(), tunnel.getInterfaceName());
-            if (chainResult.getCode() != 0) {
-                updateForwardStatusToError(forward);
-                return chainResult;
-            }
-
-            R hopResult = updateTunnelHopServices(nodeInfo, serviceName, forward, tunnel.getProtocol(), hopPorts);
-            if (hopResult.getCode() != 0) {
-                updateForwardStatusToError(forward);
-                return hopResult;
-            }
+        List<ForwardRouteDto> routes = getForwardRoutes(forward);
+        ForwardRouteDto activeRoute = getActiveRoute(forward, routes);
+        Tunnel activeTunnel = validateTunnel(activeRoute.getTunnelId());
+        if (activeTunnel == null) {
+            return R.err("当前线路不存在");
         }
-        String interfaceName = null;
-        // 创建主服务
-        if (tunnel.getType() != TUNNEL_TYPE_TUNNEL_FORWARD) { // 不是隧道转发服务才会存在网络接口
-            interfaceName = forward.getInterfaceName();
-        }
-        // 更新主服务
-        R serviceResult = updateMainService(nodeInfo.getInNode(), serviceName, forward, limiter, tunnel.getType(), tunnel, forward.getStrategy(), interfaceName);
+        Node activeInNode = nodeService.getById(activeTunnel.getInNodeId());
+        R serviceResult = updateMainService(activeInNode, serviceName, forward, activeRoute, limiter, activeTunnel);
         if (serviceResult.getCode() != 0) {
             updateForwardStatusToError(forward);
             return serviceResult;
         }
 
         return R.ok();
+    }
+
+    private R replaceGostServices(Forward oldForward, Forward updatedForward, Tunnel newTunnel, Integer limiter, NodeInfo nodeInfo, UserTunnel userTunnel) {
+        deleteForwardInfrastructureBestEffort(oldForward);
+        R createResult = createGostServices(updatedForward, newTunnel, limiter, nodeInfo, userTunnel);
+        if (createResult.getCode() != 0) {
+            log.warn("创建新线路组失败，尝试恢复原转发 {}：{}", oldForward.getId(), createResult.getMsg());
+            Tunnel oldTunnel = validateTunnel(oldForward.getTunnelId());
+            if (oldTunnel != null) {
+                NodeInfo oldNodeInfo = getRequiredNodes(oldTunnel);
+                UserTunnel oldUserTunnel = getUserTunnel(oldForward.getUserId(), oldTunnel.getId().intValue());
+                Integer oldLimiter = oldUserTunnel == null ? null : oldUserTunnel.getSpeedId();
+                createGostServices(oldForward, oldTunnel, oldLimiter, oldNodeInfo, oldUserTunnel);
+            }
+        }
+        return createResult;
     }
 
     /**
@@ -1186,24 +1451,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
 
         // 删除主服务
-        GostDto serviceResult = GostUtil.DeleteService(nodeInfo.getInNode().getId(), serviceName);
+        GostDto serviceResult = GostUtil.DeleteService(nodeInfo.getInNode().getId(), serviceName, PROTOCOL_MODE_TCP_UDP);
         if (!isGostOperationSuccess(serviceResult)) {
-            return R.err(gostMessage(serviceResult));
+            log.warn("删除转发 {} 的入口服务失败：{}", forward.getId(), gostMessage(serviceResult));
         }
 
-        // 隧道转发需要删除链和远程服务
-        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-            GostDto chainResult = GostUtil.DeleteChains(nodeInfo.getInNode().getId(), serviceName);
-            if (!isGostOperationSuccess(chainResult)) {
-                return R.err(gostMessage(chainResult));
-            }
-
-            R hopDeleteResult = deleteTunnelHopServices(nodeInfo, serviceName);
-            if (hopDeleteResult.getCode() != 0) {
-                return hopDeleteResult;
-            }
-        }
-
+        deleteRouteInfrastructureBestEffort(forward, getForwardRoutes(forward), serviceName);
         return R.ok();
     }
 
@@ -1234,6 +1487,28 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private R createMainService(Node inNode, String serviceName, Forward forward, Integer limiter, Integer tunnelType, Tunnel tunnel, String strategy, String interfaceName) {
         GostDto result = GostUtil.AddService(inNode.getId(), serviceName, forward.getInPort(), limiter, forward.getRemoteAddr(), tunnelType, tunnel, strategy, interfaceName);
+        return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
+    private R createMainService(Node inNode, String serviceName, Forward forward, ForwardRouteDto route, Integer limiter, Tunnel tunnel) {
+        String interfaceName = Objects.equals(tunnel.getType(), TUNNEL_TYPE_PORT_FORWARD)
+                ? forward.getInterfaceName()
+                : null;
+        String remoteAddr = effectiveRemoteAddr(forward, route);
+        String chainName = routeResourceName(forward, serviceName, route);
+        GostDto result = GostUtil.AddService(
+                inNode.getId(),
+                serviceName,
+                forward.getInPort(),
+                limiter,
+                remoteAddr,
+                tunnel.getType(),
+                tunnel,
+                forward.getStrategy(),
+                interfaceName,
+                normalizeProtocolMode(forward.getProtocolMode()),
+                chainName
+        );
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
     }
 
@@ -1280,6 +1555,135 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
+    private R updateMainService(Node inNode, String serviceName, Forward forward, ForwardRouteDto route, Integer limiter, Tunnel tunnel) {
+        GostUtil.DeleteService(inNode.getId(), serviceName, PROTOCOL_MODE_TCP_UDP);
+        return createMainService(inNode, serviceName, forward, route, limiter, tunnel);
+    }
+
+    private R createRouteInfrastructure(Forward forward, ForwardRouteDto route, Tunnel tunnel, String mainServiceName) {
+        if (!Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
+            return R.ok();
+        }
+        NodeInfo routeNodeInfo = getRequiredNodes(tunnel);
+        if (routeNodeInfo.isHasError()) {
+            return R.err(routeNodeInfo.getErrorMessage());
+        }
+        Forward routeForward = forwardForRoute(forward, route);
+        String routeServiceName = routeResourceName(forward, mainServiceName, route);
+        List<Integer> hopPorts = getForwardHopPorts(routeForward, tunnel);
+
+        R chainResult = createChainService(
+                routeNodeInfo,
+                routeServiceName,
+                hopPorts,
+                tunnel.getProtocol(),
+                tunnel.getInterfaceName()
+        );
+        if (chainResult.getCode() != 0) {
+            return chainResult;
+        }
+        R hopResult = createTunnelHopServices(
+                routeNodeInfo,
+                routeServiceName,
+                routeForward,
+                tunnel.getProtocol(),
+                hopPorts
+        );
+        if (hopResult.getCode() != 0) {
+            GostUtil.DeleteChains(routeNodeInfo.getInNode().getId(), routeServiceName);
+            deleteTunnelHopServices(routeNodeInfo, routeServiceName);
+        }
+        return hopResult;
+    }
+
+    private Forward forwardForRoute(Forward forward, ForwardRouteDto route) {
+        Forward routeForward = new Forward();
+        BeanUtils.copyProperties(forward, routeForward);
+        routeForward.setTunnelId(route.getTunnelId());
+        routeForward.setOutPort(route.getOutPort());
+        routeForward.setHopPorts(route.getHopPorts());
+        routeForward.setRemoteAddr(effectiveRemoteAddr(forward, route));
+        return routeForward;
+    }
+
+    private String effectiveRemoteAddr(Forward forward, ForwardRouteDto route) {
+        if (route.getHealthyTargets() != null && !route.getHealthyTargets().isEmpty()) {
+            return String.join(",", route.getHealthyTargets());
+        }
+        return forward.getRemoteAddr();
+    }
+
+    private String routeResourceName(Forward forward, String mainServiceName, ForwardRouteDto route) {
+        if (forward.getRouteConfig() == null
+                || forward.getRouteConfig().trim().isEmpty()
+                || ROUTE_MODE_SINGLE.equals(forward.getRouteMode())) {
+            return mainServiceName;
+        }
+        return mainServiceName + "r" + route.getTunnelId();
+    }
+
+    private void deleteForwardInfrastructureBestEffort(Forward forward) {
+        Tunnel primaryTunnel = validateTunnel(forward.getTunnelId());
+        if (primaryTunnel == null) {
+            return;
+        }
+        UserTunnel userTunnel = getUserTunnel(forward.getUserId(), primaryTunnel.getId().intValue());
+        String mainServiceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+        Node inNode = nodeService.getById(primaryTunnel.getInNodeId());
+        if (inNode != null) {
+            GostUtil.DeleteService(inNode.getId(), mainServiceName, PROTOCOL_MODE_TCP_UDP);
+        }
+        deleteRouteInfrastructureBestEffort(forward, getForwardRoutes(forward), mainServiceName);
+    }
+
+    private void deleteRouteInfrastructureBestEffort(Forward forward, List<ForwardRouteDto> routes, String mainServiceName) {
+        for (ForwardRouteDto route : routes) {
+            Tunnel tunnel = validateTunnel(route.getTunnelId());
+            if (tunnel == null || !Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
+                continue;
+            }
+            String routeServiceName = routeResourceName(forward, mainServiceName, route);
+            NodeInfo nodeInfo = getRequiredNodes(tunnel);
+            if (!nodeInfo.isHasError()) {
+                GostUtil.DeleteChains(nodeInfo.getInNode().getId(), routeServiceName);
+                deleteTunnelHopServices(nodeInfo, routeServiceName);
+            }
+        }
+    }
+
+    private List<ForwardRouteDto> getForwardRoutes(Forward forward) {
+        if (forward.getRouteConfig() != null && !forward.getRouteConfig().trim().isEmpty()) {
+            try {
+                List<ForwardRouteDto> routes = JSON.parseArray(forward.getRouteConfig(), ForwardRouteDto.class);
+                if (routes != null && !routes.isEmpty()) {
+                    routes.sort(Comparator.comparing(route -> route.getPriority() == null ? Integer.MAX_VALUE : route.getPriority()));
+                    return routes;
+                }
+            } catch (Exception e) {
+                log.warn("解析转发 {} 的线路组失败：{}", forward.getId(), e.getMessage());
+            }
+        }
+
+        ForwardRouteDto route = new ForwardRouteDto();
+        route.setTunnelId(forward.getTunnelId());
+        Tunnel tunnel = validateTunnel(forward.getTunnelId());
+        route.setTunnelName(tunnel == null ? "隧道 #" + forward.getTunnelId() : tunnel.getName());
+        route.setPriority(0);
+        route.setOutPort(forward.getOutPort());
+        route.setHopPorts(forward.getHopPorts());
+        return new ArrayList<>(Collections.singletonList(route));
+    }
+
+    private ForwardRouteDto getActiveRoute(Forward forward, List<ForwardRouteDto> routes) {
+        Integer activeTunnelId = forward.getActiveTunnelId() == null
+                ? forward.getTunnelId()
+                : forward.getActiveTunnelId();
+        return routes.stream()
+                .filter(route -> Objects.equals(route.getTunnelId(), activeTunnelId))
+                .findFirst()
+                .orElse(routes.get(0));
     }
 
     private List<String> buildHopAddresses(NodeInfo nodeInfo, List<Integer> hopPorts) {
@@ -1366,6 +1770,309 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return R.ok();
     }
 
+    private void changeRouteInfrastructureStatus(Forward forward, List<ForwardRouteDto> routes, String mainServiceName, boolean pause) {
+        for (ForwardRouteDto route : routes) {
+            Tunnel routeTunnel = validateTunnel(route.getTunnelId());
+            if (routeTunnel == null || !Objects.equals(routeTunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
+                continue;
+            }
+            NodeInfo routeNodes = getRequiredNodes(routeTunnel);
+            if (routeNodes.isHasError()) {
+                continue;
+            }
+            String routeServiceName = routeResourceName(forward, mainServiceName, route);
+            if (pause) {
+                pauseTunnelHopServices(routeNodes, routeServiceName);
+            } else {
+                resumeTunnelHopServices(routeNodes, routeServiceName);
+            }
+        }
+    }
+
+    @Scheduled(initialDelay = 30000L, fixedDelay = 60000L)
+    public void checkForwardRouteHealth() {
+        List<Forward> activeForwards = this.list(new QueryWrapper<Forward>().eq("status", FORWARD_STATUS_ACTIVE));
+        for (Forward forward : activeForwards) {
+            try {
+                checkSingleForwardRouteHealth(forward);
+            } catch (Exception e) {
+                log.warn("转发 {} 健康检查失败：{}", forward.getId(), e.getMessage());
+            }
+        }
+    }
+
+    private void checkSingleForwardRouteHealth(Forward forward) {
+        List<ForwardRouteDto> routes = getForwardRoutes(forward);
+        if (routes.isEmpty()) {
+            return;
+        }
+
+        ForwardRouteDto previousActive = getActiveRoute(forward, routes);
+        List<String> previousActiveTargets = previousActive.getHealthyTargets() == null
+                ? Collections.emptyList()
+                : new ArrayList<>(previousActive.getHealthyTargets());
+        Map<Integer, List<ForwardTargetHealthDto>> targetHealthByRoute = new HashMap<>();
+        for (ForwardRouteDto route : routes) {
+            Tunnel tunnel = validateTunnel(route.getTunnelId());
+            if (tunnel == null) {
+                markRouteProbeFailure(route, "隧道不存在");
+                continue;
+            }
+            RouteProbeResult probe = probeRoute(forward, route, tunnel);
+            applyRouteProbeResult(route, probe);
+            targetHealthByRoute.put(route.getTunnelId(), probe.getTargetHealth());
+            updateRouteTargetPool(forward, route, tunnel);
+        }
+
+        ForwardRouteDto selected = selectActiveRoute(forward, routes, previousActive);
+        boolean routeChanged = !Objects.equals(previousActive.getTunnelId(), selected.getTunnelId());
+        Tunnel selectedTunnel = validateTunnel(selected.getTunnelId());
+        boolean directTargetPoolChanged = selectedTunnel != null
+                && Objects.equals(selectedTunnel.getType(), TUNNEL_TYPE_PORT_FORWARD)
+                && Objects.equals(previousActive.getTunnelId(), selected.getTunnelId())
+                && !Objects.equals(previousActiveTargets, selected.getHealthyTargets());
+
+        if (routeChanged || directTargetPoolChanged) {
+            R switchResult = switchActiveRoute(forward, selected);
+            if (switchResult.getCode() != 0) {
+                markRouteProbeFailure(selected, "切换失败：" + switchResult.getMsg());
+                selected = previousActive;
+            }
+        }
+
+        forward.setActiveTunnelId(selected.getTunnelId());
+        forward.setRouteConfig(JSON.toJSONString(routes));
+        forward.setTargetHealth(JSON.toJSONString(
+                targetHealthByRoute.getOrDefault(selected.getTunnelId(), Collections.emptyList())
+        ));
+        forward.setLastHealthCheck(System.currentTimeMillis());
+        forward.setUpdatedTime(System.currentTimeMillis());
+        this.updateById(forward);
+    }
+
+    private RouteProbeResult probeRoute(Forward forward, ForwardRouteDto route, Tunnel tunnel) {
+        NodeInfo nodeInfo = getRequiredNodes(tunnel);
+        if (nodeInfo.isHasError()) {
+            return RouteProbeResult.failure(nodeInfo.getErrorMessage());
+        }
+        for (Node node : nodeInfo.getPathNodes()) {
+            if (!Objects.equals(node.getStatus(), 1)) {
+                return RouteProbeResult.failure("节点离线：" + node.getName());
+            }
+        }
+
+        double totalLatency = 0;
+        double totalPacketLoss = 0;
+        int measurementCount = 0;
+        if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
+            List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(route.getHopPorts());
+            List<Node> pathNodes = nodeInfo.getPathNodes();
+            if (hopPorts.size() != pathNodes.size() - 1) {
+                return RouteProbeResult.failure("线路端口数据不完整");
+            }
+            for (int i = 0; i < pathNodes.size() - 1; i++) {
+                DiagnosisResult segment = performTcpPingProbe(
+                        pathNodes.get(i),
+                        pathNodes.get(i + 1).getServerIp(),
+                        hopPorts.get(i),
+                        pathNodes.get(i).getName() + "->" + pathNodes.get(i + 1).getName()
+                );
+                if (!segment.isSuccess()) {
+                    return RouteProbeResult.failure(segment.getMessage());
+                }
+                totalLatency += segment.getAverageTime();
+                totalPacketLoss += segment.getPacketLoss();
+                measurementCount++;
+            }
+        }
+
+        List<ForwardTargetHealthDto> targetHealth = new ArrayList<>();
+        List<String> healthyTargets = new ArrayList<>();
+        double bestTargetLatency = Double.MAX_VALUE;
+        double bestTargetLoss = 0;
+        Node targetProbeNode = nodeInfo.getOutNode();
+        for (String address : splitRemoteAddresses(forward.getRemoteAddr())) {
+            String targetIp = extractIpFromAddress(address);
+            int targetPort = extractPortFromAddress(address);
+            DiagnosisResult targetResult = performTcpPingProbe(
+                    targetProbeNode,
+                    targetIp,
+                    targetPort,
+                    "目标探测"
+            );
+            ForwardTargetHealthDto health = new ForwardTargetHealthDto();
+            health.setAddress(address);
+            health.setStatus(targetResult.isSuccess() ? ROUTE_STATUS_HEALTHY : ROUTE_STATUS_UNHEALTHY);
+            health.setLatency(targetResult.getAverageTime());
+            health.setPacketLoss(targetResult.getPacketLoss());
+            health.setFailCount(targetResult.isSuccess() ? 0 : 1);
+            health.setLastCheckTime(System.currentTimeMillis());
+            health.setMessage(targetResult.getMessage());
+            targetHealth.add(health);
+            if (targetResult.isSuccess()) {
+                healthyTargets.add(address);
+                if (targetResult.getAverageTime() < bestTargetLatency) {
+                    bestTargetLatency = targetResult.getAverageTime();
+                    bestTargetLoss = targetResult.getPacketLoss();
+                }
+            }
+        }
+        if (healthyTargets.isEmpty()) {
+            return RouteProbeResult.failure("所有目标地址均不可用", targetHealth);
+        }
+
+        totalLatency += bestTargetLatency;
+        totalPacketLoss += bestTargetLoss;
+        measurementCount++;
+        return RouteProbeResult.success(
+                totalLatency,
+                measurementCount == 0 ? 0 : totalPacketLoss / measurementCount,
+                healthyTargets,
+                targetHealth
+        );
+    }
+
+    private DiagnosisResult performTcpPingProbe(Node node, String targetIp, int port, String description) {
+        if (node == null || targetIp == null || port < 1) {
+            DiagnosisResult invalid = new DiagnosisResult();
+            invalid.setSuccess(false);
+            invalid.setMessage("探测参数无效");
+            invalid.setAverageTime(-1);
+            invalid.setPacketLoss(100);
+            return invalid;
+        }
+        try {
+            JSONObject data = new JSONObject();
+            data.put("ip", targetIp);
+            data.put("port", port);
+            data.put("count", 1);
+            data.put("timeout", 2000);
+            GostDto response = WebSocketServer.send_msg(node.getId(), data, "TcpPing");
+            if (response != null && GOST_SUCCESS_MSG.equals(response.getMsg()) && response.getData() instanceof JSONObject) {
+                JSONObject resultData = (JSONObject) response.getData();
+                DiagnosisResult result = new DiagnosisResult();
+                result.setSuccess(resultData.getBooleanValue("success"));
+                result.setMessage(result.isSuccess() ? "连接成功" : resultData.getString("errorMessage"));
+                result.setAverageTime(resultData.getDoubleValue("averageTime"));
+                result.setPacketLoss(resultData.getDoubleValue("packetLoss"));
+                result.setDescription(description);
+                return result;
+            }
+            DiagnosisResult failed = new DiagnosisResult();
+            failed.setSuccess(false);
+            failed.setMessage(gostMessage(response));
+            failed.setAverageTime(-1);
+            failed.setPacketLoss(100);
+            failed.setDescription(description);
+            return failed;
+        } catch (Exception e) {
+            DiagnosisResult failed = new DiagnosisResult();
+            failed.setSuccess(false);
+            failed.setMessage(e.getMessage());
+            failed.setAverageTime(-1);
+            failed.setPacketLoss(100);
+            failed.setDescription(description);
+            return failed;
+        }
+    }
+
+    private void applyRouteProbeResult(ForwardRouteDto route, RouteProbeResult probe) {
+        route.setLastCheckTime(System.currentTimeMillis());
+        route.setMessage(probe.getMessage());
+        if (probe.isSuccess()) {
+            route.setStatus(ROUTE_STATUS_HEALTHY);
+            route.setLatency(probe.getLatency());
+            route.setPacketLoss(probe.getPacketLoss());
+            route.setFailCount(0);
+            route.setHealthyTargets(probe.getHealthyTargets());
+            return;
+        }
+        int failCount = (route.getFailCount() == null ? 0 : route.getFailCount()) + 1;
+        route.setFailCount(failCount);
+        if (failCount >= ROUTE_FAILURE_THRESHOLD) {
+            route.setStatus(ROUTE_STATUS_UNHEALTHY);
+            route.setLatency(null);
+            route.setPacketLoss(100.0);
+        }
+    }
+
+    private void markRouteProbeFailure(ForwardRouteDto route, String message) {
+        applyRouteProbeResult(route, RouteProbeResult.failure(message));
+    }
+
+    private ForwardRouteDto selectActiveRoute(Forward forward, List<ForwardRouteDto> routes, ForwardRouteDto current) {
+        List<ForwardRouteDto> healthy = routes.stream()
+                .filter(route -> ROUTE_STATUS_HEALTHY.equals(route.getStatus()))
+                .collect(Collectors.toList());
+        if (healthy.isEmpty() || ROUTE_MODE_SINGLE.equals(normalizeRouteMode(forward.getRouteMode(), routes.size()))) {
+            return current;
+        }
+        if (ROUTE_MODE_FAILOVER.equals(forward.getRouteMode())) {
+            return healthy.stream()
+                    .min(Comparator.comparing(route -> route.getPriority() == null ? Integer.MAX_VALUE : route.getPriority()))
+                    .orElse(current);
+        }
+        ForwardRouteDto best = healthy.stream()
+                .filter(route -> route.getLatency() != null)
+                .min(Comparator.comparing(ForwardRouteDto::getLatency))
+                .orElse(current);
+        if (!ROUTE_STATUS_HEALTHY.equals(current.getStatus()) || current.getLatency() == null) {
+            return best;
+        }
+        return best.getLatency() + ROUTE_SWITCH_LATENCY_GAP_MS < current.getLatency() ? best : current;
+    }
+
+    private R switchActiveRoute(Forward forward, ForwardRouteDto selected) {
+        Tunnel selectedTunnel = validateTunnel(selected.getTunnelId());
+        if (selectedTunnel == null) {
+            return R.err("目标线路不存在");
+        }
+        Tunnel primaryTunnel = validateTunnel(forward.getTunnelId());
+        UserTunnel userTunnel = primaryTunnel == null
+                ? null
+                : getUserTunnel(forward.getUserId(), primaryTunnel.getId().intValue());
+        Integer limiter = userTunnel == null ? null : userTunnel.getSpeedId();
+        String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+        Node inNode = nodeService.getById(selectedTunnel.getInNodeId());
+        return updateMainService(inNode, serviceName, forward, selected, limiter, selectedTunnel);
+    }
+
+    private void updateRouteTargetPool(Forward forward, ForwardRouteDto route, Tunnel tunnel) {
+        if (!Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)
+                || route.getHealthyTargets() == null
+                || route.getHealthyTargets().isEmpty()) {
+            return;
+        }
+        NodeInfo nodeInfo = getRequiredNodes(tunnel);
+        if (nodeInfo.isHasError()) {
+            return;
+        }
+        Tunnel primaryTunnel = validateTunnel(forward.getTunnelId());
+        UserTunnel userTunnel = primaryTunnel == null
+                ? null
+                : getUserTunnel(forward.getUserId(), primaryTunnel.getId().intValue());
+        String mainServiceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+        String routeServiceName = routeResourceName(forward, mainServiceName, route);
+        Forward routeForward = forwardForRoute(forward, route);
+        updateRemoteService(
+                nodeInfo.getOutNode(),
+                routeServiceName,
+                routeForward,
+                tunnel.getProtocol(),
+                forward.getInterfaceName()
+        );
+    }
+
+    private List<String> splitRemoteAddresses(String remoteAddr) {
+        if (remoteAddr == null) {
+            return Collections.emptyList();
+        }
+        return Arrays.stream(remoteAddr.split("[,\\n]"))
+                .map(String::trim)
+                .filter(address -> !address.isEmpty())
+                .collect(Collectors.toList());
+    }
+
     /**
      * 更新转发状态为错误
      */
@@ -1381,6 +2088,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return userTunnelService.getOne(new QueryWrapper<UserTunnel>()
                 .eq("user_id", userId)
                 .eq("tunnel_id", tunnelId));
+    }
+
+    private UserTunnel getPrimaryUserTunnel(Forward forward) {
+        return getUserTunnel(forward.getUserId(), forward.getTunnelId());
     }
 
     /**
@@ -1446,6 +2157,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      * @return 可用端口号，如果没有可用端口则返回null
      */
     private Integer allocatePortForNode(Long nodeId, Long excludeForwardId) {
+        return allocatePortForNode(nodeId, excludeForwardId, Collections.emptySet());
+    }
+
+    private Integer allocatePortForNode(Long nodeId, Long excludeForwardId, Set<Integer> additionallyReserved) {
         // 获取节点信息
         Node node = nodeService.getById(nodeId);
         if (node == null) {
@@ -1454,6 +2169,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 获取该节点上所有已被占用的端口（包括作为入口和出口使用的端口）
         Set<Integer> usedPorts = getAllUsedPortsOnNode(nodeId, excludeForwardId);
+        if (additionallyReserved != null) {
+            usedPorts.addAll(additionallyReserved);
+        }
 
         // 在节点端口范围内寻找未使用的端口
         for (int port = node.getPortSta(); port <= node.getPortEnd(); port++) {
@@ -1483,26 +2201,29 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
         List<Forward> forwards = this.list(queryWrapper);
         for (Forward forward : forwards) {
-            Tunnel tunnel = tunnelMap.get(forward.getTunnelId());
-            if (tunnel == null) {
+            Tunnel primaryTunnel = tunnelMap.get(forward.getTunnelId());
+            if (primaryTunnel == null) {
                 continue;
             }
 
-            if (Objects.equals(tunnel.getInNodeId(), nodeId) && forward.getInPort() != null) {
+            if (Objects.equals(primaryTunnel.getInNodeId(), nodeId) && forward.getInPort() != null) {
                 usedPorts.add(forward.getInPort());
             }
 
-            List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
-            if (nodePath.size() < 2) {
-                continue;
-            }
-            List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(forward.getHopPorts());
-            if (hopPorts.size() != nodePath.size() - 1 && nodePath.size() == 2 && forward.getOutPort() != null) {
-                hopPorts = Collections.singletonList(forward.getOutPort());
-            }
-            for (int i = 1; i < nodePath.size() && i - 1 < hopPorts.size(); i++) {
-                if (Objects.equals(nodePath.get(i), nodeId)) {
-                    usedPorts.add(hopPorts.get(i - 1));
+            for (ForwardRouteDto route : getForwardRoutes(forward)) {
+                Tunnel routeTunnel = tunnelMap.get(route.getTunnelId());
+                if (routeTunnel == null) {
+                    continue;
+                }
+                List<Long> nodePath = TunnelRouteUtil.parseNodePath(routeTunnel);
+                List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(route.getHopPorts());
+                if (hopPorts.size() != nodePath.size() - 1 && nodePath.size() == 2 && route.getOutPort() != null) {
+                    hopPorts = Collections.singletonList(route.getOutPort());
+                }
+                for (int i = 1; i < nodePath.size() && i - 1 < hopPorts.size(); i++) {
+                    if (Objects.equals(nodePath.get(i), nodeId)) {
+                        usedPorts.add(hopPorts.get(i - 1));
+                    }
                 }
             }
         }
@@ -1603,6 +2324,77 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         public static PortAllocation error(String errorMessage) {
             return new PortAllocation(true, errorMessage, null, null, Collections.emptyList());
+        }
+    }
+
+    @Data
+    private static class RouteValidationResult {
+        private final boolean hasError;
+        private final String errorMessage;
+        private final List<Tunnel> tunnels;
+
+        private static RouteValidationResult success(List<Tunnel> tunnels) {
+            return new RouteValidationResult(false, null, tunnels);
+        }
+
+        private static RouteValidationResult error(String message) {
+            return new RouteValidationResult(true, message, Collections.emptyList());
+        }
+    }
+
+    @Data
+    private static class RouteAllocationResult {
+        private final boolean hasError;
+        private final String errorMessage;
+        private final List<ForwardRouteDto> routes;
+
+        private static RouteAllocationResult success(List<ForwardRouteDto> routes) {
+            return new RouteAllocationResult(false, null, routes);
+        }
+
+        private static RouteAllocationResult error(String message) {
+            return new RouteAllocationResult(true, message, Collections.emptyList());
+        }
+    }
+
+    @Data
+    private static class RouteProbeResult {
+        private final boolean success;
+        private final String message;
+        private final Double latency;
+        private final Double packetLoss;
+        private final List<String> healthyTargets;
+        private final List<ForwardTargetHealthDto> targetHealth;
+
+        private static RouteProbeResult success(
+                Double latency,
+                Double packetLoss,
+                List<String> healthyTargets,
+                List<ForwardTargetHealthDto> targetHealth
+        ) {
+            return new RouteProbeResult(
+                    true,
+                    "线路正常",
+                    latency,
+                    packetLoss,
+                    healthyTargets,
+                    targetHealth
+            );
+        }
+
+        private static RouteProbeResult failure(String message) {
+            return failure(message, Collections.emptyList());
+        }
+
+        private static RouteProbeResult failure(String message, List<ForwardTargetHealthDto> targetHealth) {
+            return new RouteProbeResult(
+                    false,
+                    message,
+                    null,
+                    100.0,
+                    Collections.emptyList(),
+                    targetHealth
+            );
         }
     }
 

@@ -18,6 +18,8 @@ public class TunnelListDto {
      * 节点路径，逗号分隔
      */
     private String nodePath;
+
+    private Long inNodeId;
     
     /**
      * 入口节点端口起始范围

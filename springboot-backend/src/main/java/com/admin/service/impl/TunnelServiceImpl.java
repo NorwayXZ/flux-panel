@@ -711,6 +711,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         dto.setId(tunnel.getId().intValue());
         dto.setName(tunnel.getName());
         dto.setIp(tunnel.getInIp());
+        dto.setInNodeId(tunnel.getInNodeId());
         dto.setNodePath(TunnelRouteUtil.joinNodePath(TunnelRouteUtil.parseNodePath(tunnel)));
         dto.setType(tunnel.getType());
         dto.setProtocol(tunnel.getProtocol());

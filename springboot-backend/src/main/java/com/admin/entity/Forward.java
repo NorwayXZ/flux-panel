@@ -41,6 +41,33 @@ public class Forward extends BaseEntity{
 
     private String strategy;
 
+    /**
+     * single、failover 或 latency。
+     */
+    private String routeMode;
+
+    /**
+     * 候选线路及各自端口、健康状态的 JSON 配置。
+     */
+    private String routeConfig;
+
+    /**
+     * 当前实际承载流量的隧道。
+     */
+    private Integer activeTunnelId;
+
+    /**
+     * tcp、udp 或 tcp_udp。
+     */
+    private String protocolMode;
+
+    /**
+     * 目标地址主动健康检查结果 JSON。
+     */
+    private String targetHealth;
+
+    private Long lastHealthCheck;
+
     private Long inFlow;
 
     private Long outFlow;

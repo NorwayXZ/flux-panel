@@ -73,11 +73,18 @@ interface Forward {
   userName?: string;
   userId?: number;
   inx?: number;
+  routeMode?: 'single' | 'failover' | 'latency';
+  routeConfig?: string;
+  activeTunnelId?: number;
+  protocolMode?: 'tcp' | 'udp' | 'tcp_udp';
+  targetHealth?: string;
+  lastHealthCheck?: number;
 }
 
 interface Tunnel {
   id: number;
   name: string;
+  inNodeId?: number;
   inNodePortSta?: number;
   inNodePortEnd?: number;
 }
@@ -91,6 +98,32 @@ interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
+  routeMode: 'single' | 'failover' | 'latency';
+  routeTunnelIds: number[];
+  protocolMode: 'tcp' | 'udp' | 'tcp_udp';
+  batchMode: boolean;
+  batchEndPort: number | null;
+  targetStartPort: number | null;
+}
+
+interface ForwardRoute {
+  tunnelId: number;
+  tunnelName?: string;
+  priority?: number;
+  status?: 'unknown' | 'healthy' | 'unhealthy';
+  latency?: number | null;
+  packetLoss?: number | null;
+  failCount?: number;
+  lastCheckTime?: number;
+  message?: string;
+  healthyTargets?: string[];
+}
+
+interface TargetHealth {
+  address: string;
+  status: 'healthy' | 'unhealthy';
+  latency?: number;
+  packetLoss?: number;
 }
 
 interface AddressItem {
@@ -199,7 +232,13 @@ export default function ForwardPage() {
     inPort: null,
     remoteAddr: '',
     interfaceName: '',
-    strategy: 'fifo'
+    strategy: 'fifo',
+    routeMode: 'single',
+    routeTunnelIds: [],
+    protocolMode: 'tcp_udp',
+    batchMode: false,
+    batchEndPort: null,
+    targetStartPort: null
   });
 
   // 表单验证错误
@@ -353,6 +392,40 @@ export default function ForwardPage() {
     return Number.isFinite(timestamp) ? timestamp : 0;
   };
 
+  const parseForwardRoutes = (forward: Forward): ForwardRoute[] => {
+    if (forward.routeConfig) {
+      try {
+        const routes = JSON.parse(forward.routeConfig);
+        if (Array.isArray(routes) && routes.length > 0) {
+          return routes;
+        }
+      } catch {
+        // Older records fall back to their primary tunnel.
+      }
+    }
+    return [{
+      tunnelId: forward.tunnelId,
+      tunnelName: forward.tunnelName,
+      priority: 0,
+      status: forward.nodeOffline ? 'unhealthy' : 'unknown'
+    }];
+  };
+
+  const parseTargetHealth = (forward: Forward): TargetHealth[] => {
+    if (!forward.targetHealth) return [];
+    try {
+      const targets = JSON.parse(forward.targetHealth);
+      return Array.isArray(targets) ? targets : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const getActiveRoute = (forward: Forward): ForwardRoute => {
+    const routes = parseForwardRoutes(forward);
+    return routes.find(route => route.tunnelId === (forward.activeTunnelId || forward.tunnelId)) || routes[0];
+  };
+
   const compareForwardCreatedTime = (a: Forward, b: Forward): number => {
     const createdTimeCompare = getCreatedTime(b.createdTime) - getCreatedTime(a.createdTime);
     if (createdTimeCompare !== 0) return createdTimeCompare;
@@ -420,6 +493,10 @@ export default function ForwardPage() {
       newErrors.tunnelId = '请选择关联隧道';
     }
 
+    if (form.routeMode !== 'single' && form.routeTunnelIds.length === 0) {
+      newErrors.routeTunnelIds = '主备或低延迟模式至少需要一条候选线路';
+    }
+
     if (!form.remoteAddr.trim()) {
       newErrors.remoteAddr = '请输入远程地址';
     } else {
@@ -448,6 +525,22 @@ export default function ForwardPage() {
       }
     }
 
+    if (!isEdit && form.batchMode) {
+      if (!form.inPort) {
+        newErrors.inPort = '批量创建需要填写入口起始端口';
+      }
+      if (!form.batchEndPort) {
+        newErrors.batchEndPort = '请输入入口结束端口';
+      } else if (form.inPort && form.batchEndPort < form.inPort) {
+        newErrors.batchEndPort = '结束端口不能小于起始端口';
+      } else if (form.inPort && form.batchEndPort - form.inPort + 1 > 200) {
+        newErrors.batchEndPort = '单次最多创建200条转发';
+      }
+      if (!form.targetStartPort) {
+        newErrors.targetStartPort = '请输入目标起始端口';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -461,7 +554,13 @@ export default function ForwardPage() {
       inPort: null,
       remoteAddr: '',
       interfaceName: '',
-      strategy: 'fifo'
+      strategy: 'fifo',
+      routeMode: 'single',
+      routeTunnelIds: [],
+      protocolMode: 'tcp_udp',
+      batchMode: false,
+      batchEndPort: null,
+      targetStartPort: null
     });
     setSelectedTunnel(null);
     setErrors({});
@@ -470,6 +569,7 @@ export default function ForwardPage() {
 
   // 编辑转发
   const handleEdit = (forward: Forward) => {
+    const routes = parseForwardRoutes(forward);
     setIsEdit(true);
     setForm({
       id: forward.id,
@@ -479,7 +579,15 @@ export default function ForwardPage() {
       inPort: forward.inPort,
       remoteAddr: forward.remoteAddr.split(',').join('\n'),
       interfaceName: forward.interfaceName || '',
-      strategy: forward.strategy || 'fifo'
+      strategy: forward.strategy || 'fifo',
+      routeMode: forward.routeMode || (routes.length > 1 ? 'failover' : 'single'),
+      routeTunnelIds: routes
+        .map(route => route.tunnelId)
+        .filter(tunnelId => tunnelId !== forward.tunnelId),
+      protocolMode: forward.protocolMode || 'tcp_udp',
+      batchMode: false,
+      batchEndPort: null,
+      targetStartPort: null
     });
     const tunnel = tunnels.find(t => t.id === forward.tunnelId);
     setSelectedTunnel(tunnel || null);
@@ -530,7 +638,14 @@ export default function ForwardPage() {
   const handleTunnelChange = (tunnelId: string) => {
     const tunnel = tunnels.find(t => t.id === parseInt(tunnelId));
     setSelectedTunnel(tunnel || null);
-    setForm(prev => ({ ...prev, tunnelId: parseInt(tunnelId) }));
+    setForm(prev => ({
+      ...prev,
+      tunnelId: parseInt(tunnelId),
+      routeTunnelIds: prev.routeTunnelIds.filter(candidateId => {
+        const candidate = tunnels.find(item => item.id === candidateId);
+        return candidate?.inNodeId === tunnel?.inNodeId && candidateId !== parseInt(tunnelId);
+      })
+    }));
   };
 
   // 提交表单
@@ -546,6 +661,9 @@ export default function ForwardPage() {
         .join(',');
 
       const addressCount = processedRemoteAddr.split(',').length;
+      const routeTunnelIds = form.routeMode === 'single'
+        ? [form.tunnelId]
+        : [form.tunnelId, ...form.routeTunnelIds];
 
       let res;
       if (isEdit) {
@@ -558,7 +676,10 @@ export default function ForwardPage() {
           inPort: form.inPort,
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
-          strategy: addressCount > 1 ? form.strategy : 'fifo'
+          strategy: addressCount > 1 ? form.strategy : 'fifo',
+          routeMode: form.routeMode,
+          routeTunnelIds,
+          protocolMode: form.protocolMode
         };
         res = await updateForward(updateData);
       } else {
@@ -569,13 +690,25 @@ export default function ForwardPage() {
           inPort: form.inPort,
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
-          strategy: addressCount > 1 ? form.strategy : 'fifo'
+          strategy: addressCount > 1 ? form.strategy : 'fifo',
+          routeMode: form.routeMode,
+          routeTunnelIds,
+          protocolMode: form.protocolMode,
+          batchEndPort: form.batchMode ? form.batchEndPort : null,
+          targetStartPort: form.batchMode ? form.targetStartPort : null
         };
         res = await createForward(createData);
       }
 
       if (res.code === 0) {
-        toast.success(isEdit ? '修改成功' : '创建成功');
+        const successCount = res.data?.successCount;
+        toast.success(
+          isEdit
+            ? '修改成功'
+            : successCount
+              ? `批量创建成功，共 ${successCount} 条`
+              : '创建成功'
+        );
         setModalOpen(false);
         loadData();
       } else {
@@ -1052,6 +1185,8 @@ export default function ForwardPage() {
         return { color: 'success', text: '轮询' };
       case 'rand':
         return { color: 'warning', text: '随机' };
+      case 'hash':
+        return { color: 'secondary', text: 'IP 哈希' };
       default:
         return { color: 'default', text: '未知' };
     }
@@ -1065,8 +1200,23 @@ export default function ForwardPage() {
   };
 
   const isForwardLinkOffline = (forward: Forward): boolean => (
-    forward.nodeOffline === true || isForwardInNodeOffline(forward) || isForwardOutNodeOffline(forward)
+    forward.nodeOffline === true
+    || isForwardInNodeOffline(forward)
+    || isForwardOutNodeOffline(forward)
+    || getActiveRoute(forward).status === 'unhealthy'
   );
+
+  const getProtocolDisplay = (protocolMode?: string): string => {
+    if (protocolMode === 'tcp') return 'TCP';
+    if (protocolMode === 'udp') return 'UDP';
+    return 'TCP + UDP';
+  };
+
+  const getRouteModeDisplay = (routeMode?: string): string => {
+    if (routeMode === 'failover') return '主备切换';
+    if (routeMode === 'latency') return '低延迟选路';
+    return '单线路';
+  };
 
   const getNodeStatusChip = (offline: boolean) => ({
     color: offline ? 'danger' : 'success',
@@ -1272,16 +1422,20 @@ export default function ForwardPage() {
     const inAddressClickable = hasMultipleAddresses(forward.inIp);
     const targetAddressClickable = hasMultipleAddresses(forward.remoteAddr);
     const pathText = getForwardPathText(forward);
+    const routes = parseForwardRoutes(forward);
+    const activeRoute = getActiveRoute(forward);
+    const targetHealth = parseTargetHealth(forward);
+    const healthyTargetCount = targetHealth.filter(target => target.status === 'healthy').length;
 
     return (
-      <Card key={forward.id} className={cardClassName}>
+      <Card key={forward.id} className={`${cardClassName} h-full`}>
         {nodeOffline && <div className="h-1 bg-danger" />}
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start w-full">
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-foreground truncate text-sm">{forward.name}</h3>
               <p className="text-xs text-default-500 truncate">
-                {forward.tunnelName}{pathText ? ` · ${pathText}` : ''}
+                {activeRoute.tunnelName || forward.tunnelName}{pathText ? ` · ${pathText}` : ''}
               </p>
               <p className={nodeOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate mt-0.5" : "text-xs text-default-500 truncate mt-0.5"}>
                 {getLinkStatusText(inNodeOffline, outNodeOffline, nodeOffline)}
@@ -1385,20 +1539,43 @@ export default function ForwardPage() {
               </div>
             </div>
 
+            <div className={nodeOffline ? "grid grid-cols-2 gap-x-3 gap-y-1 pt-2 border-t border-danger-200 dark:border-danger-800 min-h-[52px]" : "grid grid-cols-2 gap-x-3 gap-y-1 pt-2 border-t border-divider min-h-[52px]"}>
+              <div className="min-w-0">
+                <div className="text-[11px] text-default-400">线路策略</div>
+                <div className="text-xs font-medium truncate">
+                  {getRouteModeDisplay(forward.routeMode)} · {routes.length} 条
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] text-default-400">当前线路</div>
+                <div className={activeRoute.status === 'unhealthy' ? "text-xs font-medium text-danger truncate" : "text-xs font-medium truncate"}>
+                  {activeRoute.status === 'healthy' ? '健康' : activeRoute.status === 'unhealthy' ? '异常' : '待探测'}
+                  {typeof activeRoute.latency === 'number' ? ` · ${activeRoute.latency.toFixed(0)} ms` : ''}
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] text-default-400">入口协议</div>
+                <div className="text-xs font-medium truncate">{getProtocolDisplay(forward.protocolMode)}</div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] text-default-400">健康目标</div>
+                <div className="text-xs font-medium truncate">
+                  {targetHealth.length > 0 ? `${healthyTargetCount}/${targetHealth.length}` : '待探测'}
+                </div>
+              </div>
+            </div>
+
             {/* 统计信息 */}
-            <div className={nodeOffline ? "flex items-center justify-between pt-2 border-t border-danger-200 dark:border-danger-800" : "flex items-center justify-between pt-2 border-t border-divider"}>
+            <div className={nodeOffline ? "grid grid-cols-3 gap-1.5 pt-2 border-t border-danger-200 dark:border-danger-800" : "grid grid-cols-3 gap-1.5 pt-2 border-t border-divider"}>
               <Chip color={strategyDisplay.color as any} variant="flat" size="sm" className="text-xs">
                 {strategyDisplay.text}
               </Chip>
-              <div className="flex items-center gap-1">
-                <Chip variant="flat" size="sm" className="text-xs" color="primary">
-                  ↑{formatFlow(forward.inFlow || 0)}
-                </Chip>
-
-              </div>
-              <Chip variant="flat" size="sm" className="text-xs" color="success">
-                  ↓{formatFlow(forward.outFlow || 0)}
-                </Chip>
+              <Chip variant="flat" size="sm" className="text-xs justify-center" color="primary">
+                ↑{formatFlow(forward.inFlow || 0)}
+              </Chip>
+              <Chip variant="flat" size="sm" className="text-xs justify-center" color="success">
+                ↓{formatFlow(forward.outFlow || 0)}
+              </Chip>
             </div>
           </div>
 
@@ -1470,6 +1647,12 @@ export default function ForwardPage() {
   const totalForwardCount = forwards.length;
   const totalRunningForwardCount = forwards.filter(forward => forward.serviceRunning).length;
   const totalOfflineForwardCount = forwards.filter(isForwardLinkOffline).length;
+  const compatibleCandidateTunnels = selectedTunnel
+    ? tunnels.filter(tunnel =>
+        tunnel.id !== selectedTunnel.id
+        && tunnel.inNodeId === selectedTunnel.inNodeId
+      )
+    : [];
 
   return (
 
@@ -1681,7 +1864,7 @@ export default function ForwardPage() {
         <Modal
           isOpen={modalOpen}
           onOpenChange={setModalOpen}
-          size="2xl"
+          size="4xl"
           scrollBehavior="outside"
           backdrop="blur"
           placement="center"
@@ -1698,99 +1881,234 @@ export default function ForwardPage() {
                   </p>
                 </ModalHeader>
                 <ModalBody>
-                  <div className="space-y-4 pb-4">
-                    <Input
-                      label="转发名称"
-                      placeholder="请输入转发名称"
-                      value={form.name}
-                      onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
-                      isInvalid={!!errors.name}
-                      errorMessage={errors.name}
-                      variant="bordered"
-                    />
+                  <div className="space-y-6 pb-4">
+                    <section>
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold">基础信息</h3>
+                        <p className="text-xs text-default-500">设置名称、主线路与入口端口。</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <Input
+                          label="转发名称"
+                          placeholder="请输入转发名称"
+                          value={form.name}
+                          onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+                          isInvalid={!!errors.name}
+                          errorMessage={errors.name}
+                          variant="bordered"
+                        />
+                        <Select
+                          label="主线路"
+                          placeholder="请选择主线路"
+                          selectedKeys={form.tunnelId ? [form.tunnelId.toString()] : []}
+                          onSelectionChange={(keys) => {
+                            const selectedKey = Array.from(keys)[0] as string;
+                            if (selectedKey) handleTunnelChange(selectedKey);
+                          }}
+                          isInvalid={!!errors.tunnelId}
+                          errorMessage={errors.tunnelId}
+                          variant="bordered"
+                        >
+                          {tunnels.map((tunnel) => (
+                            <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
+                          ))}
+                        </Select>
+                        <Input
+                          label={form.batchMode ? "入口起始端口" : "入口端口"}
+                          placeholder="留空自动分配"
+                          type="number"
+                          value={form.inPort?.toString() || ''}
+                          onChange={(e) => setForm(prev => ({
+                            ...prev,
+                            inPort: e.target.value ? parseInt(e.target.value) : null
+                          }))}
+                          isInvalid={!!errors.inPort}
+                          errorMessage={errors.inPort}
+                          variant="bordered"
+                          description={
+                            selectedTunnel?.inNodePortSta && selectedTunnel?.inNodePortEnd
+                              ? `允许范围: ${selectedTunnel.inNodePortSta}-${selectedTunnel.inNodePortEnd}`
+                              : '留空将自动分配可用端口'
+                          }
+                        />
+                        <Input
+                          label="出口网卡名或 IP"
+                          placeholder="通常留空"
+                          value={form.interfaceName}
+                          onChange={(e) => setForm(prev => ({ ...prev, interfaceName: e.target.value }))}
+                          isInvalid={!!errors.interfaceName}
+                          errorMessage={errors.interfaceName}
+                          variant="bordered"
+                          description="仅在多 IP 服务器需要指定出口时填写"
+                        />
+                      </div>
+                    </section>
 
-                    <Select
-                      label="选择隧道"
-                      placeholder="请选择关联的隧道"
-                      selectedKeys={form.tunnelId ? [form.tunnelId.toString()] : []}
-                      onSelectionChange={(keys) => {
-                        const selectedKey = Array.from(keys)[0] as string;
-                        if (selectedKey) {
-                          handleTunnelChange(selectedKey);
-                        }
-                      }}
-                      isInvalid={!!errors.tunnelId}
-                      errorMessage={errors.tunnelId}
-                      variant="bordered"
-                    >
-                      {tunnels.map((tunnel) => (
-                        <SelectItem key={tunnel.id} >
-                          {tunnel.name}
-                        </SelectItem>
-                      ))}
-                    </Select>
+                    <section className="border-t border-divider pt-5">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold">入口协议</h3>
+                        <p className="text-xs text-default-500">同一入口端口可以只监听一种协议，也可以同时监听。</p>
+                      </div>
+                      <div className="grid grid-cols-3 overflow-hidden rounded-md border border-divider">
+                        {([
+                          ['tcp', '仅 TCP'],
+                          ['udp', '仅 UDP'],
+                          ['tcp_udp', 'TCP + UDP']
+                        ] as const).map(([value, label]) => (
+                          <Button
+                            key={value}
+                            radius="none"
+                            variant={form.protocolMode === value ? 'solid' : 'light'}
+                            color={form.protocolMode === value ? 'primary' : 'default'}
+                            onPress={() => setForm(prev => ({ ...prev, protocolMode: value }))}
+                            className="min-w-0"
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                    </section>
 
-                    <Input
-                      label="入口端口"
-                      placeholder="留空自动分配"
-                      type="number"
-                      value={form.inPort?.toString() || ''}
-                      onChange={(e) => setForm(prev => ({
-                        ...prev,
-                        inPort: e.target.value ? parseInt(e.target.value) : null
-                      }))}
-                      isInvalid={!!errors.inPort}
-                      errorMessage={errors.inPort}
-                      variant="bordered"
-                      description={
-                        selectedTunnel && selectedTunnel.inNodePortSta && selectedTunnel.inNodePortEnd
-                          ? `允许范围: ${selectedTunnel.inNodePortSta}-${selectedTunnel.inNodePortEnd}`
-                          : '留空将自动分配可用端口'
-                      }
-                    />
+                    <section className="border-t border-divider pt-5">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold">线路策略</h3>
+                        <p className="text-xs text-default-500">候选线路必须与主线路使用同一个入口节点。</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                        <div className="grid grid-cols-3 overflow-hidden rounded-md border border-divider">
+                          {([
+                            ['single', '单线路'],
+                            ['failover', '主备切换'],
+                            ['latency', '低延迟']
+                          ] as const).map(([value, label]) => (
+                            <Button
+                              key={value}
+                              radius="none"
+                              variant={form.routeMode === value ? 'solid' : 'light'}
+                              color={form.routeMode === value ? 'primary' : 'default'}
+                              onPress={() => setForm(prev => ({
+                                ...prev,
+                                routeMode: value,
+                                routeTunnelIds: value === 'single' ? [] : prev.routeTunnelIds
+                              }))}
+                              className="min-w-0 px-2"
+                            >
+                              {label}
+                            </Button>
+                          ))}
+                        </div>
+                        {form.routeMode !== 'single' && (
+                          <Select
+                            label="候选线路"
+                            placeholder={compatibleCandidateTunnels.length > 0 ? "可选择多条备用线路" : "没有相同入口节点的其他线路"}
+                            selectionMode="multiple"
+                            selectedKeys={form.routeTunnelIds.map(String)}
+                            onSelectionChange={(keys) => {
+                              const selectedIds = Array.from(keys)
+                                .map(String)
+                                .map(Number)
+                                .filter(Number.isFinite);
+                              setForm(prev => ({ ...prev, routeTunnelIds: selectedIds }));
+                            }}
+                            isInvalid={!!errors.routeTunnelIds}
+                            errorMessage={errors.routeTunnelIds}
+                            variant="bordered"
+                            isDisabled={compatibleCandidateTunnels.length === 0}
+                          >
+                            {compatibleCandidateTunnels.map((tunnel) => (
+                              <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
+                            ))}
+                          </Select>
+                        )}
+                      </div>
+                    </section>
 
-                    <Textarea
-                      label="远程地址"
-                      placeholder="请输入远程地址，多个地址用换行分隔&#10;例如:&#10;192.168.1.100:8080&#10;example.com:3000"
-                      value={form.remoteAddr}
-                      onChange={(e) => setForm(prev => ({ ...prev, remoteAddr: e.target.value }))}
-                      isInvalid={!!errors.remoteAddr}
-                      errorMessage={errors.remoteAddr}
-                      variant="bordered"
-                      description="格式: IP:端口 或 域名:端口，支持多个地址（每行一个）"
-                      minRows={3}
-                      maxRows={6}
-                    />
-
-                    <Input
-                      label="出口网卡名或IP"
-                      placeholder="请输入出口网卡名或IP"
-                      value={form.interfaceName}
-                      onChange={(e) => setForm(prev => ({ ...prev, interfaceName: e.target.value }))}
-                      isInvalid={!!errors.interfaceName}
-                      errorMessage={errors.interfaceName}
-                      variant="bordered"
-                      description="用于多IP服务器指定使用那个IP请求远程地址，不懂的默认为空就行"
-                    />
-
-                    {getAddressCount(form.remoteAddr) > 1 && (
-                      <Select
-                        label="负载策略"
-                        placeholder="请选择负载均衡策略"
-                        selectedKeys={[form.strategy]}
-                        onSelectionChange={(keys) => {
-                          const selectedKey = Array.from(keys)[0] as string;
-                          setForm(prev => ({ ...prev, strategy: selectedKey }));
-                        }}
-                        variant="bordered"
-                        description="多个目标地址的负载均衡策略"
-                      >
-                        <SelectItem key="fifo" >主备模式 - 自上而下</SelectItem>
-                        <SelectItem key="round" >轮询模式 - 依次轮换</SelectItem>
-                        <SelectItem key="rand" >随机模式 - 随机选择</SelectItem>
-                        <SelectItem key="hash" >哈希模式 - IP哈希</SelectItem>
-                      </Select>
+                    {!isEdit && (
+                      <section className="border-t border-divider pt-5">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <h3 className="text-sm font-semibold">端口段批量创建</h3>
+                            <p className="text-xs text-default-500">按相同偏移一次创建最多 200 个入口端口。</p>
+                          </div>
+                          <Switch
+                            size="sm"
+                            isSelected={form.batchMode}
+                            onValueChange={(batchMode) => setForm(prev => ({
+                              ...prev,
+                              batchMode,
+                              batchEndPort: batchMode ? prev.batchEndPort : null,
+                              targetStartPort: batchMode ? prev.targetStartPort : null
+                            }))}
+                          />
+                        </div>
+                        {form.batchMode && (
+                          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <Input
+                              label="入口结束端口"
+                              type="number"
+                              value={form.batchEndPort?.toString() || ''}
+                              onChange={(e) => setForm(prev => ({
+                                ...prev,
+                                batchEndPort: e.target.value ? parseInt(e.target.value) : null
+                              }))}
+                              isInvalid={!!errors.batchEndPort}
+                              errorMessage={errors.batchEndPort}
+                              variant="bordered"
+                            />
+                            <Input
+                              label="目标起始端口"
+                              type="number"
+                              value={form.targetStartPort?.toString() || ''}
+                              onChange={(e) => setForm(prev => ({
+                                ...prev,
+                                targetStartPort: e.target.value ? parseInt(e.target.value) : null
+                              }))}
+                              isInvalid={!!errors.targetStartPort}
+                              errorMessage={errors.targetStartPort}
+                              variant="bordered"
+                              description="后续目标端口按入口端口的偏移同步增加"
+                            />
+                          </div>
+                        )}
+                      </section>
                     )}
+
+                    <section className="border-t border-divider pt-5">
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold">目标地址池</h3>
+                        <p className="text-xs text-default-500">面板会主动探测，失效目标自动移出，恢复后自动加入。</p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.8fr)]">
+                        <Textarea
+                          label="远程地址"
+                          placeholder={"192.168.1.100:8080\nexample.com:3000"}
+                          value={form.remoteAddr}
+                          onChange={(e) => setForm(prev => ({ ...prev, remoteAddr: e.target.value }))}
+                          isInvalid={!!errors.remoteAddr}
+                          errorMessage={errors.remoteAddr}
+                          variant="bordered"
+                          description="每行一个 IP:端口 或 域名:端口"
+                          minRows={4}
+                          maxRows={8}
+                        />
+                        <Select
+                          label="目标选择策略"
+                          selectedKeys={[form.strategy]}
+                          onSelectionChange={(keys) => {
+                            const selectedKey = Array.from(keys)[0] as string;
+                            setForm(prev => ({ ...prev, strategy: selectedKey }));
+                          }}
+                          variant="bordered"
+                          isDisabled={getAddressCount(form.remoteAddr) <= 1}
+                          description={getAddressCount(form.remoteAddr) > 1 ? "用于多个健康目标之间的调度" : "填写多个目标后可选择"}
+                        >
+                          <SelectItem key="fifo">主备 - 自上而下</SelectItem>
+                          <SelectItem key="round">轮询 - 依次轮换</SelectItem>
+                          <SelectItem key="rand">随机 - 随机选择</SelectItem>
+                          <SelectItem key="hash">IP 哈希 - 来源固定</SelectItem>
+                        </Select>
+                      </div>
+                    </section>
                   </div>
                 </ModalBody>
                 <ModalFooter>

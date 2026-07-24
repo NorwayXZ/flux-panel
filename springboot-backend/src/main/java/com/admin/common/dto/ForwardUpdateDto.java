@@ -7,6 +7,7 @@ import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.Max;
+import java.util.List;
 
 @Data
 public class ForwardUpdateDto {
@@ -27,6 +28,12 @@ public class ForwardUpdateDto {
     private String remoteAddr;
 
     private String strategy;
+
+    private String routeMode;
+
+    private List<Integer> routeTunnelIds;
+
+    private String protocolMode;
     
     /**
      * 入口端口（可选，为空时自动分配）
@@ -37,4 +44,4 @@ public class ForwardUpdateDto {
 
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String interfaceName;
-} 
+}

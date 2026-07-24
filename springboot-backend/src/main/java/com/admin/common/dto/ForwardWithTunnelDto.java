@@ -136,6 +136,18 @@ public class ForwardWithTunnelDto {
 
     private String strategy;
 
+    private String routeMode;
+
+    private String routeConfig;
+
+    private Integer activeTunnelId;
+
+    private String protocolMode;
+
+    private String targetHealth;
+
+    private Long lastHealthCheck;
+
     private Integer inx;
 
     private String interfaceName;
