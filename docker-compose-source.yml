@@ -44,6 +44,7 @@ services:
       - "${BACKEND_PORT}:6365"
     volumes:
       - backend_logs:/app/logs
+      - /var/lib/flux-panel-updater:/var/lib/flux-panel-updater
     depends_on:
       mysql:
         condition: service_healthy

@@ -8,6 +8,11 @@ CONFIG_DIR="${FLUX_PANEL_CONFIG_DIR:-/etc/flux-panel}"
 ENV_FILE="${CONFIG_DIR}/flux-panel.env"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose-source.yml"
 SOURCE_URL="https://github.com/${REPOSITORY}/archive/refs/heads/${BRANCH}.tar.gz"
+UPDATER_STATE_DIR="${FLUX_PANEL_UPDATER_STATE_DIR:-/var/lib/flux-panel-updater}"
+MANAGER_BIN="${FLUX_PANEL_MANAGER_BIN:-/usr/local/sbin/flux-panel-manager}"
+WORKER_BIN="${FLUX_PANEL_WORKER_BIN:-/usr/local/sbin/flux-panel-update-worker}"
+UPDATER_SERVICE="flux-panel-updater.service"
+UPDATER_PATH="flux-panel-updater.path"
 
 log() {
   printf '[flux-panel] %s\n' "$*"
@@ -117,6 +122,89 @@ EOF
   log "selected database image for $(host_architecture): ${mysql_image}"
 }
 
+write_updater_status() {
+  local state="$1"
+  local message="$2"
+  local temporary
+  temporary="$(mktemp "${UPDATER_STATE_DIR}/status.XXXXXX")"
+  printf 'state=%s\nmessage=%s\nstartedAt=0\nfinishedAt=0\n' "${state}" "${message}" > "${temporary}"
+  chmod 640 "${temporary}"
+  mv -f "${temporary}" "${UPDATER_STATE_DIR}/status.properties"
+}
+
+install_update_service() {
+  rm -f "${UPDATER_STATE_DIR}/enabled"
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    log "systemd is unavailable; online updates are disabled, command-line updates remain available"
+    return 0
+  fi
+
+  mkdir -p "${UPDATER_STATE_DIR}"
+  chmod 750 "${UPDATER_STATE_DIR}"
+
+  local temporary_manager temporary_worker
+  temporary_manager="$(mktemp "${MANAGER_BIN}.XXXXXX")"
+  temporary_worker="$(mktemp "${WORKER_BIN}.XXXXXX")"
+  install -m 750 "${INSTALL_DIR}/scripts/flux-panel.sh" "${temporary_manager}"
+  install -m 750 "${INSTALL_DIR}/scripts/flux-panel-update-worker.sh" "${temporary_worker}"
+  mv -f "${temporary_manager}" "${MANAGER_BIN}"
+  mv -f "${temporary_worker}" "${WORKER_BIN}"
+
+  cat > "/etc/systemd/system/${UPDATER_SERVICE}" <<EOF
+[Unit]
+Description=Flux Panel restricted update worker
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=${WORKER_BIN}
+TimeoutStartSec=0
+Nice=10
+EOF
+
+  cat > "/etc/systemd/system/${UPDATER_PATH}" <<EOF
+[Unit]
+Description=Watch for Flux Panel update requests
+
+[Path]
+PathExists=${UPDATER_STATE_DIR}/update.request
+Unit=${UPDATER_SERVICE}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  if ! systemctl daemon-reload || ! systemctl enable --now "${UPDATER_PATH}" >/dev/null; then
+    log "online update service could not be installed; command-line updates remain available"
+    return 0
+  fi
+  if systemctl is-active --quiet "${UPDATER_PATH}"; then
+    touch "${UPDATER_STATE_DIR}/enabled"
+    chmod 640 "${UPDATER_STATE_DIR}/enabled"
+    [[ -f "${UPDATER_STATE_DIR}/status.properties" ]] || write_updater_status "idle" "Ready"
+    log "online update service is ready"
+  else
+    log "online update service could not be started; command-line updates remain available"
+  fi
+}
+
+remove_update_service() {
+  local remove_state="${1:-0}"
+  rm -f "${UPDATER_STATE_DIR}/enabled" "${UPDATER_STATE_DIR}/update.request"
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    systemctl disable --now "${UPDATER_PATH}" >/dev/null 2>&1 || true
+    systemctl stop "${UPDATER_SERVICE}" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${UPDATER_SERVICE}" "/etc/systemd/system/${UPDATER_PATH}"
+    systemctl daemon-reload || true
+  fi
+  rm -f "${MANAGER_BIN}" "${WORKER_BIN}"
+  if [[ "${remove_state}" == "1" ]]; then
+    rm -rf "${UPDATER_STATE_DIR}"
+  fi
+}
+
 wait_for_services() {
   local attempt
   for attempt in $(seq 1 90); do
@@ -128,7 +216,7 @@ wait_for_services() {
     sleep 2
   done
   compose ps || true
-  fail "services did not become healthy in time; run: docker logs springboot-backend"
+  return 1
 }
 
 install_panel() {
@@ -151,9 +239,11 @@ install_panel() {
   mv "${staging}" "${INSTALL_DIR}"
   trap - EXIT
 
+  install_update_service
+
   log "building and starting Flux Panel; the first build may take several minutes"
   compose up -d --build
-  wait_for_services
+  wait_for_services || fail "services did not become healthy in time; run: docker logs springboot-backend"
 
   # shellcheck disable=SC1090
   source "${ENV_FILE}"
@@ -164,8 +254,12 @@ install_panel() {
 
 update_panel() {
   check_host
+  require_command flock
   [[ -f "${ENV_FILE}" ]] || fail "configuration not found: ${ENV_FILE}"
   [[ -f "${COMPOSE_FILE}" ]] || fail "installation not found: ${INSTALL_DIR}"
+
+  exec 9>/run/flux-panel-update.lock
+  flock -n 9 || fail "another Flux Panel update is already running"
 
   local staging backup
   staging="$(mktemp -d)"
@@ -179,20 +273,24 @@ update_panel() {
   mv "${staging}" "${INSTALL_DIR}"
   trap - EXIT
 
-  if ! compose up -d --build; then
-    log "update failed; restoring previous source"
+  install_update_service
+
+  if ! compose up -d --build || ! wait_for_services; then
+    log "update failed or services did not become healthy; restoring previous source"
     rm -rf "${INSTALL_DIR}"
     mv "${backup}" "${INSTALL_DIR}"
+    install_update_service
     compose up -d --build
+    wait_for_services || fail "update and rollback both failed; inspect the container logs immediately"
     fail "update failed and the previous source was restored"
   fi
-  wait_for_services
   rm -rf "${backup}"
   log "update complete"
 }
 
 uninstall_panel() {
   check_host
+  remove_update_service 0
   if [[ -f "${COMPOSE_FILE}" && -f "${ENV_FILE}" ]]; then
     log "stopping and removing application containers"
     compose down --remove-orphans
@@ -215,6 +313,7 @@ purge_panel() {
   docker rm -f vite-frontend springboot-backend gost-mysql >/dev/null 2>&1 || true
   docker volume rm mysql_data backend_logs >/dev/null 2>&1 || true
   docker network rm gost-network >/dev/null 2>&1 || true
+  remove_update_service 1
   rm -rf "${INSTALL_DIR}" "${INSTALL_DIR}.previous" "${CONFIG_DIR}"
   log "Flux Panel containers, source, configuration, and database volumes were permanently deleted"
 }

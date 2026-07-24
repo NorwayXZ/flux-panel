@@ -121,7 +121,8 @@ export default function AdminLayout({
         <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M20 11a8.1 8.1 0 00-14.8-4.3L3 9m0 0V4m0 5h5M4 13a8.1 8.1 0 0014.8 4.3L21 15m0 0v5m0-5h-5" />
         </svg>
-      )
+      ),
+      adminOnly: true
     }
   ];
 

@@ -87,6 +87,20 @@ export const getConfigByName = (name: string) => Network.post("/config/get", { n
 export const updateConfigs = (configMap: Record<string, string>) => Network.post("/config/update", configMap);
 export const updateConfig = (name: string, value: string) => Network.post("/config/update-single", { name, value });
 
+export type SystemUpdateState = 'idle' | 'queued' | 'running' | 'success' | 'failed' | 'unknown';
+
+export interface SystemUpdateStatus {
+  supported: boolean;
+  state: SystemUpdateState;
+  message: string;
+  startedAt: number;
+  finishedAt: number;
+  logs: string[];
+}
+
+export const getSystemUpdateStatus = () => Network.post<SystemUpdateStatus>("/system-update/status");
+export const triggerSystemUpdate = () => Network.post<SystemUpdateStatus>("/system-update/trigger");
+
 
 // 验证码相关接口
 export const checkCaptcha = () => Network.post("/captcha/check");

@@ -20,7 +20,7 @@
 - 支持候选线路与目标地址主动健康检查
 - 支持 TCP、UDP、TCP + UDP，以及端口段批量映射
 - 深色模式使用低饱和异常配色，保持警示清晰但不过度刺眼
-- 侧边栏包含版本检查入口，便于确认当前版本状态
+- 侧边栏包含管理员在线更新入口，可检查版本、确认更新并查看执行日志
 
 ## 架构
 
@@ -41,7 +41,7 @@
 - 内存：2 GB，首次源码构建建议至少配置 2 GB Swap
 - 磁盘：10 GB 可用空间
 - 权限：`root`，或能够使用 `sudo`
-- 软件：Docker Engine 24+、Docker Compose v2、`curl`、`tar`
+- 软件：Docker Engine 24+、Docker Compose v2、`curl`、`tar`、`flock`（通常由 util-linux 提供）
 - 网络：能够访问 GitHub、Docker Hub、Maven Central 和 npm 软件源
 
 ### 推荐配置
@@ -139,6 +139,12 @@ curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/fl
 
 ## 更新
 
+管理员可以在“检查更新”页面查看 GitHub 版本。通过一键脚本安装或升级过的面板会同时安装受限的宿主机更新服务；发现新版本后，管理员可点击“立即更新”，页面会展示排队、构建、重启和健康检查状态。
+
+在线更新只允许拉取本仓库固定的 `main` 分支，面板容器不会挂载 Docker Socket，也不能提交任意宿主机命令。更新过程会保留数据库卷；新镜像启动失败时，脚本会恢复上一份应用源码。
+
+仍可使用命令行更新：
+
 更新前先执行数据库备份，然后运行：
 
 ```bash
@@ -146,6 +152,14 @@ curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/fl
 ```
 
 脚本会下载最新源码并重新构建容器。构建失败时会恢复上一份源码。涉及数据库结构变化的版本，请先阅读 Release 说明并执行对应迁移。
+
+在线更新服务使用以下宿主机文件：
+
+- `/usr/local/sbin/flux-panel-manager`：固定参数的面板管理脚本
+- `/usr/local/sbin/flux-panel-update-worker`：受 systemd 调用的更新任务
+- `/var/lib/flux-panel-updater`：更新请求、状态和最近一次日志
+
+普通用户无权读取状态或提交更新任务。
 
 ## 一键卸载
 
