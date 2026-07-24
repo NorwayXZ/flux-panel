@@ -1247,7 +1247,7 @@ export default function ForwardPage() {
   const getForwardNodeBlockClassName = (offline: boolean, clickable = false): string => {
     const baseClass = clickable ? 'cursor-pointer' : '';
     return offline
-      ? `${baseClass} px-2 py-1.5 bg-danger-100/90 dark:bg-danger-900/35 rounded border border-danger-300 dark:border-danger-700 transition-colors duration-200`
+      ? `${baseClass} px-2 py-1.5 bg-danger-100/90 rounded border border-danger-300 transition-colors duration-200`
       : `${baseClass} px-2 py-1.5 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300 transition-colors duration-200`;
   };
 
@@ -1417,7 +1417,7 @@ export default function ForwardPage() {
     const inNodeChip = getNodeStatusChip(inNodeOffline);
     const outNodeChip = getNodeStatusChip(outNodeOffline);
     const cardClassName = nodeOffline
-      ? "group shadow-sm border border-danger-300 dark:border-danger-800 overflow-hidden hover:shadow-md transition-shadow duration-200"
+      ? "offline-card group shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
       : "group shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200";
     const inAddressClickable = hasMultipleAddresses(forward.inIp);
     const targetAddressClickable = hasMultipleAddresses(forward.remoteAddr);
@@ -1429,7 +1429,7 @@ export default function ForwardPage() {
 
     return (
       <Card key={forward.id} className={`${cardClassName} h-full`}>
-        {nodeOffline && <div className="h-1 bg-danger" />}
+        {nodeOffline && <div className="offline-accent h-0.5 bg-danger" />}
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start w-full">
             <div className="flex-1 min-w-0">
@@ -1468,7 +1468,7 @@ export default function ForwardPage() {
                 color={primaryStatusDisplay.color as any}
                 variant="flat"
                 size="sm"
-                className="text-xs"
+                className={nodeOffline ? "text-xs offline-status-chip" : "text-xs"}
               >
                 {primaryStatusDisplay.text}
               </Chip>
@@ -1489,7 +1489,7 @@ export default function ForwardPage() {
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className={inNodeOffline ? "text-xs font-medium text-danger-700 dark:text-danger-300" : "text-xs font-medium text-default-600"}>入口节点</span>
-                  <Chip color={inNodeChip.color as any} variant="flat" size="sm" className="text-xs">
+                  <Chip color={inNodeChip.color as any} variant="flat" size="sm" className={inNodeOffline ? "text-xs offline-status-chip" : "text-xs"}>
                     {inNodeChip.text}
                   </Chip>
                 </div>
@@ -1519,7 +1519,7 @@ export default function ForwardPage() {
                   <span className={outNodeOffline ? "text-xs font-medium text-danger-700 dark:text-danger-300" : "text-xs font-medium text-default-600"}>
                     {forward.type === 1 ? '出口节点（同入口）' : '出口节点'}
                   </span>
-                  <Chip color={outNodeChip.color as any} variant="flat" size="sm" className="text-xs">
+                  <Chip color={outNodeChip.color as any} variant="flat" size="sm" className={outNodeOffline ? "text-xs offline-status-chip" : "text-xs"}>
                     {outNodeChip.text}
                   </Chip>
                 </div>
@@ -1758,13 +1758,13 @@ export default function ForwardPage() {
                       title={
                         <div className="flex flex-col gap-3 w-full pr-2 lg:flex-row lg:items-center lg:justify-between">
                           <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <div className={hasLinkOffline ? "w-9 h-9 bg-danger-100 dark:bg-danger-900/30 rounded-lg flex items-center justify-center flex-shrink-0" : "w-9 h-9 bg-success-100 dark:bg-success-900/30 rounded-lg flex items-center justify-center flex-shrink-0"}>
+                            <div className={hasLinkOffline ? "offline-card w-9 h-9 bg-danger-100 rounded-lg border border-danger-200 flex items-center justify-center flex-shrink-0" : "w-9 h-9 bg-success-100 dark:bg-success-900/30 rounded-lg flex items-center justify-center flex-shrink-0"}>
                               <svg className={hasLinkOffline ? "w-4 h-4 text-danger" : "w-4 h-4 text-success"} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
                             </div>
                             <div className="min-w-0 flex-1">
-                              <h3 className={hasLinkOffline ? "text-sm font-semibold text-danger-700 dark:text-danger-300 truncate" : "text-sm font-semibold text-foreground truncate"}>
+                              <h3 className={hasLinkOffline ? "offline-section-heading text-sm font-semibold text-danger-700 truncate" : "text-sm font-semibold text-foreground truncate"}>
                                 {tunnelGroup.tunnelName}
                               </h3>
                               <p className="text-xs text-default-500 truncate">
@@ -1774,7 +1774,7 @@ export default function ForwardPage() {
                           </div>
                           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                             {hasLinkOffline && (
-                              <Chip color="danger" variant="flat" size="sm" className="text-xs">
+                              <Chip color="danger" variant="flat" size="sm" className="text-xs offline-status-chip">
                                 {tunnelGroup.offlineForwardCount} 条异常
                               </Chip>
                             )}
@@ -1790,7 +1790,7 @@ export default function ForwardPage() {
                           </div>
                         </div>
                       }
-                      className={hasLinkOffline ? "border-danger-200 dark:border-danger-800" : "border-divider"}
+                      className={hasLinkOffline ? "offline-section-divider border-danger-200" : "border-divider"}
                     >
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 py-4">
                         {tunnelGroup.forwards.map((forward) => renderForwardCard(forward, undefined))}

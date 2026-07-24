@@ -447,7 +447,7 @@ export default function TunnelPage() {
 
   const getNodeBlockClassName = (offline: boolean): string => {
     return offline
-      ? "p-2 bg-danger-100/90 dark:bg-danger-900/35 rounded border border-danger-300 dark:border-danger-700"
+      ? "p-2 bg-danger-100/90 rounded border border-danger-300"
       : "p-2 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300";
   };
 
@@ -640,10 +640,10 @@ export default function TunnelPage() {
           <Card
             key={tunnel.id}
             className={tunnelOffline
-              ? "w-full self-start shadow-sm border border-danger-300 dark:border-danger-800 overflow-hidden hover:shadow-md transition-shadow duration-200"
+              ? "offline-card w-full self-start shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
               : "w-full self-start shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
           >
-            {tunnelOffline && <div className="h-1 bg-danger" />}
+            {tunnelOffline && <div className="offline-accent h-0.5 bg-danger" />}
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
@@ -657,7 +657,7 @@ export default function TunnelPage() {
                         color="danger"
                         variant="flat"
                         size="sm"
-                        className="text-xs"
+                        className="text-xs offline-status-chip"
                       >
                         链路异常
                       </Chip>
@@ -697,7 +697,7 @@ export default function TunnelPage() {
                             <span className={nodeOffline ? "text-xs font-medium text-danger-700 dark:text-danger-300" : "text-xs font-medium text-default-600"}>
                               {pathNode.label}
                             </span>
-                            <Chip color={nodeChip.color as any} variant="flat" size="sm" className="text-xs">
+                            <Chip color={nodeChip.color as any} variant="flat" size="sm" className={nodeOffline ? "text-xs offline-status-chip" : "text-xs"}>
                               {nodeChip.text}
                             </Chip>
                           </div>
@@ -875,12 +875,12 @@ export default function TunnelPage() {
 
             {offlineTunnels.length > 0 && (
               <section className="space-y-3">
-                <div className="flex items-center justify-between border-b border-danger-200 dark:border-danger-800 pb-2">
+                <div className="offline-section-divider flex items-center justify-between border-b border-danger-200 pb-2">
                   <div>
-                    <h2 className="text-sm font-semibold text-danger-700 dark:text-danger-300">链路异常</h2>
-                    <p className="text-xs text-danger-600 dark:text-danger-300">路径中存在离线或连接异常节点</p>
+                    <h2 className="offline-section-heading text-sm font-semibold text-danger-700">链路异常</h2>
+                    <p className="offline-section-copy text-xs text-danger-600">路径中存在离线或连接异常节点</p>
                   </div>
-                  <Chip color="danger" variant="flat" size="sm" className="text-xs">
+                  <Chip color="danger" variant="flat" size="sm" className="text-xs offline-status-chip">
                     {offlineTunnels.length} 条
                   </Chip>
                 </div>

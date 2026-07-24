@@ -85,4 +85,48 @@ html, body {
   }
 }
 
-@config "../../tailwind.config.js"
+@config "../../tailwind.config.js";
+
+/* Dark-mode incident palette: clear status without flooding cards with red. */
+.dark .offline-card {
+  background: #18191e;
+  border-color: #63404a;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.025);
+}
+
+.dark .offline-card [class*="bg-danger-"] {
+  background: #232227;
+}
+
+.dark .offline-card [class*="border-danger-"] {
+  border-color: #59434a;
+}
+
+.dark .offline-card [class*="text-danger-"] {
+  color: #c6b9bd;
+}
+
+.dark .offline-card code[class*="text-danger-"] {
+  color: #ddd5d8;
+}
+
+.dark .offline-accent {
+  background: #a45263;
+}
+
+.dark .offline-status-chip {
+  background: #3c222a !important;
+  color: #e2a0ab !important;
+}
+
+.dark .offline-section-heading {
+  color: #d99aa5;
+}
+
+.dark .offline-section-copy {
+  color: #9f9296;
+}
+
+.dark .offline-section-divider {
+  border-color: #4f3c42;
+}

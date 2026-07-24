@@ -653,7 +653,7 @@ export default function NodePage() {
           <Card
             key={node.id}
             className={nodeOffline
-              ? "shadow-sm border border-danger-300 bg-danger-50/80 dark:bg-danger-950/30 hover:shadow-md transition-shadow duration-200"
+              ? "offline-card shadow-sm border border-danger-300 bg-danger-50/80 hover:shadow-md transition-shadow duration-200"
               : "shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"}
           >
             <CardHeader className="pb-2">
@@ -667,7 +667,7 @@ export default function NodePage() {
                     color={node.connectionStatus === 'online' ? 'success' : 'danger'}
                     variant="flat"
                     size="sm"
-                    className="text-xs"
+                    className={nodeOffline ? "text-xs offline-status-chip" : "text-xs"}
                   >
                     {node.connectionStatus === 'online' ? '在线' : '离线'}
                   </Chip>
@@ -916,12 +916,12 @@ export default function NodePage() {
 
             {offlineNodes.length > 0 && (
               <section className="space-y-3">
-                <div className="flex items-center justify-between border-b border-danger-200 dark:border-danger-800 pb-2">
+                <div className="offline-section-divider flex items-center justify-between border-b border-danger-200 pb-2">
                   <div>
-                    <h2 className="text-sm font-semibold text-danger-700 dark:text-danger-300">离线节点</h2>
-                    <p className="text-xs text-danger-600 dark:text-danger-300">需要优先排查或清理的节点</p>
+                    <h2 className="offline-section-heading text-sm font-semibold text-danger-700">离线节点</h2>
+                    <p className="offline-section-copy text-xs text-danger-600">需要优先排查或清理的节点</p>
                   </div>
-                  <Chip color="danger" variant="flat" size="sm" className="text-xs">
+                  <Chip color="danger" variant="flat" size="sm" className="text-xs offline-status-chip">
                     {offlineNodes.length} 个
                   </Chip>
                 </div>
