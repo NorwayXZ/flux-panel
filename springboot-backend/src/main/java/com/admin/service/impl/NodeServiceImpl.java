@@ -158,6 +158,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             }
             nodeList = this.list(query);
         }
+        nodeList.forEach(this::refreshNodeStatus);
         enrichNodeAccess(nodeList, userId, roleId);
         hideNodeSecrets(nodeList);
         return R.ok(nodeList);
@@ -336,14 +337,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     }
 
     private Map<String, Object> syncNodeStatus(Node node) {
-        int status = WebSocketServer.isNodeOnline(node.getId()) ? 1 : 0;
-        if (!Objects.equals(node.getStatus(), status)) {
-            Node updateNode = new Node();
-            updateNode.setId(node.getId());
-            updateNode.setStatus(status);
-            updateNode.setUpdatedTime(System.currentTimeMillis());
-            this.updateById(updateNode);
-        }
+        int status = refreshNodeStatus(node);
 
         Map<String, Object> item = new HashMap<>();
         item.put("id", node.getId());
@@ -353,16 +347,21 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         return item;
     }
 
-    private boolean isNodeOnlineForDeletion(Node node) {
-        int currentStatus = WebSocketServer.isNodeOnline(node.getId()) ? 1 : 0;
-        if (!Objects.equals(node.getStatus(), currentStatus)) {
+    private int refreshNodeStatus(Node node) {
+        int status = WebSocketServer.isNodeOnline(node.getId()) ? 1 : 0;
+        if (!Objects.equals(node.getStatus(), status)) {
             Node updateNode = new Node();
             updateNode.setId(node.getId());
-            updateNode.setStatus(currentStatus);
+            updateNode.setStatus(status);
             updateNode.setUpdatedTime(System.currentTimeMillis());
             this.updateById(updateNode);
         }
-        return currentStatus == 1;
+        node.setStatus(status);
+        return status;
+    }
+
+    private boolean isNodeOnlineForDeletion(Node node) {
+        return refreshNodeStatus(node) == 1;
     }
 
     private long countNodeTunnels(Long nodeId) {
