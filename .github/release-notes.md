@@ -9,5 +9,6 @@
 - Requires Agent 2.8.0 for terminal access; older Agents continue to provide all existing monitoring and forwarding functions.
 - Runs the terminal schema migration before Agent WebSocket handshakes are accepted, avoiding transient reconnect errors during upgrades.
 - Keeps the password, confirmation, and session controls readable without horizontal overflow when the desktop sidebar is open.
+- Proxies the dedicated `/terminal` WebSocket through the frontend runtime with one-hour transport timeouts.
 
 The schema migration only adds the disabled-by-default `node.terminal_enabled` flag and the `terminal_session_audit` table. Existing nodes, tunnels, forwards, users, and traffic records are not rewritten.
