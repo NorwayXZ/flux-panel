@@ -3,7 +3,7 @@ import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
 import { Textarea } from "@heroui/input";
-import { Select, SelectItem } from "@heroui/select";
+import { Select, SelectItem, SelectSection } from "@heroui/select";
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/modal";
 import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
@@ -67,9 +67,21 @@ interface Forward {
 interface Tunnel {
   id: number;
   name: string;
+  type?: number;
   inNodeId?: number;
+  outNodeId?: number;
+  nodePath?: string;
   inNodePortSta?: number;
   inNodePortEnd?: number;
+  ownerUserName?: string;
+  accessType?: 'admin' | 'owned' | 'shared';
+}
+
+interface TunnelLineGroup {
+  key: string;
+  title: string;
+  level: number;
+  tunnels: Tunnel[];
 }
 
 interface ForwardForm {
@@ -303,6 +315,96 @@ export default function ForwardPage() {
     if (createdTimeCompare !== 0) return createdTimeCompare;
     return (b.id || 0) - (a.id || 0);
   };
+
+  const getTunnelNodePath = (tunnel: Tunnel): number[] => {
+    if (tunnel.nodePath) {
+      const path = tunnel.nodePath
+        .split(',')
+        .map(item => Number(item.trim()))
+        .filter(nodeId => Number.isFinite(nodeId) && nodeId > 0);
+      if (path.length > 0) return path;
+    }
+    if (tunnel.type === 1) {
+      return tunnel.inNodeId ? [tunnel.inNodeId] : [];
+    }
+    return [tunnel.inNodeId, tunnel.outNodeId]
+      .filter((nodeId): nodeId is number => Number.isFinite(nodeId) && Number(nodeId) > 0);
+  };
+
+  const getTunnelLineMeta = (tunnel: Tunnel) => {
+    if (tunnel.type === 1) {
+      return {
+        key: 'port-forward',
+        title: '端口转发线路',
+        badge: '端口转发',
+        level: 1,
+        color: 'warning' as const
+      };
+    }
+    const level = Math.max(getTunnelNodePath(tunnel).length, 2);
+    return {
+      key: `tunnel-level-${level}`,
+      title: `${level}级隧道线路`,
+      badge: `${level}级隧道`,
+      level,
+      color: 'primary' as const
+    };
+  };
+
+  const groupTunnelLines = (lineTunnels: Tunnel[]): TunnelLineGroup[] => {
+    const groupMap = new Map<string, TunnelLineGroup>();
+    lineTunnels.forEach(tunnel => {
+      const meta = getTunnelLineMeta(tunnel);
+      if (!groupMap.has(meta.key)) {
+        groupMap.set(meta.key, {
+          key: meta.key,
+          title: meta.title,
+          level: meta.level,
+          tunnels: []
+        });
+      }
+      groupMap.get(meta.key)!.tunnels.push(tunnel);
+    });
+
+    return Array.from(groupMap.values()).sort((left, right) => {
+      if (left.key === 'port-forward') return -1;
+      if (right.key === 'port-forward') return 1;
+      return left.level - right.level;
+    });
+  };
+
+  const renderTunnelLineSections = (lineTunnels: Tunnel[]) => (
+    groupTunnelLines(lineTunnels).map((group, groupIndex, groups) => (
+      <SelectSection
+        key={group.key}
+        title={`${group.title} (${group.tunnels.length})`}
+        showDivider={groupIndex < groups.length - 1}
+      >
+        {group.tunnels.map(tunnel => {
+          const meta = getTunnelLineMeta(tunnel);
+          return (
+            <SelectItem
+              key={tunnel.id}
+              textValue={`${tunnel.name} · ${meta.badge}`}
+              className="py-2"
+            >
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">{tunnel.name}</p>
+                  <p className="truncate text-xs text-default-400">
+                    ID {tunnel.id}{tunnel.ownerUserName ? ` · ${tunnel.ownerUserName}` : ''}
+                  </p>
+                </div>
+                <Chip color={meta.color} variant="flat" size="sm" className="flex-shrink-0">
+                  {meta.badge}
+                </Chip>
+              </div>
+            </SelectItem>
+          );
+        })}
+      </SelectSection>
+    ))
+  );
 
   // 按隧道归纳转发数据，管理转发时先看隧道，再看隧道下面的转发
   const groupForwardsByTunnel = (): TunnelForwardGroup[] => {
@@ -1641,10 +1743,9 @@ export default function ForwardPage() {
                           isInvalid={!!errors.tunnelId}
                           errorMessage={errors.tunnelId}
                           variant="bordered"
+                          description="按端口转发和隧道级数分类展示"
                         >
-                          {tunnels.map((tunnel) => (
-                            <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
-                          ))}
+                          {renderTunnelLineSections(tunnels)}
                         </Select>
                         <Input
                           label={form.batchMode ? "入口起始端口" : "入口端口"}
@@ -1747,10 +1848,9 @@ export default function ForwardPage() {
                             errorMessage={errors.routeTunnelIds}
                             variant="bordered"
                             isDisabled={compatibleCandidateTunnels.length === 0}
+                            description="候选线路已按类型和隧道级数分组"
                           >
-                            {compatibleCandidateTunnels.map((tunnel) => (
-                              <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
-                            ))}
+                            {renderTunnelLineSections(compatibleCandidateTunnels)}
                           </Select>
                         )}
                       </div>
