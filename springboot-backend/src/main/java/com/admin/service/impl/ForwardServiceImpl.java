@@ -2424,6 +2424,20 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             }
         }
 
+        for (Long namespaceNodeId : namespaceNodeIds) {
+            List<Map<String, Object>> pools = jdbcTemplate.queryForList(
+                    "SELECT start_port, end_port, control_port FROM port_pool WHERE node_id=? AND status=1",
+                    namespaceNodeId);
+            for (Map<String, Object> pool : pools) {
+                int start = ((Number) pool.get("start_port")).intValue();
+                int end = ((Number) pool.get("end_port")).intValue();
+                for (int port = start; port <= end; port++) {
+                    usedPorts.add(port);
+                }
+                usedPorts.add(((Number) pool.get("control_port")).intValue());
+            }
+        }
+
         return usedPorts;
     }
 

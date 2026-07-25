@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Addr   string `json:"addr"`
 	Secret string `json:"secret"`
+	Role   string `json:"role"`
 	Http   int    `json:"http"`
 	Tls    int    `json:"tls"`
 	Socks  int    `json:"socks"`
@@ -37,6 +38,12 @@ func LoadConfig(configPath string) (*Config, error) {
 	// 验证必要的配置项
 	if config.Addr == "" {
 		return nil, fmt.Errorf("服务器地址不能为空")
+	}
+	if config.Role == "" {
+		config.Role = "node"
+	}
+	if config.Role != "node" && config.Role != "connector" {
+		return nil, fmt.Errorf("不支持的 Agent 角色: %s", config.Role)
 	}
 
 	return &config, nil

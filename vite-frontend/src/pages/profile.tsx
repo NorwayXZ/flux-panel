@@ -9,6 +9,7 @@ import { isWebViewFunc } from '@/utils/panel';
 import { siteConfig } from '@/config/site';
 import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
+import { Boxes, RadioTower } from 'lucide-react';
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -57,6 +58,13 @@ export default function ProfilePage() {
 
   // 管理员菜单项
   const adminMenuItems: MenuItem[] = [
+    {
+      path: '/port-resources',
+      label: '端口资源',
+      icon: <Boxes className="h-5 w-5" />,
+      color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400',
+      description: '管理公网端口池'
+    },
     {
       path: '/limit',
       label: '限速管理',
@@ -195,6 +203,15 @@ export default function ProfilePage() {
         <Card className="border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow">
           <CardBody className="p-4">
             <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => navigate('/service-publishing')}
+                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+              >
+                <div className="w-10 h-10 bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 rounded-full flex items-center justify-center mb-2">
+                  <RadioTower className="h-5 w-5" />
+                </div>
+                <span className="text-xs text-foreground text-center">服务发布</span>
+              </button>
               {/* 管理员功能 */}
               {isAdmin && adminMenuItems.map((item) => (
                 <button

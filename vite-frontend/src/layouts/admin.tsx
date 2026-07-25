@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing } from 'lucide-react';
+import { BellRing, Boxes, RadioTower } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -75,6 +75,11 @@ export default function AdminLayout({
       icon: <BellRing className="h-5 w-5" />
     },
     {
+      path: '/service-publishing',
+      label: '服务发布',
+      icon: <RadioTower className="h-5 w-5" />
+    },
+    {
       path: '/tunnel',
       label: '隧道组建',
       icon: (
@@ -100,6 +105,12 @@ export default function AdminLayout({
           <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
         </svg>
       ),
+      adminOnly: true
+    },
+    {
+      path: '/port-resources',
+      label: '端口资源',
+      icon: <Boxes className="h-5 w-5" />,
       adminOnly: true
     },
     {
@@ -135,8 +146,8 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/monitoring'] },
-    { label: '系统管理', paths: ['/limit', '/user', '/config'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/service-publishing', '/monitoring'] },
+    { label: '系统管理', paths: ['/limit', '/port-resources', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
 

@@ -13,6 +13,8 @@ import LimitPage from "@/pages/limit";
 import ConfigPage from "@/pages/config";
 import UpdatePage from "@/pages/update";
 import MonitoringPage from "@/pages/monitoring";
+import ServicePublishingPage from "@/pages/service-publishing";
+import PortResourcesPage from "@/pages/port-resources";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -238,6 +240,14 @@ function App() {
             <UpdatePage />
           </ProtectedRoute>
         }
+      />
+      <Route
+        path="/service-publishing"
+        element={<ProtectedRoute><ServicePublishingPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/port-resources"
+        element={<ProtectedRoute useSimpleLayout={true}><PortResourcesPage /></ProtectedRoute>}
       />
       <Route 
         path="/settings" 

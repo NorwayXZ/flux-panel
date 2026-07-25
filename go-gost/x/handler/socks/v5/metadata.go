@@ -17,6 +17,7 @@ type metadata struct {
 	readTimeout       time.Duration
 	noTLS             bool
 	enableBind        bool
+	bindOnly          bool
 	enableUDP         bool
 	compatibilityMode bool
 	hash              string
@@ -47,6 +48,7 @@ func (h *socks5Handler) parseMetadata(md mdata.Metadata) (err error) {
 
 	h.md.noTLS = mdutil.GetBool(md, "notls")
 	h.md.enableBind = mdutil.GetBool(md, "bind")
+	h.md.bindOnly = mdutil.GetBool(md, "bindOnly")
 	h.md.enableUDP = mdutil.GetBool(md, "udp")
 
 	h.md.compatibilityMode = mdutil.GetBool(md, "comp")

@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.6.2}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.7.0}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -13,7 +13,18 @@ PROC_ROOT="${GOST_PROC_ROOT:-/proc}"
 KILL_COMMAND="${GOST_KILL_COMMAND:-kill}"
 SERVER_ADDR="${SERVER_ADDR:-}"
 SECRET="${SECRET:-}"
+AGENT_ROLE="${AGENT_ROLE:-node}"
 SERVICE_MANAGER=""
+
+configure_role_paths() {
+  if [ "$AGENT_ROLE" = "connector" ]; then
+    [ "${GOST_INSTALL_DIR+x}" = "x" ] || INSTALL_DIR="/etc/flux-connector"
+    [ "${GOST_SERVICE_NAME+x}" = "x" ] || SERVICE_NAME="flux-connector"
+    [ "${GOST_PID_FILE+x}" = "x" ] || PID_FILE="/run/flux-connector.pid"
+  elif [ "${GOST_SERVICE_NAME+x}" = "x" ]; then
+    SERVICE_NAME="$GOST_SERVICE_NAME"
+  fi
+}
 
 log() {
   printf '%s\n' "$*"
@@ -271,10 +282,12 @@ json_escape() {
 write_agent_config() {
   escaped_addr="$(json_escape "$SERVER_ADDR")"
   escaped_secret="$(json_escape "$SECRET")"
+  escaped_role="$(json_escape "$AGENT_ROLE")"
   cat > "$INSTALL_DIR/config.json" <<EOF
 {
   "addr": "$escaped_addr",
-  "secret": "$escaped_secret"
+  "secret": "$escaped_secret",
+  "role": "$escaped_role"
 }
 EOF
 
@@ -294,6 +307,10 @@ get_config_params() {
     read -r SECRET
   fi
   [ -n "$SERVER_ADDR" ] && [ -n "$SECRET" ] || fail "服务器地址和密钥不能为空"
+  case "$AGENT_ROLE" in
+    node|connector) ;;
+    *) fail "不支持的 Agent 角色: $AGENT_ROLE" ;;
+  esac
 }
 
 install_gost() {
@@ -393,7 +410,7 @@ EOF
 }
 
 usage() {
-  log "用法: $0 -a 面板地址 -s 节点密钥"
+  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]"
 }
 
 main() {
@@ -401,14 +418,17 @@ main() {
   require_command curl
   require_command sed
 
-  while getopts "a:s:h" opt; do
+  while getopts "a:s:r:h" opt; do
     case "$opt" in
       a) SERVER_ADDR="$OPTARG" ;;
       s) SECRET="$OPTARG" ;;
+      r) AGENT_ROLE="$OPTARG" ;;
       h) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
   done
+
+  configure_role_paths
 
   if [ -n "$SERVER_ADDR" ] && [ -n "$SECRET" ]; then
     install_gost

@@ -85,15 +85,16 @@ EOF
     GOST_PROC_ROOT="$case_root/proc" \
     GOST_PID_FILE="$case_root/run/gost.pid" \
     GOST_KILL_COMMAND="$mock_dir/kill-agent" \
-    sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret >/dev/null
+    sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret -r connector >/dev/null
 
-  test -x "$case_root/etc/init.d/gost"
-  grep -Fq '#!/sbin/openrc-run' "$case_root/etc/init.d/gost"
-  grep -Fq "command=\"$case_root/etc/gost/gost\"" "$case_root/etc/init.d/gost"
+  test -x "$case_root/etc/init.d/flux-connector"
+  grep -Fq '#!/sbin/openrc-run' "$case_root/etc/init.d/flux-connector"
+  grep -Fq "command=\"$case_root/etc/gost/gost\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq '"addr": "127.0.0.1:6365"' "$case_root/etc/gost/config.json"
-  grep -Fq 'rc-update add gost default' "$event_log"
-  grep -Fq 'rc-service gost start' "$event_log"
-  grep -Fq 'rc-service gost status' "$event_log"
+  grep -Fq '"role": "connector"' "$case_root/etc/gost/config.json"
+  grep -Fq 'rc-update add flux-connector default' "$event_log"
+  grep -Fq 'rc-service flux-connector start' "$event_log"
+  grep -Fq 'rc-service flux-connector status' "$event_log"
   grep -Fq 'kill-agent 4242 ' "$event_log"
   test ! -e "$case_root/run/gost.pid"
 }
@@ -121,6 +122,7 @@ EOF
 
   test -f "$case_root/etc/systemd/system/gost.service"
   grep -Fq "ExecStart=$case_root/etc/gost/gost" "$case_root/etc/systemd/system/gost.service"
+  grep -Fq '"role": "node"' "$case_root/etc/gost/config.json"
   grep -Fq 'systemctl enable gost' "$event_log"
   grep -Fq 'systemctl start gost' "$event_log"
   grep -Fq 'systemctl is-active' "$event_log"

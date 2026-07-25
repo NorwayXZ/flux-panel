@@ -1,0 +1,285 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Button } from '@heroui/button';
+import { Chip } from '@heroui/chip';
+import { Input } from '@heroui/input';
+import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
+import { Select, SelectItem } from '@heroui/select';
+import { Spinner } from '@heroui/spinner';
+import { Tab, Tabs } from '@heroui/tabs';
+import { Clock3, Copy, Plus, RadioTower, ServerCog, Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+import {
+  createInternalConnector,
+  createPublishedService,
+  deleteInternalConnector,
+  deletePublishedService,
+  getInternalConnectorInstall,
+  getInternalConnectors,
+  getPublishedServices,
+  getPublishingPortPools,
+  renewPublishedService,
+  type InternalConnector,
+  type PublishedService,
+  type PublishingPortPool,
+} from '@/api';
+
+const stateMeta: Record<string, { label: string; color: 'success' | 'warning' | 'danger' | 'default' | 'primary' }> = {
+  provisioning: { label: '配置中', color: 'primary' },
+  active: { label: '运行中', color: 'success' },
+  expiring: { label: '即将到期', color: 'warning' },
+  cleanup_pending: { label: '到期待清理', color: 'danger' },
+  delete_pending: { label: '删除待清理', color: 'danger' },
+  expired: { label: '已到期', color: 'warning' },
+  released: { label: '已释放', color: 'default' },
+};
+
+const formatTime = (value?: number) => value
+  ? new Date(value).toLocaleString('zh-CN', { hour12: false })
+  : '无限制';
+
+export default function ServicePublishingPage() {
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [services, setServices] = useState<PublishedService[]>([]);
+  const [connectors, setConnectors] = useState<InternalConnector[]>([]);
+  const [pools, setPools] = useState<PublishingPortPool[]>([]);
+  const [serviceModal, setServiceModal] = useState(false);
+  const [connectorModal, setConnectorModal] = useState(false);
+  const [commandModal, setCommandModal] = useState(false);
+  const [installCommand, setInstallCommand] = useState('');
+  const [serviceForm, setServiceForm] = useState({
+    name: '', connectorId: '', poolId: '', targetHost: '127.0.0.1', targetPort: '', leaseHours: '24', requestedPort: '',
+  });
+  const [connectorForm, setConnectorForm] = useState({ name: '', allowedCidrs: '' });
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [serviceRes, connectorRes, poolRes] = await Promise.all([
+        getPublishedServices(), getInternalConnectors(), getPublishingPortPools(),
+      ]);
+      if (serviceRes.code === 0) setServices(serviceRes.data || []);
+      if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
+      if (poolRes.code === 0) setPools(poolRes.data || []);
+      const failed = [serviceRes, connectorRes, poolRes].find(item => item.code !== 0);
+      if (failed) toast.error(failed.msg || '加载服务发布数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadData(); }, []);
+
+  const activeCount = useMemo(() => services.filter(item => item.state === 'active').length, [services]);
+  const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
+
+  const submitService = async () => {
+    if (!serviceForm.name.trim() || !serviceForm.connectorId || !serviceForm.poolId || !serviceForm.targetHost || !serviceForm.targetPort) {
+      toast.error('请填写完整的服务发布配置');
+      return;
+    }
+    setSubmitting(true);
+    const res = await createPublishedService({
+      name: serviceForm.name.trim(),
+      connectorId: Number(serviceForm.connectorId),
+      poolId: Number(serviceForm.poolId),
+      targetHost: serviceForm.targetHost.trim(),
+      targetPort: Number(serviceForm.targetPort),
+      leaseHours: Number(serviceForm.leaseHours),
+      requestedPort: serviceForm.requestedPort ? Number(serviceForm.requestedPort) : undefined,
+    });
+    setSubmitting(false);
+    if (res.code !== 0) return toast.error(res.msg || '发布失败');
+    toast.success('内网服务已发布');
+    setServiceModal(false);
+    setServiceForm({ name: '', connectorId: '', poolId: '', targetHost: '127.0.0.1', targetPort: '', leaseHours: '24', requestedPort: '' });
+    loadData();
+  };
+
+  const submitConnector = async () => {
+    if (!connectorForm.name.trim()) return toast.error('请输入接入端名称');
+    setSubmitting(true);
+    const res = await createInternalConnector({
+      name: connectorForm.name.trim(),
+      allowedCidrs: connectorForm.allowedCidrs.trim() || undefined,
+    });
+    setSubmitting(false);
+    if (res.code !== 0) return toast.error(res.msg || '创建失败');
+    setConnectorModal(false);
+    setConnectorForm({ name: '', allowedCidrs: '' });
+    setInstallCommand(res.data.installCommand);
+    setCommandModal(true);
+    loadData();
+  };
+
+  const showInstall = async (id: number) => {
+    const res = await getInternalConnectorInstall(id);
+    if (res.code !== 0) return toast.error(res.msg || '获取安装命令失败');
+    setInstallCommand(res.data);
+    setCommandModal(true);
+  };
+
+  const copyCommand = async () => {
+    await navigator.clipboard.writeText(installCommand);
+    toast.success('安装命令已复制');
+  };
+
+  const renew = async (id: number) => {
+    const res = await renewPublishedService(id, 24);
+    if (res.code !== 0) return toast.error(res.msg || '续租失败');
+    toast.success('已续租 24 小时');
+    loadData();
+  };
+
+  const removeService = async (id: number) => {
+    if (!window.confirm('确认停止该服务并释放端口吗？')) return;
+    const res = await deletePublishedService(id);
+    if (res.code !== 0) return toast.error(res.msg || '删除失败');
+    const pending = res.data?.state === 'delete_pending';
+    if (pending) {
+      toast('接入端当前离线，服务将在恢复连接后自动删除，端口暂不释放');
+    } else {
+      toast.success('服务已停止，端口进入冷却');
+    }
+    loadData();
+  };
+
+  const removeConnector = async (id: number) => {
+    if (!window.confirm('确认删除该内网接入端吗？')) return;
+    const res = await deleteInternalConnector(id);
+    if (res.code !== 0) return toast.error(res.msg || '删除失败');
+    toast.success('接入端已删除');
+    loadData();
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-sm text-default-500">端口服务</p>
+          <h1 className="mt-1 text-2xl font-semibold">服务发布</h1>
+        </div>
+        <Button color="primary" startContent={<Plus size={18} />} onPress={() => setServiceModal(true)}>
+          发布服务
+        </Button>
+      </header>
+
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
+        {[
+          ['运行服务', activeCount], ['全部服务', services.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
+        ].map(([label, value]) => (
+          <div key={String(label)} className="bg-content1 px-4 py-4">
+            <div className="text-xs text-default-500">{label}</div>
+            <div className="mt-1 text-xl font-semibold">{value}</div>
+          </div>
+        ))}
+      </section>
+
+      <Tabs aria-label="服务发布视图" variant="underlined">
+        <Tab key="services" title={`发布服务 ${services.length}`}>
+          {loading ? (
+            <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
+          ) : services.length === 0 ? (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+              <RadioTower size={30} />
+              <span>暂无发布服务</span>
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+              {services.map(service => {
+                const meta = stateMeta[service.state] || { label: service.state, color: 'default' as const };
+                return (
+                  <article key={service.id} className="rounded-lg border border-divider bg-content1 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-base font-semibold">{service.name}</h2>
+                        <div className="mt-1 text-sm text-default-500">{service.ownerUserName}</div>
+                      </div>
+                      <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
+                    </div>
+                    <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">
+                      {service.publicHost}:{service.publicPort}
+                      <span className="mx-2 text-default-400">→</span>
+                      {service.targetHost}:{service.targetPort}
+                    </div>
+                    <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                      <div><dt className="text-default-500">端口池</dt><dd className="mt-1 truncate">{service.poolName}</dd></div>
+                      <div><dt className="text-default-500">内网接入端</dt><dd className="mt-1 flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${service.connectorOnline ? 'bg-success' : 'bg-danger'}`} />{service.connectorName}</dd></div>
+                      <div className="col-span-2"><dt className="text-default-500">到期时间</dt><dd className="mt-1">{formatTime(service.expiresAt)}</dd></div>
+                    </dl>
+                    {service.lastError && <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">{service.lastError}</div>}
+                    <div className="mt-4 flex justify-end gap-2 border-t border-divider pt-3">
+                      {service.state === 'active' && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续租24小时</Button>}
+                      {!['released', 'expired', 'delete_pending'].includes(service.state) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除服务" onPress={() => removeService(service.id)}><Trash2 size={16} /></Button>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </Tab>
+        <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
+          <div className="mb-4 flex justify-end">
+            <Button variant="flat" startContent={<Plus size={17} />} onPress={() => setConnectorModal(true)}>添加接入端</Button>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-divider">
+            <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
+              <span>名称</span><span>连接状态</span><span>最近地址</span><span>操作</span>
+            </div>
+            {connectors.length === 0 ? <div className="py-16 text-center text-default-500">暂无内网接入端</div> : connectors.map(connector => (
+              <div key={connector.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center">
+                <div><div className="font-medium">{connector.name}</div><div className="text-xs text-default-500">{connector.ownerUserName}</div></div>
+                <div className="flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${connector.online ? 'bg-success' : 'bg-default-400'}`} />{connector.online ? '在线' : '离线'}</div>
+                <div className="text-sm text-default-500">{connector.remoteIp || '尚未连接'}</div>
+                <div className="flex justify-end gap-1">
+                  <Button isIconOnly size="sm" variant="light" aria-label="安装命令" onPress={() => showInstall(connector.id)}><ServerCog size={17} /></Button>
+                  <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除接入端" onPress={() => removeConnector(connector.id)}><Trash2 size={17} /></Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Tab>
+      </Tabs>
+
+      <Modal isOpen={serviceModal} onOpenChange={setServiceModal} size="2xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>发布内网服务</ModalHeader>
+          <ModalBody className="grid gap-4 sm:grid-cols-2">
+            <Input label="服务名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
+            <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
+              {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
+            </Select>
+            <Select label="公网端口池" selectedKeys={serviceForm.poolId ? [serviceForm.poolId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolId: String(Array.from(keys)[0] || '') })}>
+              {pools.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · 剩余 {item.availablePorts}</SelectItem>)}
+            </Select>
+            <Input label="租期（小时）" type="number" min={1} value={serviceForm.leaseHours} onValueChange={value => setServiceForm({ ...serviceForm, leaseHours: value })} />
+            <Input label="内网目标 IP" value={serviceForm.targetHost} onValueChange={value => setServiceForm({ ...serviceForm, targetHost: value })} />
+            <Input label="内网目标端口" type="number" min={1} max={65535} value={serviceForm.targetPort} onValueChange={value => setServiceForm({ ...serviceForm, targetPort: value })} />
+            <Input className="sm:col-span-2" label="指定公网端口（可选）" type="number" min={1} max={65535} value={serviceForm.requestedPort} onValueChange={value => setServiceForm({ ...serviceForm, requestedPort: value })} />
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setServiceModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitService}>发布</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={connectorModal} onOpenChange={setConnectorModal} size="xl">
+        <ModalContent>
+          <ModalHeader>添加内网接入端</ModalHeader>
+          <ModalBody>
+            <Input label="名称" value={connectorForm.name} onValueChange={value => setConnectorForm({ ...connectorForm, name: value })} />
+            <Input label="允许访问网段（可选）" placeholder="127.0.0.1/32,192.168.0.0/16" value={connectorForm.allowedCidrs} onValueChange={value => setConnectorForm({ ...connectorForm, allowedCidrs: value })} />
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setConnectorModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitConnector}>创建</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={commandModal} onOpenChange={setCommandModal} size="2xl">
+        <ModalContent>
+          <ModalHeader>安装接入端</ModalHeader>
+          <ModalBody><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default-100 p-4 text-sm">{installCommand}</pre></ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setCommandModal(false)}>关闭</Button><Button color="primary" startContent={<Copy size={16} />} onPress={copyCommand}>复制命令</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+    </div>
+  );
+}

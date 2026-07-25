@@ -5,6 +5,8 @@ import com.admin.common.dto.GostConfigDto;
 import com.admin.common.dto.GostDto;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.entity.Node;
+import com.admin.entity.InternalConnector;
+import com.admin.mapper.InternalConnectorMapper;
 import com.admin.service.NodeService;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -31,11 +33,16 @@ public class WebSocketServer extends TextWebSocketHandler {
     @Resource
     NodeService nodeService;
 
+    @Resource
+    InternalConnectorMapper internalConnectorMapper;
+
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
     
     // 存储节点ID和对应的WebSocket session映射
     private static final ConcurrentHashMap<Long, WebSocketSession> nodeSessions = new ConcurrentHashMap<>();
+
+    private static final ConcurrentHashMap<Long, WebSocketSession> connectorSessions = new ConcurrentHashMap<>();
     
     // 为每个session提供锁对象，防止并发发送消息
     private static final ConcurrentHashMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
@@ -216,7 +223,28 @@ public class WebSocketServer extends TextWebSocketHandler {
             String id = session.getAttributes().get("id").toString();
             String type = session.getAttributes().get("type").toString();
             
-            if (!Objects.equals(type, "1")) {
+            if (Objects.equals(type, "2")) {
+                Long connectorId = Long.valueOf(id);
+                WebSocketSession existingSession = connectorSessions.put(connectorId, session);
+                if (existingSession != null && existingSession.isOpen() && !existingSession.equals(session)) {
+                    sessionLocks.remove(existingSession.getId());
+                    try {
+                        existingSession.close();
+                    } catch (Exception e) {
+                        log.info("关闭接入端 {} 旧连接失败: {}", connectorId, e.getMessage());
+                    }
+                }
+                InternalConnector connector = internalConnectorMapper.selectById(connectorId);
+                if (connector != null) {
+                    long now = System.currentTimeMillis();
+                    connector.setVersion((String) session.getAttributes().get("nodeVersion"));
+                    connector.setRemoteIp((String) session.getAttributes().get("remoteIp"));
+                    connector.setLastSeen(now);
+                    connector.setUpdatedTime(now);
+                    internalConnectorMapper.updateById(connector);
+                }
+                log.info("内网接入端 {} 连接建立", connectorId);
+            } else if (!Objects.equals(type, "1")) {
                 // 网页管理员连接
                 activeSessions.add(session);
                 log.info("管理员连接建立，sessionId: {}", session.getId());
@@ -300,6 +328,8 @@ public class WebSocketServer extends TextWebSocketHandler {
                     Long nodeId = Long.valueOf(id);
                     nodeSessions.remove(nodeId);
                     log.info("由于异常，移除节点 {} 的会话", nodeId);
+                } else if (Objects.equals(type, "2")) {
+                    connectorSessions.remove(Long.valueOf(id));
                 }
             } catch (Exception cleanupException) {
                 log.info("清理异常会话时出错: {}", cleanupException.getMessage());
@@ -317,7 +347,21 @@ public class WebSocketServer extends TextWebSocketHandler {
             
             log.info("连接关闭，ID: {}, 类型: {}, 状态: {}", id, type, status);
             
-            if (!Objects.equals(type, "1")) {
+            if (Objects.equals(type, "2")) {
+                Long connectorId = Long.valueOf(id);
+                WebSocketSession currentSession = connectorSessions.get(connectorId);
+                if (currentSession != null && currentSession.equals(session)) {
+                    connectorSessions.remove(connectorId);
+                    InternalConnector connector = internalConnectorMapper.selectById(connectorId);
+                    if (connector != null) {
+                        long now = System.currentTimeMillis();
+                        connector.setLastSeen(now);
+                        connector.setUpdatedTime(now);
+                        internalConnectorMapper.updateById(connector);
+                    }
+                }
+                log.info("内网接入端 {} 连接关闭", connectorId);
+            } else if (!Objects.equals(type, "1")) {
                 // 管理员连接关闭
                 boolean removed = activeSessions.remove(session);
                 log.info("管理员连接关闭，sessionId: {}, 移除结果: {}", sessionId, removed);
@@ -387,7 +431,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                         String finalMessage = message;
                         if (nodeSecret != null && !nodeSecret.isEmpty()) {
                             String type = (String) socketSession.getAttributes().get("type");
-                            if ("1".equals(type)) { // 节点连接
+                            if ("1".equals(type) || "2".equals(type)) {
                                 finalMessage = encryptMessageIfPossible(message, nodeSecret);
                             }
                         }
@@ -423,6 +467,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                 }
                 return false;
             });
+            connectorSessions.entrySet().removeIf(entry -> entry.getValue() == session);
         }
     }
 
@@ -446,24 +491,45 @@ public class WebSocketServer extends TextWebSocketHandler {
         return false;
     }
 
+    public static boolean isConnectorOnline(Long connectorId) {
+        WebSocketSession session = connectorSessions.get(connectorId);
+        if (session != null && session.isOpen()) {
+            return true;
+        }
+        if (session != null) {
+            connectorSessions.remove(connectorId);
+            sessionLocks.remove(session.getId());
+        }
+        return false;
+    }
+
 
 
     public static GostDto send_msg(Long node_id, Object msg, String type) {
-        WebSocketSession nodeSession = nodeSessions.get(node_id);
+        return sendCommand(nodeSessions, node_id, msg, type, "节点");
+    }
+
+    public static GostDto sendConnectorMsg(Long connectorId, Object msg, String type) {
+        return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端");
+    }
+
+    private static GostDto sendCommand(ConcurrentHashMap<Long, WebSocketSession> sessions,
+                                       Long targetId, Object msg, String type, String targetLabel) {
+        WebSocketSession nodeSession = sessions.get(targetId);
 
         if (nodeSession == null) {
-            log.info("发送消息失败：节点 {} 不在线或会话不存在", node_id);
+            log.info("发送消息失败：{} {} 不在线或会话不存在", targetLabel, targetId);
             GostDto result = new GostDto();
-            result.setMsg("节点不在线");
+            result.setMsg(targetLabel + "不在线");
             return result;
         }
 
         if (!nodeSession.isOpen()) {
-            log.info("发送消息失败：节点 {} 连接已断开，清理会话", node_id);
-            nodeSessions.remove(node_id);
+            log.info("发送消息失败：{} {} 连接已断开，清理会话", targetLabel, targetId);
+            sessions.remove(targetId);
             sessionLocks.remove(nodeSession.getId());
             GostDto result = new GostDto();
-            result.setMsg("节点连接已断开");
+            result.setMsg(targetLabel + "连接已断开");
             return result;
         }
 
@@ -485,7 +551,7 @@ public class WebSocketServer extends TextWebSocketHandler {
             sendToUser(nodeSession, data.toJSONString(), nodeSecret);
             GostDto result = future.get(10, TimeUnit.SECONDS);
             
-            log.info("成功发送消息到节点 {} 并收到响应: {}", node_id, result.getMsg());
+            log.info("成功发送消息到{} {} 并收到响应: {}", targetLabel, targetId, result.getMsg());
             return result;
             
         } catch (Exception e) {
@@ -495,10 +561,10 @@ public class WebSocketServer extends TextWebSocketHandler {
             GostDto result = new GostDto();
             if (e instanceof java.util.concurrent.TimeoutException) {
                 result.setMsg("等待响应超时");
-                log.info("节点 {} 响应超时，可能存在连接问题", node_id);
+                log.info("{} {} 响应超时，可能存在连接问题", targetLabel, targetId);
             } else {
                 result.setMsg("发送消息失败: " + e.getMessage());
-                log.info("发送消息到节点 {} 失败: {}", node_id, e.getMessage(), e);
+                log.info("发送消息到{} {} 失败: {}", targetLabel, targetId, e.getMessage(), e);
             }
             return result;
         }

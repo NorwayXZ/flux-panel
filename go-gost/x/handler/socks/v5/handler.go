@@ -178,6 +178,13 @@ func (h *socks5Handler) Handle(ctx context.Context, conn net.Conn, opts ...handl
 
 	switch req.Cmd {
 	case gosocks5.CmdConnect:
+		if h.md.bindOnly {
+			resp := gosocks5.NewReply(gosocks5.NotAllowed, nil)
+			if err := resp.Write(conn); err != nil {
+				return err
+			}
+			return errors.New("socks5: CONNECT is disabled in BIND-only mode")
+		}
 		return h.handleConnect(ctx, conn, "tcp", address, ro, log)
 	case gosocks5.CmdBind:
 		return h.handleBind(ctx, conn, "tcp", address, log)

@@ -85,6 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           go test ./...
+          (cd x && go test ./...)
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-arm64 .
           cd ..

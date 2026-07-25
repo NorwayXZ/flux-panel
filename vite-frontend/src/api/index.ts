@@ -197,6 +197,77 @@ export interface SystemUpdateStatus {
 export const getSystemUpdateStatus = () => Network.post<SystemUpdateStatus>("/system-update/status");
 export const triggerSystemUpdate = () => Network.post<SystemUpdateStatus>("/system-update/trigger");
 
+export interface InternalConnector {
+  id: number;
+  name: string;
+  ownerUserName: string;
+  allowedCidrs: string;
+  version?: string;
+  remoteIp?: string;
+  lastSeen?: number;
+  online: boolean;
+}
+
+export interface PublishingPortPool {
+  id: number;
+  name: string;
+  nodeId: number;
+  nodeName: string;
+  bindIp: string;
+  publicHost: string;
+  startPort: number;
+  endPort: number;
+  controlPort: number;
+  defaultLeaseHours: number;
+  maxLeaseHours: number;
+  cooldownSeconds: number;
+  totalPorts: number;
+  usedPorts: number;
+  availablePorts: number;
+}
+
+export interface PublishedService {
+  id: number;
+  name: string;
+  ownerUserName: string;
+  connectorId: number;
+  connectorName: string;
+  connectorOnline: boolean;
+  poolId: number;
+  poolName: string;
+  publicHost: string;
+  publicPort: number;
+  targetHost: string;
+  targetPort: number;
+  protocol: string;
+  state: string;
+  expiresAt?: number;
+  lastError?: string;
+}
+
+export const createInternalConnector = (data: { name: string; allowedCidrs?: string }) =>
+  Network.post<{ connector: InternalConnector; installCommand: string }>("/service-publishing/connector/create", data);
+export const getInternalConnectors = () =>
+  Network.post<InternalConnector[]>("/service-publishing/connector/list");
+export const getInternalConnectorInstall = (id: number) =>
+  Network.post<string>("/service-publishing/connector/install", { id });
+export const deleteInternalConnector = (id: number) =>
+  Network.post("/service-publishing/connector/delete", { id });
+export const createPublishingPortPool = (data: any) =>
+  Network.post<PublishingPortPool>("/service-publishing/pool/create", data);
+export const getPublishingPortPools = () =>
+  Network.post<PublishingPortPool[]>("/service-publishing/pool/list");
+export const deletePublishingPortPool = (id: number) =>
+  Network.post("/service-publishing/pool/delete", { id });
+export const createPublishedService = (data: any) =>
+  Network.post<PublishedService>("/service-publishing/service/create", data);
+export const getPublishedServices = () =>
+  Network.post<PublishedService[]>("/service-publishing/service/list");
+export const renewPublishedService = (id: number, hours: number) =>
+  Network.post<PublishedService>("/service-publishing/service/renew", { id, hours });
+export const deletePublishedService = (id: number) =>
+  Network.post("/service-publishing/service/delete", { id });
+
 
 // 验证码相关接口
 export const checkCaptcha = () => Network.post("/captcha/check");

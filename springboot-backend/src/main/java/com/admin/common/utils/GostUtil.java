@@ -13,6 +13,104 @@ import java.util.List;
 
 public class GostUtil {
 
+    public static GostDto AddPublishingGateway(Long nodeId, String name, String bindIp, Integer port,
+                                               String username, String password) {
+        JSONObject service = new JSONObject();
+        service.put("name", name);
+        service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
+
+        JSONObject auth = new JSONObject();
+        auth.put("username", username);
+        auth.put("password", password);
+        JSONObject metadata = new JSONObject();
+        metadata.put("bind", true);
+        metadata.put("bindOnly", true);
+        metadata.put("udp", false);
+        JSONObject handler = new JSONObject();
+        handler.put("type", "socks5");
+        handler.put("auth", auth);
+        handler.put("metadata", metadata);
+        service.put("handler", handler);
+
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, "AddService");
+    }
+
+    public static GostDto DeletePublishingGateway(Long nodeId, String name) {
+        JSONObject data = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(name);
+        data.put("services", services);
+        return WebSocketServer.send_msg(nodeId, data, "DeleteService");
+    }
+
+    public static GostDto AddPublishingChain(Long connectorId, String chainName, String publicAddress,
+                                             String username, String password) {
+        JSONObject auth = new JSONObject();
+        auth.put("username", username);
+        auth.put("password", password);
+        JSONObject connector = new JSONObject();
+        connector.put("type", "socks5");
+        connector.put("auth", auth);
+        JSONObject dialer = new JSONObject();
+        dialer.put("type", "tcp");
+        JSONObject node = new JSONObject();
+        node.put("name", chainName + "_node");
+        node.put("addr", publicAddress);
+        node.put("connector", connector);
+        node.put("dialer", dialer);
+        JSONArray nodes = new JSONArray();
+        nodes.add(node);
+        JSONObject hop = new JSONObject();
+        hop.put("name", chainName + "_hop");
+        hop.put("nodes", nodes);
+        JSONArray hops = new JSONArray();
+        hops.add(hop);
+        JSONObject chain = new JSONObject();
+        chain.put("name", chainName);
+        chain.put("hops", hops);
+        return WebSocketServer.sendConnectorMsg(connectorId, chain, "AddChains");
+    }
+
+    public static GostDto AddPublishedTcpService(Long connectorId, String serviceName, String chainName,
+                                                 String bindIp, Integer publicPort, String targetAddress) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + publicPort);
+        JSONObject handler = new JSONObject();
+        handler.put("type", "rtcp");
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject();
+        listener.put("type", "rtcp");
+        listener.put("chain", chainName);
+        service.put("listener", listener);
+        service.put("forwarder", createForwarder(targetAddress, "fifo"));
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.sendConnectorMsg(connectorId, services, "AddService");
+    }
+
+    public static GostDto DeletePublishedTcpService(Long connectorId, String serviceName, String chainName) {
+        JSONObject serviceData = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        serviceData.put("services", services);
+        GostDto serviceResult = WebSocketServer.sendConnectorMsg(connectorId, serviceData, "DeleteService");
+
+        JSONObject chainData = new JSONObject();
+        chainData.put("chain", chainName);
+        GostDto chainResult = WebSocketServer.sendConnectorMsg(connectorId, chainData, "DeleteChains");
+        if (serviceResult != null && "OK".equals(serviceResult.getMsg())) {
+            return chainResult;
+        }
+        return serviceResult;
+    }
+
 
     public static GostDto AddLimiters(Long node_id, Long name, String speed) {
         JSONObject data = createLimiterData(name, speed);
