@@ -86,6 +86,12 @@ public class ForwardController extends BaseController {
         return forwardService.diagnoseForward(forwardId);
     }
 
+    @PostMapping("/route-events")
+    public R routeEvents(@RequestBody Map<String, Object> params) {
+        Long forwardId = Long.valueOf(params.get("forwardId").toString());
+        return forwardService.getRouteEvents(forwardId);
+    }
+
     /**
      * 更新转发排序
      * @param params 包含forwards数组的参数，每个元素包含id和inx

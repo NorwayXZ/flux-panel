@@ -12,6 +12,7 @@ import { Alert } from "@heroui/alert";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from 'react-hot-toast';
 import type { ReactNode } from 'react';
+import { History, Route, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
@@ -25,7 +26,8 @@ import {
   userTunnel,
   pauseForwardService,
   resumeForwardService,
-  diagnoseForward
+  diagnoseForward,
+  getForwardRouteEvents
 } from "@/api";
 import { JwtUtil } from "@/utils/jwt";
 
@@ -62,6 +64,10 @@ interface Forward {
   protocolMode?: 'tcp' | 'udp' | 'tcp_udp';
   targetHealth?: string;
   lastHealthCheck?: number;
+  previousActiveTunnelId?: number;
+  lastRouteSwitch?: number;
+  routeSwitchReason?: string;
+  routeSwitchCount?: number;
 }
 
 interface Tunnel {
@@ -109,6 +115,10 @@ interface ForwardRoute {
   latency?: number | null;
   packetLoss?: number | null;
   failCount?: number;
+  successCount?: number;
+  healthySince?: number;
+  lastFailureTime?: number;
+  lastSuccessTime?: number;
   lastCheckTime?: number;
   message?: string;
   healthyTargets?: string[];
@@ -119,6 +129,20 @@ interface TargetHealth {
   status: 'healthy' | 'unhealthy';
   latency?: number;
   packetLoss?: number;
+}
+
+interface RouteSwitchEvent {
+  id: number;
+  forwardId: number;
+  fromTunnelId?: number;
+  fromTunnelName?: string;
+  toTunnelId?: number;
+  toTunnelName?: string;
+  reason: string;
+  triggerType: 'failure' | 'recovery' | 'latency';
+  status: 'success' | 'failed';
+  detail?: string;
+  createdAt: number;
 }
 
 interface AddressItem {
@@ -176,13 +200,17 @@ export default function ForwardPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [diagnosisModalOpen, setDiagnosisModalOpen] = useState(false);
+  const [failoverModalOpen, setFailoverModalOpen] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [failoverLoading, setFailoverLoading] = useState(false);
   const [forwardToDelete, setForwardToDelete] = useState<Forward | null>(null);
   const [currentDiagnosisForward, setCurrentDiagnosisForward] = useState<Forward | null>(null);
   const [diagnosisResult, setDiagnosisResult] = useState<DiagnosisResult | null>(null);
+  const [currentFailoverForward, setCurrentFailoverForward] = useState<Forward | null>(null);
+  const [routeSwitchEvents, setRouteSwitchEvents] = useState<RouteSwitchEvent[]>([]);
   const [addressModalTitle, setAddressModalTitle] = useState('');
   const [addressList, setAddressList] = useState<AddressItem[]>([]);
 
@@ -795,6 +823,40 @@ export default function ForwardPage() {
     }
   };
 
+  const handleFailoverDetails = async (forward: Forward) => {
+    setCurrentFailoverForward(forward);
+    setFailoverModalOpen(true);
+    setFailoverLoading(true);
+    setRouteSwitchEvents([]);
+    try {
+      const response = await getForwardRouteEvents(forward.id);
+      if (response.code === 0) {
+        setRouteSwitchEvents(Array.isArray(response.data) ? response.data : []);
+      } else {
+        toast.error(response.msg || '读取容灾记录失败');
+      }
+    } catch (error) {
+      console.error('读取容灾记录失败:', error);
+      toast.error('网络错误，无法读取容灾记录');
+    } finally {
+      setFailoverLoading(false);
+    }
+  };
+
+  const formatRouteEventTime = (value?: number) => {
+    if (!value) return '尚未发生自动切换';
+    return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  };
+
+  const getRouteStatusText = (route: ForwardRoute) => {
+    if (route.status === 'healthy') return '健康';
+    if (route.status === 'unhealthy' && route.message?.startsWith('恢复确认')) {
+      return route.message;
+    }
+    if (route.status === 'unhealthy') return '异常';
+    return '待探测';
+  };
+
   // 获取连接质量
   const getQualityDisplay = (averageTime?: number, packetLoss?: number) => {
     if (averageTime === undefined || packetLoss === undefined) return null;
@@ -1283,6 +1345,8 @@ export default function ForwardPage() {
     const pathText = getForwardPathText(forward);
     const routes = parseForwardRoutes(forward);
     const activeRoute = getActiveRoute(forward);
+    const healthyRouteCount = routes.filter(route => route.status === 'healthy').length;
+    const activeIsPrimary = activeRoute.tunnelId === forward.tunnelId;
     const targetHealth = parseTargetHealth(forward);
     const healthyTargetCount = targetHealth.filter(target => target.status === 'healthy').length;
 
@@ -1393,7 +1457,7 @@ export default function ForwardPage() {
               <div className="min-w-0">
                 <div className="text-[11px] text-default-400">当前线路</div>
                 <div className={activeRoute.status === 'unhealthy' ? "text-xs font-medium text-danger truncate" : "text-xs font-medium truncate"}>
-                  {activeRoute.status === 'healthy' ? '健康' : activeRoute.status === 'unhealthy' ? '异常' : '待探测'}
+                  {getRouteStatusText(activeRoute)}
                   {typeof activeRoute.latency === 'number' ? ` · ${activeRoute.latency.toFixed(0)} ms` : ''}
                 </div>
               </div>
@@ -1407,6 +1471,33 @@ export default function ForwardPage() {
                   {targetHealth.length > 0 ? `${healthyTargetCount}/${targetHealth.length}` : '待探测'}
                 </div>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 border-t border-divider pt-2 min-h-[42px]">
+              <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded ${routes.length > 1 && healthyRouteCount > 0 ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-300' : 'bg-default-100 text-default-500'}`}>
+                {routes.length > 1 && healthyRouteCount > 0
+                  ? <ShieldCheck size={15} aria-hidden="true" />
+                  : <ShieldAlert size={15} aria-hidden="true" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-default-400">容灾状态</div>
+                <div className="truncate text-xs font-medium">
+                  {routes.length > 1
+                    ? `${activeIsPrimary ? '主线路承载' : '备用线路承载'} · ${healthyRouteCount}/${routes.length} 可用`
+                    : '单线路 · 未配置备用线路'}
+                </div>
+              </div>
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                aria-label="查看容灾详情"
+                title="查看容灾详情"
+                onPress={() => handleFailoverDetails(forward)}
+                className="h-7 min-h-7 w-7 min-w-7"
+              >
+                <History size={15} aria-hidden="true" />
+              </Button>
             </div>
 
             {/* 统计信息 */}
@@ -2295,6 +2386,154 @@ export default function ForwardPage() {
                 开始导入
               </Button>
             </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* 容灾详情模态框 */}
+        <Modal
+          isOpen={failoverModalOpen}
+          onOpenChange={setFailoverModalOpen}
+          size="2xl"
+          scrollBehavior="inside"
+          backdrop="blur"
+          placement="center"
+        >
+          <ModalContent>
+            {(onClose) => {
+              const detailRoutes = currentFailoverForward ? parseForwardRoutes(currentFailoverForward) : [];
+              const detailActive = currentFailoverForward ? getActiveRoute(currentFailoverForward) : null;
+              const detailActiveTunnelId = currentFailoverForward
+                ? (currentFailoverForward.activeTunnelId || currentFailoverForward.tunnelId)
+                : undefined;
+              return (
+                <>
+                  <ModalHeader className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={20} className="text-success" aria-hidden="true" />
+                      <h2 className="text-xl font-bold">线路容灾详情</h2>
+                    </div>
+                    <p className="truncate text-small font-normal text-default-500">
+                      {currentFailoverForward?.name || '转发线路'}
+                    </p>
+                  </ModalHeader>
+                  <ModalBody className="gap-5 pb-5">
+                    {currentFailoverForward && (
+                      <section className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-divider py-4 md:grid-cols-4">
+                        <div className="min-w-0">
+                          <div className="text-xs text-default-400">运行策略</div>
+                          <div className="truncate text-sm font-medium">{getRouteModeDisplay(currentFailoverForward.routeMode)}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs text-default-400">当前承载</div>
+                          <div className="truncate text-sm font-medium">{detailActive?.tunnelName || currentFailoverForward.tunnelName}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs text-default-400">自动切换次数</div>
+                          <div className="text-sm font-medium">{currentFailoverForward.routeSwitchCount || 0}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs text-default-400">上次切换</div>
+                          <div className="truncate text-sm font-medium">{formatRouteEventTime(currentFailoverForward.lastRouteSwitch)}</div>
+                        </div>
+                      </section>
+                    )}
+
+                    <section>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-semibold">候选线路状态</h3>
+                        <Chip size="sm" variant="flat" color="success">
+                          {detailRoutes.filter(route => route.status === 'healthy').length}/{detailRoutes.length} 可用
+                        </Chip>
+                      </div>
+                      <div className="divide-y divide-divider border-y border-divider">
+                        {detailRoutes.map((route) => {
+                          const isActive = route.tunnelId === detailActiveTunnelId;
+                          const isHealthy = route.status === 'healthy';
+                          return (
+                            <div key={route.tunnelId} className="flex items-center gap-3 py-3">
+                              <Route size={17} className={isActive ? 'text-primary' : 'text-default-400'} aria-hidden="true" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="truncate text-sm font-medium">{route.tunnelName || `线路 ${route.tunnelId}`}</span>
+                                  {isActive && <Chip size="sm" color="primary" variant="flat">当前</Chip>}
+                                  {(route.priority || 0) === 0 && <Chip size="sm" variant="flat">主线</Chip>}
+                                </div>
+                                <p className="mt-0.5 truncate text-xs text-default-500" title={route.message}>
+                                  {route.message || '等待健康检查'}
+                                </p>
+                              </div>
+                              <div className="flex-shrink-0 text-right">
+                                <div className={`text-xs font-medium ${isHealthy ? 'text-success' : route.status === 'unhealthy' ? 'text-danger' : 'text-default-500'}`}>
+                                  {getRouteStatusText(route)}
+                                </div>
+                                <div className="text-[11px] text-default-400">
+                                  {typeof route.latency === 'number' ? `${route.latency.toFixed(0)} ms` : '-'}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section>
+                      <h3 className="mb-2 text-sm font-semibold">自动切换记录</h3>
+                      {failoverLoading ? (
+                        <div className="flex items-center justify-center gap-2 py-10 text-sm text-default-500">
+                          <Spinner size="sm" />
+                          正在读取切换记录...
+                        </div>
+                      ) : routeSwitchEvents.length > 0 ? (
+                        <div className="divide-y divide-divider border-y border-divider">
+                          {routeSwitchEvents.map((event) => (
+                            <div key={event.id} className="py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+                                    <span className="truncate">{event.fromTunnelName || `线路 ${event.fromTunnelId || '-'}`}</span>
+                                    <span className="text-default-400">→</span>
+                                    <span className="truncate">{event.toTunnelName || `线路 ${event.toTunnelId || '-'}`}</span>
+                                  </div>
+                                  <p className="mt-1 text-xs text-default-500">{event.reason}</p>
+                                  {event.detail && <p className="mt-1 text-xs text-danger">{event.detail}</p>}
+                                </div>
+                                <div className="flex-shrink-0 text-right">
+                                  <Chip size="sm" variant="flat" color={event.status === 'success' ? 'success' : 'danger'}>
+                                    {event.status === 'success' ? '成功' : '失败'}
+                                  </Chip>
+                                  <div className="mt-1 text-[11px] text-default-400">{formatRouteEventTime(event.createdAt)}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="border-y border-divider py-8 text-center text-sm text-default-400">
+                          尚未发生自动线路切换
+                        </div>
+                      )}
+                    </section>
+
+                    {currentFailoverForward?.routeSwitchReason && (
+                      <Alert
+                        color="primary"
+                        variant="flat"
+                        title="最近一次切换原因"
+                        description={currentFailoverForward.routeSwitchReason}
+                      />
+                    )}
+                  </ModalBody>
+                  <ModalFooter>
+                    <Button variant="light" onPress={onClose}>关闭</Button>
+                    {currentFailoverForward && (
+                      <Button color="primary" variant="flat" onPress={() => handleFailoverDetails(currentFailoverForward)} isLoading={failoverLoading}>
+                        刷新状态
+                      </Button>
+                    )}
+                  </ModalFooter>
+                </>
+              );
+            }}
           </ModalContent>
         </Modal>
 

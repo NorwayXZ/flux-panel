@@ -26,6 +26,14 @@ public class ForwardRouteDto {
 
     private Integer failCount = 0;
 
+    private Integer successCount = 0;
+
+    private Long healthySince;
+
+    private Long lastFailureTime;
+
+    private Long lastSuccessTime;
+
     private Long lastCheckTime;
 
     private String message;

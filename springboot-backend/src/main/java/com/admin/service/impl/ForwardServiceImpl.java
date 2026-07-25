@@ -8,6 +8,7 @@ import com.admin.common.dto.ForwardWithTunnelDto;
 import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.ForwardRouteFailoverPolicy;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.TunnelRouteUtil;
@@ -24,13 +25,16 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -60,9 +64,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final String ROUTE_MODE_LATENCY = "latency";
     private static final String ROUTE_STATUS_HEALTHY = "healthy";
     private static final String ROUTE_STATUS_UNHEALTHY = "unhealthy";
+    private static final String ROUTE_STATUS_UNKNOWN = "unknown";
     private static final String PROTOCOL_MODE_TCP_UDP = "tcp_udp";
-    private static final int ROUTE_FAILURE_THRESHOLD = 2;
-    private static final double ROUTE_SWITCH_LATENCY_GAP_MS = 15.0;
     private static final int MAX_BATCH_FORWARD_COUNT = 200;
 
     private static final long BYTES_TO_GB = 1024L * 1024L * 1024L;
@@ -82,6 +85,26 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     @Resource
     PortAllocationLockMapper portAllocationLockMapper;
+
+    @Resource
+    JdbcTemplate jdbcTemplate;
+
+    @Value("${forward-routing.failure-threshold:2}")
+    private int routeFailureThreshold;
+
+    @Value("${forward-routing.recovery-threshold:2}")
+    private int routeRecoveryThreshold;
+
+    @Value("${forward-routing.switch-cooldown-ms:120000}")
+    private long routeSwitchCooldownMs;
+
+    @Value("${forward-routing.failback-stable-ms:180000}")
+    private long routeFailbackStableMs;
+
+    @Value("${forward-routing.latency-gap-ms:15}")
+    private double routeLatencyGapMs;
+
+    private final AtomicBoolean routeHealthChecking = new AtomicBoolean(false);
 
 
     @Override
@@ -228,6 +251,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forwardList.forEach(this::markForwardNodeOffline);
 
         return R.ok(forwardList);
+    }
+
+    @Override
+    public R getRouteEvents(Long forwardId) {
+        UserInfo currentUser = getCurrentUserInfo();
+        Forward forward = validateForwardExists(forwardId, currentUser);
+        if (forward == null) {
+            return R.err("转发不存在");
+        }
+        List<Map<String, Object>> events = jdbcTemplate.queryForList(
+                "SELECT id, forward_id AS forwardId, from_tunnel_id AS fromTunnelId, "
+                        + "from_tunnel_name AS fromTunnelName, to_tunnel_id AS toTunnelId, "
+                        + "to_tunnel_name AS toTunnelName, reason, trigger_type AS triggerType, "
+                        + "status, detail, created_at AS createdAt FROM forward_route_switch "
+                        + "WHERE forward_id = ? ORDER BY created_at DESC LIMIT 50",
+                forwardId
+        );
+        return R.ok(events);
     }
 
     private void markForwardNodeOffline(ForwardWithTunnelDto forward) {
@@ -471,6 +512,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         // 7. 删除转发记录
         boolean result = this.removeById(id);
         if (result) {
+            deleteRouteEvents(id);
             return R.ok("端口转发删除成功");
         } else {
             return R.err("端口转发删除失败");
@@ -501,6 +543,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         // 3. 直接删除转发记录，跳过GOST服务删除
         boolean result = this.removeById(id);
         if (result) {
+            deleteRouteEvents(id);
             return R.ok("端口转发强制删除成功");
         } else {
             return R.err("端口转发强制删除失败");
@@ -1835,15 +1878,26 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
     }
 
-    @Scheduled(initialDelay = 30000L, fixedDelay = 60000L)
+    @Scheduled(
+            initialDelayString = "${forward-routing.initial-delay-ms:30000}",
+            fixedDelayString = "${forward-routing.check-interval-ms:60000}"
+    )
     public void checkForwardRouteHealth() {
-        List<Forward> activeForwards = this.list(new QueryWrapper<Forward>().eq("status", FORWARD_STATUS_ACTIVE));
-        for (Forward forward : activeForwards) {
-            try {
-                checkSingleForwardRouteHealth(forward);
-            } catch (Exception e) {
-                log.warn("转发 {} 健康检查失败：{}", forward.getId(), e.getMessage());
+        if (!routeHealthChecking.compareAndSet(false, true)) {
+            log.debug("上一次转发线路健康检查尚未结束，跳过本轮任务");
+            return;
+        }
+        try {
+            List<Forward> activeForwards = this.list(new QueryWrapper<Forward>().eq("status", FORWARD_STATUS_ACTIVE));
+            for (Forward forward : activeForwards) {
+                try {
+                    checkSingleForwardRouteHealth(forward);
+                } catch (Exception e) {
+                    log.warn("转发 {} 健康检查失败：{}", forward.getId(), e.getMessage());
+                }
             }
+        } finally {
+            routeHealthChecking.set(false);
         }
     }
 
@@ -1870,8 +1924,22 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             updateRouteTargetPool(forward, route, tunnel);
         }
 
-        ForwardRouteDto selected = selectActiveRoute(forward, routes, previousActive);
-        boolean routeChanged = !Objects.equals(previousActive.getTunnelId(), selected.getTunnelId());
+        long now = System.currentTimeMillis();
+        ForwardRouteFailoverPolicy.Decision decision = ForwardRouteFailoverPolicy.select(
+                normalizeRouteMode(forward.getRouteMode(), routes.size()),
+                routes,
+                previousActive,
+                forward.getLastRouteSwitch() == null ? 0L : forward.getLastRouteSwitch(),
+                now,
+                new ForwardRouteFailoverPolicy.Settings(
+                        Math.max(0L, routeSwitchCooldownMs),
+                        Math.max(0L, routeFailbackStableMs),
+                        Math.max(0.0, routeLatencyGapMs)
+                )
+        );
+        ForwardRouteDto selected = decision.selected() == null ? previousActive : decision.selected();
+        boolean routeChanged = decision.switchRequired()
+                && !Objects.equals(previousActive.getTunnelId(), selected.getTunnelId());
         Tunnel selectedTunnel = validateTunnel(selected.getTunnelId());
         boolean directTargetPoolChanged = selectedTunnel != null
                 && Objects.equals(selectedTunnel.getType(), TUNNEL_TYPE_PORT_FORWARD)
@@ -1882,7 +1950,32 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             R switchResult = switchActiveRoute(forward, selected);
             if (switchResult.getCode() != 0) {
                 markRouteProbeFailure(selected, "切换失败：" + switchResult.getMsg());
+                if (routeChanged) {
+                    recordRouteSwitch(
+                            forward,
+                            previousActive,
+                            selected,
+                            decision.reason(),
+                            decision.emergency() ? "failure" : switchTriggerType(forward),
+                            "failed",
+                            switchResult.getMsg()
+                    );
+                }
                 selected = previousActive;
+            } else if (routeChanged) {
+                forward.setPreviousActiveTunnelId(previousActive.getTunnelId());
+                forward.setLastRouteSwitch(now);
+                forward.setRouteSwitchReason(decision.reason());
+                forward.setRouteSwitchCount((forward.getRouteSwitchCount() == null ? 0 : forward.getRouteSwitchCount()) + 1);
+                recordRouteSwitch(
+                        forward,
+                        previousActive,
+                        selected,
+                        decision.reason(),
+                        decision.emergency() ? "failure" : switchTriggerType(forward),
+                        "success",
+                        null
+                );
             }
         }
 
@@ -1891,8 +1984,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setTargetHealth(JSON.toJSONString(
                 targetHealthByRoute.getOrDefault(selected.getTunnelId(), Collections.emptyList())
         ));
-        forward.setLastHealthCheck(System.currentTimeMillis());
-        forward.setUpdatedTime(System.currentTimeMillis());
+        forward.setLastHealthCheck(now);
+        forward.setUpdatedTime(now);
         this.updateById(forward);
     }
 
@@ -2023,49 +2116,49 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private void applyRouteProbeResult(ForwardRouteDto route, RouteProbeResult probe) {
-        route.setLastCheckTime(System.currentTimeMillis());
-        route.setMessage(probe.getMessage());
+        long now = System.currentTimeMillis();
+        String previousStatus = route.getStatus() == null ? ROUTE_STATUS_UNKNOWN : route.getStatus();
+        route.setLastCheckTime(now);
         if (probe.isSuccess()) {
-            route.setStatus(ROUTE_STATUS_HEALTHY);
+            int successCount = (route.getSuccessCount() == null ? 0 : route.getSuccessCount()) + 1;
+            route.setSuccessCount(Math.min(successCount, Math.max(routeRecoveryThreshold, 1)));
+            route.setFailCount(0);
+            route.setLastSuccessTime(now);
             route.setLatency(probe.getLatency());
             route.setPacketLoss(probe.getPacketLoss());
-            route.setFailCount(0);
             route.setHealthyTargets(probe.getHealthyTargets());
+            if (ROUTE_STATUS_UNHEALTHY.equals(previousStatus)
+                    && successCount < Math.max(routeRecoveryThreshold, 1)) {
+                route.setStatus(ROUTE_STATUS_UNHEALTHY);
+                route.setMessage("恢复确认 " + successCount + "/" + Math.max(routeRecoveryThreshold, 1));
+                return;
+            }
+            route.setStatus(ROUTE_STATUS_HEALTHY);
+            if (!ROUTE_STATUS_HEALTHY.equals(previousStatus) || route.getHealthySince() == null) {
+                route.setHealthySince(now);
+            }
+            route.setMessage(ROUTE_STATUS_UNHEALTHY.equals(previousStatus)
+                    ? "连续探测成功，线路已恢复"
+                    : probe.getMessage());
             return;
         }
         int failCount = (route.getFailCount() == null ? 0 : route.getFailCount()) + 1;
         route.setFailCount(failCount);
-        if (failCount >= ROUTE_FAILURE_THRESHOLD) {
+        route.setSuccessCount(0);
+        route.setLastFailureTime(now);
+        route.setMessage((probe.getMessage() == null ? "线路探测失败" : probe.getMessage())
+                + "（连续失败 " + failCount + "/" + Math.max(routeFailureThreshold, 1) + "）");
+        if (failCount >= Math.max(routeFailureThreshold, 1)) {
             route.setStatus(ROUTE_STATUS_UNHEALTHY);
             route.setLatency(null);
             route.setPacketLoss(100.0);
+            route.setHealthySince(null);
+            route.setHealthyTargets(Collections.emptyList());
         }
     }
 
     private void markRouteProbeFailure(ForwardRouteDto route, String message) {
         applyRouteProbeResult(route, RouteProbeResult.failure(message));
-    }
-
-    private ForwardRouteDto selectActiveRoute(Forward forward, List<ForwardRouteDto> routes, ForwardRouteDto current) {
-        List<ForwardRouteDto> healthy = routes.stream()
-                .filter(route -> ROUTE_STATUS_HEALTHY.equals(route.getStatus()))
-                .collect(Collectors.toList());
-        if (healthy.isEmpty() || ROUTE_MODE_SINGLE.equals(normalizeRouteMode(forward.getRouteMode(), routes.size()))) {
-            return current;
-        }
-        if (ROUTE_MODE_FAILOVER.equals(forward.getRouteMode())) {
-            return healthy.stream()
-                    .min(Comparator.comparing(route -> route.getPriority() == null ? Integer.MAX_VALUE : route.getPriority()))
-                    .orElse(current);
-        }
-        ForwardRouteDto best = healthy.stream()
-                .filter(route -> route.getLatency() != null)
-                .min(Comparator.comparing(ForwardRouteDto::getLatency))
-                .orElse(current);
-        if (!ROUTE_STATUS_HEALTHY.equals(current.getStatus()) || current.getLatency() == null) {
-            return best;
-        }
-        return best.getLatency() + ROUTE_SWITCH_LATENCY_GAP_MS < current.getLatency() ? best : current;
     }
 
     private R switchActiveRoute(Forward forward, ForwardRouteDto selected) {
@@ -2081,6 +2174,49 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
         Node inNode = nodeService.getById(selectedTunnel.getInNodeId());
         return updateMainService(inNode, serviceName, forward, selected, limiter, selectedTunnel);
+    }
+
+    private String switchTriggerType(Forward forward) {
+        return ROUTE_MODE_LATENCY.equals(forward.getRouteMode()) ? "latency" : "recovery";
+    }
+
+    private void recordRouteSwitch(
+            Forward forward,
+            ForwardRouteDto previous,
+            ForwardRouteDto selected,
+            String reason,
+            String triggerType,
+            String status,
+            String detail
+    ) {
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO forward_route_switch "
+                            + "(forward_id, user_id, from_tunnel_id, from_tunnel_name, to_tunnel_id, to_tunnel_name, "
+                            + "reason, trigger_type, status, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    forward.getId(),
+                    forward.getUserId(),
+                    previous == null ? null : previous.getTunnelId(),
+                    previous == null ? null : previous.getTunnelName(),
+                    selected == null ? null : selected.getTunnelId(),
+                    selected == null ? null : selected.getTunnelName(),
+                    reason,
+                    triggerType,
+                    status,
+                    detail,
+                    System.currentTimeMillis()
+            );
+        } catch (Exception e) {
+            log.warn("记录转发 {} 线路切换事件失败：{}", forward.getId(), e.getMessage());
+        }
+    }
+
+    private void deleteRouteEvents(Long forwardId) {
+        try {
+            jdbcTemplate.update("DELETE FROM forward_route_switch WHERE forward_id = ?", forwardId);
+        } catch (Exception e) {
+            log.warn("清理转发 {} 线路切换记录失败：{}", forwardId, e.getMessage());
+        }
     }
 
     private void updateRouteTargetPool(Forward forward, ForwardRouteDto route, Tunnel tunnel) {

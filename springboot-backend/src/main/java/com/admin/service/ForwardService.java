@@ -74,6 +74,13 @@ public interface ForwardService extends IService<Forward> {
     R diagnoseForward(Long id);
 
     /**
+     * 获取转发线路自动切换历史。
+     * @param id 转发ID
+     * @return 最近的切换事件
+     */
+    R getRouteEvents(Long id);
+
+    /**
      * 更新转发排序
      * @param params 包含forwards数组的参数
      * @return 更新结果

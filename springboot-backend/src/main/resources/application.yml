@@ -50,3 +50,11 @@ captcha:
   secondary:
     enabled: true
     expire: 120000
+
+forward-routing:
+  check-interval-ms: ${FORWARD_HEALTH_CHECK_INTERVAL_MS:60000}
+  failure-threshold: ${FORWARD_FAILURE_THRESHOLD:2}
+  recovery-threshold: ${FORWARD_RECOVERY_THRESHOLD:2}
+  switch-cooldown-ms: ${FORWARD_SWITCH_COOLDOWN_MS:120000}
+  failback-stable-ms: ${FORWARD_FAILBACK_STABLE_MS:180000}
+  latency-gap-ms: ${FORWARD_LATENCY_SWITCH_GAP_MS:15}

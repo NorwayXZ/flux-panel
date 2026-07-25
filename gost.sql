@@ -44,6 +44,10 @@ CREATE TABLE `forward` (
   `protocol_mode` varchar(20) NOT NULL DEFAULT 'tcp_udp',
   `target_health` longtext DEFAULT NULL,
   `last_health_check` bigint(20) DEFAULT NULL,
+  `previous_active_tunnel_id` int(10) DEFAULT NULL,
+  `last_route_switch` bigint(20) DEFAULT NULL,
+  `route_switch_reason` varchar(255) DEFAULT NULL,
+  `route_switch_count` int(10) NOT NULL DEFAULT '0',
   `interface_name` varchar(200) DEFAULT NULL,
   `in_flow` bigint(20) NOT NULL DEFAULT '0',
   `out_flow` bigint(20) NOT NULL DEFAULT '0',
@@ -51,6 +55,30 @@ CREATE TABLE `forward` (
   `updated_time` bigint(20) NOT NULL,
   `status` int(10) NOT NULL,
   `inx` int(10) NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- --------------------------------------------------------
+
+--
+-- 表的结构 `forward_route_switch`
+--
+
+CREATE TABLE `forward_route_switch` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `forward_id` bigint(20) NOT NULL,
+  `user_id` int(10) NOT NULL,
+  `from_tunnel_id` int(10) DEFAULT NULL,
+  `from_tunnel_name` varchar(160) DEFAULT NULL,
+  `to_tunnel_id` int(10) DEFAULT NULL,
+  `to_tunnel_name` varchar(160) DEFAULT NULL,
+  `reason` varchar(255) NOT NULL,
+  `trigger_type` varchar(32) NOT NULL,
+  `status` varchar(16) NOT NULL,
+  `detail` varchar(255) DEFAULT NULL,
+  `created_at` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_forward_route_switch_forward` (`forward_id`, `created_at`),
+  KEY `idx_forward_route_switch_user` (`user_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------

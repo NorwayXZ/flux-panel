@@ -68,6 +68,14 @@ public class Forward extends BaseEntity{
 
     private Long lastHealthCheck;
 
+    private Integer previousActiveTunnelId;
+
+    private Long lastRouteSwitch;
+
+    private String routeSwitchReason;
+
+    private Integer routeSwitchCount;
+
     private Long inFlow;
 
     private Long outFlow;

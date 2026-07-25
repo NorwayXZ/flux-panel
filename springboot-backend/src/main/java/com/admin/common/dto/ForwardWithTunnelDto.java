@@ -148,6 +148,14 @@ public class ForwardWithTunnelDto {
 
     private Long lastHealthCheck;
 
+    private Integer previousActiveTunnelId;
+
+    private Long lastRouteSwitch;
+
+    private String routeSwitchReason;
+
+    private Integer routeSwitchCount;
+
     private Integer inx;
 
     private String interfaceName;
