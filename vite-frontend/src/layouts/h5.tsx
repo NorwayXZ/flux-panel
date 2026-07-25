@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 import { Logo } from '@/components/icons';
 import { siteConfig } from '@/config/site';
+import { Bell } from 'lucide-react';
+import { useAlertUnreadCount } from '@/hooks/use-alert-unread-count';
 
 interface TabItem {
   path: string;
@@ -21,6 +23,7 @@ export default function H5Layout({
   const navigate = useNavigate();
   const location = useLocation();
   const [isAdmin, setIsAdmin] = useState(false);
+  const { count: unreadAlertCount } = useAlertUnreadCount();
 
   // Tabbar配置
   const tabItems: TabItem[] = [
@@ -117,6 +120,24 @@ export default function H5Layout({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="打开告警中心"
+            title="告警中心"
+            onClick={() => navigate('/monitoring')}
+            className={`relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+              location.pathname === '/monitoring'
+                ? 'bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-300'
+                : 'text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
+            }`}
+          >
+            <Bell className="h-5 w-5" />
+            {unreadAlertCount > 0 && (
+              <span className="absolute right-0.5 top-0.5 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-semibold text-white">
+                {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+              </span>
+            )}
+          </button>
         </div>
       </header>
 

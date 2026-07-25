@@ -12,6 +12,7 @@ import ProfilePage from "@/pages/profile";
 import LimitPage from "@/pages/limit";
 import ConfigPage from "@/pages/config";
 import UpdatePage from "@/pages/update";
+import MonitoringPage from "@/pages/monitoring";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -221,6 +222,14 @@ function App() {
             <ConfigPage />
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/monitoring"
+        element={
+          <ProtectedRoute>
+            <MonitoringPage />
+          </ProtectedRoute>
+        }
       />
       <Route
         path="/update"

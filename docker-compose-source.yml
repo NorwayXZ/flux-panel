@@ -29,7 +29,7 @@ services:
       retries: 20
 
   backend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.3.1}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.4.0}
     container_name: springboot-backend
     restart: unless-stopped
     environment:
@@ -46,6 +46,8 @@ services:
       TOMCAT_MAX_THREADS: ${TOMCAT_MAX_THREADS:-100}
       TOMCAT_MAX_CONNECTIONS: ${TOMCAT_MAX_CONNECTIONS:-512}
       TOMCAT_ACCEPT_COUNT: ${TOMCAT_ACCEPT_COUNT:-100}
+      MONITORING_SCAN_INTERVAL_MS: ${MONITORING_SCAN_INTERVAL_MS:-30000}
+      MONITORING_RETENTION_DAYS: ${MONITORING_RETENTION_DAYS:-90}
     ports:
       - "${BACKEND_PORT}:6365"
     volumes:
@@ -64,7 +66,7 @@ services:
       start_period: 90s
 
   frontend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.3.1}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.4.0}
     container_name: vite-frontend
     restart: unless-stopped
     ports:

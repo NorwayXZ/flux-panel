@@ -5,11 +5,13 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
+import { BellRing } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
 import { siteConfig } from '@/config/site';
+import { useAlertUnreadCount } from '@/hooks/use-alert-unread-count';
 
 interface MenuItem {
   path: string;
@@ -39,6 +41,7 @@ export default function AdminLayout({
   const [username, setUsername] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const { count: unreadAlertCount } = useAlertUnreadCount();
   const [passwordForm, setPasswordForm] = useState<PasswordForm>({
     newUsername: '',
     currentPassword: '',
@@ -65,6 +68,11 @@ export default function AdminLayout({
           <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
         </svg>
       )
+    },
+    {
+      path: '/monitoring',
+      label: '告警中心',
+      icon: <BellRing className="h-5 w-5" />
     },
     {
       path: '/tunnel',
@@ -127,7 +135,7 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/monitoring'] },
     { label: '系统管理', paths: ['/limit', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
@@ -323,7 +331,12 @@ export default function AdminLayout({
                      <div className="flex-shrink-0">
                        {item.icon}
                      </div>
-                   <span className="font-medium text-sm">{item.label}</span>
+                   <span className="min-w-0 flex-1 font-medium text-sm">{item.label}</span>
+                   {item.path === '/monitoring' && unreadAlertCount > 0 && (
+                     <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">
+                       {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+                     </span>
+                   )}
                    </button>
                       </li>
                     );

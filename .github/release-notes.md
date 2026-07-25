@@ -1,9 +1,13 @@
-## Grouped route selection
+## Alert center and history monitoring
 
-- Primary and candidate route selectors now group available lines into port-forward, 2-hop tunnel, 3-hop tunnel, and higher-hop tunnel sections.
-- Every option shows the tunnel name, ID, owner, and an explicit type badge.
-- The selected value keeps the type visible, for example `CNMB-NNC Japan · 3-hop tunnel`.
-- Candidate routes are still filtered to tunnels that share the primary route's ingress node before grouping.
-- Desktop and mobile dropdowns use the same compact two-line option layout.
+- Adds a unified alert center for node, tunnel, and forward failures.
+- Automatically resolves active alerts when a resource recovers or is intentionally paused.
+- Tracks status-change intervals instead of writing repetitive per-minute samples, keeping storage use low on small servers.
+- Adds 24-hour, 7-day, and 30-day availability trends, incident counts, and per-resource history.
+- Adds alert filtering, unread badges, single-alert read handling, and mark-all-read support.
+- Applies existing ownership and sharing permissions to monitoring data. Administrators see every resource and its owner; regular users only see owned or shared resources.
+- Adds responsive desktop and mobile layouts, including a compact mobile alert bell.
+- Automatically creates the monitoring tables during upgrade and includes an idempotent manual migration.
+- Enables MySQL 8 public-key authentication for clean amd64 and arm64 installations.
 
-Port-forward lines in this list are single-node tunnel records (`type = 1`). This release does not make arbitrary existing forward cards selectable as upstream routes.
+Monitoring runs every 30 seconds and retains closed history for 90 days by default. Paused and unknown intervals are excluded from availability calculations.

@@ -73,6 +73,97 @@ export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: nu
 export const getLayoutOrder = (scope: string) => Network.post<string[]>("/layout/order", { scope });
 export const saveLayoutOrder = (scope: string, order: string[]) => Network.post<string[]>("/layout/order/save", { scope, order });
 
+export type MonitoringRange = '24h' | '7d' | '30d';
+export type MonitoringResourceType = 'node' | 'tunnel' | 'forward';
+export type MonitoringStatus = 'healthy' | 'degraded' | 'offline' | 'paused' | 'unknown';
+
+export interface MonitoringSummary {
+  totalResources: number;
+  healthy: number;
+  degraded: number;
+  offline: number;
+  paused: number;
+  unknown: number;
+  openAlerts: number;
+  criticalAlerts: number;
+  unreadAlerts: number;
+  availability: number;
+  trackedFrom: number;
+}
+
+export interface MonitoringTrendPoint {
+  time: number;
+  availability: number | null;
+  incidents: number;
+}
+
+export interface MonitoringResource {
+  type: MonitoringResourceType;
+  id: number;
+  name: string;
+  ownerUserId: number;
+  ownerUserName: string;
+  status: MonitoringStatus;
+  detail: string;
+  changedAt: number;
+  checkedAt: number;
+  availability: number;
+  trackedMs: number;
+  incidentCount: number;
+}
+
+export interface MonitoringOverview {
+  range: MonitoringRange;
+  summary: MonitoringSummary;
+  trend: MonitoringTrendPoint[];
+  resources: MonitoringResource[];
+}
+
+export interface MonitoringAlertItem {
+  id: number;
+  resourceType: MonitoringResourceType;
+  resourceId: number;
+  resourceName: string;
+  ownerUserId: number;
+  ownerUserName: string;
+  severity: 'critical' | 'warning';
+  status: 'open' | 'resolved';
+  title: string;
+  detail: string;
+  startedAt: number;
+  resolvedAt?: number;
+  updatedAt: number;
+  read: boolean;
+}
+
+export interface MonitoringAlertPage {
+  items: MonitoringAlertItem[];
+  total: number;
+  page: number;
+  size: number;
+  unread: number;
+}
+
+export interface MonitoringAlertQuery {
+  status?: 'all' | 'open' | 'resolved';
+  resourceType?: 'all' | MonitoringResourceType;
+  severity?: 'all' | 'critical' | 'warning';
+  keyword?: string;
+  page?: number;
+  size?: number;
+}
+
+export const getMonitoringOverview = (range: MonitoringRange = '24h') =>
+  Network.post<MonitoringOverview>("/monitoring/overview", { range });
+export const getMonitoringAlerts = (query: MonitoringAlertQuery = {}) =>
+  Network.post<MonitoringAlertPage>("/monitoring/alerts", query);
+export const markMonitoringAlertsRead = (ids: number[]) =>
+  Network.post<number>("/monitoring/alerts/read", { ids });
+export const markAllMonitoringAlertsRead = () =>
+  Network.post<number>("/monitoring/alerts/read-all");
+export const getMonitoringUnreadCount = () =>
+  Network.post<number>("/monitoring/alerts/unread-count");
+
 // 限速规则CRUD操作 - 全部使用POST请求
 export const createSpeedLimit = (data: any) => Network.post("/speed-limit/create", data);
 export const getSpeedLimitList = () => Network.post("/speed-limit/list");
