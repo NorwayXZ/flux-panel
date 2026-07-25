@@ -1,7 +1,9 @@
 package udp
 
 import (
+	"errors"
 	"net"
+	"syscall"
 
 	"github.com/go-gost/core/limiter"
 	"github.com/go-gost/core/listener"
@@ -55,6 +57,13 @@ func (l *udpListener) Init(md md.Metadata) (err error) {
 
 	var conn net.PacketConn
 	conn, err = net.ListenUDP(network, laddr)
+	if shouldFallbackToIPv4(network, laddr, err) {
+		fallbackAddr := &net.UDPAddr{IP: net.IPv4zero, Port: laddr.Port}
+		conn, err = net.ListenUDP("udp4", fallbackAddr)
+		if err == nil {
+			l.logger.Warnf("IPv6 UDP wildcard is unavailable, listening on %s instead", fallbackAddr)
+		}
+	}
 	if err != nil {
 		return
 	}
@@ -79,6 +88,16 @@ func (l *udpListener) Init(md md.Metadata) (err error) {
 		Logger:         l.logger,
 	})
 	return
+}
+
+func shouldFallbackToIPv4(network string, addr *net.UDPAddr, err error) bool {
+	if network != "udp" || addr == nil || err == nil {
+		return false
+	}
+	if addr.IP != nil && !addr.IP.IsUnspecified() {
+		return false
+	}
+	return errors.Is(err, syscall.EAFNOSUPPORT) || errors.Is(err, syscall.EADDRNOTAVAIL)
 }
 
 func (l *udpListener) Accept() (conn net.Conn, err error) {

@@ -89,6 +89,8 @@
 
 Alpine 精简系统如果尚未安装 OpenRC，请先执行 `apk add --no-cache openrc curl`。安装后的状态和日志可以通过 `rc-service gost status`、`tail -f /var/log/gost.log` 查看。
 
+Agent 在监听 UDP 的 IPv6 通配地址时，如果节点内核未启用 IPv6，会自动回退到 IPv4 通配地址 `0.0.0.0`。IPv6 可用的节点仍保持双栈监听。
+
 ## 一键安装面板
 
 先安装并启动 Docker Engine 与 Docker Compose v2，然后执行：
