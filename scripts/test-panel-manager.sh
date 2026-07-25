@@ -104,6 +104,7 @@ run_manager() {
     FLUX_PANEL_UPDATER_STATE_DIR="${TEST_ROOT}/updater" \
     FLUX_PANEL_MANAGER_BIN="${TEST_ROOT}/sbin/flux-panel-manager" \
     FLUX_PANEL_WORKER_BIN="${TEST_ROOT}/sbin/flux-panel-update-worker" \
+    FLUX_PANEL_DISABLE_ONLINE_UPDATES=1 \
     bash "${PROJECT_DIR}/scripts/flux-panel.sh" "$@"
 }
 

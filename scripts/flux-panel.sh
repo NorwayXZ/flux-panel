@@ -211,6 +211,10 @@ write_updater_status() {
 
 install_update_service() {
   rm -f "${UPDATER_STATE_DIR}/enabled"
+  if [[ "${FLUX_PANEL_DISABLE_ONLINE_UPDATES:-0}" == "1" ]]; then
+    log "online updates are disabled by configuration; command-line updates remain available"
+    return 0
+  fi
   if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
     log "systemd is unavailable; online updates are disabled, command-line updates remain available"
     return 0
@@ -476,6 +480,7 @@ Environment variables:
   FLUX_PANEL_BRANCH         Git branch to install, default: main
   FLUX_PANEL_DIR            Application directory, default: /opt/flux-panel
   FLUX_PANEL_COMPOSE_FILE   Optional custom Compose file for development
+  FLUX_PANEL_DISABLE_ONLINE_UPDATES=1  Skip systemd update service installation
   FLUX_PANEL_PURGE=1        Required confirmation for permanent deletion
 EOF
 }
