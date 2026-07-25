@@ -8,6 +8,8 @@ import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import toast from 'react-hot-toast';
 
+import { SortableCardGrid } from '@/components/sortable-card-grid';
+import { useCardOrder } from '@/hooks/use-card-order';
 
 import { 
   createSpeedLimit, 
@@ -46,6 +48,8 @@ export default function LimitPage() {
   const [loading, setLoading] = useState(true);
   const [rules, setRules] = useState<SpeedLimitRule[]>([]);
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
+  const ruleCardOrder = useCardOrder('speed-limit-cards', rules.map(rule => rule.id));
+  const orderedRules = ruleCardOrder.sortItems(rules, rule => rule.id);
   
   // 模态框状态
   const [modalOpen, setModalOpen] = useState(false);
@@ -241,21 +245,27 @@ export default function LimitPage() {
 
         {/* 统一卡片网格 */}
         {rules.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {rules.map((rule) => (
-              <Card key={rule.id} className="shadow-sm border border-gray-200 dark:border-gray-700">
+          <SortableCardGrid
+            items={orderedRules}
+            getId={rule => rule.id}
+            onMove={ruleCardOrder.moveCard}
+            renderItem={(rule, dragHandle) => (
+              <Card className="shadow-sm border border-gray-200 dark:border-gray-700 h-full">
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start w-full">
                     <div>
                       <h3 className="font-semibold text-foreground">{rule.name}</h3>
                     </div>
-                    <Chip 
-                      color={rule.status === 1 ? "success" : "danger"} 
-                      variant="flat" 
-                      size="sm"
-                    >
-                      {rule.status === 1 ? '运行' : '异常'}
-                    </Chip>
+                    <div className="flex items-center gap-1.5">
+                      {dragHandle}
+                      <Chip
+                        color={rule.status === 1 ? "success" : "danger"}
+                        variant="flat"
+                        size="sm"
+                      >
+                        {rule.status === 1 ? '运行' : '异常'}
+                      </Chip>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardBody className="pt-0">
@@ -311,8 +321,8 @@ export default function LimitPage() {
                   </div>
                 </CardBody>
               </Card>
-            ))}
-          </div>
+            )}
+          />
         ) : (
           /* 空状态 */
           <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
@@ -472,4 +482,4 @@ export default function LimitPage() {
       </div>
     
   );
-} 
+}

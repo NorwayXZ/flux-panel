@@ -12,6 +12,8 @@ import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
 
+import { SortableCardGrid } from '@/components/sortable-card-grid';
+import { useCardOrder } from '@/hooks/use-card-order';
 
 import { 
   createNode, 
@@ -661,25 +663,29 @@ export default function NodePage() {
     return (b.id || 0) - (a.id || 0);
   };
 
-  const offlineNodes = nodeList
+  const nodeCardOrder = useCardOrder('node-cards', nodeList.map(node => node.id));
+
+  const offlineNodes = nodeCardOrder.sortItems(nodeList
     .filter(node => node.connectionStatus !== 'online')
-    .sort(compareCreatedTimeDesc);
-  const onlineNodes = nodeList
+    .sort(compareCreatedTimeDesc), node => node.id);
+  const onlineNodes = nodeCardOrder.sortItems(nodeList
     .filter(node => node.connectionStatus === 'online')
-    .sort(compareCreatedTimeDesc);
+    .sort(compareCreatedTimeDesc), node => node.id);
 
   const renderNodeGrid = (nodes: Node[]) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-      {nodes.map((node) => {
+    <SortableCardGrid
+      items={nodes}
+      getId={node => node.id}
+      onMove={nodeCardOrder.moveCard}
+      renderItem={(node, dragHandle) => {
         const nodeOffline = node.connectionStatus !== 'online';
         const ownerBadge = getNodeOwnerBadge(node);
 
         return (
           <Card
-            key={node.id}
-              className={nodeOffline
-              ? "offline-card shadow-sm border border-rose-300/70 bg-rose-50/70 dark:border-rose-900/80 dark:bg-rose-950/35 hover:shadow-md transition-shadow duration-200"
-              : "shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"}
+            className={nodeOffline
+              ? "offline-card shadow-sm border border-rose-300/70 bg-rose-50/70 dark:border-rose-900/80 dark:bg-rose-950/35 hover:shadow-md transition-shadow duration-200 h-full"
+              : "shadow-sm border border-divider hover:shadow-md transition-shadow duration-200 h-full"}
           >
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start w-full">
@@ -699,6 +705,7 @@ export default function NodePage() {
                   <p className={nodeOffline ? "text-xs text-danger-600 dark:text-danger-300 truncate" : "text-xs text-default-500 truncate"}>{node.serverIp}</p>
                 </div>
                 <div className="flex items-center gap-1.5 ml-2">
+                  {dragHandle}
                   <Chip
                     color={node.connectionStatus === 'online' ? 'success' : 'danger'}
                     variant="flat"
@@ -888,8 +895,8 @@ export default function NodePage() {
             </CardBody>
           </Card>
         );
-      })}
-    </div>
+      }}
+    />
   );
 
   return (

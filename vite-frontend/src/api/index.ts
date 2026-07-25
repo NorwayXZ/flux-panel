@@ -69,6 +69,10 @@ export const diagnoseForward = (forwardId: number) => Network.post("/forward/dia
 // 转发排序操作
 export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.post("/forward/update-order", data);
 
+// 用户级卡片布局
+export const getLayoutOrder = (scope: string) => Network.post<string[]>("/layout/order", { scope });
+export const saveLayoutOrder = (scope: string, order: string[]) => Network.post<string[]>("/layout/order/save", { scope, order });
+
 // 限速规则CRUD操作 - 全部使用POST请求
 export const createSpeedLimit = (data: any) => Network.post("/speed-limit/create", data);
 export const getSpeedLimitList = () => Network.post("/speed-limit/list");

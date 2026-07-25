@@ -1,9 +1,10 @@
-## Low-resource deployment
+## Card layout ordering
 
-- Panel installation and online updates now pull prebuilt amd64/arm64 images instead of compiling Maven and Vite projects on the target server.
-- Runtime defaults are tuned for a 1 vCPU, 1 GB RAM host with swap while retaining every panel feature.
-- Updates use immutable version tags, preserve database volumes, and keep the previous image version for rollback.
-- Backend runtime uses a smaller Alpine JRE image; frontend and Agent remain multi-architecture.
-- Backend file logs are compressed, size-rotated, retained for 30 days, and capped at 1 GB.
+- Dashboard summary, shared-node permission, tunnel permission, node, tunnel, forward, speed-limit, and user cards can now be reordered from a dedicated drag handle.
+- Layouts are isolated by account and card group, then stored in the panel database so the same order follows the user across browsers and devices.
+- Browser-local storage remains available as an offline fallback and is automatically uploaded when server storage becomes available.
+- Online/offline and tunnel hop-level sections stay fixed; cards only move inside their current section so operational grouping remains clear.
+- New cards appear first until the user chooses another position.
+- Forward cards use the new shared ordering behavior while preserving existing order as the initial migration source.
 
-See the README for sizing guidance, customization, migration details, and the reason for this deployment change.
+The backend creates the `layout_preference` table automatically at startup. Operators who manage schemas manually can run `migrations/20260725_layout_preferences.sql`; it is safe to run repeatedly.

@@ -225,6 +225,22 @@ CREATE TABLE `vite_config` (
   `time` bigint(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- --------------------------------------------------------
+
+--
+-- 表的结构 `layout_preference`
+--
+
+CREATE TABLE `layout_preference` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `scope` varchar(64) NOT NULL,
+  `item_order` text NOT NULL,
+  `updated_time` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_layout_preference_user_scope` (`user_id`,`scope`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 --
 -- 转存表中的数据 `vite_config`
 --

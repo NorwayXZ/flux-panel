@@ -10,6 +10,8 @@ import { Divider } from "@heroui/divider";
 import { Alert } from "@heroui/alert";
 import toast from 'react-hot-toast';
 
+import { SortableCardGrid } from '@/components/sortable-card-grid';
+import { useCardOrder } from '@/hooks/use-card-order';
 
 import {
   createTunnel,
@@ -633,8 +635,16 @@ export default function TunnelPage() {
     return (b.id || 0) - (a.id || 0);
   };
 
-  const offlineTunnels = tunnels.filter(isTunnelNodeOffline).sort(compareCreatedTimeDesc);
-  const onlineTunnels = tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel)).sort(compareCreatedTimeDesc);
+  const tunnelCardOrder = useCardOrder('tunnel-cards', tunnels.map(tunnel => tunnel.id));
+
+  const offlineTunnels = tunnelCardOrder.sortItems(
+    tunnels.filter(isTunnelNodeOffline).sort(compareCreatedTimeDesc),
+    tunnel => tunnel.id
+  );
+  const onlineTunnels = tunnelCardOrder.sortItems(
+    tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel)).sort(compareCreatedTimeDesc),
+    tunnel => tunnel.id
+  );
 
   const groupTunnelsByLevel = (tunnelList: Tunnel[]): TunnelLevelGroup[] => {
     const groupMap = new Map<string, TunnelLevelGroup>();
@@ -667,8 +677,12 @@ export default function TunnelPage() {
   };
 
   const renderTunnelGrid = (tunnelList: Tunnel[]) => (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 items-start gap-4">
-      {tunnelList.map((tunnel) => {
+    <SortableCardGrid
+      items={tunnelList}
+      getId={tunnel => tunnel.id}
+      onMove={tunnelCardOrder.moveCard}
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 items-start gap-4"
+      renderItem={(tunnel, dragHandle) => {
         const statusDisplay = getStatusDisplay(tunnel.status);
         const typeDisplay = getTypeDisplay(tunnel.type);
         const tunnelOffline = isTunnelNodeOffline(tunnel);
@@ -677,7 +691,6 @@ export default function TunnelPage() {
 
         return (
           <Card
-            key={tunnel.id}
             className={tunnelOffline
               ? "offline-card w-full self-start shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
               : "w-full self-start shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
@@ -730,6 +743,7 @@ export default function TunnelPage() {
                     </Chip>
                   </div>
                 </div>
+                <div className="ml-2 flex-shrink-0">{dragHandle}</div>
               </div>
             </CardHeader>
 
@@ -835,8 +849,8 @@ export default function TunnelPage() {
             </CardBody>
           </Card>
         );
-      })}
-    </div>
+      }}
+    />
   );
 
   const renderTunnelLevelGroups = (tunnelList: Tunnel[], offline: boolean) => (

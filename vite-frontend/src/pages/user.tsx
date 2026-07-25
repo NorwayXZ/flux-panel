@@ -53,6 +53,8 @@ import {
   removeUserNode
 } from '@/api';
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon, SettingsIcon } from '@/components/icons';
+import { SortableCardGrid } from '@/components/sortable-card-grid';
+import { useCardOrder } from '@/hooks/use-card-order';
 import { parseDate } from "@internationalized/date";
 
 
@@ -116,6 +118,15 @@ export default function UserPage() {
     size: 10,
     total: 0
   });
+  const searchScopeHash = Array.from(searchKeyword).reduce(
+    (hash, character) => ((hash * 31) + (character.codePointAt(0) || 0)) >>> 0,
+    0
+  );
+  const userCardOrder = useCardOrder(
+    `user-cards-page-${pagination.current}-search-${searchScopeHash}`,
+    users.map(user => user.id)
+  );
+  const orderedUsers = userCardOrder.sortItems(users, user => user.id);
 
   // 用户表单相关状态
   const { isOpen: isUserModalOpen, onOpen: onUserModalOpen, onClose: onUserModalClose } = useDisclosure();
@@ -650,8 +661,11 @@ export default function UserPage() {
           </CardBody>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-          {users.map((user) => {
+        <SortableCardGrid
+          items={orderedUsers}
+          getId={user => user.id}
+          onMove={userCardOrder.moveCard}
+          renderItem={(user, dragHandle) => {
             const userStatus = getUserStatus(user);
             const expStatus = user.expTime ? getExpireStatus(user.expTime) : null;
             const usedFlow = calculateUserTotalUsedFlow(user);
@@ -659,8 +673,7 @@ export default function UserPage() {
             
             return (
               <Card 
-                key={user.id} 
-                className="shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"
+                className="shadow-sm border border-divider hover:shadow-md transition-shadow duration-200 h-full"
               >
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start w-full">
@@ -671,6 +684,7 @@ export default function UserPage() {
                       <p className="text-xs text-default-500 truncate">@{user.user}</p>
                     </div>
                     <div className="flex items-center gap-1.5 ml-2">
+                      {dragHandle}
                       <Chip 
                         color={userStatus.color} 
                         variant="flat" 
@@ -792,8 +806,8 @@ export default function UserPage() {
                 </CardBody>
               </Card>
             );
-          })}
-        </div>
+          }}
+        />
       )}
 
 
