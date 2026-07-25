@@ -10,6 +10,9 @@ MOCK_DIR="${TEST_ROOT}/bin"
 EVENT_LOG="${TEST_ROOT}/events.log"
 INSTALL_DIR="${TEST_ROOT}/opt/flux-panel"
 CONFIG_DIR="${TEST_ROOT}/etc/flux-panel"
+BASE_VERSION="$(tr -d '[:space:]' < "${PROJECT_DIR}/VERSION")"
+NEXT_VERSION="${BASE_VERSION}-test1"
+FAILED_VERSION="${BASE_VERSION}-test2"
 
 mkdir -p "${FIXTURE_DIR}/scripts" "${MOCK_DIR}"
 cp "${PROJECT_DIR}/VERSION" "${PROJECT_DIR}/docker-compose.yml" \
@@ -109,7 +112,7 @@ run_manager() {
 }
 
 run_manager install >/dev/null
-grep -Fq 'PANEL_VERSION=2.2.0' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'DB_POOL_MAX_SIZE=10' "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
@@ -118,24 +121,24 @@ if grep -Eq 'docker compose .* up .*--build' "${EVENT_LOG}"; then
   exit 1
 fi
 
-printf '2.2.1\n' > "${FIXTURE_DIR}/VERSION"
+printf '%s\n' "${NEXT_VERSION}" > "${FIXTURE_DIR}/VERSION"
 : > "${EVENT_LOG}"
 run_manager update >/dev/null
-grep -Fq 'PANEL_VERSION=2.2.1' "${CONFIG_DIR}/flux-panel.env"
-grep -Fq 'PREVIOUS_PANEL_VERSION=2.2.0' "${CONFIG_DIR}/flux-panel.env"
-grep -Fq '2.2.1' "${INSTALL_DIR}/VERSION"
+grep -Fq "PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq "PREVIOUS_PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq "${NEXT_VERSION}" "${INSTALL_DIR}/VERSION"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
-printf '2.2.2\n' > "${FIXTURE_DIR}/VERSION"
+printf '%s\n' "${FAILED_VERSION}" > "${FIXTURE_DIR}/VERSION"
 : > "${EVENT_LOG}"
 FAIL_ONCE_FILE="${TEST_ROOT}/fail-once"
 if PANEL_TEST_FAIL_ONCE_FILE="${FAIL_ONCE_FILE}" run_manager update >/dev/null 2>&1; then
   printf 'failed deployment unexpectedly succeeded\n' >&2
   exit 1
 fi
-grep -Fq 'PANEL_VERSION=2.2.1' "${CONFIG_DIR}/flux-panel.env"
-grep -Fq '2.2.1' "${INSTALL_DIR}/VERSION"
+grep -Fq "PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq "${NEXT_VERSION}" "${INSTALL_DIR}/VERSION"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
 printf 'Panel manager tests passed\n'
