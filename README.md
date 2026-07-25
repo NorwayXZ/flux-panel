@@ -72,7 +72,7 @@
 ## 被控节点服务器要求
 
 - 64 位 Linux，支持 `amd64` 或 `arm64`
-- 使用 systemd 管理服务
+- 使用 systemd 或 OpenRC 管理服务；Alpine Linux 使用 OpenRC
 - 拥有 root 权限
 - 能够通过 TCP 访问面板后端地址和端口，默认是 `面板IP:6365`
 - 根据节点配置开放入口端口范围及业务所需的 TCP/UDP 防火墙规则
@@ -81,6 +81,13 @@
 - 建议至少 1 核 CPU、256 MB 可用内存；高并发或高带宽业务需要提高配置
 
 节点无需安装 Docker。节点添加完成后，在“添加节点”页面点击“安装”，使用面板生成的命令安装节点组件。
+
+节点安装脚本会自动识别服务管理器：
+
+- Ubuntu、Debian、CentOS 等 systemd 系统创建 `/etc/systemd/system/gost.service`
+- Alpine Linux 创建 `/etc/init.d/gost`，并通过 `rc-update` 加入默认启动级别
+
+Alpine 精简系统如果尚未安装 OpenRC，请先执行 `apk add --no-cache openrc curl`。安装后的状态和日志可以通过 `rc-service gost status`、`tail -f /var/log/gost.log` 查看。
 
 ## 一键安装面板
 

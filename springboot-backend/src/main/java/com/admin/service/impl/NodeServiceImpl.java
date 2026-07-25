@@ -86,6 +86,8 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_END_REQUIRED = "结束端口不能为空";
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
+    private static final String AGENT_INSTALL_SCRIPT_URL =
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.1.1/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -556,7 +558,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         StringBuilder command = new StringBuilder();
         
         // 第一部分：下载安装脚本  
-        command.append("curl -L https://github.com/bqlpfy/flux-panel/releases/download/1.4.3/install.sh")
+        command.append("curl -fsSL ").append(AGENT_INSTALL_SCRIPT_URL)
                .append(" -o ./install.sh && chmod +x ./install.sh && ");
         
         // 处理服务器地址，如果是IPv6需要添加方括号
@@ -564,10 +566,14 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         
         // 第二部分：执行安装脚本（去掉-u参数）
         command.append("./install.sh")
-               .append(" -a ").append(processedServerAddr)  // 服务器地址
-               .append(" -s ").append(node.getSecret());    // 节点密钥
-        
+               .append(" -a ").append(shellQuote(processedServerAddr))
+               .append(" -s ").append(shellQuote(node.getSecret()));
+
         return R.ok(command.toString());
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private boolean canAccess(Node node) {
