@@ -274,18 +274,20 @@ export default function NodeTerminalPage() {
         </section>
       )}
 
-      <section className="grid gap-4 border-y border-divider py-5 lg:grid-cols-[1fr_auto] lg:items-end">
-        <div className="grid gap-4 sm:grid-cols-[minmax(260px,420px)_1fr] sm:items-end">
-          <Input
-            type="password"
-            label="管理员密码"
-            value={password}
-            onValueChange={setPassword}
-            autoComplete="current-password"
-            startContent={<LockKeyhole size={17} className="text-default-400" />}
-            isDisabled={connected || connecting}
-          />
-          <Checkbox isSelected={acknowledged} onValueChange={setAcknowledged} isDisabled={connected || connecting}>
+      <section className="grid gap-4 border-y border-divider py-5">
+        <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-center">
+          <div className="w-full shrink-0 md:max-w-[420px]">
+            <Input
+              type="password"
+              label="管理员密码"
+              value={password}
+              onValueChange={setPassword}
+              autoComplete="current-password"
+              startContent={<LockKeyhole size={17} className="text-default-400" />}
+              isDisabled={connected || connecting}
+            />
+          </div>
+          <Checkbox className="min-w-0" isSelected={acknowledged} onValueChange={setAcknowledged} isDisabled={connected || connecting}>
             我确认本次会话将获得服务器命令权限
           </Checkbox>
         </div>
