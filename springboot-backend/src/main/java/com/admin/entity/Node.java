@@ -41,6 +41,8 @@ public class Node extends BaseEntity {
 
     private Integer socks;
 
+    private Boolean terminalEnabled;
+
     @TableField(exist = false)
     private String ownerUserName;
 

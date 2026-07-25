@@ -33,6 +33,30 @@ export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
   return Network.post("/node/check-status", params);
 };
+export interface TerminalTicket {
+  ticket: string;
+  expiresAt: number;
+  sessionId: string;
+}
+
+export interface TerminalAuditItem {
+  sessionId: string;
+  username: string;
+  nodeId: number;
+  nodeName: string;
+  sourceIp?: string;
+  status: string;
+  closeReason?: string;
+  startedAt: number;
+  endedAt?: number;
+}
+
+export const setNodeTerminalEnabled = (data: { nodeId: number; enabled: boolean; password: string }) =>
+  Network.post<{ nodeId: number; enabled: boolean; operator: string }>("/terminal/node/toggle", data);
+export const createTerminalSession = (data: { nodeId: number; password: string }) =>
+  Network.post<TerminalTicket>("/terminal/session/create", data);
+export const getTerminalAudit = (nodeId?: number) =>
+  Network.post<TerminalAuditItem[]>("/terminal/audit/list", nodeId ? { nodeId } : {});
 export const assignUserNode = (data: { userId: number; nodeId: number }) => Network.post("/node/user/assign", data);
 export const getUserNodeList = (userId: number) => Network.post("/node/user/list", { userId });
 export const removeUserNode = (data: { userId: number; nodeId: number }) => Network.post("/node/user/remove", data);

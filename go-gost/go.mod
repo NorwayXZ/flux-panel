@@ -23,6 +23,7 @@ require (
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/coreos/go-iptables v0.7.0 // indirect
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/danieljoos/wincred v1.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/expr-lang/expr v1.16.3 // indirect
@@ -147,4 +148,3 @@ require (
 )
 
 replace github.com/go-gost/x => ./x
-

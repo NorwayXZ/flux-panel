@@ -8,6 +8,7 @@ import com.admin.entity.Node;
 import com.admin.entity.InternalConnector;
 import com.admin.mapper.InternalConnectorMapper;
 import com.admin.service.NodeService;
+import com.admin.service.TerminalSessionManager;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.SneakyThrows;
@@ -35,6 +36,9 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     @Resource
     InternalConnectorMapper internalConnectorMapper;
+
+    @Resource
+    TerminalSessionManager terminalSessionManager;
 
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
@@ -82,6 +86,22 @@ public class WebSocketServer extends TextWebSocketHandler {
 
                 // 尝试解密消息
                 String decryptedPayload = decryptMessageIfNeeded(message.getPayload(), nodeSecret);
+
+                if (Objects.equals(type, "1")) {
+                    try {
+                        JSONObject terminalMessage = JSONObject.parseObject(decryptedPayload);
+                        String terminalType = terminalMessage.getString("type");
+                        if (terminalType != null && terminalType.startsWith("Terminal")) {
+                            try {
+                                terminalSessionManager.handleAgentMessage(Long.valueOf(id), terminalMessage);
+                            } catch (Exception terminalError) {
+                                log.warn("处理节点 {} 终端事件失败: {}", id, terminalError.getMessage());
+                            }
+                            return;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
 
                 if (decryptedPayload.contains("memory_usage")){
                     // 先发送确认消息
@@ -315,6 +335,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                     log.info("节点 {} 不存在，无法更新状态", nodeId);
                     // 移除无效的会话
                     nodeSessions.remove(nodeId);
+                    terminalSessionManager.closeNodeSessions(nodeId, "节点连接已断开", false);
                 }
             }
 
@@ -327,6 +348,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                 if (Objects.equals(type, "1")) {
                     Long nodeId = Long.valueOf(id);
                     nodeSessions.remove(nodeId);
+                    terminalSessionManager.closeNodeSessions(nodeId, "节点连接异常", false);
                     log.info("由于异常，移除节点 {} 的会话", nodeId);
                 } else if (Objects.equals(type, "2")) {
                     connectorSessions.remove(Long.valueOf(id));
@@ -380,6 +402,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                 log.info("节点 {} 当前活跃连接关闭，开始验证并更新状态", nodeId);
                 
                     nodeSessions.remove(nodeId);
+                    terminalSessionManager.closeNodeSessions(nodeId, "节点连接已断开", false);
                     
                     // 更新节点状态为离线
                     Node node = nodeService.getById(nodeId);
@@ -511,6 +534,17 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     public static GostDto sendConnectorMsg(Long connectorId, Object msg, String type) {
         return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端");
+    }
+
+    public static boolean sendNodeEvent(Long nodeId, String type, Object msg) {
+        WebSocketSession nodeSession = nodeSessions.get(nodeId);
+        if (nodeSession == null || !nodeSession.isOpen()) return false;
+        JSONObject data = new JSONObject();
+        data.put("type", type);
+        data.put("data", msg);
+        String nodeSecret = (String) nodeSession.getAttributes().get("nodeSecret");
+        sendToUser(nodeSession, data.toJSONString(), nodeSecret);
+        return nodeSession.isOpen();
     }
 
     private static GostDto sendCommand(ConcurrentHashMap<Long, WebSocketSession> sessions,

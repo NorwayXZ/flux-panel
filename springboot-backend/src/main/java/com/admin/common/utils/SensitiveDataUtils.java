@@ -65,6 +65,7 @@ public final class SensitiveDataUtils {
         return normalized.contains("secret")
             || normalized.contains("password")
             || normalized.contains("token")
+            || normalized.contains("ticket")
             || normalized.contains("authorization")
             || normalized.equals("rawdata");
     }

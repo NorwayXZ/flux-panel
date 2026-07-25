@@ -7,6 +7,7 @@ import DashboardPage from "@/pages/dashboard";
 import ForwardPage from "@/pages/forward";
 import TunnelPage from "@/pages/tunnel";
 import NodePage from "@/pages/node";
+import NodeTerminalPage from "@/pages/node-terminal";
 import UserPage from "@/pages/user";
 import ProfilePage from "@/pages/profile";
 import LimitPage from "@/pages/limit";
@@ -192,6 +193,10 @@ function App() {
             <NodePage />
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/node/:nodeId/terminal"
+        element={<ProtectedRoute><NodeTerminalPage /></ProtectedRoute>}
       />
       <Route 
         path="/user" 

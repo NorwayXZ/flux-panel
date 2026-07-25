@@ -86,21 +86,22 @@ type TcpPingResponse struct {
 }
 
 type WebSocketReporter struct {
-	url            string
-	addr           string // 保存服务器地址
-	secret         string // 保存密钥
-	version        string // 保存版本号
-	role           string // node 或 connector
-	conn           *websocket.Conn
-	reconnectTime  time.Duration
-	pingInterval   time.Duration
-	configInterval time.Duration
-	ctx            context.Context
-	cancel         context.CancelFunc
-	connected      bool
-	connecting     bool              // 新增：正在连接状态
-	connMutex      sync.Mutex        // 新增：连接状态锁
-	aesCrypto      *crypto.AESCrypto // 新增：AES加密器
+	url             string
+	addr            string // 保存服务器地址
+	secret          string // 保存密钥
+	version         string // 保存版本号
+	role            string // node 或 connector
+	conn            *websocket.Conn
+	reconnectTime   time.Duration
+	pingInterval    time.Duration
+	configInterval  time.Duration
+	ctx             context.Context
+	cancel          context.CancelFunc
+	connected       bool
+	connecting      bool              // 新增：正在连接状态
+	connMutex       sync.Mutex        // 新增：连接状态锁
+	aesCrypto       *crypto.AESCrypto // 新增：AES加密器
+	terminalManager *TerminalManager
 }
 
 // NewWebSocketReporter 创建一个新的WebSocket报告器
@@ -116,7 +117,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 		fmt.Printf("🔐 AES 加密器创建成功\n")
 	}
 
-	return &WebSocketReporter{
+	reporter := &WebSocketReporter{
 		url:            serverURL,
 		reconnectTime:  5 * time.Second,  // 重连间隔
 		pingInterval:   2 * time.Second,  // 发送间隔改为2秒
@@ -127,6 +128,8 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 		connecting:     false,
 		aesCrypto:      aesCrypto,
 	}
+	reporter.terminalManager = NewTerminalManager(reporter.sendTerminalEvent)
+	return reporter
 }
 
 // Start 启动WebSocket报告器
@@ -137,6 +140,9 @@ func (w *WebSocketReporter) Start() {
 // Stop 停止WebSocket报告器
 func (w *WebSocketReporter) Stop() {
 	w.cancel()
+	if w.terminalManager != nil {
+		w.terminalManager.CloseAll("agent stopped")
+	}
 	if w.conn != nil {
 		w.conn.Close()
 	}
@@ -259,6 +265,9 @@ func (w *WebSocketReporter) connect() error {
 // handleConnection 处理WebSocket连接
 func (w *WebSocketReporter) handleConnection() {
 	defer func() {
+		if w.terminalManager != nil {
+			w.terminalManager.CloseAll("agent connection lost")
+		}
 		w.connMutex.Lock()
 		if w.conn != nil {
 			w.conn.Close()
@@ -494,6 +503,10 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 
 // routeCommand 路由命令到对应的处理函数
 func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
+	if strings.HasPrefix(cmd.Type, "Terminal") {
+		w.routeTerminalCommand(cmd)
+		return
+	}
 	jsonBytes, errs := json.Marshal(cmd)
 	if errs != nil {
 		fmt.Println("Error marshaling JSON:", errs)
@@ -576,6 +589,56 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) routeTerminalCommand(cmd CommandMessage) {
+	if w.role != "node" || w.terminalManager == nil {
+		w.sendTerminalEvent("TerminalError", map[string]interface{}{"message": "terminal is unavailable for this agent role"})
+		return
+	}
+	jsonData, err := json.Marshal(cmd.Data)
+	if err != nil {
+		w.sendTerminalEvent("TerminalError", map[string]interface{}{"message": "invalid terminal command"})
+		return
+	}
+	switch cmd.Type {
+	case "TerminalOpen":
+		var request terminalOpenRequest
+		err = json.Unmarshal(jsonData, &request)
+		if err == nil {
+			err = w.terminalManager.Open(request)
+		}
+		if err != nil {
+			w.sendTerminalEvent("TerminalError", map[string]interface{}{"sessionId": request.SessionID, "message": err.Error()})
+		}
+	case "TerminalInput":
+		var request terminalInputRequest
+		err = json.Unmarshal(jsonData, &request)
+		if err == nil {
+			err = w.terminalManager.Input(request)
+		}
+		if err != nil {
+			w.sendTerminalEvent("TerminalError", map[string]interface{}{"sessionId": request.SessionID, "message": err.Error()})
+		}
+	case "TerminalResize":
+		var request terminalResizeRequest
+		err = json.Unmarshal(jsonData, &request)
+		if err == nil {
+			err = w.terminalManager.Resize(request)
+		}
+		if err != nil {
+			w.sendTerminalEvent("TerminalError", map[string]interface{}{"sessionId": request.SessionID, "message": err.Error()})
+		}
+	case "TerminalClose":
+		var request terminalCloseRequest
+		if json.Unmarshal(jsonData, &request) == nil {
+			w.terminalManager.Close(request)
+		}
+	}
+}
+
+func (w *WebSocketReporter) sendTerminalEvent(eventType string, data map[string]interface{}) {
+	w.sendResponse(CommandResponse{Type: eventType, Success: eventType != "TerminalError", Data: data})
 }
 
 // Service 命令处理函数

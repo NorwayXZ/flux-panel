@@ -11,9 +11,12 @@ import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { SquareTerminal } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
+import { isAdmin } from '@/utils/auth';
 
 import { 
   createNode, 
@@ -35,6 +38,7 @@ interface Node {
   http?: number; // 0 关 1 开
   tls?: number;  // 0 关 1 开
   socks?: number; // 0 关 1 开
+  terminalEnabled?: boolean;
   status: number; // 1: 在线, 0: 离线
   ownerUserId?: number;
   ownerUserName?: string;
@@ -87,6 +91,8 @@ const getNodeOwnerBadge = (node: Node) => {
 };
 
 export default function NodePage() {
+  const navigate = useNavigate();
+  const adminMode = isAdmin();
   const [nodeList, setNodeList] = useState<Node[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -860,7 +866,19 @@ export default function NodePage() {
 
               {/* 操作按钮 */}
               <div className="space-y-1.5">
-                <div className="flex gap-1.5">
+                <div className={adminMode ? "grid grid-cols-2 gap-1.5" : "flex gap-1.5"}>
+                  {adminMode && <Button
+                    size="sm"
+                    variant="flat"
+                    color="secondary"
+                    onPress={() => navigate(`/node/${node.id}/terminal`)}
+                    isDisabled={node.connectionStatus !== 'online'}
+                    startContent={<SquareTerminal size={15} />}
+                    className="flex-1 min-h-8"
+                    title={node.connectionStatus === 'online' ? '打开远程终端' : '节点离线，无法打开终端'}
+                  >
+                    终端
+                  </Button>}
                   {node.editable !== false && <Button
                     size="sm"
                     variant="flat"
