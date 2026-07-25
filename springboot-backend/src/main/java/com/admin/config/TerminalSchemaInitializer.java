@@ -1,23 +1,23 @@
 package com.admin.config;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
+
 @Slf4j
 @Component
-public class TerminalSchemaInitializer implements ApplicationRunner {
+public class TerminalSchemaInitializer {
     private final JdbcTemplate jdbcTemplate;
 
     public TerminalSchemaInitializer(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Override
-    public void run(ApplicationArguments args) {
+    @PostConstruct
+    public void initialize() {
         try {
             ensureColumn("node", "terminal_enabled", "tinyint NOT NULL DEFAULT 0");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS terminal_session_audit ("
