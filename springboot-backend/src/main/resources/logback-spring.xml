@@ -5,7 +5,7 @@
 <configuration scan="true" scanPeriod="60 seconds" debug="false">
     <contextName>logback</contextName>
     <springProperty scope="context" name="logDir" source="log-dir" defaultValue="logs" />
-    <property name="FILE_PATH" value="${logDir}/%d{yyyy-MM-dd}.log" />
+    <property name="FILE_PATH" value="${logDir}/archive/%d{yyyy-MM-dd}.%i.log.gz" />
 
 
     <!--输出到控制台-->
@@ -15,18 +15,20 @@
         </encoder>
     </appender>
 
-    <!--按天生成日志,即一天只生成一个文件夹和一个日志文件-->
+    <!-- Keep file logging bounded on small disks while preserving 30 days of history. -->
     <appender name="logFile" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <Prudent>true</Prudent>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+        <file>${logDir}/current.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <FileNamePattern>${FILE_PATH}</FileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
             <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
-        <layout class="ch.qos.logback.classic.PatternLayout">
-            <Pattern>
+        <encoder>
+            <pattern>
                 %d{yyyy-MM-dd HH:mm:ss} ^ %-5level ^ %logger{36} ^ %msg%n
-            </Pattern>
-        </layout>
+            </pattern>
+        </encoder>
     </appender>
 
     <!-- logger节点，可选节点，作用是指明具体的包或类的日志输出级别，
