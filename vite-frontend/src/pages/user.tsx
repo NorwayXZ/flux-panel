@@ -25,7 +25,6 @@ import { DatePicker } from "@heroui/date-picker";
 import { Spinner } from "@heroui/spinner";
 import { Progress } from "@heroui/progress";
 import { Switch } from "@heroui/switch";
-import { Checkbox } from "@heroui/checkbox";
 import { Tabs, Tab } from "@heroui/tabs";
 
 import toast from 'react-hot-toast';
@@ -113,6 +112,21 @@ const calculateTunnelUsedFlow = (tunnel: UserTunnel): number => {
   return inFlow + outFlow;
 };
 
+type ResourceKind = 'tunnel' | 'node';
+
+interface ResourceEditorState {
+  kind: ResourceKind;
+  resourceId: number;
+  flow: number;
+  flowUnlimited: boolean;
+  num: number;
+  forwardUnlimited: boolean;
+  expTime: Date | null;
+  flowResetTime: number;
+  speedId: number | null;
+  status: number;
+}
+
 export default function UserPage() {
   // 状态管理
   const [users, setUsers] = useState<User[]>([]);
@@ -150,6 +164,10 @@ export default function UserPage() {
     nodePermissions: []
   });
   const [userFormLoading, setUserFormLoading] = useState(false);
+  const [userModalTab, setUserModalTab] = useState('resources');
+  const [pendingTunnelId, setPendingTunnelId] = useState<number | null>(null);
+  const [pendingNodeId, setPendingNodeId] = useState<number | null>(null);
+  const [resourceEditor, setResourceEditor] = useState<ResourceEditorState | null>(null);
 
   // 隧道权限管理相关状态
   const { isOpen: isTunnelModalOpen, onOpen: onTunnelModalOpen, onClose: onTunnelModalClose } = useDisclosure();
@@ -285,6 +303,10 @@ export default function UserPage() {
 
   const handleAdd = () => {
     setIsEdit(false);
+    setUserModalTab('resources');
+    setPendingTunnelId(null);
+    setPendingNodeId(null);
+    setResourceEditor(null);
     setUserForm({
       user: '',
       pwd: '',
@@ -303,6 +325,10 @@ export default function UserPage() {
 
   const handleEdit = async (user: User) => {
     setIsEdit(true);
+    setUserModalTab('resources');
+    setPendingTunnelId(null);
+    setPendingNodeId(null);
+    setResourceEditor(null);
     let tunnelResponse: any;
     let nodeResponse: any;
     try {
@@ -669,37 +695,70 @@ export default function UserPage() {
     + userForm.tunnelPermissions.reduce((sum, item) => sum + item.num, 0)
     + userForm.nodePermissions.reduce((sum, item) => sum + item.num, 0);
 
-  const toggleTunnelProvision = (tunnelId: number, selected: boolean) => {
-    setUserForm(prev => ({
-      ...prev,
-      tunnelPermissions: selected
-        ? [...prev.tunnelPermissions, { tunnelId, flow: 100, flowUnlimited: false, num: 10, forwardUnlimited: false, expTime: null, flowResetTime: 0, speedId: null, status: 1 }]
-        : prev.tunnelPermissions.filter(item => item.tunnelId !== tunnelId)
-    }));
+  const openResourceEditor = (kind: ResourceKind, resourceId: number) => {
+    const permission = kind === 'tunnel'
+      ? userForm.tunnelPermissions.find(item => item.tunnelId === resourceId)
+      : userForm.nodePermissions.find(item => item.nodeId === resourceId);
+    setResourceEditor({
+      kind,
+      resourceId,
+      flow: permission?.flow ?? 100,
+      flowUnlimited: permission?.flowUnlimited ?? false,
+      num: permission?.num ?? 10,
+      forwardUnlimited: permission?.forwardUnlimited ?? false,
+      expTime: permission?.expTime ?? null,
+      flowResetTime: permission?.flowResetTime ?? 0,
+      speedId: kind === 'tunnel' && permission && 'speedId' in permission ? permission.speedId : null,
+      status: permission?.status ?? 1
+    });
   };
 
-  const updateTunnelProvision = (tunnelId: number, patch: Partial<UserTunnelProvision>) => {
-    setUserForm(prev => ({
-      ...prev,
-      tunnelPermissions: prev.tunnelPermissions.map(item => item.tunnelId === tunnelId ? { ...item, ...patch } : item)
-    }));
+  const saveResourceEditor = () => {
+    if (!resourceEditor) return;
+    const common = {
+      flow: resourceEditor.flow,
+      flowUnlimited: resourceEditor.flowUnlimited,
+      num: resourceEditor.num,
+      forwardUnlimited: resourceEditor.forwardUnlimited,
+      expTime: resourceEditor.expTime,
+      flowResetTime: resourceEditor.flowResetTime,
+      status: resourceEditor.status
+    };
+    setUserForm(prev => {
+      if (resourceEditor.kind === 'tunnel') {
+        const next: UserTunnelProvision = { ...common, tunnelId: resourceEditor.resourceId, speedId: resourceEditor.speedId };
+        const exists = prev.tunnelPermissions.some(item => item.tunnelId === resourceEditor.resourceId);
+        return {
+          ...prev,
+          tunnelPermissions: exists
+            ? prev.tunnelPermissions.map(item => item.tunnelId === resourceEditor.resourceId ? next : item)
+            : [...prev.tunnelPermissions, next]
+        };
+      }
+      const next: UserNodeProvision = { ...common, nodeId: resourceEditor.resourceId };
+      const exists = prev.nodePermissions.some(item => item.nodeId === resourceEditor.resourceId);
+      return {
+        ...prev,
+        nodePermissions: exists
+          ? prev.nodePermissions.map(item => item.nodeId === resourceEditor.resourceId ? next : item)
+          : [...prev.nodePermissions, next]
+      };
+    });
+    setResourceEditor(null);
+    setPendingTunnelId(null);
+    setPendingNodeId(null);
+    setUserModalTab('resources');
   };
 
-  const toggleNodeProvision = (nodeId: number, selected: boolean) => {
-    setUserForm(prev => ({
-      ...prev,
-      nodePermissions: selected
-        ? [...prev.nodePermissions, { nodeId, flow: 100, flowUnlimited: false, num: 10, forwardUnlimited: false, expTime: null, flowResetTime: 0, status: 1 }]
-        : prev.nodePermissions.filter(item => item.nodeId !== nodeId)
-    }));
+  const removeResource = (kind: ResourceKind, resourceId: number) => {
+    setUserForm(prev => kind === 'tunnel'
+      ? { ...prev, tunnelPermissions: prev.tunnelPermissions.filter(item => item.tunnelId !== resourceId) }
+      : { ...prev, nodePermissions: prev.nodePermissions.filter(item => item.nodeId !== resourceId) });
   };
 
-  const updateNodeProvision = (nodeId: number, patch: Partial<UserNodeProvision>) => {
-    setUserForm(prev => ({
-      ...prev,
-      nodePermissions: prev.nodePermissions.map(item => item.nodeId === nodeId ? { ...item, ...patch } : item)
-    }));
-  };
+  const resourceEditorName = resourceEditor?.kind === 'tunnel'
+    ? adminTunnels.find(item => item.id === resourceEditor.resourceId)?.name
+    : adminNodes.find(item => item.id === resourceEditor?.resourceId)?.name;
 
   return (
     
@@ -942,19 +1001,121 @@ export default function UserPage() {
             </div>
           </ModalHeader>
           <ModalBody className="py-4">
-            <Tabs aria-label="用户资源配置" variant="underlined" classNames={{ panel: "pt-4" }}>
-              <Tab key="account" title="账户与自有资源">
+            <Tabs
+              aria-label="用户资源配置"
+              variant="underlined"
+              selectedKey={userModalTab}
+              onSelectionChange={(key) => setUserModalTab(String(key))}
+              classNames={{ panel: "pt-4" }}
+            >
+              <Tab key="resources" title="账号与资源">
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input label="用户名" value={userForm.user} onChange={(e) => setUserForm(prev => ({ ...prev, user: e.target.value }))} isRequired />
                     <Input label="密码" type="password" value={userForm.pwd} onChange={(e) => setUserForm(prev => ({ ...prev, pwd: e.target.value }))} placeholder={isEdit ? '留空则不修改密码' : '请输入密码'} isRequired={!isEdit} />
                   </div>
+
+                  <section className="space-y-3 border-t border-divider pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">共享隧道</h3>
+                        <p className="mt-1 text-xs text-default-500">{userForm.tunnelPermissions.length} 条已选择</p>
+                      </div>
+                      <Chip size="sm" variant="flat" color="primary">隧道额度独立计算</Chip>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Select
+                        label="选择要添加的隧道"
+                        placeholder="请选择隧道"
+                        selectedKeys={pendingTunnelId ? [pendingTunnelId.toString()] : []}
+                        onSelectionChange={(keys) => setPendingTunnelId(Number(Array.from(keys)[0]) || null)}
+                        className="flex-1"
+                      >
+                        {adminTunnels.filter(tunnel => !userForm.tunnelPermissions.some(item => item.tunnelId === tunnel.id)).map(tunnel => (
+                          <SelectItem key={tunnel.id.toString()} textValue={tunnel.name}>{tunnel.name} · {tunnel.flow === 1 ? '单向计费' : '双向计费'}</SelectItem>
+                        ))}
+                      </Select>
+                      <Button color="primary" className="sm:self-end sm:min-w-28" isDisabled={!pendingTunnelId} onPress={() => pendingTunnelId && openResourceEditor('tunnel', pendingTunnelId)}>添加隧道</Button>
+                    </div>
+                    {userForm.tunnelPermissions.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-divider px-4 py-6 text-center text-sm text-default-500">尚未分配隧道</div>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {userForm.tunnelPermissions.map(permission => {
+                          const tunnel = adminTunnels.find(item => item.id === permission.tunnelId);
+                          return <div key={permission.tunnelId} className="flex items-center justify-between gap-3 rounded-md border border-divider px-3 py-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2"><p className="truncate text-sm font-medium">{tunnel?.name || `隧道 ${permission.tunnelId}`}</p><Chip size="sm" variant="flat">{tunnel?.flow === 1 ? '单向' : '双向'}</Chip></div>
+                              <p className="mt-1 text-xs text-default-500">{permission.flowUnlimited ? '流量不限' : `${permission.flow} GB`} · {permission.forwardUnlimited ? '转发不限' : `${permission.num} 个转发`} · {permission.flowResetTime ? `每月 ${permission.flowResetTime} 日重置` : '不重置'}</p>
+                            </div>
+                            <div className="flex shrink-0 gap-1">
+                              <Button isIconOnly size="sm" variant="light" color="primary" title="配置隧道额度" aria-label="配置隧道额度" onPress={() => openResourceEditor('tunnel', permission.tunnelId)}><EditIcon className="h-4 w-4" /></Button>
+                              <Button isIconOnly size="sm" variant="light" color="danger" title="移除隧道" aria-label="移除隧道" onPress={() => removeResource('tunnel', permission.tunnelId)}><DeleteIcon className="h-4 w-4" /></Button>
+                            </div>
+                          </div>;
+                        })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-3 border-t border-divider pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">共享节点</h3>
+                        <p className="mt-1 text-xs text-default-500">{userForm.nodePermissions.length} 台已选择</p>
+                      </div>
+                      <Chip size="sm" variant="flat" color="secondary">只读共享节点</Chip>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Select
+                        label="选择要添加的节点"
+                        placeholder="请选择节点"
+                        selectedKeys={pendingNodeId ? [pendingNodeId.toString()] : []}
+                        onSelectionChange={(keys) => setPendingNodeId(Number(Array.from(keys)[0]) || null)}
+                        className="flex-1"
+                      >
+                        {adminNodes.filter(node => !userForm.nodePermissions.some(item => item.nodeId === node.id)).map(node => (
+                          <SelectItem key={node.id.toString()} textValue={node.name}>{node.name} · {node.serverIp}</SelectItem>
+                        ))}
+                      </Select>
+                      <Button color="secondary" className="sm:self-end sm:min-w-28" isDisabled={!pendingNodeId} onPress={() => pendingNodeId && openResourceEditor('node', pendingNodeId)}>添加节点</Button>
+                    </div>
+                    {userForm.nodePermissions.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-divider px-4 py-6 text-center text-sm text-default-500">尚未分配节点</div>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {userForm.nodePermissions.map(permission => {
+                          const node = adminNodes.find(item => item.id === permission.nodeId);
+                          return <div key={permission.nodeId} className="flex items-center justify-between gap-3 rounded-md border border-divider px-3 py-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">{node?.name || `节点 ${permission.nodeId}`}</p>
+                              <p className="mt-1 truncate text-xs text-default-500">{node?.serverIp || '节点地址不可见'} · {permission.flowUnlimited ? '流量不限' : `${permission.flow} GB`} · {permission.forwardUnlimited ? '转发不限' : `${permission.num} 个转发`}</p>
+                            </div>
+                            <div className="flex shrink-0 gap-1">
+                              <Button isIconOnly size="sm" variant="light" color="primary" title="配置节点额度" aria-label="配置节点额度" onPress={() => openResourceEditor('node', permission.nodeId)}><EditIcon className="h-4 w-4" /></Button>
+                              <Button isIconOnly size="sm" variant="light" color="danger" title="移除节点" aria-label="移除节点" onPress={() => removeResource('node', permission.nodeId)}><DeleteIcon className="h-4 w-4" /></Button>
+                            </div>
+                          </div>;
+                        })}
+                      </div>
+                    )}
+                  </section>
+                </div>
+              </Tab>
+
+              <Tab key="advanced" title="高级设置">
+                <div className="space-y-5">
                   <section className="rounded-md border border-divider p-4 space-y-4">
-                    <div><h3 className="text-sm font-semibold">自有资源额度</h3><p className="text-xs text-default-500 mt-1">仅用于该用户自己添加的节点和完全自建的隧道，不会与共享隧道、共享节点重复扣费。</p></div>
+                    <div><h3 className="text-sm font-semibold">用户自有资源</h3><p className="mt-1 text-xs text-default-500">仅计算用户自己添加的节点和完全自建的隧道。</p></div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.flowUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, flowUnlimited: value }))}>流量无限制</Switch><Input label="流量额度 (GB)" type="number" value={userForm.flow.toString()} isDisabled={userForm.flowUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, flow: Math.max(0, Number(e.target.value) || 0) }))} /></div>
-                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.forwardUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, forwardUnlimited: value }))}>转发名额无限制</Switch><Input label="转发名额" type="number" value={userForm.num.toString()} isDisabled={userForm.forwardUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, num: Math.max(0, Number(e.target.value) || 0) }))} /></div>
-                      <Select label="流量重置日期" selectedKeys={[userForm.flowResetTime.toString()]} onSelectionChange={(keys) => setUserForm(prev => ({ ...prev, flowResetTime: Number(Array.from(keys)[0]) }))}>
+                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.flowUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, flowUnlimited: value }))}>流量无限制</Switch><Input label="自有资源流量 (GB)" type="number" value={userForm.flow.toString()} isDisabled={userForm.flowUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, flow: Math.max(0, Number(e.target.value) || 0) }))} /></div>
+                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.forwardUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, forwardUnlimited: value }))}>转发名额无限制</Switch><Input label="自有资源转发名额" type="number" value={userForm.num.toString()} isDisabled={userForm.forwardUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, num: Math.max(0, Number(e.target.value) || 0) }))} /></div>
+                    </div>
+                  </section>
+                  <section className="rounded-md border border-divider p-4 space-y-4">
+                    <h3 className="text-sm font-semibold">账户规则</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Select label="自有资源流量重置" selectedKeys={[userForm.flowResetTime.toString()]} onSelectionChange={(keys) => setUserForm(prev => ({ ...prev, flowResetTime: Number(Array.from(keys)[0]) }))}>
                         {[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>每月{i + 1}号</SelectItem>)]}
                       </Select>
                       <div className="space-y-2"><Switch size="sm" isSelected={userForm.expTime === null} onValueChange={(unlimited) => setUserForm(prev => ({ ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) }))}>账户永不过期</Switch>{userForm.expTime && <DatePicker label="账户过期时间" value={parseDate(userForm.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && setUserForm(prev => ({ ...prev, expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) }))} showMonthAndYearPickers />}</div>
@@ -962,38 +1123,6 @@ export default function UserPage() {
                     <RadioGroup label="账户状态" value={userForm.status.toString()} onValueChange={(value: string) => setUserForm(prev => ({ ...prev, status: Number(value) }))} orientation="horizontal"><Radio value="1">正常</Radio><Radio value="0">禁用</Radio></RadioGroup>
                   </section>
                   <div className="rounded-md border border-primary-200 bg-primary-50 px-4 py-3 text-xs text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300">计费规则：单向隧道只统计上传流量；双向隧道统计上传与下载流量；流量倍率只计算一次。共享资源分别计量，任一资源用尽只影响依赖该资源的转发。</div>
-                </div>
-              </Tab>
-              <Tab key="tunnels" title={`隧道权限 (${userForm.tunnelPermissions.length})`}>
-                <div className="space-y-3">
-                  {adminTunnels.length === 0 ? <p className="text-sm text-default-500 py-8 text-center">暂无管理员隧道</p> : adminTunnels.map(tunnel => {
-                    const permission = userForm.tunnelPermissions.find(item => item.tunnelId === tunnel.id);
-                    return <div key={tunnel.id} className="rounded-md border border-divider p-3">
-                      <Checkbox isSelected={!!permission} onValueChange={(selected) => toggleTunnelProvision(tunnel.id, selected)}><span className="font-medium">{tunnel.name}</span><span className="ml-2 text-xs text-default-500">{tunnel.flow === 1 ? '单向计费' : '双向计费'}</span></Checkbox>
-                      {permission && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pl-0 sm:pl-7">
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.flowUnlimited} onValueChange={(value) => updateTunnelProvision(tunnel.id, { flowUnlimited: value })}>流量不限</Switch><Input size="sm" label="流量 (GB)" type="number" value={permission.flow.toString()} isDisabled={permission.flowUnlimited} onChange={(e) => updateTunnelProvision(tunnel.id, { flow: Math.max(0, Number(e.target.value) || 0) })} /></div>
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.forwardUnlimited} onValueChange={(value) => updateTunnelProvision(tunnel.id, { forwardUnlimited: value })}>转发不限</Switch><Input size="sm" label="转发名额" type="number" value={permission.num.toString()} isDisabled={permission.forwardUnlimited} onChange={(e) => updateTunnelProvision(tunnel.id, { num: Math.max(0, Number(e.target.value) || 0) })} /></div>
-                        <Select size="sm" label="每月重置" selectedKeys={[permission.flowResetTime.toString()]} onSelectionChange={(keys) => updateTunnelProvision(tunnel.id, { flowResetTime: Number(Array.from(keys)[0]) })}>{[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>{i + 1}号</SelectItem>)]}</Select>
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.expTime === null} onValueChange={(unlimited) => updateTunnelProvision(tunnel.id, { expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) })}>永不过期</Switch>{permission.expTime && <DatePicker size="sm" label="到期时间" value={parseDate(permission.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && updateTunnelProvision(tunnel.id, { expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) })} />}</div>
-                      </div>}
-                    </div>;
-                  })}
-                </div>
-              </Tab>
-              <Tab key="nodes" title={`节点权限 (${userForm.nodePermissions.length})`}>
-                <div className="space-y-3">
-                  {adminNodes.length === 0 ? <p className="text-sm text-default-500 py-8 text-center">暂无管理员节点</p> : adminNodes.map(node => {
-                    const permission = userForm.nodePermissions.find(item => item.nodeId === node.id);
-                    return <div key={node.id} className="rounded-md border border-divider p-3">
-                      <Checkbox isSelected={!!permission} onValueChange={(selected) => toggleNodeProvision(node.id, selected)}><span className="font-medium">{node.name}</span><span className="ml-2 text-xs text-default-500">只读共享，可用于用户自建隧道</span></Checkbox>
-                      {permission && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pl-0 sm:pl-7">
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.flowUnlimited} onValueChange={(value) => updateNodeProvision(node.id, { flowUnlimited: value })}>流量不限</Switch><Input size="sm" label="流量 (GB)" type="number" value={permission.flow.toString()} isDisabled={permission.flowUnlimited} onChange={(e) => updateNodeProvision(node.id, { flow: Math.max(0, Number(e.target.value) || 0) })} /></div>
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.forwardUnlimited} onValueChange={(value) => updateNodeProvision(node.id, { forwardUnlimited: value })}>转发不限</Switch><Input size="sm" label="转发名额" type="number" value={permission.num.toString()} isDisabled={permission.forwardUnlimited} onChange={(e) => updateNodeProvision(node.id, { num: Math.max(0, Number(e.target.value) || 0) })} /></div>
-                        <Select size="sm" label="每月重置" selectedKeys={[permission.flowResetTime.toString()]} onSelectionChange={(keys) => updateNodeProvision(node.id, { flowResetTime: Number(Array.from(keys)[0]) })}>{[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>{i + 1}号</SelectItem>)]}</Select>
-                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.expTime === null} onValueChange={(unlimited) => updateNodeProvision(node.id, { expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) })}>永不过期</Switch>{permission.expTime && <DatePicker size="sm" label="到期时间" value={parseDate(permission.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && updateNodeProvision(node.id, { expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) })} />}</div>
-                      </div>}
-                    </div>;
-                  })}
                 </div>
               </Tab>
             </Tabs>
@@ -1009,6 +1138,52 @@ export default function UserPage() {
             >
               {isEdit ? '保存全部配置' : '创建并分配资源'}
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={resourceEditor !== null}
+        onClose={() => setResourceEditor(null)}
+        size="2xl"
+        scrollBehavior="inside"
+        backdrop="opaque"
+        placement="center"
+        classNames={{ base: "max-w-[94vw]" }}
+      >
+        <ModalContent>
+          <ModalHeader className="flex items-center justify-between gap-3 border-b border-divider">
+            <div className="min-w-0">
+              <p className="truncate">配置{resourceEditor?.kind === 'tunnel' ? '隧道' : '节点'}额度</p>
+              <p className="mt-1 truncate text-xs font-normal text-default-500">{resourceEditorName || '未命名资源'}</p>
+            </div>
+            <Chip size="sm" variant="flat" color={resourceEditor?.kind === 'tunnel' ? 'primary' : 'secondary'}>{resourceEditor?.kind === 'tunnel' ? '隧道权限' : '节点权限'}</Chip>
+          </ModalHeader>
+          <ModalBody className="py-5">
+            {resourceEditor && <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Switch size="sm" isSelected={resourceEditor.flowUnlimited} onValueChange={(value) => setResourceEditor(prev => prev ? { ...prev, flowUnlimited: value } : prev)}>流量无限制</Switch>
+                  <Input label="流量额度 (GB)" type="number" value={resourceEditor.flow.toString()} isDisabled={resourceEditor.flowUnlimited} onChange={(event) => setResourceEditor(prev => prev ? { ...prev, flow: Math.max(0, Number(event.target.value) || 0) } : prev)} />
+                </div>
+                <div className="space-y-2">
+                  <Switch size="sm" isSelected={resourceEditor.forwardUnlimited} onValueChange={(value) => setResourceEditor(prev => prev ? { ...prev, forwardUnlimited: value } : prev)}>转发名额无限制</Switch>
+                  <Input label="转发名额" type="number" value={resourceEditor.num.toString()} isDisabled={resourceEditor.forwardUnlimited} onChange={(event) => setResourceEditor(prev => prev ? { ...prev, num: Math.max(0, Number(event.target.value) || 0) } : prev)} />
+                </div>
+                <Select label="流量重置日期" selectedKeys={[resourceEditor.flowResetTime.toString()]} onSelectionChange={(keys) => setResourceEditor(prev => prev ? { ...prev, flowResetTime: Number(Array.from(keys)[0]) } : prev)}>
+                  {[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, index) => <SelectItem key={`${index + 1}`}>每月{index + 1}号</SelectItem>)]}
+                </Select>
+                <div className="space-y-2">
+                  <Switch size="sm" isSelected={resourceEditor.expTime === null} onValueChange={(unlimited) => setResourceEditor(prev => prev ? { ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) } : prev)}>权限永不过期</Switch>
+                  {resourceEditor.expTime && <DatePicker label="权限到期时间" value={parseDate(resourceEditor.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && setResourceEditor(prev => prev ? { ...prev, expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) } : prev)} showMonthAndYearPickers />}
+                </div>
+              </div>
+              <RadioGroup label="权限状态" value={resourceEditor.status.toString()} onValueChange={(value: string) => setResourceEditor(prev => prev ? { ...prev, status: Number(value) } : prev)} orientation="horizontal"><Radio value="1">启用</Radio><Radio value="0">禁用</Radio></RadioGroup>
+            </div>}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setResourceEditor(null)}>取消</Button>
+            <Button color="primary" onPress={saveResourceEditor}>保存并返回</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
