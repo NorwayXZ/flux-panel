@@ -56,7 +56,7 @@ import {
   getUserNodeList,
   removeUserNode
 } from '@/api';
-import { SearchIcon, EditIcon, DeleteIcon, UserIcon, SettingsIcon } from '@/components/icons';
+import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from '@/components/icons';
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
 import { parseDate } from "@internationalized/date";
@@ -111,6 +111,14 @@ const calculateTunnelUsedFlow = (tunnel: UserTunnel): number => {
   // 后端已按计费类型处理流量，前端直接使用入站+出站总和
   return inFlow + outFlow;
 };
+
+const FLOW_RESET_OPTIONS = [
+  { key: '0', label: '不重置' },
+  ...Array.from({ length: 31 }, (_, index) => ({
+    key: String(index + 1),
+    label: `每月 ${index + 1} 日（0 点重置）`
+  }))
+];
 
 type ResourceKind = 'tunnel' | 'node';
 
@@ -170,8 +178,8 @@ export default function UserPage() {
   const [resourceEditor, setResourceEditor] = useState<ResourceEditorState | null>(null);
 
   // 隧道权限管理相关状态
-  const { isOpen: isTunnelModalOpen, onOpen: onTunnelModalOpen, onClose: onTunnelModalClose } = useDisclosure();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { isOpen: isTunnelModalOpen, onClose: onTunnelModalClose } = useDisclosure();
+  const [currentUser] = useState<User | null>(null);
   const [userTunnels, setUserTunnels] = useState<UserTunnel[]>([]);
   const [tunnelListLoading, setTunnelListLoading] = useState(false);  
   
@@ -363,7 +371,9 @@ export default function UserPage() {
       forwardUnlimited: item.forwardUnlimited === 1,
       expTime: item.expTime ? new Date(item.expTime) : null,
       flowResetTime: item.flowResetTime || 0,
-      status: item.permissionStatus ?? 1
+      status: item.permissionStatus ?? 1,
+      usedFlow: (item.inFlow || 0) + (item.outFlow || 0),
+      usedForwards: item.usedForwards || 0
     }));
     setUserForm({
       id: user.id,
@@ -445,22 +455,6 @@ export default function UserPage() {
     } finally {
       setUserFormLoading(false);
     }
-  };
-
-  // 隧道权限管理操作
-  const handleManageTunnels = (user: User) => {
-    setCurrentUser(user);
-    setTunnelForm({
-      tunnelId: null,
-      flow: 100,
-      num: 10,
-      expTime: null,
-      flowResetTime: 0,
-      speedId: null
-    });
-    onTunnelModalOpen();
-    loadUserTunnels(user.id);
-    loadUserNodes(user.id);
   };
 
   const loadUserNodes = async (userId: number) => {
@@ -740,7 +734,7 @@ export default function UserPage() {
       return {
         ...prev,
         nodePermissions: exists
-          ? prev.nodePermissions.map(item => item.nodeId === resourceEditor.resourceId ? next : item)
+          ? prev.nodePermissions.map(item => item.nodeId === resourceEditor.resourceId ? { ...item, ...next } : item)
           : [...prev.nodePermissions, next]
       };
     });
@@ -919,15 +913,13 @@ export default function UserPage() {
                     </div>
                   </div>
                   
-                  <div className="space-y-1.5 mt-3">
-                    {/* 第一行：编辑和重置 */}
-                    <div className="flex gap-1.5">
+                  <div className="grid grid-cols-3 gap-1.5 mt-3">
                       <Button
                         size="sm"
                         variant="flat"
                         color="primary"
                         onPress={() => handleEdit(user)}
-                        className="flex-1 min-h-8"
+                        className="min-h-8 min-w-0 px-2"
                         startContent={<EditIcon className="w-3 h-3" />}
                       >
                         编辑
@@ -937,7 +929,7 @@ export default function UserPage() {
                         variant="flat"
                         color="warning"
                         onPress={() => handleResetFlow(user)}
-                        className="flex-1 min-h-8"
+                        className="min-h-8 min-w-0 px-2"
                         startContent={
                           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
@@ -946,31 +938,16 @@ export default function UserPage() {
                       >
                         重置
                       </Button>
-                    </div>
-                    
-                    {/* 第二行：权限和删除 */}
-                    <div className="flex gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="success"
-                        onPress={() => handleManageTunnels(user)}
-                        className="flex-1 min-h-8"
-                        startContent={<SettingsIcon className="w-3 h-3" />}
-                      >
-                        权限
-                      </Button>
                       <Button
                         size="sm"
                         variant="flat"
                         color="danger"
                         onPress={() => handleDelete(user)}
-                        className="flex-1 min-h-8"
+                        className="min-h-8 min-w-0 px-2"
                         startContent={<DeleteIcon className="w-3 h-3" />}
                       >
                         删除
                       </Button>
-                    </div>
                   </div>
                 </CardBody>
               </Card>
@@ -1089,7 +1066,8 @@ export default function UserPage() {
                           return <div key={permission.nodeId} className="flex items-center justify-between gap-3 rounded-md border border-divider px-3 py-3">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium">{node?.name || `节点 ${permission.nodeId}`}</p>
-                              <p className="mt-1 truncate text-xs text-default-500">{node?.serverIp || '节点地址不可见'} · {permission.flowUnlimited ? '流量不限' : `${permission.flow} GB`} · {permission.forwardUnlimited ? '转发不限' : `${permission.num} 个转发`}</p>
+                              <p className="mt-1 truncate text-xs text-default-500">{node?.serverIp || '节点地址不可见'} · {permission.flowUnlimited ? '流量不限' : `${permission.flow} GB`} · {permission.forwardUnlimited ? '名额不限' : `名额 ${permission.usedForwards || 0} / ${permission.num}`}</p>
+                              <p className="mt-1 truncate text-xs text-default-500">{permission.flowResetTime ? `每月 ${permission.flowResetTime} 日重置` : '不重置'} · 创建转发时按经过的节点扣除名额</p>
                             </div>
                             <div className="flex shrink-0 gap-1">
                               <Button isIconOnly size="sm" variant="light" color="primary" title="配置节点额度" aria-label="配置节点额度" onPress={() => openResourceEditor('node', permission.nodeId)}><EditIcon className="h-4 w-4" /></Button>
@@ -1115,8 +1093,8 @@ export default function UserPage() {
                   <section className="rounded-md border border-divider p-4 space-y-4">
                     <h3 className="text-sm font-semibold">账户规则</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <Select label="自有资源流量重置" selectedKeys={[userForm.flowResetTime.toString()]} onSelectionChange={(keys) => setUserForm(prev => ({ ...prev, flowResetTime: Number(Array.from(keys)[0]) }))}>
-                        {[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>每月{i + 1}号</SelectItem>)]}
+                      <Select label="自有资源流量重置" selectedKeys={[String(userForm.flowResetTime ?? 0)]} onSelectionChange={(keys) => setUserForm(prev => ({ ...prev, flowResetTime: Number(Array.from(keys)[0] ?? 0) }))}>
+                        {FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}
                       </Select>
                       <div className="space-y-2"><Switch size="sm" isSelected={userForm.expTime === null} onValueChange={(unlimited) => setUserForm(prev => ({ ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) }))}>账户永不过期</Switch>{userForm.expTime && <DatePicker label="账户过期时间" value={parseDate(userForm.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && setUserForm(prev => ({ ...prev, expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) }))} showMonthAndYearPickers />}</div>
                     </div>
@@ -1170,8 +1148,8 @@ export default function UserPage() {
                   <Switch size="sm" isSelected={resourceEditor.forwardUnlimited} onValueChange={(value) => setResourceEditor(prev => prev ? { ...prev, forwardUnlimited: value } : prev)}>转发名额无限制</Switch>
                   <Input label="转发名额" type="number" value={resourceEditor.num.toString()} isDisabled={resourceEditor.forwardUnlimited} onChange={(event) => setResourceEditor(prev => prev ? { ...prev, num: Math.max(0, Number(event.target.value) || 0) } : prev)} />
                 </div>
-                <Select label="流量重置日期" selectedKeys={[resourceEditor.flowResetTime.toString()]} onSelectionChange={(keys) => setResourceEditor(prev => prev ? { ...prev, flowResetTime: Number(Array.from(keys)[0]) } : prev)}>
-                  {[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, index) => <SelectItem key={`${index + 1}`}>每月{index + 1}号</SelectItem>)]}
+                <Select label="流量重置日期" selectedKeys={[String(resourceEditor.flowResetTime ?? 0)]} onSelectionChange={(keys) => setResourceEditor(prev => prev ? { ...prev, flowResetTime: Number(Array.from(keys)[0] ?? 0) } : prev)}>
+                  {FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}
                 </Select>
                 <div className="space-y-2">
                   <Switch size="sm" isSelected={resourceEditor.expTime === null} onValueChange={(unlimited) => setResourceEditor(prev => prev ? { ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) } : prev)}>权限永不过期</Switch>
@@ -1319,16 +1297,7 @@ export default function UserPage() {
                         setTunnelForm(prev => ({ ...prev, flowResetTime: Number(value) }));
                       }}
                     >
-                      <>
-                        <SelectItem key="0" textValue="不重置">
-                          不重置
-                        </SelectItem>
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                        <SelectItem key={day.toString()} textValue={`每月${day}号（0点重置）`}>
-                          每月{day}号（0点重置）
-                        </SelectItem>
-                      ))}
-                      </>
+                      {FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}
                     </Select>
                     
                     <DatePicker
@@ -1538,16 +1507,7 @@ export default function UserPage() {
                       setEditTunnelForm(prev => prev ? { ...prev, flowResetTime: Number(value) } : null);
                     }}
                   >
-                    <>
-                      <SelectItem key="0" textValue="不重置">
-                        不重置
-                      </SelectItem>
-                    {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                      <SelectItem key={day.toString()} textValue={`每月${day}号（0点重置）`}>
-                        每月{day}号（0点重置）
-                      </SelectItem>
-                    ))}
-                    </>
+                    {FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}
                   </Select>
                   
                   <DatePicker

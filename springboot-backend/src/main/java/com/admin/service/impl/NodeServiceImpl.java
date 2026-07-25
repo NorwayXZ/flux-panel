@@ -27,6 +27,7 @@ import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
 import com.admin.service.UserTunnelService;
+import com.admin.service.UserQuotaService;
 import com.admin.service.ViteConfigService;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -40,6 +41,7 @@ import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,7 +89,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.7.0/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.7.1/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -115,6 +117,9 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
 
     @Resource
     private UserMapper userMapper;
+
+    @Resource
+    private UserQuotaService userQuotaService;
 
     @Resource
     ViteConfigService viteConfigService;
@@ -593,6 +598,13 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private void enrichNodeAccess(List<Node> nodes, Integer userId, Integer roleId) {
         Map<String, Long> portPoolGroupSizes = this.list().stream()
                 .collect(Collectors.groupingBy(PortNamespaceUtil::fromNode, Collectors.counting()));
+        Map<Integer, Integer> forwardUsage = Objects.equals(roleId, 0)
+                ? Collections.emptyMap()
+                : userQuotaService.countForwardsUsingNodes(
+                        userId,
+                        nodes.stream().map(node -> node.getId().intValue()).collect(Collectors.toSet()),
+                        null
+                );
         for (Node node : nodes) {
             node.setPortPoolGroupSize(portPoolGroupSizes
                     .getOrDefault(PortNamespaceUtil.fromNode(node), 1L)
@@ -619,15 +631,19 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
                             + (permission.getOutFlow() == null ? 0L : permission.getOutFlow());
                     boolean flowUnlimited = Objects.equals(permission.getFlowUnlimited(), 1);
                     boolean forwardUnlimited = Objects.equals(permission.getForwardUnlimited(), 1);
+                    int forwardUsed = forwardUsage.getOrDefault(node.getId().intValue(), 0);
                     node.setQuotaFlow(permission.getFlow());
                     node.setQuotaUsedFlow(used);
                     node.setQuotaFlowUnlimited(flowUnlimited);
                     node.setQuotaForwardLimit(permission.getNum());
+                    node.setQuotaForwardUsed(forwardUsed);
                     node.setQuotaForwardUnlimited(forwardUnlimited);
+                    node.setQuotaFlowResetTime(permission.getFlowResetTime());
                     String reason = null;
                     if (!Objects.equals(permission.getStatus(), 1)) reason = "管理员已禁用节点权限";
                     else if (permission.getExpTime() != null && permission.getExpTime() <= System.currentTimeMillis()) reason = "节点权限已到期";
                     else if (!flowUnlimited && used >= (permission.getFlow() == null ? 0L : permission.getFlow()) * 1024L * 1024L * 1024L) reason = "节点流量额度已用尽";
+                    else if (!forwardUnlimited && forwardUsed >= (permission.getNum() == null ? 0 : permission.getNum())) reason = "节点转发名额已用尽";
                     node.setQuotaAvailable(reason == null);
                     node.setUnavailableReason(reason);
                 }

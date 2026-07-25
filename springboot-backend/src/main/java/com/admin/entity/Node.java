@@ -72,7 +72,13 @@ public class Node extends BaseEntity {
     private Integer quotaForwardLimit;
 
     @TableField(exist = false)
+    private Integer quotaForwardUsed;
+
+    @TableField(exist = false)
     private Boolean quotaForwardUnlimited;
+
+    @TableField(exist = false)
+    private Long quotaFlowResetTime;
 
     @TableField(exist = false)
     private Boolean quotaAvailable;

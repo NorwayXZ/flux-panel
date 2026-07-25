@@ -20,9 +20,12 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -165,18 +168,29 @@ public class UserQuotaService {
                 .eq("user_id", userId).in("node_id", path));
     }
 
-    private int countForwardsUsingNode(Integer userId, Integer nodeId, Long excludeForwardId) {
-        int count = 0;
+    public int countForwardsUsingNode(Integer userId, Integer nodeId, Long excludeForwardId) {
+        return countForwardsUsingNodes(userId, Collections.singleton(nodeId), excludeForwardId)
+                .getOrDefault(nodeId, 0);
+    }
+
+    public Map<Integer, Integer> countForwardsUsingNodes(Integer userId, Collection<Integer> nodeIds,
+                                                         Long excludeForwardId) {
+        if (nodeIds == null || nodeIds.isEmpty()) return Collections.emptyMap();
+        Set<Integer> requestedNodeIds = new HashSet<>(nodeIds);
+        Map<Integer, Integer> counts = new HashMap<>();
         for (Forward forward : userForwards(userId, excludeForwardId)) {
+            Set<Integer> usedByForward = new HashSet<>();
             for (Integer tunnelId : routeTunnelIds(forward)) {
                 Tunnel tunnel = tunnelMapper.selectById(tunnelId);
-                if (tunnel != null && TunnelRouteUtil.parseNodePath(tunnel).contains(nodeId.longValue())) {
-                    count++;
-                    break;
+                if (tunnel == null) continue;
+                for (Long pathNodeId : TunnelRouteUtil.parseNodePath(tunnel)) {
+                    int nodeId = pathNodeId.intValue();
+                    if (requestedNodeIds.contains(nodeId)) usedByForward.add(nodeId);
                 }
             }
+            usedByForward.forEach(nodeId -> counts.merge(nodeId, 1, Integer::sum));
         }
-        return count;
+        return counts;
     }
 
     private int countOwnedPoolForwards(Integer userId, Long excludeForwardId) {

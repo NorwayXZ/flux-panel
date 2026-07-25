@@ -1,13 +1,11 @@
-## Internal service publishing and port leases
+## User quota and layout fixes
 
-- Adds a dedicated service publishing page for mapping public node ports to TCP services behind NAT or inside a LAN.
-- Adds outbound-only internal connectors with per-connector target CIDR restrictions and live online status.
-- Adds admin-managed public port pools with strict conflict checks against existing forwards and nodes that share the same public network namespace.
-- Adds automatic port allocation, optional requested ports, lease renewal, expiry cleanup, cooldown, release, and audit history.
-- Keeps a port reserved when a connector is offline until its stale reverse service can be removed, preventing duplicate allocation after reconnect.
-- Uses GOST SOCKS5 BIND and `rtcp`; application traffic does not pass through the panel backend or database.
-- Restricts publishing gateways to BIND-only mode and rejects SOCKS5 CONNECT; public ingress nodes must run Agent 2.7.0 or newer.
-- Extends the existing amd64/arm64 Agent installer with an optional `connector` role while retaining `node` as the default.
-- Installs connectors as an isolated `flux-connector` service under `/etc/flux-connector`, allowing a connector and a normal node Agent to coexist on one host.
+- Fixes blank monthly reset-day values in account, tunnel, and shared-node quota editors.
+- Consolidates account and resource permissions under the single user edit workflow and removes the duplicate permissions action.
+- Shows shared-node forward slots as used, limit, and remaining values, including the configured monthly traffic reset day.
+- Marks a shared node unavailable when its forward-slot quota is exhausted.
+- Enforces and tests one forward slot per shared node traversed by a user-owned route; creating a tunnel alone does not consume a slot.
+- Keeps one slot per forward on a node even when multiple candidate routes of that forward traverse the same node.
+- Aligns shared-node permission metrics into stable desktop columns with responsive stacking on narrower screens.
 
-The database upgrade is additive. Existing nodes, tunnels, forwards, user quotas, and monitoring data are not rewritten. The first release supports reverse TCP publishing; reverse UDP and multi-ingress failover remain future work.
+This update does not change the database schema or rewrite existing nodes, tunnels, forwards, or quota assignments. It does not increase Agent resource requirements.

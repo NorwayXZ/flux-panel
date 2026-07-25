@@ -62,7 +62,9 @@ interface SharedNode {
   quotaUsedFlow?: number;
   quotaFlowUnlimited?: boolean;
   quotaForwardLimit?: number;
+  quotaForwardUsed?: number;
   quotaForwardUnlimited?: boolean;
+  quotaFlowResetTime?: number;
   quotaAvailable?: boolean;
   unavailableReason?: string;
 }
@@ -892,7 +894,7 @@ export default function DashboardPage() {
 
                     return (
                       <div className="rounded-lg border border-gray-200 bg-content1 p-3 transition-colors hover:bg-default-50/70 dark:border-default-100 dark:hover:bg-default-100/40 lg:p-4">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_minmax(620px,760px)] xl:items-center">
                           <div className="flex items-start gap-3 min-w-0">
                             <div className={`w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0 ${online ? 'bg-success-100 dark:bg-success-500/15 text-success-600 dark:text-success-400' : 'bg-danger-100/70 dark:bg-danger-500/10 text-danger-600 dark:text-danger-300'}`}>
                               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -915,7 +917,7 @@ export default function DashboardPage() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-5 gap-y-2 lg:min-w-[700px]">
+                          <div className="grid min-w-0 grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-3 xl:grid-cols-5">
                             <div className="min-w-0">
                               <p className="text-xs text-default-500 mb-0.5">入口 IP</p>
                               <p className="text-sm font-mono text-foreground truncate" title={node.ip || '-'}>
@@ -930,8 +932,8 @@ export default function DashboardPage() {
                               <p className="text-xs text-default-500 mb-0.5">节点版本</p>
                               <p className="text-sm text-foreground truncate" title={node.version || '未知'}>{node.version || '未知'}</p>
                             </div>
-                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">流量额度</p><p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? '无限制' : `${((node.quotaUsedFlow || 0) / 1073741824).toFixed(1)} / ${node.quotaFlow || 0} GB`}</p></div>
-                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">转发名额</p><p className="text-sm text-foreground truncate">{node.quotaForwardUnlimited ? '无限制' : `${node.quotaForwardLimit || 0} 个`}</p></div>
+                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">流量额度</p><p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? '无限制' : `${((node.quotaUsedFlow || 0) / 1073741824).toFixed(1)} / ${node.quotaFlow || 0} GB`}</p><p className="mt-0.5 truncate text-xs text-default-500">{formatResetTime(node.quotaFlowResetTime ?? 0)}</p></div>
+                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">转发名额</p><p className="text-sm text-foreground truncate">{node.quotaForwardUnlimited ? '无限制' : `${node.quotaForwardUsed || 0} / ${node.quotaForwardLimit || 0} 个`}</p><p className="mt-0.5 truncate text-xs text-default-500">{node.quotaForwardUnlimited ? '不计名额' : `剩余 ${Math.max(0, (node.quotaForwardLimit || 0) - (node.quotaForwardUsed || 0))} 个`}</p></div>
                           </div>
                         </div>
                       </div>

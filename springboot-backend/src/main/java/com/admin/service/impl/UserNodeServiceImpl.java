@@ -8,6 +8,7 @@ import com.admin.mapper.UserNodeMapper;
 import com.admin.service.NodeService;
 import com.admin.service.UserNodeService;
 import com.admin.service.UserService;
+import com.admin.service.UserQuotaService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.context.annotation.Lazy;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> implements UserNodeService {
@@ -28,6 +30,9 @@ public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> i
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private UserQuotaService userQuotaService;
 
     @Override
     public R assign(Integer userId, Integer nodeId) {
@@ -68,6 +73,11 @@ public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> i
     @Override
     public R listByUser(Integer userId) {
         List<UserNode> permissions = this.list(new QueryWrapper<UserNode>().eq("user_id", userId));
+        Map<Integer, Integer> forwardUsage = userQuotaService.countForwardsUsingNodes(
+                userId,
+                permissions.stream().map(UserNode::getNodeId).collect(Collectors.toSet()),
+                null
+        );
         List<Map<String, Object>> result = new ArrayList<>();
         for (UserNode permission : permissions) {
             Node node = nodeService.getById(permission.getNodeId());
@@ -88,6 +98,7 @@ public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> i
             item.put("flowUnlimited", permission.getFlowUnlimited());
             item.put("num", permission.getNum());
             item.put("forwardUnlimited", permission.getForwardUnlimited());
+            item.put("usedForwards", forwardUsage.getOrDefault(permission.getNodeId(), 0));
             item.put("flowResetTime", permission.getFlowResetTime());
             item.put("expTime", permission.getExpTime());
             item.put("permissionStatus", permission.getStatus());

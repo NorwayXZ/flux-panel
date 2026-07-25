@@ -68,6 +68,8 @@ export interface UserNodeProvision {
   expTime: Date | null;
   flowResetTime: number;
   status: number;
+  usedFlow?: number;
+  usedForwards?: number;
 }
 
 export interface UserTunnel {
