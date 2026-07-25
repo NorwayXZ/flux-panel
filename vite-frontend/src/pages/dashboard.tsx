@@ -3,11 +3,24 @@ import { useState, useEffect } from "react";
 import type { ReactNode } from 'react';
 import toast from 'react-hot-toast';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useNavigate } from 'react-router-dom';
+import { ArrowRight, CircleCheck, Clock3, Gauge, Network, Route, Server, ShieldAlert, Users } from 'lucide-react';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
 
-import { getNodeList, getUserPackageInfo } from "@/api";
+import {
+  getAllUsers,
+  getForwardList,
+  getMonitoringAlerts,
+  getMonitoringOverview,
+  getNodeList,
+  getUserPackageInfo,
+  type MonitoringAlertItem,
+  type MonitoringOverview,
+  type MonitoringResource,
+} from "@/api";
+import type { User } from '@/types';
 
 interface UserInfo {
   flow: number;
@@ -66,6 +79,15 @@ interface Forward {
   outFlow: number;
 }
 
+interface AdminForward extends Forward {
+  status: number;
+  userName?: string;
+  nodeOffline?: boolean;
+  routeMode?: 'single' | 'failover' | 'latency';
+  lastRouteSwitch?: number;
+  routeSwitchReason?: string;
+}
+
 interface StatisticsFlow {
   id: number;
   userId: number;
@@ -74,7 +96,27 @@ interface StatisticsFlow {
   time: string;
 }
 
+const EMPTY_ADMIN_OVERVIEW: MonitoringOverview = {
+  range: '24h',
+  summary: {
+    totalResources: 0,
+    healthy: 0,
+    degraded: 0,
+    offline: 0,
+    paused: 0,
+    unknown: 0,
+    openAlerts: 0,
+    criticalAlerts: 0,
+    unreadAlerts: 0,
+    availability: 100,
+    trackedFrom: 0,
+  },
+  trend: [],
+  resources: [],
+};
+
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [userInfo, setUserInfo] = useState<UserInfo>({} as UserInfo);
   const [userTunnels, setUserTunnels] = useState<UserTunnel[]>([]);
@@ -82,7 +124,13 @@ export default function DashboardPage() {
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
-  const summaryCardIds = ['total-flow', 'used-flow', 'forward-quota', 'used-forwards'];
+  const [adminOverview, setAdminOverview] = useState<MonitoringOverview>(EMPTY_ADMIN_OVERVIEW);
+  const [adminAlerts, setAdminAlerts] = useState<MonitoringAlertItem[]>([]);
+  const [adminForwards, setAdminForwards] = useState<AdminForward[]>([]);
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
+  const summaryCardIds = isAdmin
+    ? ['admin-flow', 'admin-nodes', 'admin-tunnels', 'admin-forwards']
+    : ['total-flow', 'used-flow', 'forward-quota', 'used-forwards'];
   const summaryCardOrder = useCardOrder('dashboard-summary-cards', summaryCardIds);
   const orderedSummaryCards = summaryCardOrder.sortItems(summaryCardIds, id => id);
   const sharedNodeOrder = useCardOrder('dashboard-shared-node-cards', sharedNodes.map(node => node.id));
@@ -188,6 +236,10 @@ export default function DashboardPage() {
     setSharedNodes([]);
     setForwardList([]);
     setStatisticsFlows([]);
+    setAdminOverview(EMPTY_ADMIN_OVERVIEW);
+    setAdminAlerts([]);
+    setAdminForwards([]);
+    setAdminUsers([]);
 
     // 检查用户是否是管理员
     const adminStatus = localStorage.getItem('admin');
@@ -200,10 +252,15 @@ export default function DashboardPage() {
   const loadPackageData = async () => {
     setLoading(true);
     try {
-      const shouldLoadSharedNodes = localStorage.getItem('admin') !== 'true';
-      const [res, nodeRes] = await Promise.all([
+      const admin = localStorage.getItem('admin') === 'true';
+      const shouldLoadSharedNodes = !admin;
+      const [res, nodeRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
         getUserPackageInfo(),
-        shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null)
+        shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null),
+        admin ? getMonitoringOverview('24h') : Promise.resolve(null),
+        admin ? getMonitoringAlerts({ status: 'open', page: 1, size: 5 }) : Promise.resolve(null),
+        admin ? getForwardList() : Promise.resolve(null),
+        admin ? getAllUsers() : Promise.resolve(null),
       ]);
 
       if (res.code === 0) {
@@ -230,6 +287,11 @@ export default function DashboardPage() {
       } else if (nodeRes) {
         toast.error(nodeRes.msg || '获取节点权限失败');
       }
+
+      if (monitoringRes?.code === 0) setAdminOverview(monitoringRes.data || EMPTY_ADMIN_OVERVIEW);
+      if (alertsRes?.code === 0) setAdminAlerts(alertsRes.data?.items || []);
+      if (forwardsRes?.code === 0) setAdminForwards((forwardsRes.data || []) as AdminForward[]);
+      if (usersRes?.code === 0) setAdminUsers((usersRes.data || []) as User[]);
     } catch (error) {
       console.error('获取套餐信息失败:', error);
       toast.error('获取套餐信息失败');
@@ -448,6 +510,78 @@ export default function DashboardPage() {
     }
   };
 
+  const formatRelativeTime = (timestamp?: number) => {
+    if (!timestamp) return '暂无记录';
+    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前`;
+    return `${Math.floor(hours / 24)} 天前`;
+  };
+
+  const formatAlertDuration = (startedAt: number) => {
+    const minutes = Math.max(0, Math.floor((Date.now() - startedAt) / 60000));
+    if (minutes < 60) return `${Math.max(1, minutes)} 分钟`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时`;
+    return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`;
+  };
+
+  const resourcesByType = (type: MonitoringResource['type']) =>
+    adminOverview.resources.filter(resource => resource.type === type);
+
+  const resourceSummary = (type: MonitoringResource['type']) => {
+    const resources = resourcesByType(type);
+    return {
+      total: resources.length,
+      healthy: resources.filter(resource => resource.status === 'healthy').length,
+      degraded: resources.filter(resource => resource.status === 'degraded').length,
+      offline: resources.filter(resource => resource.status === 'offline').length,
+      paused: resources.filter(resource => resource.status === 'paused').length,
+      unknown: resources.filter(resource => resource.status === 'unknown').length,
+    };
+  };
+
+  const nodeHealth = resourceSummary('node');
+  const tunnelHealth = resourceSummary('tunnel');
+  const forwardHealth = resourceSummary('forward');
+  const total24HourFlow = statisticsFlows.reduce((sum, item) => sum + (item.flow || 0), 0);
+  const runningForwards = adminForwards.filter(forward => forward.status === 1 && !forward.nodeOffline).length;
+  const topTrafficForwards = [...adminForwards]
+    .sort((a, b) => ((b.inFlow || 0) + (b.outFlow || 0)) - ((a.inFlow || 0) + (a.outFlow || 0)))
+    .slice(0, 5);
+  const recentRouteSwitches = adminForwards
+    .filter(forward => !!forward.lastRouteSwitch)
+    .sort((a, b) => (b.lastRouteSwitch || 0) - (a.lastRouteSwitch || 0))
+    .slice(0, 5);
+  const quotaRisks = adminUsers.map(user => {
+    const totalBytes = (user.totalFlow || 0) * 1024 * 1024 * 1024;
+    const usage = !user.totalFlowUnlimited && totalBytes > 0
+      ? ((user.totalUsedFlow || 0) / totalBytes) * 100
+      : 0;
+    const daysToExpire = user.expTime
+      ? Math.ceil((user.expTime - Date.now()) / 86400000)
+      : null;
+    const priority = user.status !== 1 || (daysToExpire !== null && daysToExpire <= 0) || usage >= 100
+      ? 3
+      : (daysToExpire !== null && daysToExpire <= 7) || usage >= 90
+        ? 2
+        : (daysToExpire !== null && daysToExpire <= 30) || usage >= 80
+          ? 1
+          : 0;
+    const badge = user.status !== 1
+      ? '禁用'
+      : daysToExpire !== null && daysToExpire <= 0
+        ? '到期'
+        : usage >= 80
+          ? `${Math.round(usage)}%`
+          : `${daysToExpire}天`;
+    return { user, usage, daysToExpire, priority, badge };
+  }).filter(item => item.priority > 0)
+    .sort((a, b) => b.priority - a.priority || b.usage - a.usage)
+    .slice(0, 5);
+
       if (loading) {
       return (
 
@@ -484,6 +618,33 @@ export default function DashboardPage() {
                  </div>
                </div>
              );
+
+             if (isAdmin) {
+               if (cardId === 'admin-flow') return (
+                 <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex h-full flex-col justify-between gap-2">
+                   {header('24 小时总流量', 'bg-blue-100 dark:bg-blue-500/20', <Gauge className="h-4 w-4 text-blue-600 dark:text-blue-400 lg:h-5 lg:w-5" />)}
+                   <div><p className="text-base font-bold text-foreground lg:text-xl">{formatFlow(total24HourFlow)}</p><p className="mt-1 text-xs text-default-500">全部用户计费流量</p></div>
+                 </div></CardBody></Card>
+               );
+               if (cardId === 'admin-nodes') return (
+                 <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex h-full flex-col justify-between gap-2">
+                   {header('在线节点', 'bg-emerald-100 dark:bg-emerald-500/20', <Server className="h-4 w-4 text-emerald-600 dark:text-emerald-400 lg:h-5 lg:w-5" />)}
+                   <div><p className="text-base font-bold text-foreground lg:text-xl">{nodeHealth.healthy} / {nodeHealth.total}</p><p className="mt-1 text-xs text-default-500">{nodeHealth.offline + nodeHealth.degraded} 台需要关注</p></div>
+                 </div></CardBody></Card>
+               );
+               if (cardId === 'admin-tunnels') return (
+                 <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex h-full flex-col justify-between gap-2">
+                   {header('健康隧道', 'bg-cyan-100 dark:bg-cyan-500/20', <Route className="h-4 w-4 text-cyan-700 dark:text-cyan-300 lg:h-5 lg:w-5" />)}
+                   <div><p className="text-base font-bold text-foreground lg:text-xl">{tunnelHealth.healthy} / {tunnelHealth.total}</p><p className="mt-1 text-xs text-default-500">{tunnelHealth.offline + tunnelHealth.degraded} 条链路异常</p></div>
+                 </div></CardBody></Card>
+               );
+               return (
+                 <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex h-full flex-col justify-between gap-2">
+                   {header('运行中转发', 'bg-orange-100 dark:bg-orange-500/20', <Network className="h-4 w-4 text-orange-700 dark:text-orange-300 lg:h-5 lg:w-5" />)}
+                   <div><p className="text-base font-bold text-foreground lg:text-xl">{runningForwards} / {adminForwards.length}</p><p className="mt-1 text-xs text-default-500">{Math.max(0, adminForwards.length - runningForwards)} 条暂停或异常</p></div>
+                 </div></CardBody></Card>
+               );
+             }
 
              if (cardId === 'total-flow') return (
                <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex flex-col space-y-2">
@@ -589,6 +750,111 @@ export default function DashboardPage() {
              )}
            </CardBody>
          </Card>
+
+         {isAdmin && (
+           <div className="space-y-5 lg:space-y-6">
+             <section className="border-y border-gray-200 bg-content1 px-3 py-5 dark:border-default-200 sm:px-5" aria-label="资源健康概览">
+               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                 <div>
+                   <h2 className="text-base font-semibold text-foreground lg:text-lg">资源健康概览</h2>
+                   <p className="mt-1 text-xs text-default-500">综合在线率 {adminOverview.summary.availability.toFixed(2)}%</p>
+                 </div>
+                 <button type="button" onClick={() => navigate('/monitoring')} className="flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary hover:bg-primary-50 dark:hover:bg-primary-500/10">
+                   {adminOverview.summary.openAlerts} 条待处理告警 <ArrowRight className="h-4 w-4" />
+                 </button>
+               </div>
+               <div className="grid grid-cols-1 divide-y divide-gray-200 dark:divide-gray-800 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                 {[
+                   { label: '节点', path: '/node', summary: nodeHealth, icon: <Server className="h-5 w-5" /> },
+                   { label: '隧道', path: '/tunnel', summary: tunnelHealth, icon: <Route className="h-5 w-5" /> },
+                   { label: '转发', path: '/forward', summary: forwardHealth, icon: <Network className="h-5 w-5" /> },
+                 ].map(item => (
+                   <button key={item.label} type="button" onClick={() => navigate(item.path)} className="group flex min-h-28 flex-col justify-between gap-3 px-1 py-4 text-left first:pt-0 last:pb-0 sm:px-5 sm:py-0 sm:first:pl-0 sm:last:pr-0">
+                     <div className="flex w-full items-center justify-between gap-3">
+                       <span className="flex items-center gap-2 font-medium text-foreground">{item.icon}{item.label}</span>
+                       <ArrowRight className="h-4 w-4 text-default-400 transition-transform group-hover:translate-x-1" />
+                     </div>
+                     <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+                       <div><p className="text-2xl font-semibold text-foreground">{item.summary.healthy}<span className="ml-1 text-sm font-normal text-default-500">/ {item.summary.total}</span></p><p className="text-xs text-default-500">健康</p></div>
+                       <div className="flex gap-3 pb-0.5 text-xs">
+                         <span className="text-amber-600 dark:text-amber-400">降级 {item.summary.degraded}</span>
+                         <span className="text-rose-600 dark:text-rose-400">异常 {item.summary.offline}</span>
+                         <span className="text-default-500">暂停 {item.summary.paused}</span>
+                         {item.summary.unknown > 0 && <span className="text-default-500">未知 {item.summary.unknown}</span>}
+                       </div>
+                     </div>
+                   </button>
+                 ))}
+               </div>
+             </section>
+
+             <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
+               <Card radius="sm" className="border border-gray-200 shadow-sm dark:border-default-200 xl:col-span-3">
+                 <CardHeader className="flex items-center justify-between gap-3 pb-2">
+                   <div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-rose-500" /><h2 className="text-base font-semibold">异常与待处理</h2></div>
+                   <button type="button" onClick={() => navigate('/monitoring')} className="text-sm font-medium text-primary">查看全部</button>
+                 </CardHeader>
+                 <CardBody className="pt-1">
+                   {adminAlerts.length === 0 ? (
+                     <div className="flex min-h-48 flex-col items-center justify-center text-center"><CircleCheck className="mb-3 h-9 w-9 text-emerald-500" /><p className="font-medium text-foreground">当前没有待处理告警</p><p className="mt-1 text-sm text-default-500">节点、隧道和转发均未报告异常</p></div>
+                   ) : (
+                     <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                       {adminAlerts.map(alert => <button key={alert.id} type="button" onClick={() => navigate('/monitoring')} className="flex w-full items-start gap-3 py-3 text-left first:pt-1 last:pb-1">
+                         <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${alert.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-400'}`} />
+                         <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-sm font-medium text-foreground">{alert.resourceName}</strong><span className="text-xs text-default-500">{alert.ownerUserName || '管理员'}</span></span><span className="mt-1 block truncate text-xs text-default-500">{alert.title} · {alert.detail}</span></span>
+                         <span className="shrink-0 text-xs text-default-500">持续 {formatAlertDuration(alert.startedAt)}</span>
+                       </button>)}
+                     </div>
+                   )}
+                 </CardBody>
+               </Card>
+
+               <Card radius="sm" className="border border-gray-200 shadow-sm dark:border-default-200 xl:col-span-2">
+                 <CardHeader className="flex items-center justify-between gap-3 pb-2"><div className="flex items-center gap-2"><Gauge className="h-5 w-5 text-blue-500" /><h2 className="text-base font-semibold">转发流量排行</h2></div><span className="text-xs text-default-500">累计计费流量</span></CardHeader>
+                 <CardBody className="pt-1">
+                   {topTrafficForwards.length === 0 ? <div className="flex min-h-48 items-center justify-center text-sm text-default-500">暂无转发流量</div> : <div className="space-y-3">
+                     {topTrafficForwards.map((forward, index) => {
+                       const flow = (forward.inFlow || 0) + (forward.outFlow || 0);
+                       const maxFlow = (topTrafficForwards[0]?.inFlow || 0) + (topTrafficForwards[0]?.outFlow || 0);
+                       return <button key={forward.id} type="button" onClick={() => navigate('/forward')} className="block w-full text-left">
+                         <div className="mb-1.5 flex items-center justify-between gap-3 text-sm"><span className="min-w-0 truncate"><span className="mr-2 text-default-400">{index + 1}</span><span className="font-medium text-foreground">{forward.name}</span><span className="ml-2 text-xs text-default-500">{forward.userName || '管理员'}</span></span><span className="shrink-0 font-medium text-foreground">{formatFlow(flow)}</span></div>
+                         <div className="h-1.5 overflow-hidden rounded-full bg-default-100"><div className="h-full rounded-full bg-blue-500" style={{ width: `${maxFlow > 0 ? Math.max(3, (flow / maxFlow) * 100) : 0}%` }} /></div>
+                       </button>;
+                     })}
+                   </div>}
+                 </CardBody>
+               </Card>
+             </div>
+
+             <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+               <Card radius="sm" className="border border-gray-200 shadow-sm dark:border-default-200">
+                 <CardHeader className="flex items-center justify-between gap-3 pb-2"><div className="flex items-center gap-2"><Users className="h-5 w-5 text-amber-500" /><h2 className="text-base font-semibold">额度与到期风险</h2></div><button type="button" onClick={() => navigate('/user')} className="text-sm font-medium text-primary">用户管理</button></CardHeader>
+                 <CardBody className="pt-1">
+                   {quotaRisks.length === 0 ? <div className="flex min-h-44 flex-col items-center justify-center text-center"><CircleCheck className="mb-3 h-8 w-8 text-emerald-500" /><p className="text-sm text-default-500">当前没有高风险用户</p></div> : <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                     {quotaRisks.map(item => <button key={item.user.id} type="button" onClick={() => navigate('/user')} className="flex w-full items-center gap-3 py-3 text-left first:pt-1 last:pb-1">
+                       <span className={`flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1 text-xs font-semibold ${item.priority >= 3 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'}`}>{item.badge}</span>
+                       <span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium text-foreground">{item.user.user}</strong><span className="mt-1 block truncate text-xs text-default-500">{item.user.status !== 1 ? '账号已禁用' : item.daysToExpire !== null && item.daysToExpire <= 0 ? '账号已到期' : item.daysToExpire !== null && item.daysToExpire <= 30 ? `${item.daysToExpire} 天后到期` : `额度已使用 ${item.usage.toFixed(1)}%`}</span></span>
+                       <ArrowRight className="h-4 w-4 shrink-0 text-default-400" />
+                     </button>)}
+                   </div>}
+                 </CardBody>
+               </Card>
+
+               <Card radius="sm" className="border border-gray-200 shadow-sm dark:border-default-200">
+                 <CardHeader className="flex items-center justify-between gap-3 pb-2"><div className="flex items-center gap-2"><Clock3 className="h-5 w-5 text-cyan-500" /><h2 className="text-base font-semibold">线路切换动态</h2></div><button type="button" onClick={() => navigate('/forward')} className="text-sm font-medium text-primary">转发管理</button></CardHeader>
+                 <CardBody className="pt-1">
+                   {recentRouteSwitches.length === 0 ? <div className="flex min-h-44 items-center justify-center text-sm text-default-500">暂无线路切换记录</div> : <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                     {recentRouteSwitches.map(forward => <button key={forward.id} type="button" onClick={() => navigate('/forward')} className="flex w-full items-start gap-3 py-3 text-left first:pt-1 last:pb-1">
+                       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300"><Route className="h-4 w-4" /></span>
+                       <span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><strong className="truncate text-sm font-medium text-foreground">{forward.name}</strong><span className="text-xs text-default-500">{forward.userName || '管理员'}</span></span><span className="mt-1 block truncate text-xs text-default-500">{forward.routeSwitchReason || '线路状态变化'}</span></span>
+                       <span className="shrink-0 text-xs text-default-500">{formatRelativeTime(forward.lastRouteSwitch)}</span>
+                     </button>)}
+                   </div>}
+                 </CardBody>
+               </Card>
+             </div>
+           </div>
+         )}
 
          {/* 节点权限 - 管理员不显示 */}
          {!isAdmin && (
