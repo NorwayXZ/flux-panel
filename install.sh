@@ -196,7 +196,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/gost
+ExecStart=$INSTALL_DIR/gost -C $INSTALL_DIR/gost.json
 Restart=on-failure
 RestartSec=3
 
@@ -213,6 +213,7 @@ EOF
 name="Gost Proxy Service"
 description="Flux Panel GOST agent"
 command="$INSTALL_DIR/gost"
+command_args="-C $INSTALL_DIR/gost.json"
 command_background="yes"
 directory="$INSTALL_DIR"
 pidfile="$PID_FILE"
