@@ -98,4 +98,28 @@ public class Tunnel extends BaseEntity {
 
     @TableField(exist = false)
     private List<TunnelPathNodeDto> pathNodeDetails;
+
+    @TableField(exist = false)
+    private Long quotaFlow;
+
+    @TableField(exist = false)
+    private Long quotaUsedFlow;
+
+    @TableField(exist = false)
+    private Boolean quotaFlowUnlimited;
+
+    @TableField(exist = false)
+    private Integer quotaForwardLimit;
+
+    @TableField(exist = false)
+    private Integer quotaForwardUsed;
+
+    @TableField(exist = false)
+    private Boolean quotaForwardUnlimited;
+
+    @TableField(exist = false)
+    private Boolean quotaAvailable;
+
+    @TableField(exist = false)
+    private String unavailableReason;
 }

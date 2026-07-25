@@ -11,9 +11,11 @@ import { getNodeList, getUserPackageInfo } from "@/api";
 
 interface UserInfo {
   flow: number;
+  flowUnlimited?: boolean;
   inFlow: number;
   outFlow: number;
   num: number;
+  forwardUnlimited?: boolean;
   expTime?: string;
   flowResetTime?: number;
 }
@@ -23,9 +25,11 @@ interface UserTunnel {
   tunnelId: number;
   tunnelName: string;
   flow: number;
+  flowUnlimited?: number;
   inFlow: number;
   outFlow: number;
   num: number;
+  forwardUnlimited?: number;
   expTime?: string;
   flowResetTime?: number;
   tunnelFlow: number;
@@ -41,6 +45,13 @@ interface SharedNode {
   status: number;
   accessType?: 'admin' | 'owned' | 'shared';
   ownerUserName?: string;
+  quotaFlow?: number;
+  quotaUsedFlow?: number;
+  quotaFlowUnlimited?: boolean;
+  quotaForwardLimit?: number;
+  quotaForwardUnlimited?: boolean;
+  quotaAvailable?: boolean;
+  unavailableReason?: string;
 }
 
 interface Forward {
@@ -339,13 +350,13 @@ export default function DashboardPage() {
       const totalUsed = calculateUserTotalUsedFlow();
       const totalLimit = (userInfo.flow || 0) * 1024 * 1024 * 1024;
       // 无限制时返回0%
-      if (userInfo.flow === 99999) return 0;
+      if (userInfo.flowUnlimited || userInfo.flow === 99999) return 0;
       return totalLimit > 0 ? Math.min((totalUsed / totalLimit) * 100, 100) : 0;
     } else if (type === 'forwards') {
       const totalUsed = forwardList.length;
       const totalLimit = userInfo.num || 0;
       // 无限制时返回0%
-      if (userInfo.num === 99999) return 0;
+      if (userInfo.forwardUnlimited || userInfo.num === 99999) return 0;
       return totalLimit > 0 ? Math.min((totalUsed / totalLimit) * 100, 100) : 0;
     }
     return 0;
@@ -477,27 +488,27 @@ export default function DashboardPage() {
              if (cardId === 'total-flow') return (
                <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex flex-col space-y-2">
                  {header('总流量', 'bg-blue-100 dark:bg-blue-500/20', <svg className="w-4 h-4 lg:w-5 lg:h-5 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" /></svg>)}
-                 <p className="text-base lg:text-xl font-bold text-foreground truncate">{formatFlow(userInfo.flow, 'gb')}</p>
+                 <p className="text-base lg:text-xl font-bold text-foreground truncate">{userInfo.flowUnlimited ? '无限制' : formatFlow(userInfo.flow, 'gb')}</p>
                </div></CardBody></Card>
              );
              if (cardId === 'used-flow') return (
                <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex flex-col space-y-2">
                  {header('已用流量', 'bg-green-100 dark:bg-green-500/20', <svg className="w-4 h-4 lg:w-5 lg:h-5 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" /></svg>)}
                  <p className="text-base lg:text-xl font-bold text-foreground truncate">{formatFlow(calculateUserTotalUsedFlow())}</p>
-                 <div className="mt-1">{renderProgressBar(calculateUsagePercentage('flow'), 'sm', userInfo.flow === 99999)}<div className="flex items-center justify-between mt-1"><p className="text-xs text-default-500 truncate">{userInfo.flow === 99999 ? '无限制' : `${calculateUsagePercentage('flow').toFixed(1)}%`}</p>{userInfo.flowResetTime !== undefined && userInfo.flowResetTime !== null && <span className="text-xs text-default-500 truncate">{formatResetTime(userInfo.flowResetTime)}</span>}</div></div>
+                 <div className="mt-1">{renderProgressBar(calculateUsagePercentage('flow'), 'sm', !!userInfo.flowUnlimited || userInfo.flow === 99999)}<div className="flex items-center justify-between mt-1"><p className="text-xs text-default-500 truncate">{userInfo.flowUnlimited || userInfo.flow === 99999 ? '无限制' : `${calculateUsagePercentage('flow').toFixed(1)}%`}</p>{userInfo.flowResetTime !== undefined && userInfo.flowResetTime !== null && <span className="text-xs text-default-500 truncate">{formatResetTime(userInfo.flowResetTime)}</span>}</div></div>
                </div></CardBody></Card>
              );
              if (cardId === 'forward-quota') return (
                <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex flex-col space-y-2">
                  {header('转发配额', 'bg-purple-100 dark:bg-purple-500/20', <svg className="w-4 h-4 lg:w-5 lg:h-5 text-purple-600 dark:text-purple-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" /></svg>)}
-                 <p className="text-base lg:text-xl font-bold text-foreground truncate">{formatNumber(userInfo.num || 0)}</p>
+                 <p className="text-base lg:text-xl font-bold text-foreground truncate">{userInfo.forwardUnlimited ? '无限制' : formatNumber(userInfo.num || 0)}</p>
                </div></CardBody></Card>
              );
              return (
                <Card className={cardClass}><CardBody className="p-3 lg:p-4"><div className="flex flex-col space-y-2">
                  {header('已用转发', 'bg-orange-100 dark:bg-orange-500/20', <svg className="w-4 h-4 lg:w-5 lg:h-5 text-orange-600 dark:text-orange-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clipRule="evenodd" /></svg>)}
                  <p className="text-base lg:text-xl font-bold text-foreground truncate">{forwardList.length}</p>
-                 <div className="mt-1">{renderProgressBar(calculateUsagePercentage('forwards'), 'sm', userInfo.num === 99999)}<p className="text-xs text-default-500 mt-1 truncate">{userInfo.num === 99999 ? '无限制' : `${calculateUsagePercentage('forwards').toFixed(1)}%`}</p></div>
+                 <div className="mt-1">{renderProgressBar(calculateUsagePercentage('forwards'), 'sm', !!userInfo.forwardUnlimited || userInfo.num === 99999)}<p className="text-xs text-default-500 mt-1 truncate">{userInfo.forwardUnlimited || userInfo.num === 99999 ? '无限制' : `${calculateUsagePercentage('forwards').toFixed(1)}%`}</p></div>
                </div></CardBody></Card>
              );
            }}
@@ -634,10 +645,11 @@ export default function DashboardPage() {
                                 {dragHandle}
                               </div>
                               <p className="text-xs text-default-500 mt-1">节点 ID: {node.id} · 只读共享</p>
+                              {node.quotaAvailable === false && <p className="text-xs text-danger mt-1">{node.unavailableReason}</p>}
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2 lg:min-w-[480px]">
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-5 gap-y-2 lg:min-w-[700px]">
                             <div className="min-w-0">
                               <p className="text-xs text-default-500 mb-0.5">入口 IP</p>
                               <p className="text-sm font-mono text-foreground truncate" title={node.ip || '-'}>
@@ -652,6 +664,8 @@ export default function DashboardPage() {
                               <p className="text-xs text-default-500 mb-0.5">节点版本</p>
                               <p className="text-sm text-foreground truncate" title={node.version || '未知'}>{node.version || '未知'}</p>
                             </div>
+                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">流量额度</p><p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? '无限制' : `${((node.quotaUsedFlow || 0) / 1073741824).toFixed(1)} / ${node.quotaFlow || 0} GB`}</p></div>
+                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">转发名额</p><p className="text-sm text-foreground truncate">{node.quotaForwardUnlimited ? '无限制' : `${node.quotaForwardLimit || 0} 个`}</p></div>
                           </div>
                         </div>
                       </div>
@@ -718,18 +732,18 @@ export default function DashboardPage() {
                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
                          <div>
                            <p className="text-sm text-default-600 mb-1">流量配额</p>
-                           <p className="font-semibold text-foreground">{formatFlow(tunnel.flow, 'gb')}</p>
+                           <p className="font-semibold text-foreground">{tunnel.flowUnlimited === 1 ? '无限制' : formatFlow(tunnel.flow, 'gb')}</p>
                          </div>
                          <div>
                            <p className="text-sm text-default-600 mb-1">已用流量</p>
                            <p className="font-semibold text-foreground">{formatFlow(calculateTunnelUsedFlow(tunnel))}</p>
                            <div className="mt-1">
-                             {renderProgressBar(calculateTunnelFlowPercentage(tunnel), 'sm', tunnel.flow === 99999)}
+                             {renderProgressBar(calculateTunnelFlowPercentage(tunnel), 'sm', tunnel.flowUnlimited === 1 || tunnel.flow === 99999)}
                            </div>
                          </div>
                          <div>
                            <p className="text-sm text-default-600 mb-1">转发配额</p>
-                           <p className="font-semibold text-foreground">{formatNumber(tunnel.num)}</p>
+                           <p className="font-semibold text-foreground">{tunnel.forwardUnlimited === 1 ? '无限制' : formatNumber(tunnel.num)}</p>
                          </div>
                          <div>
                            <p className="text-sm text-default-600 mb-1">已用转发</p>

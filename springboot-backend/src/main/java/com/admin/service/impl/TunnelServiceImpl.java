@@ -24,6 +24,7 @@ import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
 import com.admin.service.UserTunnelService;
+import com.admin.service.UserQuotaService;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -113,6 +114,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     
     @Resource
     UserTunnelService userTunnelService;
+
+    @Resource
+    UserQuotaService userQuotaService;
 
     @Resource
     @Lazy
@@ -393,8 +397,41 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                 tunnel.setAccessType("shared");
                 tunnel.setEditable(false);
                 tunnel.setDeletable(false);
+                enrichSharedTunnelQuota(tunnel, userId);
             }
         }
+    }
+
+    private void enrichSharedTunnelQuota(Tunnel tunnel, Integer userId) {
+        UserTunnel permission = userQuotaService.getTunnelPermission(userId, tunnel.getId().intValue());
+        if (permission == null) return;
+        long used = valueOrZero(permission.getInFlow()) + valueOrZero(permission.getOutFlow());
+        int forwardUsed = userQuotaService.countForwardsUsingTunnel(userId, tunnel.getId().intValue(), null);
+        boolean flowUnlimited = Objects.equals(permission.getFlowUnlimited(), 1);
+        boolean forwardUnlimited = Objects.equals(permission.getForwardUnlimited(), 1);
+        tunnel.setQuotaFlow(permission.getFlow());
+        tunnel.setQuotaUsedFlow(used);
+        tunnel.setQuotaFlowUnlimited(flowUnlimited);
+        tunnel.setQuotaForwardLimit(permission.getNum());
+        tunnel.setQuotaForwardUsed(forwardUsed);
+        tunnel.setQuotaForwardUnlimited(forwardUnlimited);
+
+        String reason = null;
+        if (!Objects.equals(permission.getStatus(), 1)) {
+            reason = "管理员已禁用该隧道权限";
+        } else if (permission.getExpTime() != null && permission.getExpTime() <= System.currentTimeMillis()) {
+            reason = "隧道权限已到期";
+        } else if (!flowUnlimited && used >= valueOrZero(permission.getFlow()) * 1024L * 1024L * 1024L) {
+            reason = "隧道流量额度已用尽";
+        } else if (!forwardUnlimited && forwardUsed >= (permission.getNum() == null ? 0 : permission.getNum())) {
+            reason = "隧道转发名额已用尽";
+        }
+        tunnel.setQuotaAvailable(reason == null);
+        tunnel.setUnavailableReason(reason);
+    }
+
+    private long valueOrZero(Long value) {
+        return value == null ? 0L : value;
     }
 
     private void enrichTunnelPathDetails(List<Tunnel> tunnels) {

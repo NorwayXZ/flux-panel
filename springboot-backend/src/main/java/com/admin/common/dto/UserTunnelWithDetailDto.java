@@ -31,12 +31,16 @@ public class UserTunnelWithDetailDto {
     /**
      * 流量限制
      */
-    private Integer flow;
+    private Long flow;
+
+    private Integer flowUnlimited;
     
     /**
      * 转发数量限制
      */
     private Integer num;
+
+    private Integer forwardUnlimited;
     
     /**
      * 流量重置时间（时间戳）
@@ -85,4 +89,4 @@ public class UserTunnelWithDetailDto {
 
     private Integer status;
 
-} 
+}

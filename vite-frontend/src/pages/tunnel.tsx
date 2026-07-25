@@ -52,6 +52,14 @@ interface Tunnel {
     name: string;
     status: number;
   }>;
+  quotaFlow?: number;
+  quotaUsedFlow?: number;
+  quotaFlowUnlimited?: boolean;
+  quotaForwardLimit?: number;
+  quotaForwardUsed?: number;
+  quotaForwardUnlimited?: boolean;
+  quotaAvailable?: boolean;
+  unavailableReason?: string;
 }
 
 interface Node {
@@ -641,8 +649,12 @@ export default function TunnelPage() {
     tunnels.filter(isTunnelNodeOffline).sort(compareCreatedTimeDesc),
     tunnel => tunnel.id
   );
+  const quotaUnavailableTunnels = tunnelCardOrder.sortItems(
+    tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel) && tunnel.accessType === 'shared' && tunnel.quotaAvailable === false).sort(compareCreatedTimeDesc),
+    tunnel => tunnel.id
+  );
   const onlineTunnels = tunnelCardOrder.sortItems(
-    tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel)).sort(compareCreatedTimeDesc),
+    tunnels.filter(tunnel => !isTunnelNodeOffline(tunnel) && !(tunnel.accessType === 'shared' && tunnel.quotaAvailable === false)).sort(compareCreatedTimeDesc),
     tunnel => tunnel.id
   );
 
@@ -688,14 +700,15 @@ export default function TunnelPage() {
         const tunnelOffline = isTunnelNodeOffline(tunnel);
         const pathNodes = getTunnelPathNodes(tunnel);
         const ownerBadge = getTunnelOwnerBadge(tunnel);
+        const permissionUnavailable = tunnel.accessType === 'shared' && tunnel.quotaAvailable === false;
 
         return (
           <Card
-            className={tunnelOffline
+            className={tunnelOffline || permissionUnavailable
               ? "offline-card w-full self-start shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
               : "w-full self-start shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"}
           >
-            {tunnelOffline && <div className="offline-accent h-0.5 bg-danger" />}
+            {(tunnelOffline || permissionUnavailable) && <div className="offline-accent h-0.5 bg-danger" />}
             <CardHeader className="pb-2">
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
@@ -715,6 +728,9 @@ export default function TunnelPage() {
                     {getLinkStatusText(tunnel)}
                   </p>
                   <div className="flex items-center gap-1.5 mt-1">
+                    {permissionUnavailable && (
+                      <Chip color="danger" variant="flat" size="sm" className="text-xs">权限不可用</Chip>
+                    )}
                     {tunnelOffline && (
                       <Chip
                         color="danger"
@@ -749,6 +765,23 @@ export default function TunnelPage() {
 
             <CardBody className="pt-0 pb-3">
               <div className="space-y-2">
+                {tunnel.accessType === 'shared' && (
+                  <div className={permissionUnavailable
+                    ? "rounded-md border border-danger-200 bg-danger-50 px-2.5 py-2 dark:border-danger-800 dark:bg-danger-950/30"
+                    : "rounded-md border border-divider bg-default-50 px-2.5 py-2"}>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className={permissionUnavailable ? "font-medium text-danger" : "text-default-600"}>
+                        {permissionUnavailable ? tunnel.unavailableReason : '资源额度正常'}
+                      </span>
+                      <span className="text-default-500 whitespace-nowrap">
+                        {tunnel.quotaFlowUnlimited ? '流量不限' : `${((tunnel.quotaUsedFlow || 0) / 1073741824).toFixed(1)} / ${tunnel.quotaFlow || 0} GB`}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-default-500">
+                      转发名额：{tunnel.quotaForwardUnlimited ? '不限' : `${tunnel.quotaForwardUsed || 0} / ${tunnel.quotaForwardLimit || 0}`}
+                    </div>
+                  </div>
+                )}
                 {/* 流程展示 */}
                 <div className="space-y-1.5">
                   {pathNodes.map((pathNode, index) => {
@@ -950,6 +983,16 @@ export default function TunnelPage() {
                   </Chip>
                 </div>
                 {renderTunnelLevelGroups(offlineTunnels, true)}
+              </section>
+            )}
+
+            {quotaUnavailableTunnels.length > 0 && (
+              <section className="space-y-3">
+                <div className="offline-section-divider flex items-center justify-between border-b border-danger-200 pb-2">
+                  <div><h2 className="offline-section-heading text-sm font-semibold text-danger-700">权限不可用</h2><p className="offline-section-copy text-xs text-danger-600">额度、有效期或管理员授权限制</p></div>
+                  <Chip color="danger" variant="flat" size="sm" className="text-xs offline-status-chip">{quotaUnavailableTunnels.length} 条</Chip>
+                </div>
+                {renderTunnelLevelGroups(quotaUnavailableTunnels, true)}
               </section>
             )}
           </div>

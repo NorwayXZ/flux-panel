@@ -29,7 +29,7 @@ services:
       retries: 20
 
   backend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.5.0}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.6.0}
     container_name: springboot-backend
     restart: unless-stopped
     environment:
@@ -72,7 +72,7 @@ services:
       start_period: 90s
 
   frontend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.5.0}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.6.0}
     container_name: vite-frontend
     restart: unless-stopped
     ports:

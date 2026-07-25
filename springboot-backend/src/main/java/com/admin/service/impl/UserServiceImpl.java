@@ -23,11 +23,18 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * <p>
@@ -101,6 +108,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Resource
     private UserNodeMapper userNodeMapper;
+
+    @Resource
+    private UserQuotaService userQuotaService;
     
     @Resource
     @Lazy
@@ -173,6 +183,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @return 创建结果响应
      */
     @Override
+    @Transactional
     public R createUser(UserDto userDto) {
         // 1. 验证用户名唯一性
         R usernameValidationResult = validateUsernameUniqueness(userDto.getUser(), null);
@@ -180,12 +191,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return usernameValidationResult;
         }
 
+        R permissionValidation = validateProvisioning(userDto.getTunnelPermissions(), userDto.getNodePermissions());
+        if (permissionValidation.getCode() != 0) {
+            return permissionValidation;
+        }
+
         // 2. 构建用户实体并保存
         User user = buildNewUserEntity(userDto);
         boolean result = this.save(user);
         
         if (result) {
-            // 3. 添加到期时间延时任务
+            syncPermissions(user.getId().intValue(), userDto.getTunnelPermissions(), userDto.getNodePermissions());
             return R.ok(SUCCESS_CREATE_MSG);
         } else {
             return R.err(ERROR_CREATE_FAILED);
@@ -200,7 +216,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     @Override
     public R getAllUsers() {
-        return R.ok(this.list(new QueryWrapper<User>().ne("role_id", ADMIN_ROLE_ID)));
+        List<User> users = this.list(new QueryWrapper<User>().ne("role_id", ADMIN_ROLE_ID));
+        enrichQuotaSummaries(users);
+        return R.ok(users);
     }
 
     /**
@@ -211,6 +229,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @return 更新结果响应
      */
     @Override
+    @Transactional
     public R updateUser(UserUpdateDto userUpdateDto) {
         // 1. 验证用户是否存在
         if (!isUserExists(userUpdateDto.getId())) {
@@ -229,12 +248,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return updateValidationResult;
         }
 
+        R permissionValidation = validateProvisioning(userUpdateDto.getTunnelPermissions(), userUpdateDto.getNodePermissions());
+        if (permissionValidation.getCode() != 0) {
+            return permissionValidation;
+        }
+        R removalValidation = validatePermissionRemoval(userUpdateDto.getId().intValue(),
+                userUpdateDto.getTunnelPermissions(), userUpdateDto.getNodePermissions());
+        if (removalValidation.getCode() != 0) {
+            return removalValidation;
+        }
+
         // 4. 构建更新实体并保存
         User updateUser = buildUpdateUserEntity(userUpdateDto);
         boolean result = this.updateById(updateUser);
         
         if (result) {
-            // 5. 处理到期时间延时任务
+            syncPermissions(userUpdateDto.getId().intValue(), userUpdateDto.getTunnelPermissions(), userUpdateDto.getNodePermissions());
             return R.ok(SUCCESS_UPDATE_MSG);
         } else {
             return R.err(ERROR_UPDATE_FAILED);
@@ -354,7 +383,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             if (user == null) return R.err(ERROR_USER_NOT_FOUND);
             user.setInFlow(0L);
             user.setOutFlow(0L);
+            user.setOwnedInFlow(0L);
+            user.setOwnedOutFlow(0L);
             this.updateById(user);
+            userTunnelMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<UserTunnel>()
+                    .eq("user_id", user.getId()).setSql("in_flow = 0, out_flow = 0"));
+            userNodeMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<UserNode>()
+                    .eq("user_id", user.getId()).setSql("in_flow = 0, out_flow = 0"));
         }else { // 清零隧道流量
             UserTunnel tunnel = userTunnelService.getById(resetFlowDto.getId());
             if (tunnel == null) return R.err("隧道不存在");
@@ -433,6 +468,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private User buildNewUserEntity(UserDto userDto) {
         User user = new User();
         BeanUtils.copyProperties(userDto, user);
+        user.setFlowUnlimited(flag(userDto.getFlowUnlimited()));
+        user.setForwardUnlimited(flag(userDto.getForwardUnlimited()));
         
         // 设置加密密码
         user.setPwd(Md5Util.md5(userDto.getPwd()));
@@ -440,6 +477,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 设置默认属性
         user.setStatus(userDto.getStatus() != null ? userDto.getStatus() : USER_STATUS_ACTIVE);
         user.setRoleId(USER_ROLE_ID);
+        applyQuotaDefaults(user);
         
         // 设置时间戳
         long currentTime = System.currentTimeMillis();
@@ -470,6 +508,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private User buildUpdateUserEntity(UserUpdateDto userUpdateDto) {
         User user = new User();
         BeanUtils.copyProperties(userUpdateDto, user);
+        user.setFlowUnlimited(flag(userUpdateDto.getFlowUnlimited()));
+        user.setForwardUnlimited(flag(userUpdateDto.getForwardUnlimited()));
         
         // 处理密码更新
         if (StrUtil.isNotBlank(userUpdateDto.getPwd())) {
@@ -480,8 +520,190 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         
         // 设置更新时间
         user.setUpdatedTime(System.currentTimeMillis());
+        applyQuotaDefaults(user);
         
         return user;
+    }
+
+    private void applyQuotaDefaults(User user) {
+        user.setFlow(user.getFlow() == null ? 0L : user.getFlow());
+        user.setNum(user.getNum() == null ? 0 : user.getNum());
+        user.setFlowResetTime(user.getFlowResetTime() == null ? 0L : user.getFlowResetTime());
+        user.setFlowUnlimited(user.getFlowUnlimited() == null ? 0 : user.getFlowUnlimited());
+        user.setForwardUnlimited(user.getForwardUnlimited() == null ? 0 : user.getForwardUnlimited());
+    }
+
+    private R validateProvisioning(List<UserTunnelProvisionDto> tunnelPermissions,
+                                   List<UserNodeProvisionDto> nodePermissions) {
+        if (tunnelPermissions != null) {
+            Set<Integer> ids = new HashSet<>();
+            for (UserTunnelProvisionDto permission : tunnelPermissions) {
+                if (permission.getTunnelId() == null || !ids.add(permission.getTunnelId())) {
+                    return R.err("隧道权限配置重复或缺少隧道");
+                }
+                Tunnel tunnel = tunnelService.getById(permission.getTunnelId());
+                User owner = tunnel == null ? null : this.getById(tunnel.getOwnerUserId());
+                if (tunnel == null || owner == null || owner.getRoleId() != ADMIN_ROLE_ID) {
+                    return R.err("只能分配管理员创建的隧道");
+                }
+            }
+        }
+        if (nodePermissions != null) {
+            Set<Integer> ids = new HashSet<>();
+            for (UserNodeProvisionDto permission : nodePermissions) {
+                if (permission.getNodeId() == null || !ids.add(permission.getNodeId())) {
+                    return R.err("节点权限配置重复或缺少节点");
+                }
+                Node node = nodeService.getById(permission.getNodeId());
+                User owner = node == null ? null : this.getById(node.getOwnerUserId());
+                if (node == null || owner == null || owner.getRoleId() != ADMIN_ROLE_ID) {
+                    return R.err("只能分配管理员创建的节点");
+                }
+            }
+        }
+        return R.ok();
+    }
+
+    private R validatePermissionRemoval(Integer userId, List<UserTunnelProvisionDto> tunnelPermissions,
+                                        List<UserNodeProvisionDto> nodePermissions) {
+        if (tunnelPermissions != null) {
+            Set<Integer> retained = tunnelPermissions.stream().map(UserTunnelProvisionDto::getTunnelId).collect(Collectors.toSet());
+            for (UserTunnel current : userTunnelMapper.selectList(new QueryWrapper<UserTunnel>().eq("user_id", userId))) {
+                if (!retained.contains(current.getTunnelId())
+                        && userQuotaService.countForwardsUsingTunnel(userId, current.getTunnelId(), null) > 0) {
+                    Tunnel tunnel = tunnelService.getById(current.getTunnelId());
+                    return R.err("无法取消隧道权限，仍有转发使用：" + (tunnel == null ? current.getTunnelId() : tunnel.getName()));
+                }
+            }
+        }
+        if (nodePermissions != null) {
+            Set<Integer> retained = nodePermissions.stream().map(UserNodeProvisionDto::getNodeId).collect(Collectors.toSet());
+            List<Tunnel> ownedTunnels = tunnelService.list(new QueryWrapper<Tunnel>().eq("owner_user_id", userId));
+            for (UserNode current : userNodeMapper.selectList(new QueryWrapper<UserNode>().eq("user_id", userId))) {
+                if (retained.contains(current.getNodeId())) continue;
+                boolean used = ownedTunnels.stream().anyMatch(tunnel ->
+                        com.admin.common.utils.TunnelRouteUtil.parseNodePath(tunnel).contains(current.getNodeId().longValue()));
+                if (used) {
+                    Node node = nodeService.getById(current.getNodeId());
+                    return R.err("无法取消节点权限，用户自建隧道仍在使用：" + (node == null ? current.getNodeId() : node.getName()));
+                }
+            }
+        }
+        return R.ok();
+    }
+
+    private void syncPermissions(Integer userId, List<UserTunnelProvisionDto> tunnelPermissions,
+                                 List<UserNodeProvisionDto> nodePermissions) {
+        if (tunnelPermissions != null) {
+            Map<Integer, UserTunnel> existing = userTunnelMapper.selectList(new QueryWrapper<UserTunnel>()
+                            .eq("user_id", userId)).stream()
+                    .collect(Collectors.toMap(UserTunnel::getTunnelId, Function.identity()));
+            Set<Integer> retained = new HashSet<>();
+            for (UserTunnelProvisionDto dto : tunnelPermissions) {
+                retained.add(dto.getTunnelId());
+                UserTunnel permission = existing.getOrDefault(dto.getTunnelId(), new UserTunnel());
+                permission.setUserId(userId);
+                permission.setTunnelId(dto.getTunnelId());
+                permission.setFlow(valueOrZero(dto.getFlow()));
+                permission.setFlowUnlimited(flag(dto.getFlowUnlimited()));
+                permission.setNum(dto.getNum() == null ? 0 : dto.getNum());
+                permission.setForwardUnlimited(flag(dto.getForwardUnlimited()));
+                permission.setFlowResetTime(valueOrZero(dto.getFlowResetTime()));
+                permission.setExpTime(dto.getExpTime());
+                permission.setSpeedId(dto.getSpeedId());
+                permission.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
+                if (permission.getId() == null) {
+                    permission.setInFlow(0L);
+                    permission.setOutFlow(0L);
+                    userTunnelMapper.insert(permission);
+                } else {
+                    userTunnelMapper.updateById(permission);
+                }
+            }
+            existing.values().stream().filter(item -> !retained.contains(item.getTunnelId()))
+                    .forEach(item -> userTunnelMapper.deleteById(item.getId()));
+        }
+
+        if (nodePermissions != null) {
+            Map<Integer, UserNode> existing = userNodeMapper.selectList(new QueryWrapper<UserNode>()
+                            .eq("user_id", userId)).stream()
+                    .collect(Collectors.toMap(UserNode::getNodeId, Function.identity()));
+            Set<Integer> retained = new HashSet<>();
+            for (UserNodeProvisionDto dto : nodePermissions) {
+                retained.add(dto.getNodeId());
+                UserNode permission = existing.getOrDefault(dto.getNodeId(), new UserNode());
+                permission.setUserId(userId);
+                permission.setNodeId(dto.getNodeId());
+                permission.setFlow(valueOrZero(dto.getFlow()));
+                permission.setFlowUnlimited(flag(dto.getFlowUnlimited()));
+                permission.setNum(dto.getNum() == null ? 0 : dto.getNum());
+                permission.setForwardUnlimited(flag(dto.getForwardUnlimited()));
+                permission.setFlowResetTime(valueOrZero(dto.getFlowResetTime()));
+                permission.setExpTime(dto.getExpTime());
+                permission.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
+                if (permission.getId() == null) {
+                    permission.setCreatedTime(System.currentTimeMillis());
+                    permission.setInFlow(0L);
+                    permission.setOutFlow(0L);
+                    userNodeMapper.insert(permission);
+                } else {
+                    userNodeMapper.updateById(permission);
+                }
+            }
+            existing.values().stream().filter(item -> !retained.contains(item.getNodeId()))
+                    .forEach(item -> userNodeMapper.deleteById(item.getId()));
+        }
+    }
+
+    private void enrichQuotaSummaries(List<User> users) {
+        if (users.isEmpty()) return;
+        List<Integer> ids = users.stream().map(user -> user.getId().intValue()).collect(Collectors.toList());
+        Map<Integer, List<UserTunnel>> tunnels = userTunnelMapper.selectList(new QueryWrapper<UserTunnel>()
+                        .in("user_id", ids)).stream().collect(Collectors.groupingBy(UserTunnel::getUserId));
+        Map<Integer, List<UserNode>> nodes = userNodeMapper.selectList(new QueryWrapper<UserNode>()
+                        .in("user_id", ids)).stream().collect(Collectors.groupingBy(UserNode::getUserId));
+        for (User user : users) {
+            List<UserTunnel> tunnelItems = tunnels.getOrDefault(user.getId().intValue(), Collections.emptyList());
+            List<UserNode> nodeItems = nodes.getOrDefault(user.getId().intValue(), Collections.emptyList());
+            long totalFlow = valueOrZero(user.getFlow());
+            int totalNum = user.getNum() == null ? 0 : user.getNum();
+            long usedFlow = valueOrZero(user.getOwnedInFlow()) + valueOrZero(user.getOwnedOutFlow());
+            boolean flowUnlimited = flag(user.getFlowUnlimited()) == 1;
+            boolean numUnlimited = flag(user.getForwardUnlimited()) == 1;
+            for (UserTunnel item : tunnelItems) {
+                totalFlow += valueOrZero(item.getFlow());
+                totalNum += item.getNum() == null ? 0 : item.getNum();
+                usedFlow += valueOrZero(item.getInFlow()) + valueOrZero(item.getOutFlow());
+                flowUnlimited |= flag(item.getFlowUnlimited()) == 1;
+                numUnlimited |= flag(item.getForwardUnlimited()) == 1;
+            }
+            for (UserNode item : nodeItems) {
+                totalFlow += valueOrZero(item.getFlow());
+                totalNum += item.getNum() == null ? 0 : item.getNum();
+                usedFlow += valueOrZero(item.getInFlow()) + valueOrZero(item.getOutFlow());
+                flowUnlimited |= flag(item.getFlowUnlimited()) == 1;
+                numUnlimited |= flag(item.getForwardUnlimited()) == 1;
+            }
+            user.setTotalFlow(totalFlow);
+            user.setTotalFlowUnlimited(flowUnlimited);
+            user.setTotalUsedFlow(usedFlow);
+            user.setTotalNum(totalNum);
+            user.setTotalNumUnlimited(numUnlimited);
+            user.setTunnelPermissionCount(tunnelItems.size());
+            user.setNodePermissionCount(nodeItems.size());
+        }
+    }
+
+    private long valueOrZero(Long value) {
+        return value == null ? 0L : value;
+    }
+
+    private int flag(Boolean value) {
+        return Boolean.TRUE.equals(value) ? 1 : 0;
+    }
+
+    private int flag(Integer value) {
+        return value == null ? 0 : value;
     }
 
     /**
@@ -679,6 +901,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private UserPackageDto buildUserPackageDto(CurrentUserInfo currentUser) {
         User user = currentUser.getUser();
         Integer roleId = currentUser.getRoleId();
+        enrichQuotaSummaries(Collections.singletonList(user));
         
         // 1. 构造用户基本信息
         UserPackageDto.UserInfoDto userInfo = buildUserInfoDto(user);
@@ -713,10 +936,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         userInfo.setId(user.getId());
         userInfo.setUser(user.getUser());
         userInfo.setStatus(user.getStatus());
-        userInfo.setFlow(user.getFlow());
-        userInfo.setInFlow(user.getInFlow());
-        userInfo.setOutFlow(user.getOutFlow());
-        userInfo.setNum(user.getNum());
+        userInfo.setFlow(user.getTotalFlow() == null ? user.getFlow() : user.getTotalFlow());
+        userInfo.setFlowUnlimited(Boolean.TRUE.equals(user.getTotalFlowUnlimited()));
+        userInfo.setInFlow(user.getTotalUsedFlow() == null ? user.getInFlow() : user.getTotalUsedFlow());
+        userInfo.setOutFlow(user.getTotalUsedFlow() == null ? user.getOutFlow() : 0L);
+        userInfo.setNum(user.getTotalNum() == null ? user.getNum() : user.getTotalNum());
+        userInfo.setForwardUnlimited(Boolean.TRUE.equals(user.getTotalNumUnlimited()));
+        userInfo.setTunnelPermissionCount(user.getTunnelPermissionCount());
+        userInfo.setNodePermissionCount(user.getNodePermissionCount());
         userInfo.setExpTime(user.getExpTime());
         userInfo.setFlowResetTime(user.getFlowResetTime());
         userInfo.setCreatedTime(user.getCreatedTime());

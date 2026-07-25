@@ -12,12 +12,23 @@ export interface User {
   pwd?: string;
   status: number; // 1-正常, 0-禁用
   flow: number; // 流量限制(GB)
+  flowUnlimited?: number;
   num: number; // 转发数量
+  forwardUnlimited?: number;
   expTime?: number; // 过期时间戳
   flowResetTime?: number; // 流量重置日期(1-31号)
   createdTime?: number; // 创建时间戳
   inFlow?: number; // 下载流量(字节)
   outFlow?: number; // 上传流量(字节)
+  ownedInFlow?: number;
+  ownedOutFlow?: number;
+  totalFlow?: number;
+  totalFlowUnlimited?: boolean;
+  totalUsedFlow?: number;
+  totalNum?: number;
+  totalNumUnlimited?: boolean;
+  tunnelPermissionCount?: number;
+  nodePermissionCount?: number;
 }
 
 export interface UserForm {
@@ -27,9 +38,36 @@ export interface UserForm {
   pwd?: string;
   status: number;
   flow: number;
+  flowUnlimited: boolean;
   num: number;
+  forwardUnlimited: boolean;
   expTime: Date | null;
   flowResetTime: number;
+  tunnelPermissions: UserTunnelProvision[];
+  nodePermissions: UserNodeProvision[];
+}
+
+export interface UserTunnelProvision {
+  tunnelId: number;
+  flow: number;
+  flowUnlimited: boolean;
+  num: number;
+  forwardUnlimited: boolean;
+  expTime: Date | null;
+  flowResetTime: number;
+  speedId: number | null;
+  status: number;
+}
+
+export interface UserNodeProvision {
+  nodeId: number;
+  flow: number;
+  flowUnlimited: boolean;
+  num: number;
+  forwardUnlimited: boolean;
+  expTime: Date | null;
+  flowResetTime: number;
+  status: number;
 }
 
 export interface UserTunnel {
@@ -39,7 +77,9 @@ export interface UserTunnel {
   tunnelName: string;
   status: number; // 1-正常, 0-禁用
   flow: number; // 流量限制(GB)
+  flowUnlimited?: number;
   num: number; // 转发数量
+  forwardUnlimited?: number;
   expTime: number; // 过期时间戳
   flowResetTime: number; // 流量重置日期
   speedId?: number | null; // 限速规则ID
@@ -67,6 +107,8 @@ export interface Tunnel {
   exitNodeName?: string;
   status?: number;
   flow?: number; // 流量计算类型
+  ownerRoleId?: number;
+  ownerUserId?: number;
 }
 
 export interface SpeedLimit {

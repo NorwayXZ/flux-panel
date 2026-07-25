@@ -54,6 +54,14 @@ public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> i
         permission.setUserId(userId);
         permission.setNodeId(nodeId);
         permission.setCreatedTime(System.currentTimeMillis());
+        permission.setFlow(0L);
+        permission.setInFlow(0L);
+        permission.setOutFlow(0L);
+        permission.setFlowUnlimited(1);
+        permission.setNum(0);
+        permission.setForwardUnlimited(1);
+        permission.setFlowResetTime(0L);
+        permission.setStatus(1);
         return this.save(permission) ? R.ok("节点共享成功") : R.err("节点共享失败");
     }
 
@@ -74,6 +82,15 @@ public class UserNodeServiceImpl extends ServiceImpl<UserNodeMapper, UserNode> i
             item.put("status", node.getStatus());
             item.put("serverIp", node.getServerIp());
             item.put("createdTime", permission.getCreatedTime());
+            item.put("flow", permission.getFlow());
+            item.put("inFlow", permission.getInFlow());
+            item.put("outFlow", permission.getOutFlow());
+            item.put("flowUnlimited", permission.getFlowUnlimited());
+            item.put("num", permission.getNum());
+            item.put("forwardUnlimited", permission.getForwardUnlimited());
+            item.put("flowResetTime", permission.getFlowResetTime());
+            item.put("expTime", permission.getExpTime());
+            item.put("permissionStatus", permission.getStatus());
             result.add(item);
         }
         return R.ok(result);

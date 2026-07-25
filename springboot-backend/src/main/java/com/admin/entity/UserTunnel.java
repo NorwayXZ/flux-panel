@@ -35,18 +35,23 @@ public class UserTunnel implements Serializable {
 
     private Long flow;
 
+    private Integer flowUnlimited;
+
     private Long inFlow;
 
     private Long outFlow;
 
     private Long flowResetTime;
 
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Long expTime;
 
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Integer speedId;
 
     private Integer num;
+
+    private Integer forwardUnlimited;
 
     private Integer status;
 

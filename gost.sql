@@ -193,12 +193,16 @@ CREATE TABLE `user` (
   `user` varchar(100) NOT NULL,
   `pwd` varchar(100) NOT NULL,
   `role_id` int(10) NOT NULL,
-  `exp_time` bigint(20) NOT NULL,
+  `exp_time` bigint(20) DEFAULT NULL,
   `flow` bigint(20) NOT NULL,
+  `flow_unlimited` tinyint(1) NOT NULL DEFAULT '0',
   `in_flow` bigint(20) NOT NULL DEFAULT '0',
   `out_flow` bigint(20) NOT NULL DEFAULT '0',
+  `owned_in_flow` bigint(20) NOT NULL DEFAULT '0',
+  `owned_out_flow` bigint(20) NOT NULL DEFAULT '0',
   `flow_reset_time` bigint(20) NOT NULL,
   `num` int(10) NOT NULL,
+  `forward_unlimited` tinyint(1) NOT NULL DEFAULT '0',
   `created_time` bigint(20) NOT NULL,
   `updated_time` bigint(20) DEFAULT NULL,
   `status` int(10) NOT NULL
@@ -227,7 +231,9 @@ CREATE TABLE `user_tunnel` (
   `in_flow` bigint(20) NOT NULL DEFAULT '0',
   `out_flow` bigint(20) NOT NULL DEFAULT '0',
   `flow_reset_time` bigint(20) NOT NULL,
-  `exp_time` bigint(20) NOT NULL,
+  `exp_time` bigint(20) DEFAULT NULL,
+  `flow_unlimited` tinyint(1) NOT NULL DEFAULT '0',
+  `forward_unlimited` tinyint(1) NOT NULL DEFAULT '0',
   `status` int(10) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -237,7 +243,17 @@ CREATE TABLE `user_node` (
   `id` int(10) NOT NULL,
   `user_id` int(10) NOT NULL,
   `node_id` int(10) NOT NULL,
-  `created_time` bigint(20) NOT NULL
+  `created_time` bigint(20) NOT NULL,
+  `flow` bigint(20) NOT NULL DEFAULT '0',
+  `in_flow` bigint(20) NOT NULL DEFAULT '0',
+  `out_flow` bigint(20) NOT NULL DEFAULT '0',
+  `flow_unlimited` tinyint(1) NOT NULL DEFAULT '1',
+  `num` int(10) NOT NULL DEFAULT '0',
+  `forward_unlimited` tinyint(1) NOT NULL DEFAULT '1',
+  `flow_reset_time` bigint(20) NOT NULL DEFAULT '0',
+  `exp_time` bigint(20) DEFAULT NULL,
+  `status` tinyint(1) NOT NULL DEFAULT '1',
+  UNIQUE KEY `uq_user_node` (`user_id`,`node_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------

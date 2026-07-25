@@ -87,7 +87,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.5.0/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.6.0/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -612,6 +612,25 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
                 node.setAccessType("shared");
                 node.setEditable(false);
                 node.setDeletable(false);
+                UserNode permission = userNodeMapper.selectOne(new QueryWrapper<UserNode>()
+                        .eq("user_id", userId).eq("node_id", node.getId()));
+                if (permission != null) {
+                    long used = (permission.getInFlow() == null ? 0L : permission.getInFlow())
+                            + (permission.getOutFlow() == null ? 0L : permission.getOutFlow());
+                    boolean flowUnlimited = Objects.equals(permission.getFlowUnlimited(), 1);
+                    boolean forwardUnlimited = Objects.equals(permission.getForwardUnlimited(), 1);
+                    node.setQuotaFlow(permission.getFlow());
+                    node.setQuotaUsedFlow(used);
+                    node.setQuotaFlowUnlimited(flowUnlimited);
+                    node.setQuotaForwardLimit(permission.getNum());
+                    node.setQuotaForwardUnlimited(forwardUnlimited);
+                    String reason = null;
+                    if (!Objects.equals(permission.getStatus(), 1)) reason = "管理员已禁用节点权限";
+                    else if (permission.getExpTime() != null && permission.getExpTime() <= System.currentTimeMillis()) reason = "节点权限已到期";
+                    else if (!flowUnlimited && used >= (permission.getFlow() == null ? 0L : permission.getFlow()) * 1024L * 1024L * 1024L) reason = "节点流量额度已用尽";
+                    node.setQuotaAvailable(reason == null);
+                    node.setUnavailableReason(reason);
+                }
             }
         }
     }

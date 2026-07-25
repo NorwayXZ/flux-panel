@@ -41,9 +41,13 @@ public class UserPackageDto {
         private String user;
         private Integer status;
         private Long flow;           // 总流量配额(GB)
+        private Boolean flowUnlimited;
         private Long inFlow;         // 已用入站流量(字节)
         private Long outFlow;        // 已用出站流量(字节)
         private Integer num;         // 转发数量配额
+        private Boolean forwardUnlimited;
+        private Integer tunnelPermissionCount;
+        private Integer nodePermissionCount;
         private Long expTime;        // 过期时间
         private Long flowResetTime;  // 流量重置时间
         private Long createdTime;
@@ -61,9 +65,11 @@ public class UserPackageDto {
         private String tunnelName;
         private Integer tunnelFlow;  // 隧道流量计算类型（1-单向，2-双向）
         private Long flow;           // 隧道流量配额(GB)
+        private Integer flowUnlimited;
         private Long inFlow;         // 隧道已用入站流量(字节)
         private Long outFlow;        // 隧道已用出站流量(字节)
         private Integer num;         // 隧道转发数量配额
+        private Integer forwardUnlimited;
         private Long flowResetTime;  // 流量重置时间
         private Long expTime;        // 隧道权限过期时间
         private Integer speedId;
@@ -88,4 +94,4 @@ public class UserPackageDto {
         private Integer status;
         private Long createdTime;
     }
-} 
+}

@@ -81,6 +81,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     UserService userService;
 
     @Resource
+    UserQuotaService userQuotaService;
+
+    @Resource
     NodeService nodeService;
 
     @Resource
@@ -136,7 +139,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (permissionResult.isHasError()) {
             return R.err(permissionResult.getErrorMessage());
         }
-        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue());
+        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue(), null);
         if (candidatePermission.getCode() != 0) {
             return candidatePermission;
         }
@@ -385,7 +388,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     }
 
                     // 检查原用户的流量和转发数量限制
-                    R quotaCheckResult = checkForwardQuota(existForward.getUserId(), tunnel.getId().intValue(), userTunnel, originalUser, forwardUpdateDto.getId());
+                    R quotaCheckResult = userQuotaService.checkTunnelQuota(existForward.getUserId(), tunnel, forwardUpdateDto.getId());
                     if (quotaCheckResult.getCode() != 0) {
                         return R.err("用户" + quotaCheckResult.getMsg());
                     }
@@ -400,7 +403,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 }
             }
         }
-        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue());
+        R candidatePermission = checkCandidateTunnelPermissions(currentUser, routeValidation.getTunnels(), tunnel.getId().intValue(), forwardUpdateDto.getId());
         if (candidatePermission.getCode() != 0) {
             return candidatePermission;
         }
@@ -588,9 +591,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
             // 普通用户需要检查流量和账户状态
             if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
-                R flowCheckResult = checkUserFlowLimits(currentUser.getUserId(), tunnel);
+                R flowCheckResult = userQuotaService.checkTunnelQuota(currentUser.getUserId(), tunnel, forward.getId());
                 if (flowCheckResult.getCode() != 0) {
                     return flowCheckResult;
+                }
+                for (ForwardRouteDto route : forwardRoutes) {
+                    Tunnel routeTunnel = tunnelService.getById(route.getTunnelId());
+                    if (routeTunnel == null) return R.err("候选线路不存在：" + route.getTunnelName());
+                    R routeQuota = userQuotaService.checkTunnelQuota(currentUser.getUserId(), routeTunnel, forward.getId());
+                    if (routeQuota.getCode() != 0) return routeQuota;
                 }
 
                 activeUserTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
@@ -1049,16 +1058,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return UserPermissionResult.error("该隧道权限已到期");
         }
 
-        // 流量限制检查
-        if (userInfo.getFlow() <= 0) {
-            return UserPermissionResult.error("用户总流量已用完");
-        }
-        if (!ownedTunnel && userTunnel.getFlow() <= 0) {
-            return UserPermissionResult.error("该隧道流量已用完");
-        }
-
-        // 转发数量限制检查
-        R quotaCheckResult = checkForwardQuota(currentUser.getUserId(), tunnel.getId().intValue(), userTunnel, userInfo, excludeForwardId);
+        R quotaCheckResult = userQuotaService.checkTunnelQuota(currentUser.getUserId(), tunnel, excludeForwardId);
         if (quotaCheckResult.getCode() != 0) {
             return UserPermissionResult.error(quotaCheckResult.getMsg());
         }
@@ -1159,7 +1159,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return RouteValidationResult.success(tunnels);
     }
 
-    private R checkCandidateTunnelPermissions(UserInfo currentUser, List<Tunnel> tunnels, Integer primaryTunnelId) {
+    private R checkCandidateTunnelPermissions(UserInfo currentUser, List<Tunnel> tunnels, Integer primaryTunnelId, Long excludeForwardId) {
         if (currentUser.getRoleId() == ADMIN_ROLE_ID) {
             return R.ok();
         }
@@ -1168,6 +1168,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 continue;
             }
             if (Objects.equals(tunnel.getOwnerUserId(), currentUser.getUserId())) {
+                R quota = userQuotaService.checkTunnelQuota(currentUser.getUserId(), tunnel, excludeForwardId);
+                if (quota.getCode() != 0) return quota;
                 continue;
             }
             UserTunnel userTunnel = getUserTunnel(currentUser.getUserId(), tunnel.getId().intValue());
@@ -1180,6 +1182,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             if (userTunnel.getExpTime() != null && userTunnel.getExpTime() <= System.currentTimeMillis()) {
                 return R.err("候选隧道权限已到期：" + tunnel.getName());
             }
+            R quota = userQuotaService.checkTunnelQuota(currentUser.getUserId(), tunnel, excludeForwardId);
+            if (quota.getCode() != 0) return quota;
         }
         return R.ok();
     }

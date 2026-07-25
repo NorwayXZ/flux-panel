@@ -5,10 +5,12 @@ import com.admin.entity.Forward;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserTunnel;
+import com.admin.entity.UserNode;
 import com.admin.service.ForwardService;
 import com.admin.service.TunnelService;
 import com.admin.service.UserService;
 import com.admin.service.UserTunnelService;
+import com.admin.service.UserNodeService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +33,9 @@ public class ResetFlowAsync {
 
     @Resource
     UserTunnelService userTunnelService;
+
+    @Resource
+    UserNodeService userNodeService;
 
     @Resource
     ForwardService forwardService;
@@ -65,6 +70,8 @@ public class ResetFlowAsync {
             
             // 重置用户隧道流量
             resetUserTunnelFlow(currentDay, lastDayOfMonth);
+
+            resetUserNodeFlow(currentDay, lastDayOfMonth);
             
             log.info("流量重置任务执行完成");
 
@@ -119,7 +126,7 @@ public class ResetFlowAsync {
             for (User user : usersToReset) {
                 UpdateWrapper<User> updateWrapper = new UpdateWrapper<>();
                 updateWrapper.eq("id", user.getId())
-                           .setSql("in_flow = 0, out_flow = 0"); // 使用SQL原子操作，只更新流量字段
+                           .setSql("in_flow = 0, out_flow = 0, owned_in_flow = 0, owned_out_flow = 0");
                 
                 boolean success = userService.update(null, updateWrapper);
                 if (success) {
@@ -132,6 +139,19 @@ public class ResetFlowAsync {
             
         } catch (Exception e) {
             log.info("重置用户流量失败", e);
+        }
+    }
+
+    private void resetUserNodeFlow(int currentDay, int lastDayOfMonth) {
+        QueryWrapper<UserNode> query = new QueryWrapper<UserNode>().ne("flow_reset_time", 0);
+        if (currentDay == lastDayOfMonth) {
+            query.and(wrapper -> wrapper.eq("flow_reset_time", currentDay).or().gt("flow_reset_time", lastDayOfMonth));
+        } else {
+            query.eq("flow_reset_time", currentDay);
+        }
+        for (UserNode permission : userNodeService.list(query)) {
+            userNodeService.update(null, new UpdateWrapper<UserNode>().eq("id", permission.getId())
+                    .setSql("in_flow = 0, out_flow = 0"));
         }
     }
     

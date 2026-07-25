@@ -4,9 +4,11 @@ import com.admin.common.aop.LogAnnotation;
 import com.admin.common.dto.FlowDto;
 import com.admin.common.dto.GostConfigDto;
 import com.admin.common.lang.R;
+import com.admin.service.UserQuotaService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.TrafficBillingUtil;
 import com.admin.entity.*;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -64,6 +66,9 @@ public class FlowController extends BaseController {
 
     @Resource
     CheckGostConfigAsync checkGostConfigAsync;
+
+    @Resource
+    UserQuotaService userQuotaService;
 
     /**
      * 加密消息包装器
@@ -219,6 +224,7 @@ public class FlowController extends BaseController {
         String userTunnelId = serviceIds[2];
 
         Forward forward = forwardService.getById(forwardId);
+        if (forward == null) return SUCCESS_RESPONSE;
 
         // 获取流量计费类型
         int flowType = getFlowType(forward);
@@ -229,13 +235,17 @@ public class FlowController extends BaseController {
         // 先更新所有流量统计 - 确保流量数据的一致性
         updateForwardFlow(forwardId, flowStats);
         updateUserFlow(userId, flowStats);
-        updateUserTunnelFlow(userTunnelId, flowStats);
+        userQuotaService.recordResourceFlow(forward, flowStats.getD(), flowStats.getU());
 
         // 7. 检查和服务暂停操作
         String name = buildServiceName(forwardId, userId, userTunnelId);
-        if (!Objects.equals(userTunnelId, DEFAULT_USER_TUNNEL_ID)) { // 非管理员的转发需要检测流量限制
-            checkUserRelatedLimits(userId, name);
-            checkUserTunnelRelatedLimits(userTunnelId, name, userId);
+        User user = userService.getById(userId);
+        if (user != null && !Objects.equals(user.getRoleId(), 0)) {
+            R quota = userQuotaService.checkForwardActiveQuota(forward);
+            if (quota.getCode() != 0) {
+                log.warn("暂停超出资源额度的转发 {}: {}", forwardId, quota.getMsg());
+                pauseService(java.util.Collections.singletonList(forward), name);
+            }
         }
 
         return SUCCESS_RESPONSE;
@@ -301,7 +311,8 @@ public class FlowController extends BaseController {
 
     public void pauseService(List<Forward> forwardList, String name) {
         for (Forward forward : forwardList) {
-            Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
+            Integer activeTunnelId = forward.getActiveTunnelId() == null ? forward.getTunnelId() : forward.getActiveTunnelId();
+            Tunnel tunnel = tunnelService.getById(activeTunnelId);
             if (tunnel != null){
                 GostUtil.PauseService(tunnel.getInNodeId(), name);
                 if (tunnel.getType() == 2){
@@ -315,18 +326,14 @@ public class FlowController extends BaseController {
 
     private FlowDto filterFlowData(FlowDto flowDto, Forward forward, int flowType) {
         if (forward != null) {
-            Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
+            Integer activeTunnelId = forward.getActiveTunnelId() == null ? forward.getTunnelId() : forward.getActiveTunnelId();
+            Tunnel tunnel = tunnelService.getById(activeTunnelId);
             if (tunnel != null) {
                 BigDecimal trafficRatio = tunnel.getTrafficRatio();
 
-                BigDecimal originalD = BigDecimal.valueOf(flowDto.getD());
-                BigDecimal originalU = BigDecimal.valueOf(flowDto.getU());
-
-                BigDecimal newD = originalD.multiply(trafficRatio);
-                BigDecimal newU = originalU.multiply(trafficRatio);
-
-                flowDto.setD(newD.longValue() * flowType);
-                flowDto.setU(newU.longValue() * flowType);
+                long[] billed = TrafficBillingUtil.calculate(flowDto.getD(), flowDto.getU(), flowType, trafficRatio);
+                flowDto.setD(billed[0]);
+                flowDto.setU(billed[1]);
             }
         }
         return flowDto;
@@ -335,7 +342,8 @@ public class FlowController extends BaseController {
     private int getFlowType(Forward forward) {
         int defaultFlowType = 2;
         if (forward == null) return defaultFlowType;
-        Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
+        Integer activeTunnelId = forward.getActiveTunnelId() == null ? forward.getTunnelId() : forward.getActiveTunnelId();
+        Tunnel tunnel = tunnelService.getById(activeTunnelId);
         if (tunnel == null) return defaultFlowType;
         return tunnel.getFlow();
     }

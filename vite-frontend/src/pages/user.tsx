@@ -24,6 +24,9 @@ import { RadioGroup, Radio } from "@heroui/radio";
 import { DatePicker } from "@heroui/date-picker";
 import { Spinner } from "@heroui/spinner";
 import { Progress } from "@heroui/progress";
+import { Switch } from "@heroui/switch";
+import { Checkbox } from "@heroui/checkbox";
+import { Tabs, Tab } from "@heroui/tabs";
 
 import toast from 'react-hot-toast';
 import { 
@@ -31,6 +34,8 @@ import {
   UserForm, 
   UserTunnel, 
   UserTunnelForm, 
+  UserTunnelProvision,
+  UserNodeProvision,
   Tunnel, 
   SpeedLimit, 
   Pagination as PaginationType 
@@ -135,10 +140,14 @@ export default function UserPage() {
     user: '',
     pwd: '',
     status: 1,
-    flow: 100,
-    num: 10,
+    flow: 0,
+    flowUnlimited: false,
+    num: 0,
+    forwardUnlimited: false,
     expTime: null,
-    flowResetTime: 0
+    flowResetTime: 0,
+    tunnelPermissions: [],
+    nodePermissions: []
   });
   const [userFormLoading, setUserFormLoading] = useState(false);
 
@@ -280,16 +289,56 @@ export default function UserPage() {
       user: '',
       pwd: '',
       status: 1,
-      flow: 100,
-      num: 10,
+      flow: 0,
+      flowUnlimited: false,
+      num: 0,
+      forwardUnlimited: false,
       expTime: null,
-      flowResetTime: 0
+      flowResetTime: 0,
+      tunnelPermissions: [],
+      nodePermissions: []
     });
     onUserModalOpen();
   };
 
-  const handleEdit = (user: User) => {
+  const handleEdit = async (user: User) => {
     setIsEdit(true);
+    let tunnelResponse: any;
+    let nodeResponse: any;
+    try {
+      [tunnelResponse, nodeResponse] = await Promise.all([
+        getUserTunnelList({ userId: user.id }),
+        getUserNodeList(user.id)
+      ]);
+    } catch {
+      toast.error('加载用户资源权限失败，请重试');
+      return;
+    }
+    if (tunnelResponse.code !== 0 || nodeResponse.code !== 0) {
+      toast.error(tunnelResponse.msg || nodeResponse.msg || '加载用户资源权限失败');
+      return;
+    }
+    const tunnelPermissions: UserTunnelProvision[] = (tunnelResponse.data || []).map((item: any) => ({
+      tunnelId: item.tunnelId,
+      flow: item.flow || 0,
+      flowUnlimited: item.flowUnlimited === 1,
+      num: item.num || 0,
+      forwardUnlimited: item.forwardUnlimited === 1,
+      expTime: item.expTime ? new Date(item.expTime) : null,
+      flowResetTime: item.flowResetTime || 0,
+      speedId: item.speedId || null,
+      status: item.status ?? 1
+    }));
+    const nodePermissions: UserNodeProvision[] = (nodeResponse.data || []).map((item: any) => ({
+      nodeId: item.nodeId,
+      flow: item.flow || 0,
+      flowUnlimited: item.flowUnlimited === 1,
+      num: item.num || 0,
+      forwardUnlimited: item.forwardUnlimited === 1,
+      expTime: item.expTime ? new Date(item.expTime) : null,
+      flowResetTime: item.flowResetTime || 0,
+      status: item.permissionStatus ?? 1
+    }));
     setUserForm({
       id: user.id,
       name: user.name,
@@ -297,9 +346,13 @@ export default function UserPage() {
       pwd: '',
       status: user.status,
       flow: user.flow,
+      flowUnlimited: user.flowUnlimited === 1,
       num: user.num,
+      forwardUnlimited: user.forwardUnlimited === 1,
       expTime: user.expTime ? new Date(user.expTime) : null,
-      flowResetTime: user.flowResetTime ?? 0
+      flowResetTime: user.flowResetTime ?? 0,
+      tunnelPermissions,
+      nodePermissions
     });
     onUserModalOpen();
   };
@@ -328,7 +381,7 @@ export default function UserPage() {
   };
 
   const handleSubmitUser = async () => {
-    if (!userForm.user || (!userForm.pwd && !isEdit) || !userForm.expTime) {
+    if (!userForm.user || (!userForm.pwd && !isEdit)) {
       toast.error('请填写完整信息');
       return;
     }
@@ -337,7 +390,15 @@ export default function UserPage() {
     try {
       const submitData: any = {
         ...userForm,
-        expTime: userForm.expTime.getTime()
+        expTime: userForm.expTime?.getTime() ?? null,
+        tunnelPermissions: userForm.tunnelPermissions.map(item => ({
+          ...item,
+          expTime: item.expTime?.getTime() ?? null
+        })),
+        nodePermissions: userForm.nodePermissions.map(item => ({
+          ...item,
+          expTime: item.expTime?.getTime() ?? null
+        }))
       };
 
       if (isEdit && !submitData.pwd) {
@@ -593,6 +654,53 @@ export default function UserPage() {
     speedLimit => speedLimit.tunnelId === editTunnelForm?.tunnelId
   );
 
+  const adminTunnels = tunnels.filter(tunnel => tunnel.ownerRoleId !== 1);
+  const adminNodes = nodes.filter(node => node.ownerRoleId !== 1);
+  const totalQuotaUnlimited = userForm.flowUnlimited
+    || userForm.tunnelPermissions.some(item => item.flowUnlimited)
+    || userForm.nodePermissions.some(item => item.flowUnlimited);
+  const totalQuota = userForm.flow
+    + userForm.tunnelPermissions.reduce((sum, item) => sum + item.flow, 0)
+    + userForm.nodePermissions.reduce((sum, item) => sum + item.flow, 0);
+  const totalForwardUnlimited = userForm.forwardUnlimited
+    || userForm.tunnelPermissions.some(item => item.forwardUnlimited)
+    || userForm.nodePermissions.some(item => item.forwardUnlimited);
+  const totalForwardQuota = userForm.num
+    + userForm.tunnelPermissions.reduce((sum, item) => sum + item.num, 0)
+    + userForm.nodePermissions.reduce((sum, item) => sum + item.num, 0);
+
+  const toggleTunnelProvision = (tunnelId: number, selected: boolean) => {
+    setUserForm(prev => ({
+      ...prev,
+      tunnelPermissions: selected
+        ? [...prev.tunnelPermissions, { tunnelId, flow: 100, flowUnlimited: false, num: 10, forwardUnlimited: false, expTime: null, flowResetTime: 0, speedId: null, status: 1 }]
+        : prev.tunnelPermissions.filter(item => item.tunnelId !== tunnelId)
+    }));
+  };
+
+  const updateTunnelProvision = (tunnelId: number, patch: Partial<UserTunnelProvision>) => {
+    setUserForm(prev => ({
+      ...prev,
+      tunnelPermissions: prev.tunnelPermissions.map(item => item.tunnelId === tunnelId ? { ...item, ...patch } : item)
+    }));
+  };
+
+  const toggleNodeProvision = (nodeId: number, selected: boolean) => {
+    setUserForm(prev => ({
+      ...prev,
+      nodePermissions: selected
+        ? [...prev.nodePermissions, { nodeId, flow: 100, flowUnlimited: false, num: 10, forwardUnlimited: false, expTime: null, flowResetTime: 0, status: 1 }]
+        : prev.nodePermissions.filter(item => item.nodeId !== nodeId)
+    }));
+  };
+
+  const updateNodeProvision = (nodeId: number, patch: Partial<UserNodeProvision>) => {
+    setUserForm(prev => ({
+      ...prev,
+      nodePermissions: prev.nodePermissions.map(item => item.nodeId === nodeId ? { ...item, ...patch } : item)
+    }));
+  };
+
   return (
     
       <div className="px-3 lg:px-6 py-8">
@@ -668,8 +776,9 @@ export default function UserPage() {
           renderItem={(user, dragHandle) => {
             const userStatus = getUserStatus(user);
             const expStatus = user.expTime ? getExpireStatus(user.expTime) : null;
-            const usedFlow = calculateUserTotalUsedFlow(user);
-            const flowPercent = user.flow > 0 ? Math.min((usedFlow / (user.flow * 1024 * 1024 * 1024)) * 100, 100) : 0;
+            const usedFlow = user.totalUsedFlow ?? calculateUserTotalUsedFlow(user);
+            const displayFlow = user.totalFlow ?? user.flow;
+            const flowPercent = !user.totalFlowUnlimited && displayFlow > 0 ? Math.min((usedFlow / (displayFlow * 1024 * 1024 * 1024)) * 100, 100) : 0;
             
             return (
               <Card 
@@ -702,28 +811,29 @@ export default function UserPage() {
                     {/* 流量信息 */}
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-sm">
-                        <span className="text-default-600">流量限制</span>
-                        <span className="font-medium text-xs">{formatFlow(user.flow, 'gb')}</span>
+                        <span className="text-default-600">汇总流量额度</span>
+                        <span className="font-medium text-xs">{user.totalFlowUnlimited ? '无限制' : formatFlow(displayFlow, 'gb')}</span>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-default-600">已使用</span>
                         <span className="font-medium text-xs text-danger">{formatFlow(usedFlow)}</span>
                       </div>
-                      <Progress 
+                      {!user.totalFlowUnlimited && <Progress
                         size="sm" 
                         value={flowPercent}
                         color={flowPercent > 90 ? 'danger' : flowPercent > 70 ? 'warning' : 'success'}
                         className="mt-1"
                         aria-label={`流量使用 ${flowPercent.toFixed(1)}%`}
-                      />
+                      />}
                     </div>
 
                     {/* 其他信息 */}
                     <div className="space-y-1.5 pt-2 border-t border-divider">
                       <div className="flex justify-between text-sm">
-                        <span className="text-default-600">转发数量</span>
-                        <span className="font-medium text-xs">{user.num}</span>
+                        <span className="text-default-600">全部资源转发名额</span>
+                        <span className="font-medium text-xs">{user.totalNumUnlimited ? '无限制' : (user.totalNum ?? user.num)}</span>
                       </div>
+                      <div className="flex justify-between text-sm"><span className="text-default-600">已分配资源</span><span className="font-medium text-xs">隧道 {user.tunnelPermissionCount || 0} · 节点 {user.nodePermissionCount || 0}</span></div>
                       <div className="flex justify-between text-sm">
                         <span className="text-default-600">重置日期</span>
                         <span className="text-xs">{user.flowResetTime === 0 ? '不重置' : `每月${user.flowResetTime}号`}</span>
@@ -815,100 +925,78 @@ export default function UserPage() {
       <Modal
         isOpen={isUserModalOpen}
         onClose={onUserModalClose}
-        size="2xl"
-      scrollBehavior="outside"
-      backdrop="blur"
-      placement="center"
+        size="5xl"
+        scrollBehavior="inside"
+        backdrop="blur"
+        placement="center"
+        classNames={{ base: "max-w-[96vw] h-[88vh]" }}
       >
         <ModalContent>
-          <ModalHeader>
-            {isEdit ? '编辑用户' : '新增用户'}
-          </ModalHeader>
-          <ModalBody>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="用户名"
-                value={userForm.user}
-                onChange={(e) => setUserForm(prev => ({ ...prev, user: e.target.value }))}
-                isRequired
-              />
-              <Input
-                label="密码"
-                type="password"
-                value={userForm.pwd}
-                onChange={(e) => setUserForm(prev => ({ ...prev, pwd: e.target.value }))}
-                placeholder={isEdit ? '留空则不修改密码' : '请输入密码'}
-                isRequired={!isEdit}
-              />
-              <Input
-                label="流量限制(GB)"
-                type="number"
-                value={userForm.flow.toString()}
-                onChange={(e) => {
-                  const value = Math.min(Math.max(Number(e.target.value) || 0, 1), 99999);
-                  setUserForm(prev => ({ ...prev, flow: value }));
-                }}
-                min="1"
-                max="99999"
-                isRequired
-              />
-              <Input
-                label="转发数量"
-                type="number"
-                value={userForm.num.toString()}
-                onChange={(e) => {
-                  const value = Math.min(Math.max(Number(e.target.value) || 0, 1), 99999);
-                  setUserForm(prev => ({ ...prev, num: value }));
-                }}
-                min="1"
-                max="99999"
-                isRequired
-              />
-              <Select
-                label="流量重置日期"
-                selectedKeys={[userForm.flowResetTime.toString()]}
-                onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as string;
-                  setUserForm(prev => ({ ...prev, flowResetTime: Number(value) }));
-                }}
-              >
-                <>
-                  <SelectItem key="0" textValue="不重置">
-                    不重置
-                  </SelectItem>
-                {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                  <SelectItem key={day.toString()} textValue={`每月${day}号（0点重置）`}>
-                    每月{day}号（0点重置）
-                  </SelectItem>
-                ))}
-                </>
-              </Select>
-              <DatePicker
-                label="过期时间"
-                value={userForm.expTime ? parseDate(userForm.expTime.toISOString().split('T')[0]) as any : null}
-                onChange={(date) => {
-                  if (date) {
-                    const jsDate = new Date(date.year, date.month - 1, date.day, 23, 59, 59);
-                    setUserForm(prev => ({ ...prev, expTime: jsDate }));
-                  } else {
-                    setUserForm(prev => ({ ...prev, expTime: null }));
-                  }
-                }}
-                isRequired
-                showMonthAndYearPickers
-                className="cursor-pointer"
-              />
+          <ModalHeader className="flex flex-col gap-3 border-b border-divider">
+            <span>{isEdit ? '编辑用户与资源额度' : '新增用户与资源额度'}</span>
+            <div className="grid w-full grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-normal">
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总流量</span><p className="mt-0.5 font-semibold text-foreground">{totalQuotaUnlimited ? '无限制' : `${totalQuota} GB`}</p></div>
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总转发名额</span><p className="mt-0.5 font-semibold text-foreground">{totalForwardUnlimited ? '无限制' : `${totalForwardQuota} 个`}</p></div>
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享隧道</span><p className="mt-0.5 font-semibold text-foreground">{userForm.tunnelPermissions.length} 条</p></div>
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享节点</span><p className="mt-0.5 font-semibold text-foreground">{userForm.nodePermissions.length} 台</p></div>
             </div>
-            
-            <RadioGroup
-              label="状态"
-              value={userForm.status.toString()}
-              onValueChange={(value: string) => setUserForm(prev => ({ ...prev, status: Number(value) }))}
-              orientation="horizontal"
-            >
-              <Radio value="1">正常</Radio>
-              <Radio value="0">禁用</Radio>
-            </RadioGroup>
+          </ModalHeader>
+          <ModalBody className="py-4">
+            <Tabs aria-label="用户资源配置" variant="underlined" classNames={{ panel: "pt-4" }}>
+              <Tab key="account" title="账户与自有资源">
+                <div className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input label="用户名" value={userForm.user} onChange={(e) => setUserForm(prev => ({ ...prev, user: e.target.value }))} isRequired />
+                    <Input label="密码" type="password" value={userForm.pwd} onChange={(e) => setUserForm(prev => ({ ...prev, pwd: e.target.value }))} placeholder={isEdit ? '留空则不修改密码' : '请输入密码'} isRequired={!isEdit} />
+                  </div>
+                  <section className="rounded-md border border-divider p-4 space-y-4">
+                    <div><h3 className="text-sm font-semibold">自有资源额度</h3><p className="text-xs text-default-500 mt-1">仅用于该用户自己添加的节点和完全自建的隧道，不会与共享隧道、共享节点重复扣费。</p></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.flowUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, flowUnlimited: value }))}>流量无限制</Switch><Input label="流量额度 (GB)" type="number" value={userForm.flow.toString()} isDisabled={userForm.flowUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, flow: Math.max(0, Number(e.target.value) || 0) }))} /></div>
+                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.forwardUnlimited} onValueChange={(value) => setUserForm(prev => ({ ...prev, forwardUnlimited: value }))}>转发名额无限制</Switch><Input label="转发名额" type="number" value={userForm.num.toString()} isDisabled={userForm.forwardUnlimited} onChange={(e) => setUserForm(prev => ({ ...prev, num: Math.max(0, Number(e.target.value) || 0) }))} /></div>
+                      <Select label="流量重置日期" selectedKeys={[userForm.flowResetTime.toString()]} onSelectionChange={(keys) => setUserForm(prev => ({ ...prev, flowResetTime: Number(Array.from(keys)[0]) }))}>
+                        {[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>每月{i + 1}号</SelectItem>)]}
+                      </Select>
+                      <div className="space-y-2"><Switch size="sm" isSelected={userForm.expTime === null} onValueChange={(unlimited) => setUserForm(prev => ({ ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) }))}>账户永不过期</Switch>{userForm.expTime && <DatePicker label="账户过期时间" value={parseDate(userForm.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && setUserForm(prev => ({ ...prev, expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) }))} showMonthAndYearPickers />}</div>
+                    </div>
+                    <RadioGroup label="账户状态" value={userForm.status.toString()} onValueChange={(value: string) => setUserForm(prev => ({ ...prev, status: Number(value) }))} orientation="horizontal"><Radio value="1">正常</Radio><Radio value="0">禁用</Radio></RadioGroup>
+                  </section>
+                  <div className="rounded-md border border-primary-200 bg-primary-50 px-4 py-3 text-xs text-primary-700 dark:border-primary-800 dark:bg-primary-950/30 dark:text-primary-300">计费规则：单向隧道只统计上传流量；双向隧道统计上传与下载流量；流量倍率只计算一次。共享资源分别计量，任一资源用尽只影响依赖该资源的转发。</div>
+                </div>
+              </Tab>
+              <Tab key="tunnels" title={`隧道权限 (${userForm.tunnelPermissions.length})`}>
+                <div className="space-y-3">
+                  {adminTunnels.length === 0 ? <p className="text-sm text-default-500 py-8 text-center">暂无管理员隧道</p> : adminTunnels.map(tunnel => {
+                    const permission = userForm.tunnelPermissions.find(item => item.tunnelId === tunnel.id);
+                    return <div key={tunnel.id} className="rounded-md border border-divider p-3">
+                      <Checkbox isSelected={!!permission} onValueChange={(selected) => toggleTunnelProvision(tunnel.id, selected)}><span className="font-medium">{tunnel.name}</span><span className="ml-2 text-xs text-default-500">{tunnel.flow === 1 ? '单向计费' : '双向计费'}</span></Checkbox>
+                      {permission && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pl-0 sm:pl-7">
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.flowUnlimited} onValueChange={(value) => updateTunnelProvision(tunnel.id, { flowUnlimited: value })}>流量不限</Switch><Input size="sm" label="流量 (GB)" type="number" value={permission.flow.toString()} isDisabled={permission.flowUnlimited} onChange={(e) => updateTunnelProvision(tunnel.id, { flow: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.forwardUnlimited} onValueChange={(value) => updateTunnelProvision(tunnel.id, { forwardUnlimited: value })}>转发不限</Switch><Input size="sm" label="转发名额" type="number" value={permission.num.toString()} isDisabled={permission.forwardUnlimited} onChange={(e) => updateTunnelProvision(tunnel.id, { num: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                        <Select size="sm" label="每月重置" selectedKeys={[permission.flowResetTime.toString()]} onSelectionChange={(keys) => updateTunnelProvision(tunnel.id, { flowResetTime: Number(Array.from(keys)[0]) })}>{[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>{i + 1}号</SelectItem>)]}</Select>
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.expTime === null} onValueChange={(unlimited) => updateTunnelProvision(tunnel.id, { expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) })}>永不过期</Switch>{permission.expTime && <DatePicker size="sm" label="到期时间" value={parseDate(permission.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && updateTunnelProvision(tunnel.id, { expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) })} />}</div>
+                      </div>}
+                    </div>;
+                  })}
+                </div>
+              </Tab>
+              <Tab key="nodes" title={`节点权限 (${userForm.nodePermissions.length})`}>
+                <div className="space-y-3">
+                  {adminNodes.length === 0 ? <p className="text-sm text-default-500 py-8 text-center">暂无管理员节点</p> : adminNodes.map(node => {
+                    const permission = userForm.nodePermissions.find(item => item.nodeId === node.id);
+                    return <div key={node.id} className="rounded-md border border-divider p-3">
+                      <Checkbox isSelected={!!permission} onValueChange={(selected) => toggleNodeProvision(node.id, selected)}><span className="font-medium">{node.name}</span><span className="ml-2 text-xs text-default-500">只读共享，可用于用户自建隧道</span></Checkbox>
+                      {permission && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pl-0 sm:pl-7">
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.flowUnlimited} onValueChange={(value) => updateNodeProvision(node.id, { flowUnlimited: value })}>流量不限</Switch><Input size="sm" label="流量 (GB)" type="number" value={permission.flow.toString()} isDisabled={permission.flowUnlimited} onChange={(e) => updateNodeProvision(node.id, { flow: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.forwardUnlimited} onValueChange={(value) => updateNodeProvision(node.id, { forwardUnlimited: value })}>转发不限</Switch><Input size="sm" label="转发名额" type="number" value={permission.num.toString()} isDisabled={permission.forwardUnlimited} onChange={(e) => updateNodeProvision(node.id, { num: Math.max(0, Number(e.target.value) || 0) })} /></div>
+                        <Select size="sm" label="每月重置" selectedKeys={[permission.flowResetTime.toString()]} onSelectionChange={(keys) => updateNodeProvision(node.id, { flowResetTime: Number(Array.from(keys)[0]) })}>{[<SelectItem key="0">不重置</SelectItem>, ...Array.from({ length: 31 }, (_, i) => <SelectItem key={`${i + 1}`}>{i + 1}号</SelectItem>)]}</Select>
+                        <div className="space-y-1.5"><Switch size="sm" isSelected={permission.expTime === null} onValueChange={(unlimited) => updateNodeProvision(node.id, { expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) })}>永不过期</Switch>{permission.expTime && <DatePicker size="sm" label="到期时间" value={parseDate(permission.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && updateNodeProvision(node.id, { expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) })} />}</div>
+                      </div>}
+                    </div>;
+                  })}
+                </div>
+              </Tab>
+            </Tabs>
           </ModalBody>
           <ModalFooter>
             <Button onPress={onUserModalClose}>
@@ -919,7 +1007,7 @@ export default function UserPage() {
               onPress={handleSubmitUser}
               isLoading={userFormLoading}
             >
-              确定
+              {isEdit ? '保存全部配置' : '创建并分配资源'}
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1446,7 +1534,7 @@ export default function UserPage() {
                   确定要重置用户 <span className="font-semibold text-warning">"{userToReset?.user}"</span> 的流量吗？
                 </p>
                 <p className="text-small text-default-500 mt-1">
-                  该操作只会重置账号流量不会重置隧道权限流量，重置后该用户的上下行流量将归零，此操作不可撤销。
+                  将重置该用户的自有资源、共享隧道和共享节点流量统计，所有资源会重新获得本周期额度。此操作不可撤销。
                 </p>
                 <div className="mt-2 p-2 bg-warning-50 dark:bg-warning-100/10 rounded text-xs">
                   <div className="text-warning-700 dark:text-warning-300">
