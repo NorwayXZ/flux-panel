@@ -29,6 +29,7 @@
 - 用户可在一次创建或编辑中配置自有资源、共享隧道和共享节点的独立额度
 - 用户流量与转发额度按资源自动汇总，资源用尽只停用依赖该资源的业务
 - 支持通过主动连接的内网接入端，将公网节点端口发布到家庭网络、局域网和 NAT 后方的 TCP 服务
+- 内网接入端支持 Linux、Windows 与 macOS，并按所选系统生成可直接执行的安装命令
 - 支持端口池、自动分配、指定端口、租期、续租、到期停用、冷却和自动释放
 - 支持通过 Agent 加密通道打开管理员网页终端，无需额外开放 SSH 端口
 
@@ -73,9 +74,19 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 - 管理员能看到全部用户的发布服务及归属账号；普通用户只能管理自己的接入端和发布服务。
 - 内网接入端默认安装到 `/etc/flux-connector`，服务名为 `flux-connector`；它可以与同机的普通节点 Agent 并存，不会覆盖 `/etc/gost` 或 `gost` 服务。
 
+`2.9.0` 将内网接入端扩展到三类桌面与服务器系统。添加接入端时选择系统，面板会生成对应命令；以后打开安装窗口也可以临时切换系统，不需要重新创建接入端。安装窗口同时提供“安装 / 更新”和“卸载”命令，卸载只删除内网接入端服务及其独立配置目录，不会删除同机普通节点 Agent。
+
+| 系统 | 支持版本与权限 | 安装位置 | 后台服务 |
+| --- | --- | --- | --- |
+| Linux | x86_64/arm64，root，systemd 或 OpenRC | `/etc/flux-connector` | `flux-connector` |
+| Windows | Windows 10/11、Windows Server 2016+，管理员 PowerShell 5.1+ | `%ProgramData%\FluxConnector` | `FluxConnector` |
+| macOS | macOS 11+，Intel 或 Apple Silicon，sudo | `/Library/Application Support/FluxConnector` | `com.fluxpanel.connector` LaunchDaemon |
+
+三种接入端都只主动向外连接，不要求家庭或办公网络开放入站管理端口。安装器会识别 amd64/arm64 架构，升级二进制时保留现有 `gost.json`；Windows 和 macOS 接入端只承担内网服务发布，不提供 Linux 节点的网页 root 终端。目标系统需要能访问面板地址、GitHub Release 下载地址和管理员配置的端口池控制端口。
+
 端口池的控制端口必须允许接入端访问，租用端口范围按业务需要对公网开放。`2.7.0` Agent 会将控制服务限制为 BIND-only 并拒绝普通 SOCKS5 CONNECT；创建端口池前，公网节点 Agent 必须先升级到 `2.7.0` 或更高版本。仍应使用防火墙限制控制端口的来源地址，形成第二层保护，并且不应公开展示认证信息。接入端复用现有 GOST Agent 二进制，空闲资源消耗与普通节点 Agent 接近；每个并发连接仍会消耗公网节点和接入端的文件描述符、内存与带宽，大并发场景需要提高系统限制和服务器配置。
 
-升级后端会自动创建 `internal_connector`、`port_pool`、`published_service`、`port_lease`、`port_lease_event` 和分配锁表。手动维护数据库时可以执行 [`migrations/20260725_service_publishing.sql`](migrations/20260725_service_publishing.sql)。迁移仅新增表，不修改或删除现有业务数据；回退旧版本前停止新发布服务即可，现有节点、隧道和转发不受影响。
+升级后端会自动创建 `internal_connector`、`port_pool`、`published_service`、`port_lease`、`port_lease_event` 和分配锁表，并为旧的接入端记录补充默认值为 Linux 的 `platform` 字段。手动维护数据库时可以执行 [`migrations/20260725_service_publishing.sql`](migrations/20260725_service_publishing.sql)。迁移不删除或改写现有业务数据；回退旧版本前停止新发布服务即可，现有节点、隧道和转发不受影响。
 
 ### 管理员运维仪表板
 

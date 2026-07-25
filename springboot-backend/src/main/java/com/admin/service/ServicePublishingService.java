@@ -8,7 +8,7 @@ import com.admin.common.lang.R;
 public interface ServicePublishingService {
     R createConnector(InternalConnectorCreateDto dto);
     R listConnectors();
-    R connectorInstallCommand(Long id);
+    R connectorInstallCommand(Long id, String platform, boolean uninstall);
     R deleteConnector(Long id);
     R createPortPool(PortPoolCreateDto dto);
     R listPortPools();

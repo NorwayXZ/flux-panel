@@ -129,7 +129,47 @@ EOF
   grep -Fq 'systemctl is-active' "$event_log"
 }
 
+run_connector_uninstall_test() {
+  case_root="$TEST_ROOT/connector-uninstall"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$case_root/etc/flux-connector" "$case_root/etc/systemd/system"
+  printf '{}\n' > "$case_root/etc/flux-connector/config.json"
+  printf '[Service]\n' > "$case_root/etc/systemd/system/flux-connector.service"
+
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/systemctl"
+
+  PATH="$mock_dir:$PATH" \
+    GOST_KEEP_SCRIPT=1 \
+    GOST_SERVICE_MANAGER=systemd \
+    GOST_INSTALL_DIR="$case_root/etc/flux-connector" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    GOST_PROC_ROOT="$case_root/proc" \
+    sh "$PROJECT_DIR/install.sh" -r connector -u >/dev/null
+
+  test ! -e "$case_root/etc/flux-connector"
+  test ! -e "$case_root/etc/systemd/system/flux-connector.service"
+  grep -Fq 'systemctl stop flux-connector' "$event_log"
+  grep -Fq 'systemctl disable flux-connector' "$event_log"
+  grep -Fq 'systemctl daemon-reload ' "$event_log"
+}
+
 sh -n "$PROJECT_DIR/install.sh"
+sh -n "$PROJECT_DIR/install-connector-macos.sh"
+grep -Fq 'com.fluxpanel.connector' "$PROJECT_DIR/install-connector-macos.sh"
+grep -Fq 'gost-darwin-$arch' "$PROJECT_DIR/install-connector-macos.sh"
+grep -Fq 'UNINSTALL_ONLY=1' "$PROJECT_DIR/install-connector-macos.sh"
+grep -Fq 'New-Service -Name $ServiceName' "$PROJECT_DIR/install-connector.ps1"
+grep -Fq 'gost-windows-$arch.exe' "$PROJECT_DIR/install-connector.ps1"
+grep -Fq 'if ($Uninstall)' "$PROJECT_DIR/install-connector.ps1"
 run_openrc_test
 run_systemd_test
+run_connector_uninstall_test
 printf 'Agent installer tests passed\n'

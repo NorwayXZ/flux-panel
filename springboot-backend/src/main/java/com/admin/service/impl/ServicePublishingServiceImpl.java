@@ -7,6 +7,7 @@ import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.AgentVersionUtil;
+import com.admin.common.utils.ConnectorInstallCommandUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.WebSocketServer;
@@ -53,7 +54,6 @@ import java.util.stream.Collectors;
 public class ServicePublishingServiceImpl implements ServicePublishingService {
     private static final String MIN_PUBLISHING_AGENT_VERSION = "2.7.0";
     private static final String DEFAULT_ALLOWED_CIDRS = "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16";
-    private static final String INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/install.sh";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Resource private InternalConnectorMapper connectorMapper;
@@ -74,6 +74,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         connector.setName(dto.getName().trim());
         connector.setSecret(randomHex(24));
         connector.setAllowedCidrs(StringUtils.defaultIfBlank(dto.getAllowedCidrs(), DEFAULT_ALLOWED_CIDRS));
+        connector.setPlatform(ConnectorInstallCommandUtil.normalizePlatform(dto.getPlatform()));
         if (!validCidrList(connector.getAllowedCidrs())) {
             return R.err("允许访问的网段格式不正确");
         }
@@ -106,10 +107,10 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     }
 
     @Override
-    public R connectorInstallCommand(Long id) {
+    public R connectorInstallCommand(Long id, String platform, boolean uninstall) {
         InternalConnector connector = ownedConnector(id);
         if (connector == null) return R.err("内网接入端不存在或无权访问");
-        return R.ok(buildInstallCommand(connector));
+        return R.ok(buildInstallCommand(connector, platform, uninstall));
     }
 
     @Override
@@ -571,14 +572,13 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     }
 
     private String buildInstallCommand(InternalConnector connector) {
-        ViteConfig config = viteConfigMapper.selectOne(new QueryWrapper<ViteConfig>().eq("name", "ip"));
-        if (config == null || StringUtils.isBlank(config.getValue())) return "请先在网站设置中配置面板连接地址";
-        return "curl -fsSL " + INSTALL_SCRIPT_URL + " -o ./install.sh && chmod +x ./install.sh && ./install.sh -a "
-                + shellQuote(config.getValue()) + " -s " + shellQuote(connector.getSecret()) + " -r connector";
+        return buildInstallCommand(connector, connector.getPlatform(), false);
     }
 
-    private String shellQuote(String value) {
-        return "'" + value.replace("'", "'\"'\"'") + "'";
+    private String buildInstallCommand(InternalConnector connector, String platform, boolean uninstall) {
+        ViteConfig config = viteConfigMapper.selectOne(new QueryWrapper<ViteConfig>().eq("name", "ip"));
+        if (config == null || StringUtils.isBlank(config.getValue())) return "请先在网站设置中配置面板连接地址";
+        return ConnectorInstallCommandUtil.build(platform, config.getValue(), connector.getSecret(), uninstall);
     }
 
     private String gatewayName(Long poolId) {

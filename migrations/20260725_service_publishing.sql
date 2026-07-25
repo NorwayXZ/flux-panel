@@ -1,10 +1,24 @@
 CREATE TABLE IF NOT EXISTS internal_connector (
   id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(80) NOT NULL,
-  secret varchar(64) NOT NULL, allowed_cidrs varchar(1000) NOT NULL, version varchar(40) DEFAULT NULL,
+  secret varchar(64) NOT NULL, allowed_cidrs varchar(1000) NOT NULL,
+  platform varchar(16) NOT NULL DEFAULT 'linux', version varchar(40) DEFAULT NULL,
   remote_ip varchar(128) DEFAULT NULL, last_seen bigint DEFAULT NULL, status tinyint NOT NULL DEFAULT 1,
   created_time bigint NOT NULL, updated_time bigint NOT NULL,
   PRIMARY KEY (id), UNIQUE KEY uk_connector_secret (secret), KEY idx_connector_user (user_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET @connector_platform_exists = (
+  SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_schema = DATABASE() AND table_name = 'internal_connector' AND column_name = 'platform'
+);
+SET @connector_platform_ddl = IF(
+  @connector_platform_exists = 0,
+  'ALTER TABLE internal_connector ADD COLUMN platform varchar(16) NOT NULL DEFAULT ''linux'' AFTER allowed_cidrs',
+  'SELECT 1'
+);
+PREPARE connector_platform_stmt FROM @connector_platform_ddl;
+EXECUTE connector_platform_stmt;
+DEALLOCATE PREPARE connector_platform_stmt;
 
 CREATE TABLE IF NOT EXISTS port_pool (
   id bigint unsigned NOT NULL AUTO_INCREMENT, name varchar(80) NOT NULL, node_id bigint NOT NULL,

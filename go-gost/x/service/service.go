@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -54,22 +53,13 @@ var needWrap = false
 
 // SetProtocolBlock sets protocol blocking switches and recomputes wrapper need
 func SetProtocolBlock(httpOn int, tlsOn int, socksOn int) {
-    isHttp = httpOn
-    isTls = tlsOn
-    isSocks = socksOn
-    needWrap = isTls+isSocks+isHttp > 0
+	isHttp = httpOn
+	isTls = tlsOn
+	isSocks = socksOn
+	needWrap = isTls+isSocks+isHttp > 0
 }
 
 type Option func(opts *options)
-
-func init() {
-	_, err := LoadConfig("config.json")
-	fmt.Println("config.json loaded")
-	if err != nil {
-		log.Fatal(err)
-	}
-	needWrap = isTls+isSocks+isHttp > 0
-}
 
 func AdmissionOption(admission admission.Admission) Option {
 	return func(opts *options) {

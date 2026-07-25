@@ -226,11 +226,14 @@ export interface InternalConnector {
   name: string;
   ownerUserName: string;
   allowedCidrs: string;
+  platform: ConnectorPlatform;
   version?: string;
   remoteIp?: string;
   lastSeen?: number;
   online: boolean;
 }
+
+export type ConnectorPlatform = 'linux' | 'windows' | 'macos';
 
 export interface PublishingPortPool {
   id: number;
@@ -269,12 +272,12 @@ export interface PublishedService {
   lastError?: string;
 }
 
-export const createInternalConnector = (data: { name: string; allowedCidrs?: string }) =>
+export const createInternalConnector = (data: { name: string; allowedCidrs?: string; platform: ConnectorPlatform }) =>
   Network.post<{ connector: InternalConnector; installCommand: string }>("/service-publishing/connector/create", data);
 export const getInternalConnectors = () =>
   Network.post<InternalConnector[]>("/service-publishing/connector/list");
-export const getInternalConnectorInstall = (id: number) =>
-  Network.post<string>("/service-publishing/connector/install", { id });
+export const getInternalConnectorInstall = (id: number, platform: ConnectorPlatform, action: 'install' | 'uninstall' = 'install') =>
+  Network.post<string>("/service-publishing/connector/install", { id, platform, action });
 export const deleteInternalConnector = (id: number) =>
   Network.post("/service-publishing/connector/delete", { id });
 export const createPublishingPortPool = (data: any) =>

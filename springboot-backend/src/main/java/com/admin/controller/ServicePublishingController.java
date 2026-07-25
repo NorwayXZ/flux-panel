@@ -36,7 +36,12 @@ public class ServicePublishingController {
 
     @LogAnnotation @PostMapping("/connector/install")
     public R connectorInstall(@RequestBody Map<String, Object> params) {
-        return service.connectorInstallCommand(Long.valueOf(params.get("id").toString()));
+        Object platform = params.get("platform");
+        Object action = params.get("action");
+        return service.connectorInstallCommand(
+                Long.valueOf(params.get("id").toString()),
+                platform == null ? null : platform.toString(),
+                action != null && "uninstall".equalsIgnoreCase(action.toString()));
     }
 
     @LogAnnotation @PostMapping("/connector/delete")

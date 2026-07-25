@@ -14,10 +14,13 @@ check_contains() {
 }
 
 check_contains install.sh "FLUX_PANEL_AGENT_RELEASE:-$VERSION"
+check_contains install-connector-macos.sh "FLUX_PANEL_CONNECTOR_RELEASE:-$VERSION"
+check_contains install-connector.ps1 "Release = \"$VERSION\""
 check_contains go-gost/agent_version.go "const agentVersion = \"$VERSION\""
 check_contains docker-compose-source.yml "PANEL_VERSION:-$VERSION"
 check_contains .env.example "PANEL_VERSION=$VERSION"
 check_contains vite-frontend/src/config/site.ts "VERSION = \"$VERSION\""
 check_contains springboot-backend/src/main/java/com/admin/service/impl/NodeServiceImpl.java "/$VERSION/install.sh"
+check_contains springboot-backend/src/main/java/com/admin/common/utils/ConnectorInstallCommandUtil.java "RELEASE = \"$VERSION\""
 
 printf 'Version consistency checks passed: %s\n' "$VERSION"

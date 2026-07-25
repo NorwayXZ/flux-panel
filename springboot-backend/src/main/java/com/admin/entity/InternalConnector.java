@@ -15,6 +15,7 @@ public class InternalConnector implements Serializable {
     private String name;
     private String secret;
     private String allowedCidrs;
+    private String platform;
     private String version;
     private String remoteIp;
     private Long lastSeen;

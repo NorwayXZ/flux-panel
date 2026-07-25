@@ -20,6 +20,7 @@ import {
   getPublishingPortPools,
   renewPublishedService,
   type InternalConnector,
+  type ConnectorPlatform,
   type PublishedService,
   type PublishingPortPool,
 } from '@/api';
@@ -38,6 +39,12 @@ const formatTime = (value?: number) => value
   ? new Date(value).toLocaleString('zh-CN', { hour12: false })
   : '无限制';
 
+const platformMeta: Record<ConnectorPlatform, { label: string; commandLabel: string }> = {
+  linux: { label: 'Linux', commandLabel: '终端命令' },
+  windows: { label: 'Windows', commandLabel: '管理员 PowerShell' },
+  macos: { label: 'macOS', commandLabel: '终端命令' },
+};
+
 export default function ServicePublishingPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -48,10 +55,16 @@ export default function ServicePublishingPage() {
   const [connectorModal, setConnectorModal] = useState(false);
   const [commandModal, setCommandModal] = useState(false);
   const [installCommand, setInstallCommand] = useState('');
+  const [commandLoading, setCommandLoading] = useState(false);
+  const [commandConnectorId, setCommandConnectorId] = useState<number | null>(null);
+  const [commandPlatform, setCommandPlatform] = useState<ConnectorPlatform>('linux');
+  const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
   const [serviceForm, setServiceForm] = useState({
     name: '', connectorId: '', poolId: '', targetHost: '127.0.0.1', targetPort: '', leaseHours: '24', requestedPort: '',
   });
-  const [connectorForm, setConnectorForm] = useState({ name: '', allowedCidrs: '' });
+  const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
+    name: '', allowedCidrs: '', platform: 'linux',
+  });
 
   const loadData = async () => {
     setLoading(true);
@@ -103,26 +116,46 @@ export default function ServicePublishingPage() {
     const res = await createInternalConnector({
       name: connectorForm.name.trim(),
       allowedCidrs: connectorForm.allowedCidrs.trim() || undefined,
+      platform: connectorForm.platform,
     });
     setSubmitting(false);
     if (res.code !== 0) return toast.error(res.msg || '创建失败');
     setConnectorModal(false);
-    setConnectorForm({ name: '', allowedCidrs: '' });
+    setConnectorForm({ name: '', allowedCidrs: '', platform: 'linux' });
+    setCommandConnectorId(res.data.connector.id);
+    setCommandPlatform(res.data.connector.platform || connectorForm.platform);
+    setCommandAction('install');
     setInstallCommand(res.data.installCommand);
     setCommandModal(true);
     loadData();
   };
 
-  const showInstall = async (id: number) => {
-    const res = await getInternalConnectorInstall(id);
+  const showInstall = async (id: number, platform: ConnectorPlatform) => {
+    setCommandConnectorId(id);
+    setCommandPlatform(platform);
+    setCommandAction('install');
+    setCommandLoading(true);
+    const res = await getInternalConnectorInstall(id, platform, 'install');
+    setCommandLoading(false);
     if (res.code !== 0) return toast.error(res.msg || '获取安装命令失败');
     setInstallCommand(res.data);
     setCommandModal(true);
   };
 
+  const refreshInstallCommand = async (platform: ConnectorPlatform, action: 'install' | 'uninstall') => {
+    setCommandPlatform(platform);
+    setCommandAction(action);
+    if (commandConnectorId === null) return;
+    setCommandLoading(true);
+    const res = await getInternalConnectorInstall(commandConnectorId, platform, action);
+    setCommandLoading(false);
+    if (res.code !== 0) return toast.error(res.msg || '获取安装命令失败');
+    setInstallCommand(res.data);
+  };
+
   const copyCommand = async () => {
     await navigator.clipboard.writeText(installCommand);
-    toast.success('安装命令已复制');
+    toast.success(commandAction === 'install' ? '安装命令已复制' : '卸载命令已复制');
   };
 
   const renew = async (id: number) => {
@@ -229,11 +262,17 @@ export default function ServicePublishingPage() {
             </div>
             {connectors.length === 0 ? <div className="py-16 text-center text-default-500">暂无内网接入端</div> : connectors.map(connector => (
               <div key={connector.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center">
-                <div><div className="font-medium">{connector.name}</div><div className="text-xs text-default-500">{connector.ownerUserName}</div></div>
+                <div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{connector.name}</span>
+                    <Chip size="sm" variant="flat">{platformMeta[connector.platform || 'linux'].label}</Chip>
+                  </div>
+                  <div className="mt-1 text-xs text-default-500">{connector.ownerUserName}</div>
+                </div>
                 <div className="flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${connector.online ? 'bg-success' : 'bg-default-400'}`} />{connector.online ? '在线' : '离线'}</div>
                 <div className="text-sm text-default-500">{connector.remoteIp || '尚未连接'}</div>
                 <div className="flex justify-end gap-1">
-                  <Button isIconOnly size="sm" variant="light" aria-label="安装命令" onPress={() => showInstall(connector.id)}><ServerCog size={17} /></Button>
+                  <Button isIconOnly size="sm" variant="light" aria-label="安装命令" onPress={() => showInstall(connector.id, connector.platform || 'linux')}><ServerCog size={17} /></Button>
                   <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除接入端" onPress={() => removeConnector(connector.id)}><Trash2 size={17} /></Button>
                 </div>
               </div>
@@ -265,8 +304,19 @@ export default function ServicePublishingPage() {
       <Modal isOpen={connectorModal} onOpenChange={setConnectorModal} size="xl">
         <ModalContent>
           <ModalHeader>添加内网接入端</ModalHeader>
-          <ModalBody>
+          <ModalBody className="gap-4">
             <Input label="名称" value={connectorForm.name} onValueChange={value => setConnectorForm({ ...connectorForm, name: value })} />
+            <div>
+              <div className="mb-2 text-sm text-default-600">安装系统</div>
+              <Tabs
+                fullWidth
+                aria-label="接入端安装系统"
+                selectedKey={connectorForm.platform}
+                onSelectionChange={key => setConnectorForm({ ...connectorForm, platform: String(key) as ConnectorPlatform })}
+              >
+                {Object.entries(platformMeta).map(([key, meta]) => <Tab key={key} title={meta.label} />)}
+              </Tabs>
+            </div>
             <Input label="允许访问网段（可选）" placeholder="127.0.0.1/32,192.168.0.0/16" value={connectorForm.allowedCidrs} onValueChange={value => setConnectorForm({ ...connectorForm, allowedCidrs: value })} />
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setConnectorModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitConnector}>创建</Button></ModalFooter>
@@ -275,9 +325,38 @@ export default function ServicePublishingPage() {
 
       <Modal isOpen={commandModal} onOpenChange={setCommandModal} size="2xl">
         <ModalContent>
-          <ModalHeader>安装接入端</ModalHeader>
-          <ModalBody><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default-100 p-4 text-sm">{installCommand}</pre></ModalBody>
-          <ModalFooter><Button variant="flat" onPress={() => setCommandModal(false)}>关闭</Button><Button color="primary" startContent={<Copy size={16} />} onPress={copyCommand}>复制命令</Button></ModalFooter>
+          <ModalHeader>接入端安装与卸载</ModalHeader>
+          <ModalBody className="gap-4">
+            <Tabs
+              fullWidth
+              aria-label="安装命令系统"
+              selectedKey={commandPlatform}
+              onSelectionChange={key => refreshInstallCommand(String(key) as ConnectorPlatform, commandAction)}
+            >
+              {Object.entries(platformMeta).map(([key, meta]) => <Tab key={key} title={meta.label} />)}
+            </Tabs>
+            <Tabs
+              aria-label="安装或卸载"
+              selectedKey={commandAction}
+              variant="bordered"
+              onSelectionChange={key => refreshInstallCommand(commandPlatform, String(key) as 'install' | 'uninstall')}
+            >
+              <Tab key="install" title="安装 / 更新" />
+              <Tab key="uninstall" title="卸载" />
+            </Tabs>
+            <div>
+              <div className="mb-2 text-xs text-default-500">
+                {platformMeta[commandPlatform].commandLabel} · {commandAction === 'install' ? '安装或更新接入端' : '仅卸载内网接入端'}
+              </div>
+              <pre className="min-h-28 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default-100 p-4 font-mono text-sm">
+                {commandLoading ? '正在生成安装命令...' : installCommand}
+              </pre>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setCommandModal(false)}>关闭</Button>
+            <Button color="primary" isDisabled={commandLoading} startContent={<Copy size={16} />} onPress={copyCommand}>复制命令</Button>
+          </ModalFooter>
         </ModalContent>
       </Modal>
     </div>

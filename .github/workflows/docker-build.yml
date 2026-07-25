@@ -88,8 +88,12 @@ jobs:
           (cd x && go test ./...)
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-arm64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-windows-amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-windows-arm64.exe .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-darwin-arm64 .
           cd ..
-          sha256sum gost-amd64 gost-arm64 > SHA256SUMS
+          sha256sum gost-amd64 gost-arm64 gost-windows-amd64.exe gost-windows-arm64.exe gost-darwin-amd64 gost-darwin-arm64 > SHA256SUMS
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -145,7 +149,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           gh release create "${VERSION}" \
-            gost-amd64 gost-arm64 SHA256SUMS install.sh \
+            gost-amd64 gost-arm64 \
+            gost-windows-amd64.exe gost-windows-arm64.exe \
+            gost-darwin-amd64 gost-darwin-arm64 \
+            SHA256SUMS install.sh install-connector.ps1 install-connector-macos.sh \
             --verify-tag \
             --title "Flux Panel ${VERSION}" \
             --notes-file .github/release-notes.md

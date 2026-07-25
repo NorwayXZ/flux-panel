@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.8.3}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.9.0}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -15,6 +15,7 @@ SERVER_ADDR="${SERVER_ADDR:-}"
 SECRET="${SECRET:-}"
 AGENT_ROLE="${AGENT_ROLE:-node}"
 SERVICE_MANAGER=""
+UNINSTALL_ONLY=0
 
 configure_role_paths() {
   if [ "$AGENT_ROLE" = "connector" ]; then
@@ -376,12 +377,14 @@ update_gost() {
 
 uninstall_gost() {
   detect_service_manager
-  printf '确认卸载 GOST 吗？此操作将删除所有相关文件 (y/N): '
-  read -r confirm
-  case "$confirm" in
-    y|Y) ;;
-    *) log "已取消卸载"; return 0 ;;
-  esac
+  if [ "$UNINSTALL_ONLY" != "1" ]; then
+    printf '确认卸载 GOST 吗？此操作将删除所有相关文件 (y/N): '
+    read -r confirm
+    case "$confirm" in
+      y|Y) ;;
+      *) log "已取消卸载"; return 0 ;;
+    esac
+  fi
 
   stop_service
   stop_orphaned_processes
@@ -411,7 +414,7 @@ EOF
 }
 
 usage() {
-  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]"
+  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]，或 $0 -r connector -u 卸载"
 }
 
 main() {
@@ -419,17 +422,24 @@ main() {
   require_command curl
   require_command sed
 
-  while getopts "a:s:r:h" opt; do
+  while getopts "a:s:r:uh" opt; do
     case "$opt" in
       a) SERVER_ADDR="$OPTARG" ;;
       s) SECRET="$OPTARG" ;;
       r) AGENT_ROLE="$OPTARG" ;;
+      u) UNINSTALL_ONLY=1 ;;
       h) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
   done
 
   configure_role_paths
+
+  if [ "$UNINSTALL_ONLY" = "1" ]; then
+    uninstall_gost
+    delete_self
+    exit 0
+  fi
 
   if [ -n "$SERVER_ADDR" ] && [ -n "$SECRET" ]; then
     install_gost

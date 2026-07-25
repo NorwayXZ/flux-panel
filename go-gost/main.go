@@ -8,6 +8,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -30,14 +31,15 @@ func (l *stringList) Set(value string) error {
 }
 
 var (
-	cfgFile      string
-	outputFormat string
-	services     stringList
-	nodes        stringList
-	debug        bool
-	trace        bool
-	apiAddr      string
-	metricsAddr  string
+	cfgFile         string
+	outputFormat    string
+	services        stringList
+	nodes           stringList
+	debug           bool
+	trace           bool
+	apiAddr         string
+	metricsAddr     string
+	agentConfigFile string
 )
 
 func init() {
@@ -96,6 +98,7 @@ func init() {
 	flag.BoolVar(&trace, "DD", false, "trace mode")
 	flag.StringVar(&apiAddr, "api", "", "api service address")
 	flag.StringVar(&metricsAddr, "metrics", "", "metrics service address")
+	flag.StringVar(&agentConfigFile, "agent-config", "", "Flux Agent connection configuration file")
 	flag.Parse()
 
 	if printVersion {
@@ -106,15 +109,36 @@ func init() {
 }
 
 func main() {
-	// 加载配置文件
-	config, err := LoadConfig("config.json")
+	configPath := agentConfigFile
+	if configPath == "" {
+		configPath = os.Getenv("FLUX_AGENT_CONFIG")
+	}
+	if configPath == "" {
+		configPath = "config.json"
+	}
+	workingDirectory, _ := os.Getwd()
+	if cfgFile != "" && !filepath.IsAbs(cfgFile) {
+		cfgFile = filepath.Join(workingDirectory, cfgFile)
+	}
+	absoluteConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		fmt.Printf("❌ 配置路径无效: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Chdir(filepath.Dir(absoluteConfigPath)); err != nil {
+		fmt.Printf("❌ 无法进入配置目录: %v\n", err)
+		os.Exit(1)
+	}
+
+	config, err := LoadConfig(filepath.Base(absoluteConfigPath))
 	if err != nil {
 		fmt.Printf("❌ 配置加载失败: %v\n", err)
-		fmt.Println("请确保当前目录存在 config.json 文件")
+		fmt.Printf("请检查配置文件: %s\n", absoluteConfigPath)
 		os.Exit(1)
 	}
 
 	fmt.Printf("✅ 配置加载成功 - addr: %s\n", config.Addr)
+	service.SetProtocolBlock(config.Http, config.Tls, config.Socks)
 
 	log := xlogger.NewLogger()
 	logger.SetDefault(log)

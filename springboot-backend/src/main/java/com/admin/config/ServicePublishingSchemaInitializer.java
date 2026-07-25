@@ -1,27 +1,28 @@
 package com.admin.config;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
+
 @Slf4j
 @Component
-public class ServicePublishingSchemaInitializer implements ApplicationRunner {
+public class ServicePublishingSchemaInitializer {
     private final JdbcTemplate jdbcTemplate;
 
     public ServicePublishingSchemaInitializer(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Override
-    public void run(ApplicationArguments args) {
+    @PostConstruct
+    public void initialize() {
         try {
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS internal_connector ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(80) NOT NULL, "
-                    + "secret varchar(64) NOT NULL, allowed_cidrs varchar(1000) NOT NULL, version varchar(40) DEFAULT NULL, "
+                    + "secret varchar(64) NOT NULL, allowed_cidrs varchar(1000) NOT NULL, platform varchar(16) NOT NULL DEFAULT 'linux', "
+                    + "version varchar(40) DEFAULT NULL, "
                     + "remote_ip varchar(128) DEFAULT NULL, last_seen bigint DEFAULT NULL, status tinyint NOT NULL DEFAULT 1, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), UNIQUE KEY uk_connector_secret (secret), "
                     + "KEY idx_connector_user (user_id, status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -50,8 +51,18 @@ public class ServicePublishingSchemaInitializer implements ApplicationRunner {
                     + "KEY idx_lease_event_service (service_id, created_time)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS service_publish_lock (id int NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.update("INSERT IGNORE INTO service_publish_lock (id) VALUES (1)");
+            ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
         } catch (DataAccessException e) {
             log.error("Service publishing storage initialization failed", e);
+        }
+    }
+
+    private void ensureColumn(String table, String column, String definition) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                Integer.class, table, column);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
         }
     }
 }
