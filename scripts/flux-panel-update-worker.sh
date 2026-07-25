@@ -26,7 +26,7 @@ rm -f "${REQUEST_FILE}"
 chmod 640 "${LOG_FILE}"
 
 started_at="$(date +%s%3N)"
-write_status "running" "Downloading and rebuilding the panel" "${started_at}" 0
+write_status "running" "Downloading and deploying panel images" "${started_at}" 0
 
 {
   printf '[%s] Starting Flux Panel update\n' "$(date '+%F %T')"
