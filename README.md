@@ -91,6 +91,8 @@ Alpine 精简系统如果尚未安装 OpenRC，请先执行 `apk add --no-cache 
 
 Agent 在监听 UDP 的 IPv6 通配地址时，如果节点内核未启用 IPv6，会自动回退到 IPv4 通配地址 `0.0.0.0`。IPv6 可用的节点仍保持双栈监听。
 
+节点安装命令可以安全地重复执行。脚本会先停止已有服务，并只清理可执行文件指向 `/etc/gost/gost` 的残留进程及失效 PID 文件，再安装当前版本。
+
 ## 一键安装面板
 
 先安装并启动 Docker Engine 与 Docker Compose v2，然后执行：

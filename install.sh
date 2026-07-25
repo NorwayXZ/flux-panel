@@ -2,12 +2,15 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.1.2}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.1.3}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
 OPENRC_DIR="${GOST_OPENRC_DIR:-/etc/init.d}"
 SERVICE_NAME="gost"
+PID_FILE="${GOST_PID_FILE:-/run/gost.pid}"
+PROC_ROOT="${GOST_PROC_ROOT:-/proc}"
+KILL_COMMAND="${GOST_KILL_COMMAND:-kill}"
 SERVER_ADDR="${SERVER_ADDR:-}"
 SECRET="${SECRET:-}"
 SERVICE_MANAGER=""
@@ -89,6 +92,41 @@ stop_service() {
   esac
 }
 
+find_agent_pids() {
+  for proc_dir in "$PROC_ROOT"/[0-9]*; do
+    [ -d "$proc_dir" ] || continue
+    executable="$(readlink "$proc_dir/exe" 2>/dev/null || true)"
+    case "$executable" in
+      "$INSTALL_DIR/gost"|"$INSTALL_DIR/gost (deleted)")
+        printf '%s\n' "${proc_dir##*/}"
+        ;;
+    esac
+  done
+}
+
+stop_orphaned_processes() {
+  pids="$(find_agent_pids)"
+  if [ -n "$pids" ]; then
+    log "清理未被服务管理器接管的 GOST 进程"
+    for pid in $pids; do
+      "$KILL_COMMAND" "$pid" >/dev/null 2>&1 || true
+    done
+
+    attempts=0
+    while [ "$attempts" -lt 5 ] && [ -n "$(find_agent_pids)" ]; do
+      sleep 1
+      attempts=$((attempts + 1))
+    done
+
+    remaining_pids="$(find_agent_pids)"
+    for pid in $remaining_pids; do
+      "$KILL_COMMAND" -9 "$pid" >/dev/null 2>&1 || true
+    done
+  fi
+
+  rm -f "$PID_FILE"
+}
+
 disable_service() {
   if ! service_exists; then
     return 0
@@ -166,7 +204,7 @@ description="Flux Panel GOST agent"
 command="$INSTALL_DIR/gost"
 command_background="yes"
 directory="$INSTALL_DIR"
-pidfile="/run/gost.pid"
+pidfile="$PID_FILE"
 output_log="/var/log/gost.log"
 error_log="/var/log/gost.log"
 
@@ -270,6 +308,7 @@ install_gost() {
     stop_service
     disable_service
   fi
+  stop_orphaned_processes
 
   mkdir -p "$INSTALL_DIR"
   download_binary "$INSTALL_DIR/gost.new"
@@ -302,6 +341,7 @@ update_gost() {
   download_binary "$INSTALL_DIR/gost.new"
   cp -f "$INSTALL_DIR/gost" "$INSTALL_DIR/gost.previous"
   stop_service
+  stop_orphaned_processes
   mv -f "$INSTALL_DIR/gost.new" "$INSTALL_DIR/gost"
 
   if start_service && sleep 2 && service_is_active; then
@@ -326,6 +366,7 @@ uninstall_gost() {
   esac
 
   stop_service
+  stop_orphaned_processes
   disable_service
   remove_service_definition
   rm -rf "$INSTALL_DIR"

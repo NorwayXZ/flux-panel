@@ -48,6 +48,22 @@ run_openrc_test() {
   event_log="$case_root/events.log"
   make_mock_commands "$mock_dir"
 
+  mkdir -p "$case_root/etc/gost" "$case_root/proc/4242" "$case_root/run"
+  printf '#!/bin/sh\nexit 0\n' > "$case_root/etc/gost/gost"
+  chmod 755 "$case_root/etc/gost/gost"
+  ln -s "$case_root/etc/gost/gost" "$case_root/proc/4242/exe"
+  printf '4242\n' > "$case_root/run/gost.pid"
+
+  cat > "$mock_dir/kill-agent" <<EOF
+#!/bin/sh
+printf 'kill-agent %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+case "\${1:-}" in
+  -9) pid="\${2:-}" ;;
+  *) pid="\${1:-}" ;;
+esac
+rm -f "$case_root/proc/\$pid/exe"
+EOF
+
   cat > "$mock_dir/rc-service" <<EOF
 #!/bin/sh
 printf 'rc-service %s %s\n' "\$1" "\$2" >> "$event_log"
@@ -58,7 +74,7 @@ EOF
 printf 'rc-update %s %s %s\n' "\$1" "\$2" "\$3" >> "$event_log"
 exit 0
 EOF
-  chmod 755 "$mock_dir/rc-service" "$mock_dir/rc-update"
+  chmod 755 "$mock_dir/rc-service" "$mock_dir/rc-update" "$mock_dir/kill-agent"
 
   PATH="$mock_dir:$PATH" \
     GOST_KEEP_SCRIPT=1 \
@@ -66,6 +82,9 @@ EOF
     GOST_DOWNLOAD_URL=https://example.invalid/gost \
     GOST_INSTALL_DIR="$case_root/etc/gost" \
     GOST_OPENRC_DIR="$case_root/etc/init.d" \
+    GOST_PROC_ROOT="$case_root/proc" \
+    GOST_PID_FILE="$case_root/run/gost.pid" \
+    GOST_KILL_COMMAND="$mock_dir/kill-agent" \
     sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret >/dev/null
 
   test -x "$case_root/etc/init.d/gost"
@@ -75,6 +94,8 @@ EOF
   grep -Fq 'rc-update add gost default' "$event_log"
   grep -Fq 'rc-service gost start' "$event_log"
   grep -Fq 'rc-service gost status' "$event_log"
+  grep -Fq 'kill-agent 4242 ' "$event_log"
+  test ! -e "$case_root/run/gost.pid"
 }
 
 run_systemd_test() {
