@@ -1,4 +1,12 @@
-## Clearer intranet mapping navigation
+## Reliable Agent upgrade recovery
+
+- Records terminal-bootstrap upgrade output in a per-task log on the node.
+- Reports helper startup and execution failures instead of leaving the card in a generic waiting state.
+- Explains whether an upgrade timed out because the node stayed offline or because it came back with the old Agent version.
+- Shows `Retry upgrade` after failed, rolled-back, or timed-out attempts.
+- Hides stale failed task banners after a node has already reached the current Agent version.
+
+The updater still preserves the existing node configuration and restores the previous Agent binary if the new service cannot start.
 
 - Adds a dedicated **Intranet Access** navigation group for the related Port Resources and Intranet Mapping workflows.
 - Orders Port Resources before Intranet Mapping to reflect the actual setup sequence.

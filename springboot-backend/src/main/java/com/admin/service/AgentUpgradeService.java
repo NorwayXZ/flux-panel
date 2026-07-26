@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.13.2";
+    public static final String TARGET_VERSION = "2.13.3";
     public static final String SELF_UPDATE_MIN_VERSION = "2.13.0";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;
@@ -178,12 +178,13 @@ public class AgentUpgradeService {
                         String combined = previous + current;
                         return combined.length() <= 4096 ? combined : combined.substring(combined.length() - 4096);
                     });
-            if (output.contains("FLUX_UPGRADE_STARTED")) {
-                updateTask(bootstrap.taskId(), "restarting", "升级助手已启动，等待 Agent 重新上线", null);
-                closeBootstrapSession(bootstrap, "升级助手已启动");
-            } else if (output.contains("FLUX_UPGRADE_FAILED")) {
-                updateTask(bootstrap.taskId(), "failed", "无法启动升级助手", System.currentTimeMillis());
+            if (output.contains("FLUX_UPGRADE_FAILED")) {
+                updateTask(bootstrap.taskId(), "failed", "升级助手执行失败，请查看节点日志 " + bootstrap.logPath(),
+                        System.currentTimeMillis());
                 closeBootstrapSession(bootstrap, "升级助手启动失败");
+            } else if (output.contains("FLUX_UPGRADE_STARTED")) {
+                updateTask(bootstrap.taskId(), "restarting",
+                        "升级助手已启动，等待 Agent 重新上线；日志 " + bootstrap.logPath(), null);
             }
         } else if ("TerminalError".equals(type) || "TerminalClosed".equals(type)) {
             bootstrapSessions.remove(sessionId);
@@ -210,16 +211,31 @@ public class AgentUpgradeService {
     @Scheduled(fixedDelay = 30_000L)
     public void expireTasks() {
         long cutoff = System.currentTimeMillis() - TASK_TIMEOUT_MS;
-        jdbcTemplate.update("UPDATE agent_upgrade_task SET state='timeout',message='等待 Agent 重新上线超时',"
-                        + "updated_at=?,finished_at=? WHERE state IN (?,?,?,?,?,?,?) AND updated_at<?",
-                System.currentTimeMillis(), System.currentTimeMillis(),
+        List<Map<String, Object>> expired = jdbcTemplate.queryForList(
+                "SELECT task_id AS taskId,node_id AS nodeId "
+                        + "FROM agent_upgrade_task WHERE state IN (?,?,?,?,?,?,?) AND updated_at<?",
                 ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2), ACTIVE_STATES.get(3),
                 ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), cutoff);
+        long now = System.currentTimeMillis();
+        for (Map<String, Object> task : expired) {
+            Long nodeId = ((Number) task.get("nodeId")).longValue();
+            Node node = nodeService.getById(nodeId);
+            String message;
+            if (node != null && WebSocketServer.isNodeOnline(nodeId)) {
+                message = "升级未生效，Agent 已在线但仍为 " + Objects.toString(node.getVersion(), "未知版本")
+                        + "；可重试升级，详细日志位于节点 /var/log/flux-agent-update-*.log";
+            } else {
+                message = "等待 Agent 重新上线超时；请检查节点服务和 /var/log/flux-agent-update-*.log";
+            }
+            updateTask(Objects.toString(task.get("taskId"), ""), "timeout", message, now);
+        }
     }
 
     private R startTerminalBootstrap(Node node, String taskId) {
         String sessionId = "agent-upgrade-" + taskId;
-        bootstrapSessions.put(sessionId, new BootstrapSession(sessionId, taskId, node.getId()));
+        String taskPrefix = taskId.substring(0, 12);
+        String logPath = "/var/log/flux-agent-update-" + taskPrefix + ".log";
+        bootstrapSessions.put(sessionId, new BootstrapSession(sessionId, taskId, node.getId(), logPath));
         bootstrapOutput.put(sessionId, "");
         JSONObject data = new JSONObject();
         data.put("sessionId", sessionId);
@@ -236,15 +252,32 @@ public class AgentUpgradeService {
 
     String bootstrapCommand(String taskId) {
         String script = "/tmp/flux-agent-update-" + taskId + ".sh";
-        String unit = "flux-agent-bootstrap-" + taskId.substring(0, 12);
-        String run = "/bin/sh " + script + " -U >>/var/log/flux-agent-update.log 2>&1";
-        return "SCRIPT=" + script + "; "
+        String prefix = taskId.substring(0, 12);
+        String unit = "flux-agent-bootstrap-" + prefix;
+        String log = "/var/log/flux-agent-update-" + prefix + ".log";
+        String result = "/tmp/flux-agent-update-" + prefix + ".result";
+        String run = "/bin/sh " + shellQuote(script) + " -U >>" + shellQuote(log)
+                + " 2>&1; code=$?; printf '%s\\n' \"$code\" >" + shellQuote(result) + "; exit \"$code\"";
+        return "SCRIPT=" + shellQuote(script) + "; RESULT=" + shellQuote(result) + "; LOG=" + shellQuote(log) + "; "
+                + "rm -f \"$RESULT\"; "
                 + "if curl -fsSL --connect-timeout 15 '" + RELEASE_SCRIPT + "' -o \"$SCRIPT\" && chmod 700 \"$SCRIPT\"; then "
                 + "if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then "
-                + "systemd-run --unit=" + unit + " --collect --property=Type=oneshot /bin/sh \"$SCRIPT\" -U >/dev/null 2>&1; "
-                + "elif command -v setsid >/dev/null 2>&1; then setsid /bin/sh -c 'sleep 1; exec " + run + "' </dev/null >/dev/null 2>&1 & "
-                + "else nohup /bin/sh -c 'sleep 1; exec " + run + "' </dev/null >/dev/null 2>&1 & fi; "
-                + "echo FLUX_UPGRADE_STARTED; else echo FLUX_UPGRADE_FAILED; fi";
+                + "systemd-run --unit=" + unit + " --collect --property=Type=oneshot /bin/sh -c "
+                + shellQuote(run) + " >/dev/null 2>&1; started=$?; "
+                + "elif command -v setsid >/dev/null 2>&1; then setsid /bin/sh -c " + shellQuote("sleep 1; " + run)
+                + " </dev/null >/dev/null 2>&1 & started=$?; "
+                + "else nohup /bin/sh -c " + shellQuote("sleep 1; " + run)
+                + " </dev/null >/dev/null 2>&1 & started=$?; fi; "
+                + "if [ \"$started\" -ne 0 ]; then echo FLUX_UPGRADE_FAILED; "
+                + "else echo FLUX_UPGRADE_STARTED; i=0; while [ \"$i\" -lt 150 ]; do "
+                + "if [ -f \"$RESULT\" ]; then code=$(cat \"$RESULT\" 2>/dev/null || echo 1); "
+                + "if [ \"$code\" = 0 ]; then echo FLUX_UPGRADE_FINISHED; "
+                + "else echo FLUX_UPGRADE_FAILED; tail -n 20 \"$LOG\" 2>/dev/null; fi; break; fi; "
+                + "i=$((i+1)); sleep 2; done; fi; else echo FLUX_UPGRADE_FAILED; fi";
+    }
+
+    private String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private void closeBootstrapSession(BootstrapSession bootstrap, String reason) {
@@ -334,6 +367,6 @@ public class AgentUpgradeService {
         return value.length() <= 255 ? value : value.substring(0, 255);
     }
 
-    private record BootstrapSession(String sessionId, String taskId, Long nodeId) {
+    private record BootstrapSession(String sessionId, String taskId, Long nodeId, String logPath) {
     }
 }

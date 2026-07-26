@@ -786,6 +786,7 @@ export default function NodePage() {
         const upgradeStatus = upgradeItems[node.id];
         const upgradeTask = upgradeStatus?.task;
         const upgradeActive = activeUpgradeStates.has(upgradeTask?.state || '');
+        const upgradeRetry = ['failed', 'rolled_back', 'timeout'].includes(upgradeTask?.state || '');
         const manualUpgrade = upgradeStatus?.mode === 'manual';
 
         return (
@@ -879,7 +880,7 @@ export default function NodePage() {
                 </div>
               </div>
 
-              {adminMode && upgradeTask && (
+              {adminMode && upgradeTask && !upgradeStatus?.upToDate && (
                 <div className="mb-4 flex min-h-9 items-center justify-between gap-2 border-y border-divider py-2 text-xs">
                   <div className="min-w-0">
                     <div className="truncate font-medium">Agent {upgradeTask.fromVersion || node.version || '未知'} → {upgradeTask.targetVersion}</div>
@@ -1004,9 +1005,9 @@ export default function NodePage() {
                     isDisabled={upgradeActive}
                     startContent={upgradeActive ? undefined : <RefreshCw size={15} />}
                     className="flex-1 min-h-8"
-                    title={`升级到 Agent ${upgradeTargetVersion}`}
+                    title={`${upgradeRetry ? '重新尝试升级到' : '升级到'} Agent ${upgradeTargetVersion}`}
                   >
-                    {upgradeActive ? (upgradeStateLabels[upgradeTask?.state || ''] || '升级中') : '升级'}
+                    {upgradeActive ? (upgradeStateLabels[upgradeTask?.state || ''] || '升级中') : upgradeRetry ? '重试升级' : '升级'}
                   </Button>}
                   {node.editable !== false && (nodeOffline || manualUpgrade) && <Button
                     size="sm"
