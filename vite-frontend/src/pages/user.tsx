@@ -35,6 +35,7 @@ import {
   UserTunnelForm, 
   UserTunnelProvision,
   UserNodeProvision,
+  UserPortProvision,
   Tunnel, 
   SpeedLimit, 
   Pagination as PaginationType 
@@ -54,7 +55,10 @@ import {
   getNodeList,
   assignUserNode,
   getUserNodeList,
-  removeUserNode
+  removeUserNode,
+  getPublishingPortPools,
+  getPublishingPortGrants,
+  type PublishingPortPool
 } from '@/api';
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from '@/components/icons';
 import { SortableCardGrid } from '@/components/sortable-card-grid';
@@ -135,6 +139,13 @@ interface ResourceEditorState {
   status: number;
 }
 
+interface PortEditorState {
+  id?: number;
+  poolId: number;
+  startPort: number;
+  endPort: number;
+}
+
 export default function UserPage() {
   // 状态管理
   const [users, setUsers] = useState<User[]>([]);
@@ -169,13 +180,16 @@ export default function UserPage() {
     expTime: null,
     flowResetTime: 0,
     tunnelPermissions: [],
-    nodePermissions: []
+    nodePermissions: [],
+    portPermissions: []
   });
   const [userFormLoading, setUserFormLoading] = useState(false);
   const [userModalTab, setUserModalTab] = useState('resources');
   const [pendingTunnelId, setPendingTunnelId] = useState<number | null>(null);
   const [pendingNodeId, setPendingNodeId] = useState<number | null>(null);
+  const [pendingPortPoolId, setPendingPortPoolId] = useState<number | null>(null);
   const [resourceEditor, setResourceEditor] = useState<ResourceEditorState | null>(null);
+  const [portEditor, setPortEditor] = useState<PortEditorState | null>(null);
 
   // 隧道权限管理相关状态
   const { isOpen: isTunnelModalOpen, onClose: onTunnelModalClose } = useDisclosure();
@@ -221,6 +235,7 @@ export default function UserPage() {
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
   const [speedLimits, setSpeedLimits] = useState<SpeedLimit[]>([]);
   const [nodes, setNodes] = useState<any[]>([]);
+  const [portPools, setPortPools] = useState<PublishingPortPool[]>([]);
   const [userNodes, setUserNodes] = useState<any[]>([]);
   const [nodeToShare, setNodeToShare] = useState<number | null>(null);
   const [nodeShareLoading, setNodeShareLoading] = useState(false);
@@ -231,6 +246,7 @@ export default function UserPage() {
     loadTunnels();
     loadSpeedLimits();
     loadNodes();
+    loadPortPools();
   }, [pagination.current, pagination.size, searchKeyword]);
 
   // 数据加载函数
@@ -287,6 +303,15 @@ export default function UserPage() {
     }
   };
 
+  const loadPortPools = async () => {
+    try {
+      const response = await getPublishingPortPools();
+      if (response.code === 0) setPortPools(response.data || []);
+    } catch (error) {
+      console.error('获取端口池失败:', error);
+    }
+  };
+
   const loadUserTunnels = async (userId: number) => {
     setTunnelListLoading(true);
     try {
@@ -314,7 +339,9 @@ export default function UserPage() {
     setUserModalTab('resources');
     setPendingTunnelId(null);
     setPendingNodeId(null);
+    setPendingPortPoolId(null);
     setResourceEditor(null);
+    setPortEditor(null);
     setUserForm({
       user: '',
       pwd: '',
@@ -326,7 +353,8 @@ export default function UserPage() {
       expTime: null,
       flowResetTime: 0,
       tunnelPermissions: [],
-      nodePermissions: []
+      nodePermissions: [],
+      portPermissions: []
     });
     onUserModalOpen();
   };
@@ -336,20 +364,24 @@ export default function UserPage() {
     setUserModalTab('resources');
     setPendingTunnelId(null);
     setPendingNodeId(null);
+    setPendingPortPoolId(null);
     setResourceEditor(null);
+    setPortEditor(null);
     let tunnelResponse: any;
     let nodeResponse: any;
+    let portResponse: any;
     try {
-      [tunnelResponse, nodeResponse] = await Promise.all([
+      [tunnelResponse, nodeResponse, portResponse] = await Promise.all([
         getUserTunnelList({ userId: user.id }),
-        getUserNodeList(user.id)
+        getUserNodeList(user.id),
+        getPublishingPortGrants(user.id)
       ]);
     } catch {
       toast.error('加载用户资源权限失败，请重试');
       return;
     }
-    if (tunnelResponse.code !== 0 || nodeResponse.code !== 0) {
-      toast.error(tunnelResponse.msg || nodeResponse.msg || '加载用户资源权限失败');
+    if (tunnelResponse.code !== 0 || nodeResponse.code !== 0 || portResponse.code !== 0) {
+      toast.error(tunnelResponse.msg || nodeResponse.msg || portResponse.msg || '加载用户资源权限失败');
       return;
     }
     const tunnelPermissions: UserTunnelProvision[] = (tunnelResponse.data || []).map((item: any) => ({
@@ -375,6 +407,17 @@ export default function UserPage() {
       usedFlow: (item.inFlow || 0) + (item.outFlow || 0),
       usedForwards: item.usedForwards || 0
     }));
+    const portPermissions: UserPortProvision[] = (portResponse.data || []).map((item: any) => ({
+      id: item.id,
+      poolId: item.poolId,
+      startPort: item.startPort,
+      endPort: item.endPort,
+      poolName: item.poolName,
+      nodeName: item.nodeName,
+      publicHost: item.publicHost,
+      usedPorts: item.usedPorts || 0,
+      availablePorts: item.availablePorts || 0
+    }));
     setUserForm({
       id: user.id,
       name: user.name,
@@ -388,7 +431,8 @@ export default function UserPage() {
       expTime: user.expTime ? new Date(user.expTime) : null,
       flowResetTime: user.flowResetTime ?? 0,
       tunnelPermissions,
-      nodePermissions
+      nodePermissions,
+      portPermissions
     });
     onUserModalOpen();
   };
@@ -688,6 +732,7 @@ export default function UserPage() {
   const totalForwardQuota = userForm.num
     + userForm.tunnelPermissions.reduce((sum, item) => sum + item.num, 0)
     + userForm.nodePermissions.reduce((sum, item) => sum + item.num, 0);
+  const totalSharedPorts = userForm.portPermissions.reduce((sum, item) => sum + Math.max(0, item.endPort - item.startPort + 1), 0);
 
   const openResourceEditor = (kind: ResourceKind, resourceId: number) => {
     const permission = kind === 'tunnel'
@@ -705,6 +750,48 @@ export default function UserPage() {
       speedId: kind === 'tunnel' && permission && 'speedId' in permission ? permission.speedId : null,
       status: permission?.status ?? 1
     });
+  };
+
+  const openPortEditor = (permission?: UserPortProvision, poolId?: number) => {
+    const pool = portPools.find(item => item.id === (permission?.poolId || poolId));
+    if (!pool) return toast.error('请先选择端口池');
+    setPortEditor({
+      id: permission?.id,
+      poolId: pool.id,
+      startPort: permission?.startPort ?? pool.startPort,
+      endPort: permission?.endPort ?? pool.endPort
+    });
+  };
+
+  const savePortEditor = () => {
+    if (!portEditor) return;
+    const pool = portPools.find(item => item.id === portEditor.poolId);
+    if (!pool) return toast.error('端口池不存在');
+    if (portEditor.startPort > portEditor.endPort || portEditor.startPort < pool.startPort || portEditor.endPort > pool.endPort) {
+      return toast.error(`授权范围必须位于 ${pool.startPort}-${pool.endPort}`);
+    }
+    const overlap = userForm.portPermissions.some(item => item.id !== portEditor.id && item.poolId === portEditor.poolId
+      && item.startPort <= portEditor.endPort && portEditor.startPort <= item.endPort);
+    if (overlap) return toast.error('同一端口池的授权范围不能重叠');
+    const next: UserPortProvision = {
+      ...portEditor,
+      poolName: pool.name,
+      nodeName: pool.nodeName,
+      publicHost: pool.publicHost,
+      usedPorts: userForm.portPermissions.find(item => item.id === portEditor.id)?.usedPorts || 0
+    };
+    setUserForm(prev => ({
+      ...prev,
+      portPermissions: portEditor.id
+        ? prev.portPermissions.map(item => item.id === portEditor.id ? next : item)
+        : [...prev.portPermissions, next]
+    }));
+    setPortEditor(null);
+  };
+
+  const removePortPermission = (permission: UserPortProvision) => {
+    if ((permission.usedPorts || 0) > 0) return toast.error('该范围仍有发布服务，需先停止服务后才能取消分享');
+    setUserForm(prev => ({ ...prev, portPermissions: prev.portPermissions.filter(item => item !== permission) }));
   };
 
   const saveResourceEditor = () => {
@@ -886,7 +973,7 @@ export default function UserPage() {
                         <span className="text-default-600">全部资源转发名额</span>
                         <span className="font-medium text-xs">{user.totalNumUnlimited ? '无限制' : (user.totalNum ?? user.num)}</span>
                       </div>
-                      <div className="flex justify-between text-sm"><span className="text-default-600">已分配资源</span><span className="font-medium text-xs">隧道 {user.tunnelPermissionCount || 0} · 节点 {user.nodePermissionCount || 0}</span></div>
+                      <div className="flex justify-between gap-3 text-sm"><span className="text-default-600">已分配资源</span><span className="text-right text-xs font-medium">隧道 {user.tunnelPermissionCount || 0} · 节点 {user.nodePermissionCount || 0} · 端口段 {user.portPermissionCount || 0}</span></div>
                       <div className="flex justify-between text-sm">
                         <span className="text-default-600">重置日期</span>
                         <span className="text-xs">{user.flowResetTime === 0 ? '不重置' : `每月${user.flowResetTime}号`}</span>
@@ -970,11 +1057,12 @@ export default function UserPage() {
         <ModalContent>
           <ModalHeader className="flex flex-col gap-3 border-b border-divider">
             <span>{isEdit ? '编辑用户与资源额度' : '新增用户与资源额度'}</span>
-            <div className="grid w-full grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-normal">
+            <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-5">
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总流量</span><p className="mt-0.5 font-semibold text-foreground">{totalQuotaUnlimited ? '无限制' : `${totalQuota} GB`}</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总转发名额</span><p className="mt-0.5 font-semibold text-foreground">{totalForwardUnlimited ? '无限制' : `${totalForwardQuota} 个`}</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享隧道</span><p className="mt-0.5 font-semibold text-foreground">{userForm.tunnelPermissions.length} 条</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享节点</span><p className="mt-0.5 font-semibold text-foreground">{userForm.nodePermissions.length} 台</p></div>
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享端口</span><p className="mt-0.5 font-semibold text-foreground">{totalSharedPorts} 个</p></div>
             </div>
           </ModalHeader>
           <ModalBody className="py-4">
@@ -1078,6 +1166,30 @@ export default function UserPage() {
                       </div>
                     )}
                   </section>
+
+                  <section className="space-y-3 border-t border-divider pt-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div><h3 className="text-sm font-semibold">共享端口资源</h3><p className="mt-1 text-xs text-default-500">{userForm.portPermissions.length} 段 · 共 {totalSharedPorts} 个端口</p></div>
+                      <Chip size="sm" variant="flat" color="warning">全局独占</Chip>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Select label="选择端口池" placeholder="请选择端口池" selectedKeys={pendingPortPoolId ? [String(pendingPortPoolId)] : []} onSelectionChange={keys => setPendingPortPoolId(Number(Array.from(keys)[0]) || null)} className="flex-1">
+                        {portPools.map(pool => <SelectItem key={String(pool.id)} textValue={pool.name}>{pool.name} · {pool.nodeName} · {pool.startPort}-{pool.endPort} · 管理员可用 {pool.availablePorts}</SelectItem>)}
+                      </Select>
+                      <Button color="warning" variant="flat" className="sm:self-end sm:min-w-28" isDisabled={!pendingPortPoolId} onPress={() => pendingPortPoolId && openPortEditor(undefined, pendingPortPoolId)}>添加范围</Button>
+                    </div>
+                    {userForm.portPermissions.length === 0 ? <div className="rounded-md border border-dashed border-divider px-4 py-6 text-center text-sm text-default-500">尚未分配端口资源</div> : <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      {userForm.portPermissions.map((permission, index) => {
+                        const pool = portPools.find(item => item.id === permission.poolId);
+                        const total = permission.endPort - permission.startPort + 1;
+                        return <div key={permission.id || `${permission.poolId}-${index}`} className="flex items-center justify-between gap-3 rounded-md border border-divider px-3 py-3">
+                          <div className="min-w-0"><p className="truncate text-sm font-medium">{permission.poolName || pool?.name || `端口池 ${permission.poolId}`}</p><p className="mt-1 truncate font-mono text-xs text-default-500">{permission.publicHost || pool?.publicHost} · {permission.startPort}-{permission.endPort}</p><p className="mt-1 text-xs text-default-500">{total} 个端口 · 已使用 {permission.usedPorts || 0} · 剩余 {Math.max(0, total - (permission.usedPorts || 0))}</p></div>
+                          <div className="flex shrink-0 gap-1"><Button isIconOnly size="sm" variant="light" color="primary" aria-label="编辑端口范围" onPress={() => openPortEditor(permission)}><EditIcon className="h-4 w-4" /></Button><Button isIconOnly size="sm" variant="light" color="danger" aria-label="移除端口范围" onPress={() => removePortPermission(permission)}><DeleteIcon className="h-4 w-4" /></Button></div>
+                        </div>;
+                      })}
+                    </div>}
+                    <p className="text-xs text-default-500">分享后管理员不能再使用该范围；范围内已有服务时不能分享，也不能收回正在使用的范围。</p>
+                  </section>
                 </div>
               </Tab>
 
@@ -1163,6 +1275,23 @@ export default function UserPage() {
             <Button variant="flat" onPress={() => setResourceEditor(null)}>取消</Button>
             <Button color="primary" onPress={saveResourceEditor}>保存并返回</Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={portEditor !== null} onClose={() => setPortEditor(null)} size="xl" backdrop="opaque">
+        <ModalContent>
+          <ModalHeader className="border-b border-divider">配置共享端口范围</ModalHeader>
+          <ModalBody className="gap-4 py-5">
+            {portEditor && (() => {
+              const pool = portPools.find(item => item.id === portEditor.poolId);
+              return <>
+                <div className="grid grid-cols-2 gap-3 rounded-md bg-default-100 px-4 py-3 text-sm"><div><p className="text-xs text-default-500">端口池</p><p className="mt-1 font-medium">{pool?.name}</p></div><div><p className="text-xs text-default-500">可配置范围</p><p className="mt-1 font-mono">{pool?.startPort}-{pool?.endPort}</p></div></div>
+                <div className="grid grid-cols-2 gap-3"><Input label="起始端口" type="number" min={pool?.startPort} max={pool?.endPort} value={String(portEditor.startPort)} onValueChange={value => setPortEditor(prev => prev ? { ...prev, startPort: Number(value) || 0 } : prev)} /><Input label="结束端口" type="number" min={pool?.startPort} max={pool?.endPort} value={String(portEditor.endPort)} onValueChange={value => setPortEditor(prev => prev ? { ...prev, endPort: Number(value) || 0 } : prev)} /></div>
+                <p className="text-xs text-default-500">首尾端口均包含在授权内。例如 1000-1010 实际包含 11 个端口。</p>
+              </>;
+            })()}
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setPortEditor(null)}>取消</Button><Button color="primary" onPress={savePortEditor}>保存并返回</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

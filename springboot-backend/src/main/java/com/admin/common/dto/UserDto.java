@@ -34,4 +34,6 @@ public class UserDto {
     private List<UserTunnelProvisionDto> tunnelPermissions;
 
     private List<UserNodeProvisionDto> nodePermissions;
+
+    private List<UserPortProvisionDto> portPermissions;
 }

@@ -60,7 +60,7 @@ export default function ServicePublishingPage() {
   const [commandPlatform, setCommandPlatform] = useState<ConnectorPlatform>('linux');
   const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
   const [serviceForm, setServiceForm] = useState({
-    name: '', connectorId: '', poolId: '', targetHost: '127.0.0.1', targetPort: '', leaseHours: '24', requestedPort: '',
+    name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent' as 'timed' | 'permanent', leaseDuration: '24', leaseUnit: 'hours' as 'hours' | 'days', requestedPort: '',
   });
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
     name: '', allowedCidrs: '', platform: 'linux',
@@ -86,27 +86,34 @@ export default function ServicePublishingPage() {
 
   const activeCount = useMemo(() => services.filter(item => item.state === 'active').length, [services]);
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
+  const selectedPool = useMemo(() => pools.find(item => `${item.id}:${item.grantId || 'admin'}` === serviceForm.poolAccessKey), [pools, serviceForm.poolAccessKey]);
 
   const submitService = async () => {
-    if (!serviceForm.name.trim() || !serviceForm.connectorId || !serviceForm.poolId || !serviceForm.targetHost || !serviceForm.targetPort) {
+    if (!serviceForm.name.trim() || !serviceForm.connectorId || !selectedPool || !serviceForm.targetHost || !serviceForm.targetPort) {
       toast.error('请填写完整的服务发布配置');
       return;
     }
+    const permanent = serviceForm.leaseMode === 'permanent';
+    const duration = Number(serviceForm.leaseDuration);
+    if (!permanent && (!Number.isFinite(duration) || duration < 1)) return toast.error('定时服务的有效期至少为 1 小时');
+    const leaseHours = permanent ? undefined : Math.round(duration * (serviceForm.leaseUnit === 'days' ? 24 : 1));
     setSubmitting(true);
     const res = await createPublishedService({
       name: serviceForm.name.trim(),
       connectorId: Number(serviceForm.connectorId),
-      poolId: Number(serviceForm.poolId),
+      poolId: selectedPool.id,
+      grantId: selectedPool.grantId,
       targetHost: serviceForm.targetHost.trim(),
       targetPort: Number(serviceForm.targetPort),
-      leaseHours: Number(serviceForm.leaseHours),
+      permanent,
+      leaseHours,
       requestedPort: serviceForm.requestedPort ? Number(serviceForm.requestedPort) : undefined,
     });
     setSubmitting(false);
     if (res.code !== 0) return toast.error(res.msg || '发布失败');
     toast.success('内网服务已发布');
     setServiceModal(false);
-    setServiceForm({ name: '', connectorId: '', poolId: '', targetHost: '127.0.0.1', targetPort: '', leaseHours: '24', requestedPort: '' });
+    setServiceForm({ name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent', leaseDuration: '24', leaseUnit: 'hours', requestedPort: '' });
     loadData();
   };
 
@@ -162,6 +169,13 @@ export default function ServicePublishingPage() {
     const res = await renewPublishedService(id, 24);
     if (res.code !== 0) return toast.error(res.msg || '续租失败');
     toast.success('已续租 24 小时');
+    loadData();
+  };
+
+  const makePermanent = async (id: number) => {
+    const res = await renewPublishedService(id, undefined, true);
+    if (res.code !== 0) return toast.error(res.msg || '设置永久有效失败');
+    toast.success('服务已改为永久有效');
     loadData();
   };
 
@@ -227,7 +241,7 @@ export default function ServicePublishingPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">{service.name}</h2>
-                        <div className="mt-1 text-sm text-default-500">{service.ownerUserName}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500"><span>{service.ownerRoleId === 1 ? `普通用户 · ${service.ownerUserName}` : '管理员'}</span>{service.grantId && <Chip size="sm" color="secondary" variant="flat">共享端口</Chip>}</div>
                       </div>
                       <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
                     </div>
@@ -237,13 +251,14 @@ export default function ServicePublishingPage() {
                       {service.targetHost}:{service.targetPort}
                     </div>
                     <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                      <div><dt className="text-default-500">端口池</dt><dd className="mt-1 truncate">{service.poolName}</dd></div>
+                      <div><dt className="text-default-500">端口资源</dt><dd className="mt-1 truncate">{service.poolName}{service.grantStartPort ? ` · ${service.grantStartPort}-${service.grantEndPort}` : ''}</dd></div>
                       <div><dt className="text-default-500">内网接入端</dt><dd className="mt-1 flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${service.connectorOnline ? 'bg-success' : 'bg-danger'}`} />{service.connectorName}</dd></div>
-                      <div className="col-span-2"><dt className="text-default-500">到期时间</dt><dd className="mt-1">{formatTime(service.expiresAt)}</dd></div>
+                      <div className="col-span-2"><dt className="text-default-500">有效期</dt><dd className="mt-1">{service.permanent ? '永久有效' : formatTime(service.expiresAt)}</dd></div>
                     </dl>
                     {service.lastError && <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">{service.lastError}</div>}
                     <div className="mt-4 flex justify-end gap-2 border-t border-divider pt-3">
-                      {service.state === 'active' && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续租24小时</Button>}
+                      {service.state === 'active' && !service.permanent && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续期 24 小时</Button>}
+                      {service.state === 'active' && !service.permanent && <Button size="sm" variant="light" color="primary" onPress={() => makePermanent(service.id)}>改为永久</Button>}
                       {!['released', 'expired', 'delete_pending'].includes(service.state) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除服务" onPress={() => removeService(service.id)}><Trash2 size={16} /></Button>}
                     </div>
                   </article>
@@ -289,10 +304,24 @@ export default function ServicePublishingPage() {
             <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
               {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
             </Select>
-            <Select label="公网端口池" selectedKeys={serviceForm.poolId ? [serviceForm.poolId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolId: String(Array.from(keys)[0] || '') })}>
-              {pools.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · 剩余 {item.availablePorts}</SelectItem>)}
+            <Select label="公网端口资源" selectedKeys={serviceForm.poolAccessKey ? [serviceForm.poolAccessKey] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolAccessKey: String(Array.from(keys)[0] || '') })}>
+              {pools.map(item => {
+                const key = `${item.id}:${item.grantId || 'admin'}`;
+                const range = item.grantId ? `${item.grantStartPort}-${item.grantEndPort}` : `${item.startPort}-${item.endPort}`;
+                return <SelectItem key={key} textValue={`${item.name} ${range}`}>{item.name} · {item.nodeName} · {range} · 剩余 {item.availablePorts}</SelectItem>;
+              })}
             </Select>
-            <Input label="租期（小时）" type="number" min={1} value={serviceForm.leaseHours} onValueChange={value => setServiceForm({ ...serviceForm, leaseHours: value })} />
+            <div>
+              <div className="mb-2 text-sm text-default-600">服务有效期</div>
+              <Tabs fullWidth size="sm" selectedKey={serviceForm.leaseMode} onSelectionChange={key => setServiceForm({ ...serviceForm, leaseMode: String(key) as 'timed' | 'permanent' })} aria-label="服务有效期">
+                <Tab key="permanent" title="永久" />
+                <Tab key="timed" title="定时" />
+              </Tabs>
+            </div>
+            {serviceForm.leaseMode === 'timed' && <div className="grid grid-cols-[1fr_120px] gap-2 sm:col-span-2">
+              <Input label="有效时长" type="number" min={1} value={serviceForm.leaseDuration} onValueChange={value => setServiceForm({ ...serviceForm, leaseDuration: value })} />
+              <Select label="单位" selectedKeys={[serviceForm.leaseUnit]} onSelectionChange={keys => setServiceForm({ ...serviceForm, leaseUnit: String(Array.from(keys)[0] || 'hours') as 'hours' | 'days' })}><SelectItem key="hours">小时</SelectItem><SelectItem key="days">天</SelectItem></Select>
+            </div>}
             <Input label="内网目标 IP" value={serviceForm.targetHost} onValueChange={value => setServiceForm({ ...serviceForm, targetHost: value })} />
             <Input label="内网目标端口" type="number" min={1} max={65535} value={serviceForm.targetPort} onValueChange={value => setServiceForm({ ...serviceForm, targetPort: value })} />
             <Input className="sm:col-span-2" label="指定公网端口（可选）" type="number" min={1} max={65535} value={serviceForm.requestedPort} onValueChange={value => setServiceForm({ ...serviceForm, requestedPort: value })} />

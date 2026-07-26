@@ -111,6 +111,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Resource
     private UserQuotaService userQuotaService;
+
+    @Resource
+    private PortPoolGrantService portPoolGrantService;
     
     @Resource
     @Lazy
@@ -195,6 +198,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (permissionValidation.getCode() != 0) {
             return permissionValidation;
         }
+        R portValidation = portPoolGrantService.validatePermissions(null, userDto.getPortPermissions());
+        if (portValidation.getCode() != 0) return portValidation;
 
         // 2. 构建用户实体并保存
         User user = buildNewUserEntity(userDto);
@@ -202,6 +207,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         
         if (result) {
             syncPermissions(user.getId().intValue(), userDto.getTunnelPermissions(), userDto.getNodePermissions());
+            portPoolGrantService.syncPermissions(user.getId().intValue(), userDto.getPortPermissions());
             return R.ok(SUCCESS_CREATE_MSG);
         } else {
             return R.err(ERROR_CREATE_FAILED);
@@ -252,6 +258,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (permissionValidation.getCode() != 0) {
             return permissionValidation;
         }
+        R portValidation = portPoolGrantService.validatePermissions(userUpdateDto.getId().intValue(), userUpdateDto.getPortPermissions());
+        if (portValidation.getCode() != 0) return portValidation;
         R removalValidation = validatePermissionRemoval(userUpdateDto.getId().intValue(),
                 userUpdateDto.getTunnelPermissions(), userUpdateDto.getNodePermissions());
         if (removalValidation.getCode() != 0) {
@@ -264,6 +272,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         
         if (result) {
             syncPermissions(userUpdateDto.getId().intValue(), userUpdateDto.getTunnelPermissions(), userUpdateDto.getNodePermissions());
+            portPoolGrantService.syncPermissions(userUpdateDto.getId().intValue(), userUpdateDto.getPortPermissions());
             return R.ok(SUCCESS_UPDATE_MSG);
         } else {
             return R.err(ERROR_UPDATE_FAILED);
@@ -662,6 +671,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                         .in("user_id", ids)).stream().collect(Collectors.groupingBy(UserTunnel::getUserId));
         Map<Integer, List<UserNode>> nodes = userNodeMapper.selectList(new QueryWrapper<UserNode>()
                         .in("user_id", ids)).stream().collect(Collectors.groupingBy(UserNode::getUserId));
+        Map<Integer, List<PortPoolGrant>> portGrants = portPoolGrantService.listGrants(null).stream()
+                .filter(item -> ids.contains(item.getUserId()))
+                .collect(Collectors.groupingBy(PortPoolGrant::getUserId));
         for (User user : users) {
             List<UserTunnel> tunnelItems = tunnels.getOrDefault(user.getId().intValue(), Collections.emptyList());
             List<UserNode> nodeItems = nodes.getOrDefault(user.getId().intValue(), Collections.emptyList());
@@ -691,6 +703,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             user.setTotalNumUnlimited(numUnlimited);
             user.setTunnelPermissionCount(tunnelItems.size());
             user.setNodePermissionCount(nodeItems.size());
+            user.setPortPermissionCount(portGrants.getOrDefault(user.getId().intValue(), Collections.emptyList()).size());
         }
     }
 
@@ -750,6 +763,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @param userId 用户ID
      */
     private void deleteUserRelatedData(Long userId) {
+        // Active published services keep their grants reserved until explicitly removed.
+        portPoolGrantService.syncPermissions(userId.intValue(), Collections.emptyList());
         // 1. 删除用户的所有转发和对应的Gost服务
         deleteUserForwardsAndGostServices(userId);
         

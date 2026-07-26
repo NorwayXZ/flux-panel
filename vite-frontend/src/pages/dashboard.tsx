@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import toast from 'react-hot-toast';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, CircleCheck, Clock3, Gauge, Network, Route, Server, ShieldAlert, Users } from 'lucide-react';
+import { ArrowRight, Boxes, CircleCheck, Clock3, Gauge, Network, Route, Server, ShieldAlert, Users } from 'lucide-react';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
@@ -15,10 +15,12 @@ import {
   getMonitoringAlerts,
   getMonitoringOverview,
   getNodeList,
+  getPublishingPortGrants,
   getUserPackageInfo,
   type MonitoringAlertItem,
   type MonitoringOverview,
   type MonitoringResource,
+  type PublishingPortGrant,
 } from "@/api";
 import type { User } from '@/types';
 
@@ -123,6 +125,7 @@ export default function DashboardPage() {
   const [userInfo, setUserInfo] = useState<UserInfo>({} as UserInfo);
   const [userTunnels, setUserTunnels] = useState<UserTunnel[]>([]);
   const [sharedNodes, setSharedNodes] = useState<SharedNode[]>([]);
+  const [sharedPortGrants, setSharedPortGrants] = useState<PublishingPortGrant[]>([]);
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -139,6 +142,8 @@ export default function DashboardPage() {
   const orderedSharedNodes = sharedNodeOrder.sortItems(sharedNodes, node => node.id);
   const tunnelPermissionOrder = useCardOrder('dashboard-tunnel-permission-cards', userTunnels.map(tunnel => tunnel.id));
   const orderedUserTunnels = tunnelPermissionOrder.sortItems(userTunnels, tunnel => tunnel.id);
+  const portPermissionOrder = useCardOrder('dashboard-port-permission-cards', sharedPortGrants.map(grant => grant.id));
+  const orderedPortGrants = portPermissionOrder.sortItems(sharedPortGrants, grant => grant.id);
 
   // 检查有效期通知
   const checkExpirationNotifications = (userInfo: UserInfo, tunnels: UserTunnel[]) => {
@@ -236,6 +241,7 @@ export default function DashboardPage() {
     setUserInfo({} as UserInfo);
     setUserTunnels([]);
     setSharedNodes([]);
+    setSharedPortGrants([]);
     setForwardList([]);
     setStatisticsFlows([]);
     setAdminOverview(EMPTY_ADMIN_OVERVIEW);
@@ -256,9 +262,10 @@ export default function DashboardPage() {
     try {
       const admin = localStorage.getItem('admin') === 'true';
       const shouldLoadSharedNodes = !admin;
-      const [res, nodeRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
+      const [res, nodeRes, portGrantRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
         getUserPackageInfo(),
         shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null),
+        !admin ? getPublishingPortGrants() : Promise.resolve(null),
         admin ? getMonitoringOverview('24h') : Promise.resolve(null),
         admin ? getMonitoringAlerts({ status: 'open', page: 1, size: 5 }) : Promise.resolve(null),
         admin ? getForwardList() : Promise.resolve(null),
@@ -288,6 +295,12 @@ export default function DashboardPage() {
         setSharedNodes(shared);
       } else if (nodeRes) {
         toast.error(nodeRes.msg || '获取节点权限失败');
+      }
+
+      if (portGrantRes?.code === 0) {
+        setSharedPortGrants(portGrantRes.data || []);
+      } else if (portGrantRes) {
+        toast.error(portGrantRes.msg || '获取端口资源失败');
       }
 
       if (monitoringRes?.code === 0) setAdminOverview(monitoringRes.data || EMPTY_ADMIN_OVERVIEW);
@@ -856,6 +869,31 @@ export default function DashboardPage() {
                </Card>
              </div>
            </div>
+         )}
+
+         {!isAdmin && (
+          <Card className="mb-6 border border-gray-200 shadow-md dark:border-default-200 lg:mb-8">
+            <CardHeader className="flex items-center justify-between gap-3 pb-3">
+              <div className="flex min-w-0 items-center gap-2"><Boxes className="h-5 w-5 shrink-0 text-warning" /><h2 className="text-lg font-semibold text-foreground lg:text-xl">端口资源</h2><span className="rounded-md bg-default-100 px-2 py-1 text-xs text-default-600">{sharedPortGrants.length} 段</span></div>
+              <span className="text-xs text-default-500">共 {sharedPortGrants.reduce((sum, grant) => sum + grant.totalPorts, 0)} 个</span>
+            </CardHeader>
+            <CardBody className="pt-0">
+              {sharedPortGrants.length === 0 ? <div className="py-10 text-center text-sm text-default-500">暂无端口资源</div> : <SortableCardGrid
+                items={orderedPortGrants}
+                getId={grant => grant.id}
+                onMove={portPermissionOrder.moveCard}
+                className="space-y-3"
+                renderItem={(grant, dragHandle) => (
+                  <div className="rounded-lg border border-gray-200 bg-content1 p-3 dark:border-default-100 lg:p-4">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(230px,1fr)_minmax(520px,2fr)] lg:items-center">
+                      <div className="flex min-w-0 items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warning-100 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300"><Boxes className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{grant.poolName}</h3><span className="rounded-md bg-secondary-100 px-2 py-0.5 text-xs text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300">共享 · {grant.ownerUserName}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{grant.nodeName} · {grant.publicHost}</p></div></div>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><div><p className="text-xs text-default-500">授权范围</p><p className="mt-1 truncate font-mono text-sm">{grant.startPort}-{grant.endPort}</p></div><div><p className="text-xs text-default-500">端口总数</p><p className="mt-1 text-sm font-medium">{grant.totalPorts}</p></div><div><p className="text-xs text-default-500">已发布</p><p className="mt-1 text-sm font-medium">{grant.usedPorts}</p></div><div><p className="text-xs text-default-500">剩余可用</p><p className="mt-1 text-sm font-medium text-success">{grant.availablePorts}</p></div></div>
+                    </div>
+                  </div>
+                )}
+              />}
+            </CardBody>
+          </Card>
          )}
 
          {/* 节点权限 - 管理员不显示 */}

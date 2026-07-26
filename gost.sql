@@ -382,11 +382,18 @@ CREATE TABLE `published_service` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `port_lease` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT, `pool_id` bigint NOT NULL, `service_id` bigint DEFAULT NULL,
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT, `pool_id` bigint NOT NULL, `grant_id` bigint DEFAULT NULL, `service_id` bigint DEFAULT NULL,
   `user_id` int NOT NULL, `port` int NOT NULL, `protocol` varchar(12) NOT NULL, `state` varchar(24) NOT NULL,
   `expires_at` bigint DEFAULT NULL, `release_after` bigint DEFAULT NULL, `created_time` bigint NOT NULL, `updated_time` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_active_pool_port` (`pool_id`,`protocol`,`port`),
-  KEY `idx_lease_expire` (`state`,`expires_at`), KEY `idx_lease_release` (`state`,`release_after`)
+  KEY `idx_lease_expire` (`state`,`expires_at`), KEY `idx_lease_release` (`state`,`release_after`), KEY `idx_lease_grant` (`grant_id`,`state`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `port_pool_grant` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT, `pool_id` bigint NOT NULL, `user_id` int NOT NULL,
+  `start_port` int NOT NULL, `end_port` int NOT NULL, `status` tinyint NOT NULL DEFAULT 1,
+  `created_time` bigint NOT NULL, `updated_time` bigint NOT NULL,
+  PRIMARY KEY (`id`), KEY `idx_port_grant_user` (`user_id`,`status`), KEY `idx_port_grant_pool` (`pool_id`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `port_lease_event` (

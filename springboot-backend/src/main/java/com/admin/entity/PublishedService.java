@@ -38,4 +38,14 @@ public class PublishedService implements Serializable {
     private String publicHost;
     @TableField(exist = false)
     private String ownerUserName;
+    @TableField(exist = false)
+    private Integer ownerRoleId;
+    @TableField(exist = false)
+    private Long grantId;
+    @TableField(exist = false)
+    private Integer grantStartPort;
+    @TableField(exist = false)
+    private Integer grantEndPort;
+    @TableField(exist = false)
+    private Boolean permanent;
 }

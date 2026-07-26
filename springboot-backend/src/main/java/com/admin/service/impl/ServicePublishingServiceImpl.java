@@ -16,6 +16,7 @@ import com.admin.entity.Node;
 import com.admin.entity.PortLease;
 import com.admin.entity.PortLeaseEvent;
 import com.admin.entity.PortPool;
+import com.admin.entity.PortPoolGrant;
 import com.admin.entity.PublishedService;
 import com.admin.entity.User;
 import com.admin.entity.ViteConfig;
@@ -23,11 +24,13 @@ import com.admin.mapper.InternalConnectorMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseEventMapper;
 import com.admin.mapper.PortLeaseMapper;
+import com.admin.mapper.PortAllocationLockMapper;
 import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.PublishedServiceMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.ViteConfigMapper;
 import com.admin.service.ServicePublishingService;
+import com.admin.service.PortPoolGrantService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -65,6 +68,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Resource private UserMapper userMapper;
     @Resource private ViteConfigMapper viteConfigMapper;
     @Resource private JdbcTemplate jdbcTemplate;
+    @Resource private PortAllocationLockMapper portAllocationLockMapper;
+    @Resource private PortPoolGrantService portPoolGrantService;
 
     @Override
     public R createConnector(InternalConnectorCreateDto dto) {
@@ -129,6 +134,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R createPortPool(PortPoolCreateDto dto) {
+        portAllocationLockMapper.lockForUpdate();
         Node node = nodeMapper.selectById(dto.getNodeId());
         if (node == null) return R.err("公网节点不存在");
         if (!WebSocketServer.isNodeOnline(node.getId())) return R.err("公网节点离线，暂时不能创建端口池");
@@ -160,10 +166,10 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         pool.setControlPort(dto.getControlPort());
         pool.setAuthUsername("flux_" + randomHex(5));
         pool.setAuthPassword(randomHex(16));
-        pool.setDefaultLeaseHours(dto.getDefaultLeaseHours() == null ? 24 : dto.getDefaultLeaseHours());
-        pool.setMaxLeaseHours(dto.getMaxLeaseHours() == null ? 720 : dto.getMaxLeaseHours());
+        // Retained only for compatibility with existing installations; lease policy now belongs to each service.
+        pool.setDefaultLeaseHours(24);
+        pool.setMaxLeaseHours(720);
         pool.setCooldownSeconds(dto.getCooldownSeconds() == null ? 60 : dto.getCooldownSeconds());
-        if (pool.getDefaultLeaseHours() > pool.getMaxLeaseHours()) return R.err("默认租期不能大于最大租期");
         pool.setStatus(1);
         pool.setCreatedTime(now);
         pool.setUpdatedTime(now);
@@ -180,18 +186,55 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Override
     public R listPortPools() {
         List<PortPool> pools = poolMapper.selectList(new QueryWrapper<PortPool>().eq("status", 1).orderByDesc("created_time"));
+        if (!isAdmin()) {
+            Map<Long, PortPool> poolMap = pools.stream().collect(Collectors.toMap(PortPool::getId, item -> item));
+            List<PortPool> grantedPools = new ArrayList<>();
+            for (PortPoolGrant grant : portPoolGrantService.listGrants(currentUserId())) {
+                PortPool source = poolMap.get(grant.getPoolId());
+                if (source == null) continue;
+                PortPool view = poolMapper.selectById(source.getId());
+                Node node = nodeMapper.selectById(view.getNodeId());
+                view.setNodeName(node == null ? "节点已删除" : node.getName());
+                view.setGrantId(grant.getId());
+                view.setGrantStartPort(grant.getStartPort());
+                view.setGrantEndPort(grant.getEndPort());
+                view.setGrantTotalPorts(grant.getTotalPorts());
+                view.setGrantUsedPorts(grant.getUsedPorts());
+                view.setTotalPorts(grant.getTotalPorts());
+                view.setUsedPorts(grant.getUsedPorts());
+                view.setAvailablePorts(grant.getAvailablePorts());
+                view.setAccessType("shared");
+                view.setStartPort(grant.getStartPort());
+                view.setEndPort(grant.getEndPort());
+                view.setAuthUsername(null);
+                view.setAuthPassword(null);
+                grantedPools.add(view);
+            }
+            return R.ok(grantedPools);
+        }
         for (PortPool pool : pools) {
             Node node = nodeMapper.selectById(pool.getNodeId());
             pool.setNodeName(node == null ? "节点已删除" : node.getName());
             int total = pool.getEndPort() - pool.getStartPort() + 1;
-            Integer used = leaseMapper.selectCount(new QueryWrapper<PortLease>().eq("pool_id", pool.getId()));
+            Integer used = leaseMapper.selectCount(new QueryWrapper<PortLease>().eq("pool_id", pool.getId()).isNull("grant_id"));
             pool.setTotalPorts(total);
             pool.setUsedPorts(used == null ? 0 : used.intValue());
-            pool.setAvailablePorts(Math.max(0, total - pool.getUsedPorts()));
+            Set<Integer> unavailable = portPoolGrantService.grantedPorts(pool.getId());
+            leaseMapper.selectList(new QueryWrapper<PortLease>().eq("pool_id", pool.getId()))
+                    .forEach(lease -> unavailable.add(lease.getPort()));
+            pool.setSharedPorts(portPoolGrantService.sharedPortCount(pool.getId()));
+            pool.setAvailablePorts(Math.max(0, total - unavailable.size()));
+            pool.setAccessType("admin");
             pool.setAuthUsername(null);
             pool.setAuthPassword(null);
         }
         return R.ok(pools);
+    }
+
+    @Override
+    public R listPortGrants(Integer userId) {
+        Integer effectiveUserId = isAdmin() ? userId : currentUserId();
+        return R.ok(portPoolGrantService.listGrants(effectiveUserId));
     }
 
     @Override
@@ -201,6 +244,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在");
         Integer leases = leaseMapper.selectCount(new QueryWrapper<PortLease>().eq("pool_id", id));
         if (leases != null && leases > 0) return R.err("端口池仍有租约，不能删除");
+        boolean granted = portPoolGrantService.listGrants(null).stream().anyMatch(item -> Objects.equals(item.getPoolId(), id));
+        if (granted) return R.err("端口池仍有分享授权，不能删除");
         GostDto result = GostUtil.DeletePublishingGateway(pool.getNodeId(), gatewayName(pool.getId()));
         if (!gostSuccess(result)) return R.err("删除公网入口失败：" + gostMessage(result));
         pool.setStatus(0);
@@ -212,6 +257,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R createPublishedService(PublishedServiceCreateDto dto) {
+        portAllocationLockMapper.lockForUpdate();
         Integer userId = currentUserId();
         InternalConnector connector = connectorMapper.selectById(dto.getConnectorId());
         if (connector == null || connector.getStatus() == 0 || (!isAdmin() && !Objects.equals(connector.getUserId(), userId))) {
@@ -221,16 +267,22 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         PortPool pool = poolMapper.selectById(dto.getPoolId());
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在或已停用");
         if (!WebSocketServer.isNodeOnline(pool.getNodeId())) return R.err("公网节点离线，暂时不能发布服务");
-        int leaseHours = dto.getLeaseHours() == null ? pool.getDefaultLeaseHours() : dto.getLeaseHours();
-        if (leaseHours > pool.getMaxLeaseHours()) return R.err("租期超过该端口池允许的最大值");
+        boolean permanent = Boolean.TRUE.equals(dto.getPermanent());
+        int leaseHours = permanent ? 0 : (dto.getLeaseHours() == null ? 24 : dto.getLeaseHours());
+        if (!permanent && leaseHours < 1) return R.err("定时服务的租期至少为 1 小时");
         if (!targetAllowed(dto.getTargetHost(), connector.getAllowedCidrs())) {
             return R.err("目标地址不在该接入端允许访问的网段内");
         }
 
         jdbcTemplate.queryForObject("SELECT id FROM service_publish_lock WHERE id=1 FOR UPDATE", Integer.class);
-        int port = allocatePort(pool, dto.getRequestedPort());
+        PortPoolGrant grant = null;
+        if (!isAdmin()) {
+            grant = portPoolGrantService.usableGrant(dto.getGrantId(), userId, pool.getId());
+            if (grant == null) return R.err("端口资源未分配给当前用户或已被收回");
+        }
+        int port = allocatePort(pool, dto.getRequestedPort(), grant);
         long now = System.currentTimeMillis();
-        long expiresAt = now + leaseHours * 3600000L;
+        Long expiresAt = permanent ? null : now + leaseHours * 3600000L;
 
         PublishedService published = new PublishedService();
         published.setUserId(userId);
@@ -255,6 +307,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
 
         PortLease lease = new PortLease();
         lease.setPoolId(pool.getId());
+        lease.setGrantId(grant == null ? null : grant.getId());
         lease.setServiceId(published.getId());
         lease.setUserId(userId);
         lease.setPort(port);
@@ -291,7 +344,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         lease.setState("active");
         lease.setUpdatedTime(System.currentTimeMillis());
         leaseMapper.updateById(lease);
-        recordEvent(lease, published, "created", "租用端口 " + port + "，租期 " + leaseHours + " 小时");
+        recordEvent(lease, published, "created", "使用端口 " + port + "，" + (permanent ? "永久有效" : "租期 " + leaseHours + " 小时"));
         return R.ok(enrich(published));
     }
 
@@ -306,17 +359,15 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public R renewPublishedService(Long id, Integer hours) {
-        if (hours == null || hours < 1) return R.err("续租时长至少为1小时");
+    public R renewPublishedService(Long id, Integer hours, boolean permanent) {
+        if (!permanent && (hours == null || hours < 1)) return R.err("续租时长至少为1小时");
         PublishedService service = ownedService(id);
         if (service == null) return R.err("发布服务不存在或无权访问");
         if (!List.of("active", "expiring").contains(service.getState())) return R.err("当前状态不能续租");
-        PortPool pool = poolMapper.selectById(service.getPoolId());
-        if (pool == null || hours > pool.getMaxLeaseHours()) return R.err("续租时长超过端口池限制");
         long now = System.currentTimeMillis();
-        long expiresAt = Math.max(now, service.getExpiresAt() == null ? now : service.getExpiresAt()) + hours * 3600000L;
+        Long expiresAt = permanent ? null : Math.max(now, service.getExpiresAt() == null ? now : service.getExpiresAt()) + hours * 3600000L;
         service.setExpiresAt(expiresAt);
-        service.setLeaseHours(service.getLeaseHours() + hours);
+        service.setLeaseHours(permanent ? 0 : service.getLeaseHours() + hours);
         service.setState("active");
         service.setUpdatedTime(now);
         publishedServiceMapper.updateById(service);
@@ -327,7 +378,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             lease.setReleaseAfter(null);
             lease.setUpdatedTime(now);
             leaseMapper.updateById(lease);
-            recordEvent(lease, service, "renewed", "续租 " + hours + " 小时");
+            recordEvent(lease, service, "renewed", permanent ? "已改为永久有效" : "续租 " + hours + " 小时");
         }
         return R.ok(enrich(service));
     }
@@ -431,25 +482,39 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         service.setPoolName(pool == null ? "端口池已删除" : pool.getName());
         service.setPublicHost(pool == null ? null : pool.getPublicHost());
         service.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+        service.setOwnerRoleId(owner == null ? null : owner.getRoleId());
+        PortLease lease = service.getLeaseId() == null ? null : leaseMapper.selectById(service.getLeaseId());
+        PortPoolGrant grant = lease == null || lease.getGrantId() == null ? null
+                : portPoolGrantService.listGrants(service.getUserId()).stream()
+                .filter(item -> Objects.equals(item.getId(), lease.getGrantId())).findFirst().orElse(null);
+        service.setGrantId(lease == null ? null : lease.getGrantId());
+        service.setGrantStartPort(grant == null ? null : grant.getStartPort());
+        service.setGrantEndPort(grant == null ? null : grant.getEndPort());
+        service.setPermanent(service.getExpiresAt() == null);
         return service;
     }
 
-    private int allocatePort(PortPool pool, Integer requested) {
-        if (requested != null && (requested < pool.getStartPort() || requested > pool.getEndPort())) {
-            throw new IllegalArgumentException("指定端口不在端口池范围内");
+    private int allocatePort(PortPool pool, Integer requested, PortPoolGrant grant) {
+        int startPort = grant == null ? pool.getStartPort() : grant.getStartPort();
+        int endPort = grant == null ? pool.getEndPort() : grant.getEndPort();
+        if (requested != null && (requested < startPort || requested > endPort)) {
+            throw new IllegalArgumentException("指定端口不在当前可用端口范围内");
         }
-        List<Integer> used = leaseMapper.selectList(new QueryWrapper<PortLease>().eq("pool_id", pool.getId()))
-                .stream().map(PortLease::getPort).sorted().toList();
+        Set<Integer> used = leaseMapper.selectList(new QueryWrapper<PortLease>().eq("pool_id", pool.getId()))
+                .stream().map(PortLease::getPort).collect(Collectors.toSet());
+        Set<Integer> grantedToUsers = grant == null ? portPoolGrantService.grantedPorts(pool.getId()) : Set.of();
         if (requested != null) {
-            if (used.contains(requested) || forwardPortConflict(namespaceNodeIds(pool.getNodeId()), requested)) {
+            if (used.contains(requested) || grantedToUsers.contains(requested)
+                    || forwardPortConflict(namespaceNodeIds(pool.getNodeId()), requested)) {
                 throw new IllegalStateException("指定端口已被占用");
             }
             return requested;
         }
-        for (int port = pool.getStartPort(); port <= pool.getEndPort(); port++) {
-            if (!used.contains(port) && !forwardPortConflict(namespaceNodeIds(pool.getNodeId()), port)) return port;
+        for (int port = startPort; port <= endPort; port++) {
+            if (!used.contains(port) && !grantedToUsers.contains(port)
+                    && !forwardPortConflict(namespaceNodeIds(pool.getNodeId()), port)) return port;
         }
-        throw new IllegalStateException("端口池没有可用端口");
+        throw new IllegalStateException("当前端口资源没有可用端口");
     }
 
     private boolean poolRangeConflict(Set<Long> nodeIds, int start, int end, int controlPort) {

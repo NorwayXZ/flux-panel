@@ -91,5 +91,8 @@ public class User extends BaseEntity {
     @TableField(exist = false)
     private Integer nodePermissionCount;
 
+    @TableField(exist = false)
+    private Integer portPermissionCount;
+
 
 }

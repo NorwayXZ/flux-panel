@@ -15,12 +15,14 @@ public class PublishedServiceCreateDto {
     private Long connectorId;
     @NotNull(message = "端口池不能为空")
     private Long poolId;
+    private Long grantId;
     @NotBlank(message = "内网目标地址不能为空")
     private String targetHost;
     @NotNull @Min(1) @Max(65535)
     private Integer targetPort;
-    @Min(1) @Max(8760)
+    @Min(1) @Max(876000)
     private Integer leaseHours;
+    private Boolean permanent;
     @Min(1) @Max(65535)
     private Integer requestedPort;
 }

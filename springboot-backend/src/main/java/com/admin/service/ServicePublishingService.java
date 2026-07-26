@@ -12,10 +12,11 @@ public interface ServicePublishingService {
     R deleteConnector(Long id);
     R createPortPool(PortPoolCreateDto dto);
     R listPortPools();
+    R listPortGrants(Integer userId);
     R deletePortPool(Long id);
     R createPublishedService(PublishedServiceCreateDto dto);
     R listPublishedServices();
-    R renewPublishedService(Long id, Integer hours);
+    R renewPublishedService(Long id, Integer hours, boolean permanent);
     R deletePublishedService(Long id);
     R listLeaseEvents(Long serviceId);
     void processLeaseLifecycle();

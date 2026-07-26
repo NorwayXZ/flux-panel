@@ -59,6 +59,12 @@ public class ServicePublishingController {
         return service.listPortPools();
     }
 
+    @LogAnnotation @PostMapping("/grant/list")
+    public R listGrants(@RequestBody(required = false) Map<String, Object> params) {
+        Integer userId = params == null || params.get("userId") == null ? null : Integer.valueOf(params.get("userId").toString());
+        return service.listPortGrants(userId);
+    }
+
     @LogAnnotation @RequireRole @PostMapping("/pool/delete")
     public R deletePool(@RequestBody Map<String, Object> params) {
         return service.deletePortPool(Long.valueOf(params.get("id").toString()));
@@ -78,7 +84,8 @@ public class ServicePublishingController {
     public R renewService(@RequestBody Map<String, Object> params) {
         return service.renewPublishedService(
                 Long.valueOf(params.get("id").toString()),
-                Integer.valueOf(params.get("hours").toString()));
+                params.get("hours") == null ? null : Integer.valueOf(params.get("hours").toString()),
+                Boolean.parseBoolean(String.valueOf(params.getOrDefault("permanent", false))));
     }
 
     @LogAnnotation @PostMapping("/service/delete")

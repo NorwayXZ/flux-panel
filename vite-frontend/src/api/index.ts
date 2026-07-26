@@ -269,9 +269,30 @@ export interface PublishingPortPool {
   startPort: number;
   endPort: number;
   controlPort: number;
-  defaultLeaseHours: number;
-  maxLeaseHours: number;
   cooldownSeconds: number;
+  totalPorts: number;
+  usedPorts: number;
+  availablePorts: number;
+  sharedPorts?: number;
+  grantId?: number;
+  grantStartPort?: number;
+  grantEndPort?: number;
+  grantTotalPorts?: number;
+  grantUsedPorts?: number;
+  accessType?: 'admin' | 'shared';
+}
+
+export interface PublishingPortGrant {
+  id: number;
+  poolId: number;
+  userId: number;
+  ownerUserName: string;
+  poolName: string;
+  nodeId: number;
+  nodeName: string;
+  publicHost: string;
+  startPort: number;
+  endPort: number;
   totalPorts: number;
   usedPorts: number;
   availablePorts: number;
@@ -281,6 +302,7 @@ export interface PublishedService {
   id: number;
   name: string;
   ownerUserName: string;
+  ownerRoleId?: number;
   connectorId: number;
   connectorName: string;
   connectorOnline: boolean;
@@ -293,6 +315,10 @@ export interface PublishedService {
   protocol: string;
   state: string;
   expiresAt?: number;
+  permanent?: boolean;
+  grantId?: number;
+  grantStartPort?: number;
+  grantEndPort?: number;
   lastError?: string;
 }
 
@@ -308,14 +334,16 @@ export const createPublishingPortPool = (data: any) =>
   Network.post<PublishingPortPool>("/service-publishing/pool/create", data);
 export const getPublishingPortPools = () =>
   Network.post<PublishingPortPool[]>("/service-publishing/pool/list");
+export const getPublishingPortGrants = (userId?: number) =>
+  Network.post<PublishingPortGrant[]>("/service-publishing/grant/list", userId ? { userId } : {});
 export const deletePublishingPortPool = (id: number) =>
   Network.post("/service-publishing/pool/delete", { id });
 export const createPublishedService = (data: any) =>
   Network.post<PublishedService>("/service-publishing/service/create", data);
 export const getPublishedServices = () =>
   Network.post<PublishedService[]>("/service-publishing/service/list");
-export const renewPublishedService = (id: number, hours: number) =>
-  Network.post<PublishedService>("/service-publishing/service/renew", { id, hours });
+export const renewPublishedService = (id: number, hours?: number, permanent = false) =>
+  Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
 

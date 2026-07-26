@@ -22,10 +22,6 @@ public class PortPoolCreateDto {
     private Integer endPort;
     @NotNull @Min(1) @Max(65535)
     private Integer controlPort;
-    @Min(1) @Max(8760)
-    private Integer defaultLeaseHours;
-    @Min(1) @Max(8760)
-    private Integer maxLeaseHours;
     @Min(0) @Max(86400)
     private Integer cooldownSeconds;
 }

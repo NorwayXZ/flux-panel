@@ -35,4 +35,18 @@ public class PortPool implements Serializable {
     private Integer usedPorts;
     @TableField(exist = false)
     private Integer availablePorts;
+    @TableField(exist = false)
+    private Integer sharedPorts;
+    @TableField(exist = false)
+    private Long grantId;
+    @TableField(exist = false)
+    private Integer grantStartPort;
+    @TableField(exist = false)
+    private Integer grantEndPort;
+    @TableField(exist = false)
+    private Integer grantTotalPorts;
+    @TableField(exist = false)
+    private Integer grantUsedPorts;
+    @TableField(exist = false)
+    private String accessType;
 }

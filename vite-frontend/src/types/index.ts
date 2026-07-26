@@ -29,6 +29,7 @@ export interface User {
   totalNumUnlimited?: boolean;
   tunnelPermissionCount?: number;
   nodePermissionCount?: number;
+  portPermissionCount?: number;
 }
 
 export interface UserForm {
@@ -45,6 +46,7 @@ export interface UserForm {
   flowResetTime: number;
   tunnelPermissions: UserTunnelProvision[];
   nodePermissions: UserNodeProvision[];
+  portPermissions: UserPortProvision[];
 }
 
 export interface UserTunnelProvision {
@@ -70,6 +72,18 @@ export interface UserNodeProvision {
   status: number;
   usedFlow?: number;
   usedForwards?: number;
+}
+
+export interface UserPortProvision {
+  id?: number;
+  poolId: number;
+  startPort: number;
+  endPort: number;
+  poolName?: string;
+  nodeName?: string;
+  publicHost?: string;
+  usedPorts?: number;
+  availablePorts?: number;
 }
 
 export interface UserTunnel {
