@@ -4,6 +4,7 @@
 - Selecting a template pre-fills the mapping name and target port while preserving the selected connector, public port resource, and lease settings.
 - Keeps custom TCP mappings available and clearly identifies the current TCP-only protocol support.
 - Adds focused security notices for remote administration, NAS, and database templates.
+- Uses a stable responsive template grid so service names and port details remain readable without truncation.
 
 ## Upgrade impact
 

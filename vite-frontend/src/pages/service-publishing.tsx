@@ -487,7 +487,7 @@ export default function ServicePublishingPage() {
                 <h3 className="text-sm font-semibold">服务模板</h3>
                 <Chip size="sm" color="primary" variant="flat">TCP</Chip>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {serviceTemplates.map(template => {
                   const Icon = template.icon;
                   const selected = template.id === selectedTemplateId;
@@ -496,14 +496,14 @@ export default function ServicePublishingPage() {
                       key={template.id}
                       type="button"
                       aria-pressed={selected}
-                      className={`min-h-16 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-divider bg-content1 hover:bg-default-100'}`}
+                      className={`min-h-20 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-divider bg-content1 hover:bg-default-100'}`}
                       onClick={() => applyServiceTemplate(template)}
                     >
                       <div className="flex items-center gap-2">
                         <Icon aria-hidden="true" className="shrink-0" size={17} />
-                        <span className="truncate text-sm font-medium">{template.name}</span>
+                        <span className="break-words text-sm font-medium">{template.name}</span>
                       </div>
-                      <div className={`mt-1 truncate text-xs ${selected ? 'text-primary/80' : 'text-default-500'}`}>{template.category} · {template.summary}</div>
+                      <div className={`mt-1 break-words text-xs leading-5 ${selected ? 'text-primary/80' : 'text-default-500'}`}>{template.category} · {template.summary}</div>
                     </button>
                   );
                 })}
