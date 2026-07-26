@@ -236,8 +236,21 @@ export default function CrossEntryFailoverPage() {
             <section className="grid gap-3 sm:grid-cols-2">
               <Input label="容灾组名称" value={form.name} onValueChange={name => setForm({ ...form, name })} />
               <Input label="业务域名" placeholder="service.example.com" value={form.domain} onValueChange={domain => setForm({ ...form, domain })} />
-              <Input label="Cloudflare Zone ID" value={form.zoneId} onValueChange={zoneId => setForm({ ...form, zoneId })} />
-              <Input type="password" label={form.id ? 'Cloudflare API Token（留空不修改）' : 'Cloudflare API Token'} value={form.apiToken} onValueChange={apiToken => setForm({ ...form, apiToken })} />
+              <Input
+                label="Cloudflare Zone ID"
+                name="cloudflare-zone-id"
+                autoComplete="off"
+                value={form.zoneId}
+                onValueChange={zoneId => setForm({ ...form, zoneId })}
+              />
+              <Input
+                type="password"
+                label={form.id ? 'Cloudflare API Token（留空不修改）' : 'Cloudflare API Token'}
+                name="cloudflare-api-token"
+                autoComplete="new-password"
+                value={form.apiToken}
+                onValueChange={apiToken => setForm({ ...form, apiToken })}
+              />
               <Select label="DNS 记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
             </section>

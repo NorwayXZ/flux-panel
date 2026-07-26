@@ -1,5 +1,6 @@
 ## Cross-entry failover groups
 
+- Prevents browser password managers from inserting panel login credentials into Cloudflare Zone ID and API Token fields.
 - Adds independent cross-entry groups that bind existing forwards from different ingress nodes without changing same-ingress route candidates.
 - Performs parallel node-presence and public TCP probes with a 2-second fast profile and two-failure confirmation.
 - Updates a Cloudflare DNS-only A or AAAA record to the healthiest available ingress and records every successful or failed switch.
