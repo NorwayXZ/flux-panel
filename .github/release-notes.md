@@ -1,8 +1,8 @@
-## Clear Agent install and upgrade actions
+## Clearer intranet mapping navigation
 
-- Online nodes consistently show **Upgrade**, regardless of whether the panel can perform a direct self-update or must provide a compatibility command.
-- Offline nodes consistently show **Install**, making recovery and reinstallation distinct from an online upgrade.
-- Command dialogs, clipboard messages, colors, and icons now follow the selected install or upgrade action.
-- Keeps dedicated self-update, encrypted-terminal bootstrap, checksum verification, backup, and automatic rollback behavior from 2.13.0.
+- Adds a dedicated **Intranet Access** navigation group for the related Port Resources and Intranet Mapping workflows.
+- Orders Port Resources before Intranet Mapping to reflect the actual setup sequence.
+- Moves Alert Center into System Management as an operational administration feature.
+- Renames the former Service Publishing page and its actions to concise intranet-mapping terminology across desktop, mobile, port ledger, user permissions, and backend validation messages.
 
-Agent restart can briefly interrupt traffic handled by that node. This patch does not change database schemas or rewrite node, tunnel, forwarding, port, user, or traffic data.
+This navigation and terminology patch does not change routes, API contracts, database schemas, stored resource types, or existing node, tunnel, forwarding, port, user, and traffic data.

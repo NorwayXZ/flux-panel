@@ -92,7 +92,7 @@ public class PortPoolGrantService {
             for (PortPoolGrant grant : existing) {
                 UserPortProvisionDto replacement = requested.stream().filter(item -> Objects.equals(item.getId(), grant.getId())).findFirst().orElse(null);
                 if (!retained.contains(grant.getId())) {
-                    if (hasActiveLease(grant.getId())) return R.err("端口资源仍被发布服务使用，不能取消分享");
+                    if (hasActiveLease(grant.getId())) return R.err("端口资源仍被内网映射使用，不能取消分享");
                 } else if (replacement != null && hasLeaseOutside(grant.getId(), replacement.getStartPort(), replacement.getEndPort())) {
                     return R.err("新的授权范围不包含正在使用的端口");
                 }

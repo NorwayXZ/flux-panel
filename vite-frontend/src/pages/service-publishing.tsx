@@ -76,7 +76,7 @@ export default function ServicePublishingPage() {
       if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
       if (poolRes.code === 0) setPools(poolRes.data || []);
       const failed = [serviceRes, connectorRes, poolRes].find(item => item.code !== 0);
-      if (failed) toast.error(failed.msg || '加载服务发布数据失败');
+      if (failed) toast.error(failed.msg || '加载内网映射数据失败');
     } finally {
       setLoading(false);
     }
@@ -90,7 +90,7 @@ export default function ServicePublishingPage() {
 
   const submitService = async () => {
     if (!serviceForm.name.trim() || !serviceForm.connectorId || !selectedPool || !serviceForm.targetHost || !serviceForm.targetPort) {
-      toast.error('请填写完整的服务发布配置');
+      toast.error('请填写完整的内网映射配置');
       return;
     }
     const permanent = serviceForm.leaseMode === 'permanent';
@@ -110,8 +110,8 @@ export default function ServicePublishingPage() {
       requestedPort: serviceForm.requestedPort ? Number(serviceForm.requestedPort) : undefined,
     });
     setSubmitting(false);
-    if (res.code !== 0) return toast.error(res.msg || '发布失败');
-    toast.success('内网服务已发布');
+    if (res.code !== 0) return toast.error(res.msg || '创建映射失败');
+    toast.success('内网映射已创建');
     setServiceModal(false);
     setServiceForm({ name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent', leaseDuration: '24', leaseUnit: 'hours', requestedPort: '' });
     loadData();
@@ -180,14 +180,14 @@ export default function ServicePublishingPage() {
   };
 
   const removeService = async (id: number) => {
-    if (!window.confirm('确认停止该服务并释放端口吗？')) return;
+    if (!window.confirm('确认停止该映射并释放端口吗？')) return;
     const res = await deletePublishedService(id);
     if (res.code !== 0) return toast.error(res.msg || '删除失败');
     const pending = res.data?.state === 'delete_pending';
     if (pending) {
-      toast('接入端当前离线，服务将在恢复连接后自动删除，端口暂不释放');
+      toast('接入端当前离线，映射将在恢复连接后自动删除，端口暂不释放');
     } else {
-      toast.success('服务已停止，端口进入冷却');
+      toast.success('映射已停止，端口进入冷却');
     }
     loadData();
   };
@@ -204,17 +204,17 @@ export default function ServicePublishingPage() {
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">端口服务</p>
-          <h1 className="mt-1 text-2xl font-semibold">服务发布</h1>
+          <p className="text-sm text-default-500">内网穿透</p>
+          <h1 className="mt-1 text-2xl font-semibold">内网映射</h1>
         </div>
         <Button color="primary" startContent={<Plus size={18} />} onPress={() => setServiceModal(true)}>
-          发布服务
+          新建映射
         </Button>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行服务', activeCount], ['全部服务', services.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
+          ['运行映射', activeCount], ['全部映射', services.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-content1 px-4 py-4">
             <div className="text-xs text-default-500">{label}</div>
@@ -223,14 +223,14 @@ export default function ServicePublishingPage() {
         ))}
       </section>
 
-      <Tabs aria-label="服务发布视图" variant="underlined">
-        <Tab key="services" title={`发布服务 ${services.length}`}>
+      <Tabs aria-label="内网映射视图" variant="underlined">
+        <Tab key="services" title={`映射列表 ${services.length}`}>
           {loading ? (
             <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
           ) : services.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
               <RadioTower size={30} />
-              <span>暂无发布服务</span>
+              <span>暂无内网映射</span>
             </div>
           ) : (
             <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
@@ -259,7 +259,7 @@ export default function ServicePublishingPage() {
                     <div className="mt-4 flex justify-end gap-2 border-t border-divider pt-3">
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续期 24 小时</Button>}
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="light" color="primary" onPress={() => makePermanent(service.id)}>改为永久</Button>}
-                      {!['released', 'expired', 'delete_pending'].includes(service.state) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除服务" onPress={() => removeService(service.id)}><Trash2 size={16} /></Button>}
+                      {!['released', 'expired', 'delete_pending'].includes(service.state) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除映射" onPress={() => removeService(service.id)}><Trash2 size={16} /></Button>}
                     </div>
                   </article>
                 );
@@ -298,9 +298,9 @@ export default function ServicePublishingPage() {
 
       <Modal isOpen={serviceModal} onOpenChange={setServiceModal} size="2xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>发布内网服务</ModalHeader>
+          <ModalHeader>映射内网服务</ModalHeader>
           <ModalBody className="grid gap-4 sm:grid-cols-2">
-            <Input label="服务名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
+            <Input label="映射名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
             <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
               {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
             </Select>
@@ -312,8 +312,8 @@ export default function ServicePublishingPage() {
               })}
             </Select>
             <div>
-              <div className="mb-2 text-sm text-default-600">服务有效期</div>
-              <Tabs fullWidth size="sm" selectedKey={serviceForm.leaseMode} onSelectionChange={key => setServiceForm({ ...serviceForm, leaseMode: String(key) as 'timed' | 'permanent' })} aria-label="服务有效期">
+              <div className="mb-2 text-sm text-default-600">映射有效期</div>
+              <Tabs fullWidth size="sm" selectedKey={serviceForm.leaseMode} onSelectionChange={key => setServiceForm({ ...serviceForm, leaseMode: String(key) as 'timed' | 'permanent' })} aria-label="映射有效期">
                 <Tab key="permanent" title="永久" />
                 <Tab key="timed" title="定时" />
               </Tabs>
@@ -326,7 +326,7 @@ export default function ServicePublishingPage() {
             <Input label="内网目标端口" type="number" min={1} max={65535} value={serviceForm.targetPort} onValueChange={value => setServiceForm({ ...serviceForm, targetPort: value })} />
             <Input className="sm:col-span-2" label="指定公网端口（可选）" type="number" min={1} max={65535} value={serviceForm.requestedPort} onValueChange={value => setServiceForm({ ...serviceForm, requestedPort: value })} />
           </ModalBody>
-          <ModalFooter><Button variant="flat" onPress={() => setServiceModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitService}>发布</Button></ModalFooter>
+          <ModalFooter><Button variant="flat" onPress={() => setServiceModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitService}>创建映射</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

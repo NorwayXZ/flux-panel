@@ -790,7 +790,7 @@ export default function UserPage() {
   };
 
   const removePortPermission = (permission: UserPortProvision) => {
-    if ((permission.usedPorts || 0) > 0) return toast.error('该范围仍有发布服务，需先停止服务后才能取消分享');
+    if ((permission.usedPorts || 0) > 0) return toast.error('该范围仍有内网映射，需先停止映射后才能取消分享');
     setUserForm(prev => ({ ...prev, portPermissions: prev.portPermissions.filter(item => item !== permission) }));
   };
 

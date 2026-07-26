@@ -132,7 +132,7 @@ public class PortLedgerService {
     private void addPools(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, List<PortPool> pools) {
         for (PortPool pool : pools) {
             add(entries, nodeEntry("pool_range", "reserved", nodes.get(pool.getNodeId()), pool.getStartPort(), pool.getEndPort(),
-                    "tcp_udp", 1, "admin", pool.getId(), pool.getName(), "服务发布端口池", pool.getCreatedTime(), null));
+                    "tcp_udp", 1, "admin", pool.getId(), pool.getName(), "内网映射端口池", pool.getCreatedTime(), null));
             add(entries, nodeEntry("pool_control", "occupied", nodes.get(pool.getNodeId()), pool.getControlPort(), pool.getControlPort(),
                     "tcp", 1, "admin", pool.getId(), pool.getName(), "反向连接控制端口", pool.getCreatedTime(), null));
         }
@@ -161,7 +161,7 @@ public class PortLedgerService {
             add(entries, nodeEntry("published_service", status, nodes.get(pool.getNodeId()), lease.getPort(), lease.getPort(),
                     lease.getProtocol(), lease.getUserId(), owner == null ? "未知用户" : owner.getUser(),
                     service == null ? lease.getId() : service.getId(), service == null ? "服务记录已删除" : service.getName(),
-                    service == null ? "服务发布端口" : service.getTargetHost() + ":" + service.getTargetPort(),
+                    service == null ? "内网映射端口" : service.getTargetHost() + ":" + service.getTargetPort(),
                     lease.getCreatedTime(), lease.getExpiresAt()));
         }
     }

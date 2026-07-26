@@ -128,7 +128,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (connector == null) return R.err("内网接入端不存在或无权访问");
         Integer count = publishedServiceMapper.selectCount(new QueryWrapper<PublishedService>()
                 .eq("connector_id", id).notIn("state", "released", "deleted"));
-        if (count != null && count > 0) return R.err("该接入端仍有发布服务，请先删除相关服务");
+        if (count != null && count > 0) return R.err("该接入端仍有内网映射，请先删除相关映射");
         connector.setStatus(0);
         connector.setUpdatedTime(System.currentTimeMillis());
         connectorMapper.updateById(connector);
@@ -272,10 +272,10 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (connector == null || connector.getStatus() == 0 || (!isAdmin() && !Objects.equals(connector.getUserId(), userId))) {
             return R.err("内网接入端不存在或无权使用");
         }
-        if (!WebSocketServer.isConnectorOnline(connector.getId())) return R.err("内网接入端离线，暂时不能发布服务");
+        if (!WebSocketServer.isConnectorOnline(connector.getId())) return R.err("内网接入端离线，暂时不能创建映射");
         PortPool pool = poolMapper.selectById(dto.getPoolId());
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在或已停用");
-        if (!WebSocketServer.isNodeOnline(pool.getNodeId())) return R.err("公网节点离线，暂时不能发布服务");
+        if (!WebSocketServer.isNodeOnline(pool.getNodeId())) return R.err("公网节点离线，暂时不能创建映射");
         boolean permanent = Boolean.TRUE.equals(dto.getPermanent());
         int leaseHours = permanent ? 0 : (dto.getLeaseHours() == null ? 24 : dto.getLeaseHours());
         if (!permanent && leaseHours < 1) return R.err("定时服务的租期至少为 1 小时");
@@ -349,7 +349,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
                 pool.getBindIp(), port, hostPort(dto.getTargetHost(), dto.getTargetPort()));
         if (!gostSuccess(serviceResult)) {
             GostUtil.DeletePublishedTcpService(connector.getId(), serviceName, chainName);
-            throw new IllegalStateException("发布内网服务失败：" + gostMessage(serviceResult));
+            throw new IllegalStateException("创建内网映射失败：" + gostMessage(serviceResult));
         }
 
         published.setState("active");
@@ -377,7 +377,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R renewPublishedService(Long id, Integer hours, boolean permanent) {
         if (!permanent && (hours == null || hours < 1)) return R.err("续租时长至少为1小时");
         PublishedService service = ownedService(id);
-        if (service == null) return R.err("发布服务不存在或无权访问");
+        if (service == null) return R.err("内网映射不存在或无权访问");
         if (!List.of("active", "expiring").contains(service.getState())) return R.err("当前状态不能续租");
         long now = System.currentTimeMillis();
         Long expiresAt = permanent ? null : Math.max(now, service.getExpiresAt() == null ? now : service.getExpiresAt()) + hours * 3600000L;
@@ -402,7 +402,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Transactional(rollbackFor = Exception.class)
     public R deletePublishedService(Long id) {
         PublishedService service = ownedService(id);
-        if (service == null) return R.err("发布服务不存在或无权访问");
+        if (service == null) return R.err("内网映射不存在或无权访问");
         if ("deleted".equals(service.getState())) return R.ok();
         if (!cleanupService(service, true)) {
             return R.ok(enrich(publishedServiceMapper.selectById(id)));
@@ -413,7 +413,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Override
     public R listLeaseEvents(Long serviceId) {
         PublishedService service = ownedService(serviceId);
-        if (service == null) return R.err("发布服务不存在或无权访问");
+        if (service == null) return R.err("内网映射不存在或无权访问");
         return R.ok(eventMapper.selectList(new QueryWrapper<PortLeaseEvent>()
                 .eq("service_id", serviceId).orderByDesc("created_time").last("LIMIT 100")));
     }
@@ -441,7 +441,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             try {
                 cleanupService(service, "delete_pending".equals(service.getState()));
             } catch (Exception e) {
-                log.warn("清理过期发布服务 {} 失败: {}", service.getId(), e.getMessage());
+                log.warn("清理过期内网映射 {} 失败: {}", service.getId(), e.getMessage());
             }
         }
         List<PortLease> releasable = leaseMapper.selectList(new QueryWrapper<PortLease>()

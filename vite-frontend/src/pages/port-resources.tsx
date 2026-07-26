@@ -111,7 +111,7 @@ export default function PortResourcesPage() {
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
       <header className="flex items-end justify-between border-b border-divider pb-5">
-        <div><p className="text-sm text-default-500">系统管理</p><h1 className="mt-1 text-2xl font-semibold">端口资源</h1></div>
+        <div><p className="text-sm text-default-500">内网穿透</p><h1 className="mt-1 text-2xl font-semibold">端口资源</h1></div>
         <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建端口池</Button>
       </header>
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : pools.length === 0 ? (
@@ -159,7 +159,7 @@ export default function PortResourcesPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold"><CircleGauge size={18} className="text-primary" />全局端口账本</h2>
-            <p className="mt-1 text-xs text-default-500">同一服务器地址下的节点共用端口命名空间。账本同时追踪转发入口、隧道跳点、服务发布和用户授权。</p>
+            <p className="mt-1 text-xs text-default-500">同一服务器地址下的节点共用端口命名空间。账本同时追踪转发入口、隧道跳点、内网映射和用户授权。</p>
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <Chip size="sm" variant="flat" color="danger">占用 {ledger.summary.occupied || 0}</Chip>
@@ -179,7 +179,7 @@ export default function PortResourcesPage() {
             <SelectItem key="all">全部类型</SelectItem>
             <SelectItem key="forward_entry">转发入口</SelectItem>
             <SelectItem key="tunnel_hop">隧道跳点</SelectItem>
-            <SelectItem key="published_service">发布服务</SelectItem>
+            <SelectItem key="published_service">内网映射</SelectItem>
             <SelectItem key="pool_control">控制端口</SelectItem>
             <SelectItem key="pool_range">端口池范围</SelectItem>
             <SelectItem key="user_grant">用户授权</SelectItem>
@@ -240,7 +240,7 @@ export default function PortResourcesPage() {
 }
 
 const typeLabels: Record<string, string> = {
-  forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '发布服务',
+  forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '内网映射',
   pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权',
 };
 

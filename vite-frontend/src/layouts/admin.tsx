@@ -76,7 +76,7 @@ export default function AdminLayout({
     },
     {
       path: '/service-publishing',
-      label: '服务发布',
+      label: '内网映射',
       icon: <RadioTower className="h-5 w-5" />
     },
     {
@@ -146,8 +146,9 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/service-publishing', '/monitoring'] },
-    { label: '系统管理', paths: ['/limit', '/port-resources', '/user', '/config'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward'] },
+    { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
+    { label: '系统管理', paths: ['/monitoring', '/limit', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
 

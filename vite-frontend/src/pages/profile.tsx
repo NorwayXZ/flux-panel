@@ -210,7 +210,7 @@ export default function ProfilePage() {
                 <div className="w-10 h-10 bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 rounded-full flex items-center justify-center mb-2">
                   <RadioTower className="h-5 w-5" />
                 </div>
-                <span className="text-xs text-foreground text-center">服务发布</span>
+                <span className="text-xs text-foreground text-center">内网映射</span>
               </button>
               {/* 管理员功能 */}
               {isAdmin && adminMenuItems.map((item) => (
