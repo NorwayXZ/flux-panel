@@ -5,9 +5,13 @@ import com.admin.common.aop.LogAnnotation;
 import com.admin.common.annotation.RequireRole;
 import com.admin.common.dto.*;
 import com.admin.common.lang.R;
+import com.admin.common.utils.ClientIpUtil;
+import com.admin.service.TelegramNotificationService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import javax.annotation.Resource;
+import javax.servlet.http.HttpServletRequest;
 import java.util.Map;
 
 /**
@@ -23,10 +27,18 @@ import java.util.Map;
 @RequestMapping("/api/v1/user")
 public class UserController extends BaseController {
 
+    @Resource
+    private TelegramNotificationService telegramNotificationService;
+
     @LogAnnotation
     @PostMapping("/login")
-    public R login(@Validated @RequestBody LoginDto loginDto) {
-        return userService.login(loginDto);
+    public R login(@Validated @RequestBody LoginDto loginDto, HttpServletRequest request) {
+        R result = userService.login(loginDto);
+        if (result.getCode() == 0) {
+            telegramNotificationService.notifyLoginOutsideWhitelist(
+                    loginDto.getUsername(), ClientIpUtil.resolve(request), System.currentTimeMillis());
+        }
+        return result;
     }
 
     @LogAnnotation
@@ -77,7 +89,5 @@ public class UserController extends BaseController {
     public R reset(@Validated @RequestBody ResetFlowDto resetFlowDto) {
         return userService.reset(resetFlowDto);
     }
-
-
 
 }

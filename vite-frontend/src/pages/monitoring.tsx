@@ -1,5 +1,8 @@
 import { Button } from '@heroui/button';
 import { Card, CardBody } from '@heroui/card';
+import { Input, Textarea } from '@heroui/input';
+import { Spinner } from '@heroui/spinner';
+import { Switch } from '@heroui/switch';
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -9,7 +12,9 @@ import {
   Clock3,
   Network,
   RefreshCw,
+  Save,
   Search,
+  Send,
   Server,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -28,8 +33,11 @@ import {
 import {
   getMonitoringAlerts,
   getMonitoringOverview,
+  getTelegramNotificationSettings,
   markAllMonitoringAlertsRead,
   markMonitoringAlertsRead,
+  saveTelegramNotificationSettings,
+  testTelegramNotification,
   type MonitoringAlertItem,
   type MonitoringAlertPage,
   type MonitoringOverview,
@@ -37,6 +45,7 @@ import {
   type MonitoringResource,
   type MonitoringResourceType,
   type MonitoringStatus,
+  type TelegramNotificationSettings,
 } from '@/api';
 import { notifyAlertCountChanged } from '@/hooks/use-alert-unread-count';
 
@@ -65,6 +74,23 @@ const EMPTY_ALERTS: MonitoringAlertPage = {
   page: 1,
   size: 20,
   unread: 0,
+};
+
+const EMPTY_NOTIFICATION_SETTINGS: TelegramNotificationSettings = {
+  enabled: false,
+  botToken: '',
+  botTokenConfigured: false,
+  chatId: '',
+  nodeEnabled: true,
+  nodeRepeatLimit: 1,
+  tunnelEnabled: true,
+  tunnelRepeatLimit: 1,
+  forwardEnabled: true,
+  forwardRepeatLimit: 1,
+  recoveryEnabled: true,
+  loginOutsideWhitelistEnabled: false,
+  loginAllowedCidrs: '',
+  repeatIntervalMinutes: 30,
 };
 
 const RANGE_LABELS: Record<MonitoringRange, string> = {
@@ -133,7 +159,7 @@ const formatDuration = (startedAt: number, endedAt?: number) => {
 
 export default function MonitoringPage() {
   const [range, setRange] = useState<MonitoringRange>('24h');
-  const [view, setView] = useState<'alerts' | 'resources'>('alerts');
+  const [view, setView] = useState<'alerts' | 'resources' | 'notifications'>('alerts');
   const [overview, setOverview] = useState<MonitoringOverview>(EMPTY_OVERVIEW);
   const [alerts, setAlerts] = useState<MonitoringAlertPage>(EMPTY_ALERTS);
   const [loading, setLoading] = useState(true);
@@ -385,6 +411,15 @@ export default function MonitoringPage() {
               >
                 资源状态 ({overview.summary.totalResources})
               </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setView('notifications')}
+                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === 'notifications' ? 'bg-white shadow-sm dark:bg-gray-800' : 'text-default-500'}`}
+                >
+                  通知设置
+                </button>
+              )}
             </div>
             {view === 'alerts' && alerts.unread > 0 && (
               <Button size="sm" variant="flat" startContent={<CheckCheck className="h-4 w-4" />} onPress={handleMarkAllRead}>
@@ -393,7 +428,9 @@ export default function MonitoringPage() {
             )}
           </div>
 
-          {view === 'alerts' ? (
+          {view === 'notifications' && isAdmin ? (
+            <NotificationSettings />
+          ) : view === 'alerts' ? (
             <AlertList
               alerts={alerts}
               statusFilter={statusFilter}
@@ -413,6 +450,163 @@ export default function MonitoringPage() {
             <ResourceList resources={overview.resources} isAdmin={isAdmin} range={range} />
           )}
         </section>
+      </div>
+    </div>
+  );
+}
+
+function NotificationSettings() {
+  const [settings, setSettings] = useState<TelegramNotificationSettings>(EMPTY_NOTIFICATION_SETTINGS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    const response = await getTelegramNotificationSettings();
+    if (response.code === 0 && response.data) setSettings({ ...EMPTY_NOTIFICATION_SETTINGS, ...response.data, botToken: '' });
+    else toast.error(response.msg || '获取通知设置失败');
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  const save = async (showSuccess = true) => {
+    setSaving(true);
+    const response = await saveTelegramNotificationSettings(settings);
+    setSaving(false);
+    if (response.code !== 0) {
+      toast.error(response.msg || '保存通知设置失败');
+      return false;
+    }
+    setSettings({ ...response.data, botToken: '' });
+    if (showSuccess) toast.success('通知设置已保存');
+    return true;
+  };
+
+  const test = async () => {
+    setTesting(true);
+    const saved = await save(false);
+    if (!saved) {
+      setTesting(false);
+      return;
+    }
+    const response = await testTelegramNotification();
+    setTesting(false);
+    response.code === 0 ? toast.success('测试通知已发送') : toast.error(response.msg || '测试通知发送失败');
+  };
+
+  const update = <K extends keyof TelegramNotificationSettings>(key: K, value: TelegramNotificationSettings[K]) => {
+    setSettings(current => ({ ...current, [key]: value }));
+  };
+
+  if (loading) return <div className="flex min-h-64 items-center justify-center"><Spinner /></div>;
+
+  const eventRows: Array<{
+    label: string;
+    detail: string;
+    enabledKey: 'nodeEnabled' | 'tunnelEnabled' | 'forwardEnabled';
+    repeatKey: 'nodeRepeatLimit' | 'tunnelRepeatLimit' | 'forwardRepeatLimit';
+  }> = [
+    { label: '节点异常', detail: 'Agent 离线或恢复', enabledKey: 'nodeEnabled', repeatKey: 'nodeRepeatLimit' },
+    { label: '隧道异常', detail: '链路离线、降级或恢复', enabledKey: 'tunnelEnabled', repeatKey: 'tunnelRepeatLimit' },
+    { label: '转发异常', detail: '线路或目标不可用、恢复', enabledKey: 'forwardEnabled', repeatKey: 'forwardRepeatLimit' },
+  ];
+
+  return (
+    <div className="overflow-hidden border-y border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+      <div className="flex flex-col gap-4 border-b border-divider px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div>
+          <h2 className="font-semibold text-foreground">Telegram 通知</h2>
+          <p className="mt-1 text-sm text-default-500">按事件独立控制，重复通知受次数和冷却时间约束。</p>
+        </div>
+        <Switch isSelected={settings.enabled} onValueChange={value => update('enabled', value)}>
+          {settings.enabled ? '已启用' : '未启用'}
+        </Switch>
+      </div>
+
+      <div className="grid gap-4 border-b border-divider px-4 py-5 sm:px-5 lg:grid-cols-2">
+        <Input
+          type="password"
+          label="Bot Token"
+          placeholder={settings.botTokenConfigured ? '已保存，留空保持不变' : '123456:ABC...'}
+          value={settings.botToken}
+          onValueChange={value => update('botToken', value)}
+          autoComplete="off"
+        />
+        <Input label="Chat ID" placeholder="-1001234567890" value={settings.chatId} onValueChange={value => update('chatId', value)} />
+      </div>
+
+      <div className="border-b border-divider px-4 py-5 sm:px-5">
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-medium text-foreground">资源事件</h3>
+            <p className="mt-1 text-sm text-default-500">同一故障按设定次数发送，具体对象单独计数。</p>
+          </div>
+          <Switch size="sm" isSelected={settings.recoveryEnabled} onValueChange={value => update('recoveryEnabled', value)}>恢复通知</Switch>
+        </div>
+        <div className="divide-y divide-divider border-y border-divider">
+          {eventRows.map(row => (
+            <div key={row.label} className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">{row.label}</p>
+                <p className="mt-1 text-sm text-default-500">{row.detail}</p>
+              </div>
+              <Switch size="sm" isSelected={settings[row.enabledKey] as boolean} onValueChange={value => update(row.enabledKey, value)}>
+                {settings[row.enabledKey] ? '通知' : '关闭'}
+              </Switch>
+              <label className="flex items-center gap-2 text-sm text-default-500">
+                最多
+                <select
+                  className="h-9 rounded-md border border-divider bg-background px-3 text-foreground outline-none focus:border-primary"
+                  value={settings[row.repeatKey] as number}
+                  onChange={event => update(row.repeatKey, Number(event.target.value))}
+                  disabled={!settings[row.enabledKey]}
+                  aria-label={`${row.label}发送次数`}
+                >
+                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value} 次</option>)}
+                </select>
+              </label>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 max-w-sm">
+          <Input
+            type="number"
+            min={5}
+            max={1440}
+            label="重复通知冷却（分钟）"
+            value={String(settings.repeatIntervalMinutes)}
+            onValueChange={value => update('repeatIntervalMinutes', Math.max(5, Math.min(1440, Number(value) || 5)))}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 border-b border-divider px-4 py-5 sm:px-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,1fr)]">
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="font-medium text-foreground">白名单外登录</h3>
+              <p className="mt-1 text-sm text-default-500">登录成功后检查来源地址，同账号同地址在冷却期内只发一次。</p>
+            </div>
+            <Switch size="sm" isSelected={settings.loginOutsideWhitelistEnabled} onValueChange={value => update('loginOutsideWhitelistEnabled', value)}>
+              {settings.loginOutsideWhitelistEnabled ? '通知' : '关闭'}
+            </Switch>
+          </div>
+        </div>
+        <Textarea
+          label="允许登录的 IP / CIDR"
+          placeholder={'198.51.100.20\n203.0.113.0/24'}
+          minRows={3}
+          value={settings.loginAllowedCidrs}
+          onValueChange={value => update('loginAllowedCidrs', value)}
+          isDisabled={!settings.loginOutsideWhitelistEnabled}
+        />
+      </div>
+
+      <div className="flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:justify-end sm:px-5">
+        <Button variant="flat" startContent={<Send className="h-4 w-4" />} isLoading={testing} onPress={test}>保存并测试</Button>
+        <Button color="primary" startContent={<Save className="h-4 w-4" />} isLoading={saving && !testing} onPress={() => save()}>保存设置</Button>
       </div>
     </div>
   );

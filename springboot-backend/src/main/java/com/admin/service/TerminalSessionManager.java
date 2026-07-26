@@ -1,13 +1,11 @@
 package com.admin.service;
 
 import com.admin.common.utils.JwtUtil;
-import com.admin.common.utils.Md5Util;
 import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.Node;
 import com.admin.entity.User;
 import com.alibaba.fastjson.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -36,9 +34,6 @@ public class TerminalSessionManager {
     private static final long IDLE_TIMEOUT_MS = 10 * 60_000L;
     private static final long SESSION_TIMEOUT_MS = 60 * 60_000L;
     private static final int MAX_ACTIVE_SESSIONS = 3;
-    private static final int MAX_AUTH_FAILURES = 5;
-    private static final long AUTH_WINDOW_MS = 10 * 60_000L;
-    private static final long AUTH_BLOCK_MS = 15 * 60_000L;
 
     private final NodeService nodeService;
     private final UserService userService;
@@ -46,7 +41,6 @@ public class TerminalSessionManager {
     private final SecureRandom secureRandom = new SecureRandom();
     private final ConcurrentHashMap<String, TerminalTicket> tickets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ActiveTerminal> sessions = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Integer, AuthFailures> authFailures = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> sendLocks = new ConcurrentHashMap<>();
 
     public TerminalSessionManager(NodeService nodeService, UserService userService, JdbcTemplate jdbcTemplate) {
@@ -55,8 +49,8 @@ public class TerminalSessionManager {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public Map<String, Object> setNodeEnabled(Long nodeId, boolean enabled, String password) {
-        User admin = verifyAdminPassword(password);
+    public Map<String, Object> setNodeEnabled(Long nodeId, boolean enabled) {
+        User admin = requireAdmin();
         Node node = requireNode(nodeId);
         if (enabled && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_AGENT_VERSION)) {
             throw new IllegalArgumentException("节点 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
@@ -78,8 +72,8 @@ public class TerminalSessionManager {
         return result;
     }
 
-    public Map<String, Object> createTicket(Long nodeId, String password, String sourceIp) {
-        User admin = verifyAdminPassword(password);
+    public Map<String, Object> createTicket(Long nodeId, String sourceIp) {
+        User admin = requireAdmin();
         Node node = requireNode(nodeId);
         if (!Boolean.TRUE.equals(node.getTerminalEnabled())) {
             throw new IllegalArgumentException("该节点尚未启用远程终端");
@@ -245,38 +239,15 @@ public class TerminalSessionManager {
             }
         });
         expired.forEach(id -> closeSession(id, "会话超时或节点离线", true, CloseStatus.SESSION_NOT_RELIABLE));
-        authFailures.entrySet().removeIf(entry -> entry.getValue().getBlockedUntil() < now
-                && now - entry.getValue().getWindowStarted() > AUTH_WINDOW_MS);
     }
 
-    private User verifyAdminPassword(String password) {
+    private User requireAdmin() {
         Integer userId = JwtUtil.getUserIdFromToken();
         User user = userService.getById(userId);
         if (user == null || !Objects.equals(user.getRoleId(), 0) || !Objects.equals(user.getStatus(), 1)) {
             throw new SecurityException("仅管理员可以使用远程终端");
         }
-        long now = System.currentTimeMillis();
-        AuthFailures failures = authFailures.get(userId);
-        if (failures != null && failures.getBlockedUntil() > now) {
-            throw new SecurityException("密码验证失败次数过多，请稍后再试");
-        }
-        if (StringUtils.isBlank(password) || !Objects.equals(user.getPwd(), Md5Util.md5(password))) {
-            registerAuthFailure(userId, now);
-            throw new SecurityException("管理员密码错误");
-        }
-        authFailures.remove(userId);
         return user;
-    }
-
-    private void registerAuthFailure(Integer userId, long now) {
-        authFailures.compute(userId, (id, current) -> {
-            if (current == null || now - current.getWindowStarted() > AUTH_WINDOW_MS) {
-                return new AuthFailures(1, now, 0);
-            }
-            current.setCount(current.getCount() + 1);
-            if (current.getCount() >= MAX_AUTH_FAILURES) current.setBlockedUntil(now + AUTH_BLOCK_MS);
-            return current;
-        });
     }
 
     private Node requireNode(Long nodeId) {
@@ -369,11 +340,4 @@ public class TerminalSessionManager {
         private volatile boolean opened;
     }
 
-    @Data
-    @AllArgsConstructor
-    private static class AuthFailures {
-        private int count;
-        private long windowStarted;
-        private long blockedUntil;
-    }
 }

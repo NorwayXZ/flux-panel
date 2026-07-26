@@ -40,14 +40,17 @@ public class MonitoringService {
 
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
+    private final TelegramNotificationService telegramNotificationService;
     private final AtomicBoolean scanning = new AtomicBoolean(false);
 
     @Value("${monitoring.retention-days:90}")
     private int retentionDays;
 
-    public MonitoringService(JdbcTemplate jdbcTemplate, PlatformTransactionManager transactionManager) {
+    public MonitoringService(JdbcTemplate jdbcTemplate, PlatformTransactionManager transactionManager,
+                             TelegramNotificationService telegramNotificationService) {
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.telegramNotificationService = telegramNotificationService;
     }
 
     @Scheduled(
@@ -466,11 +469,19 @@ public class MonitoringService {
     }
 
     private void synchronizeAlert(ResourceState state, long now) {
+        List<Map<String, Object>> openAlerts = jdbcTemplate.queryForList(
+                "SELECT started_at FROM monitoring_alert WHERE resource_type = ? AND resource_id = ? AND status = ? "
+                        + "ORDER BY started_at DESC LIMIT 1",
+                state.type(), state.id(), ALERT_OPEN);
         boolean alertWorthy = OFFLINE.equals(state.status()) || DEGRADED.equals(state.status());
         if (!alertWorthy) {
             jdbcTemplate.update("UPDATE monitoring_alert SET status = ?, resolved_at = ?, updated_at = ? "
                             + "WHERE resource_type = ? AND resource_id = ? AND status = ?",
                     ALERT_RESOLVED, now, now, state.type(), state.id(), ALERT_OPEN);
+            if (!openAlerts.isEmpty()) {
+                telegramNotificationService.notifyResourceRecovery(
+                        state.type(), state.id(), state.name(), longValue(openAlerts.get(0).get("started_at")));
+            }
             return;
         }
 
@@ -488,6 +499,9 @@ public class MonitoringService {
                     state.type(), state.id(), state.name(), state.ownerUserId(), severity, ALERT_OPEN,
                     title, state.detail(), now, now);
         }
+        long incidentStartedAt = openAlerts.isEmpty() ? now : longValue(openAlerts.get(0).get("started_at"));
+        telegramNotificationService.notifyResourceIncident(
+                state.type(), state.id(), state.name(), state.status(), state.detail(), incidentStartedAt);
     }
 
     private void closeRemovedResources(Set<ResourceKey> seen, long now) {

@@ -51,9 +51,9 @@ export interface TerminalAuditItem {
   endedAt?: number;
 }
 
-export const setNodeTerminalEnabled = (data: { nodeId: number; enabled: boolean; password: string }) =>
+export const setNodeTerminalEnabled = (data: { nodeId: number; enabled: boolean }) =>
   Network.post<{ nodeId: number; enabled: boolean; operator: string }>("/terminal/node/toggle", data);
-export const createTerminalSession = (data: { nodeId: number; password: string }) =>
+export const createTerminalSession = (data: { nodeId: number }) =>
   Network.post<TerminalTicket>("/terminal/session/create", data);
 export const getTerminalAudit = (nodeId?: number) =>
   Network.post<TerminalAuditItem[]>("/terminal/audit/list", nodeId ? { nodeId } : {});
@@ -188,6 +188,30 @@ export const markAllMonitoringAlertsRead = () =>
   Network.post<number>("/monitoring/alerts/read-all");
 export const getMonitoringUnreadCount = () =>
   Network.post<number>("/monitoring/alerts/unread-count");
+
+export interface TelegramNotificationSettings {
+  enabled: boolean;
+  botToken: string;
+  botTokenConfigured: boolean;
+  chatId: string;
+  nodeEnabled: boolean;
+  nodeRepeatLimit: number;
+  tunnelEnabled: boolean;
+  tunnelRepeatLimit: number;
+  forwardEnabled: boolean;
+  forwardRepeatLimit: number;
+  recoveryEnabled: boolean;
+  loginOutsideWhitelistEnabled: boolean;
+  loginAllowedCidrs: string;
+  repeatIntervalMinutes: number;
+}
+
+export const getTelegramNotificationSettings = () =>
+  Network.post<TelegramNotificationSettings>("/monitoring/notifications/settings");
+export const saveTelegramNotificationSettings = (settings: TelegramNotificationSettings) =>
+  Network.post<TelegramNotificationSettings>("/monitoring/notifications/settings/save", settings);
+export const testTelegramNotification = () =>
+  Network.post<string>("/monitoring/notifications/test");
 
 // 限速规则CRUD操作 - 全部使用POST请求
 export const createSpeedLimit = (data: any) => Network.post("/speed-limit/create", data);

@@ -1,8 +1,11 @@
 package com.admin.controller;
 
+import com.admin.common.annotation.RequireRole;
+import com.admin.common.dto.TelegramNotificationSettingsDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.JwtUtil;
 import com.admin.service.MonitoringService;
+import com.admin.service.TelegramNotificationService;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,6 +23,9 @@ public class MonitoringController {
 
     @Resource
     private MonitoringService monitoringService;
+
+    @Resource
+    private TelegramNotificationService telegramNotificationService;
 
     @PostMapping("/overview")
     public R overview(@RequestBody(required = false) Map<String, Object> params) {
@@ -75,6 +81,33 @@ public class MonitoringController {
         return R.ok(monitoringService.getUnreadCount(
                 JwtUtil.getUserIdFromToken(), JwtUtil.getRoleIdFromToken()
         ));
+    }
+
+    @RequireRole
+    @PostMapping("/notifications/settings")
+    public R notificationSettings() {
+        return R.ok(telegramNotificationService.getSettings());
+    }
+
+    @RequireRole
+    @PostMapping("/notifications/settings/save")
+    public R saveNotificationSettings(@RequestBody TelegramNotificationSettingsDto settings) {
+        try {
+            return R.ok(telegramNotificationService.saveSettings(settings));
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+    }
+
+    @RequireRole
+    @PostMapping("/notifications/test")
+    public R testNotification() {
+        try {
+            telegramNotificationService.sendTest();
+            return R.ok("测试通知已发送");
+        } catch (RuntimeException e) {
+            return R.err(e.getMessage());
+        }
     }
 
     private String value(Map<String, Object> params, String key, String fallback) {

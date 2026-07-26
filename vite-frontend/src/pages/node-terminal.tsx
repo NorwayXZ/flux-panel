@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@heroui/button';
-import { Checkbox } from '@heroui/checkbox';
 import { Chip } from '@heroui/chip';
-import { Input } from '@heroui/input';
 import { Spinner } from '@heroui/spinner';
-import { ArrowLeft, LockKeyhole, Power, RefreshCw, ShieldAlert, SquareTerminal } from 'lucide-react';
+import { ArrowLeft, Power, RefreshCw, ShieldAlert, SquareTerminal } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -76,8 +74,6 @@ export default function NodeTerminalPage() {
   const [node, setNode] = useState<TerminalNode | null>(null);
   const [audits, setAudits] = useState<TerminalAuditItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [password, setPassword] = useState('');
-  const [acknowledged, setAcknowledged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -212,10 +208,10 @@ export default function NodeTerminalPage() {
   };
 
   const startSession = async () => {
-    if (!node || !password || !acknowledged) return;
+    if (!node) return;
     setSubmitting(true);
     if (!node.terminalEnabled) {
-      const toggleResult = await setNodeTerminalEnabled({ nodeId: node.id, enabled: true, password });
+      const toggleResult = await setNodeTerminalEnabled({ nodeId: node.id, enabled: true });
       if (toggleResult.code !== 0) {
         setSubmitting(false);
         toast.error(toggleResult.msg || '启用远程终端失败');
@@ -223,8 +219,7 @@ export default function NodeTerminalPage() {
       }
       setNode({ ...node, terminalEnabled: true });
     }
-    const result = await createTerminalSession({ nodeId: node.id, password });
-    setPassword('');
+    const result = await createTerminalSession({ nodeId: node.id });
     setSubmitting(false);
     if (result.code !== 0) {
       toast.error(result.msg || '创建终端会话失败');
@@ -235,10 +230,9 @@ export default function NodeTerminalPage() {
   };
 
   const disableTerminal = async () => {
-    if (!node || !password) return toast.error('请输入管理员密码');
+    if (!node) return;
     setSubmitting(true);
-    const result = await setNodeTerminalEnabled({ nodeId: node.id, enabled: false, password });
-    setPassword('');
+    const result = await setNodeTerminalEnabled({ nodeId: node.id, enabled: false });
     setSubmitting(false);
     if (result.code !== 0) return toast.error(result.msg || '关闭远程终端失败');
     closeSocket(true);
@@ -274,31 +268,19 @@ export default function NodeTerminalPage() {
         </section>
       )}
 
-      <section className="grid gap-4 border-y border-divider py-5">
-        <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-center">
-          <div className="w-full shrink-0 md:max-w-[420px]">
-            <Input
-              type="password"
-              label="管理员密码"
-              value={password}
-              onValueChange={setPassword}
-              autoComplete="current-password"
-              startContent={<LockKeyhole size={17} className="text-default-400" />}
-              isDisabled={connected || connecting}
-            />
-          </div>
-          <Checkbox className="min-w-0" isSelected={acknowledged} onValueChange={setAcknowledged} isDisabled={connected || connecting}>
-            我确认本次会话将获得服务器命令权限
-          </Checkbox>
+      <section className="flex flex-col gap-3 border-y border-divider py-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">远程会话</p>
+          <p className="mt-1 text-sm text-default-500">{sessionStatus}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 sm:justify-end">
           {node.terminalEnabled && !connected && !connecting && (
             <Button variant="flat" color="danger" onPress={disableTerminal} isLoading={submitting}>关闭终端功能</Button>
           )}
           {!connected && (
             <Button color="primary" startContent={<SquareTerminal size={17} />} onPress={startSession}
-              isLoading={submitting || connecting} isDisabled={!supported || node.status !== 1 || !password || !acknowledged}>
-              {node.terminalEnabled ? '开始安全会话' : '启用并连接'}
+              isLoading={submitting || connecting} isDisabled={!supported || node.status !== 1}>
+              {node.terminalEnabled ? '打开终端' : '启用并打开'}
             </Button>
           )}
           {connected && <Button color="danger" variant="flat" startContent={<Power size={17} />} onPress={() => closeSocket(true)}>断开会话</Button>}

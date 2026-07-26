@@ -3,8 +3,8 @@ package com.admin.controller;
 import com.admin.common.annotation.RequireRole;
 import com.admin.common.aop.LogAnnotation;
 import com.admin.common.lang.R;
+import com.admin.common.utils.ClientIpUtil;
 import com.admin.service.TerminalSessionManager;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -31,8 +31,7 @@ public class TerminalController {
         try {
             Long nodeId = Long.valueOf(params.get("nodeId").toString());
             boolean enabled = Boolean.parseBoolean(params.get("enabled").toString());
-            String password = String.valueOf(params.getOrDefault("password", ""));
-            return R.ok(terminalSessionManager.setNodeEnabled(nodeId, enabled, password));
+            return R.ok(terminalSessionManager.setNodeEnabled(nodeId, enabled));
         } catch (SecurityException e) {
             return R.err(403, e.getMessage());
         } catch (Exception e) {
@@ -46,8 +45,7 @@ public class TerminalController {
     public R create(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         try {
             Long nodeId = Long.valueOf(params.get("nodeId").toString());
-            String password = String.valueOf(params.getOrDefault("password", ""));
-            return R.ok(terminalSessionManager.createTicket(nodeId, password, clientIp(request)));
+            return R.ok(terminalSessionManager.createTicket(nodeId, ClientIpUtil.resolve(request)));
         } catch (SecurityException e) {
             return R.err(403, e.getMessage());
         } catch (Exception e) {
@@ -63,12 +61,5 @@ public class TerminalController {
             nodeId = Long.valueOf(params.get("nodeId").toString());
         }
         return R.ok(terminalSessionManager.listAudit(nodeId));
-    }
-
-    private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (StringUtils.isNotBlank(forwarded)) return forwarded.split(",")[0].trim();
-        String realIp = request.getHeader("X-Real-IP");
-        return StringUtils.defaultIfBlank(realIp, request.getRemoteAddr());
     }
 }
