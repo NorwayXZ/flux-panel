@@ -1,11 +1,10 @@
-## Node Agent status display
+## Domain entry stability
 
-- Moves the Agent version to a permanent row directly below node uptime.
-- Hides completed upgrade tasks from node cards instead of leaving stale success banners visible.
-- Shows a short success notification only when an active upgrade transitions to success.
-- Keeps active progress and current-target failure details visible so retry actions remain clear.
+- Fixes an Agent crash when a TLS SNI domain entry receives a matching connection.
+- Passes the service logger into both TLS and HTTP protocol-sniffing routes.
+- Adds an end-to-end regression test that sends a real TLS ClientHello and verifies SNI routing to the selected HTTPS backend.
 
-## Included platform changes
+## Upgrade impact
 
-- Includes the TLS SNI domain-entry feature introduced in 2.14.0.
-- Contains no database migration and does not restart or reconfigure node forwarding services.
+- Contains no database migration and does not change existing tunnels or ordinary port forwarding.
+- Domain entry nodes should upgrade their Agent to 2.14.2 before receiving production traffic.

@@ -163,6 +163,7 @@ func (h *forwardHandler) Handle(ctx context.Context, conn net.Conn, opts ...hand
 				forwarder.WithDial(dial),
 				forwarder.WithHop(h.hop),
 				forwarder.WithBypass(h.options.Bypass),
+				forwarder.WithLog(h.options.Logger),
 				forwarder.WithHTTPKeepalive(h.md.httpKeepalive),
 				forwarder.WithRecorderObject(ro),
 			)
@@ -171,6 +172,7 @@ func (h *forwardHandler) Handle(ctx context.Context, conn net.Conn, opts ...hand
 				forwarder.WithDial(dial),
 				forwarder.WithHop(h.hop),
 				forwarder.WithBypass(h.options.Bypass),
+				forwarder.WithLog(h.options.Logger),
 				forwarder.WithRecorderObject(ro),
 			)
 		}

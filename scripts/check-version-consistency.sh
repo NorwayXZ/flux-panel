@@ -22,5 +22,8 @@ check_contains .env.example "PANEL_VERSION=$VERSION"
 check_contains vite-frontend/src/config/site.ts "VERSION = \"$VERSION\""
 check_contains springboot-backend/src/main/java/com/admin/service/impl/NodeServiceImpl.java "/$VERSION/install.sh"
 check_contains springboot-backend/src/main/java/com/admin/common/utils/ConnectorInstallCommandUtil.java "RELEASE = \"$VERSION\""
+check_contains springboot-backend/src/main/java/com/admin/service/AgentUpgradeService.java "TARGET_VERSION = \"$VERSION\""
+check_contains springboot-backend/src/test/java/com/admin/common/utils/ConnectorInstallCommandUtilTests.java "/$VERSION/install.sh"
+check_contains springboot-backend/src/test/java/com/admin/service/AgentUpgradeServiceTests.java "/$VERSION/install.sh"
 
 printf 'Version consistency checks passed: %s\n' "$VERSION"
