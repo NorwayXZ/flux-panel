@@ -6,21 +6,25 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Tab, Tabs } from '@heroui/tabs';
-import { Clock3, Copy, Plus, RadioTower, ServerCog, Trash2 } from 'lucide-react';
+import { Clock3, Copy, Globe2, Plus, RadioTower, ServerCog, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
   createInternalConnector,
+  createDomainRoute,
   createPublishedService,
   deleteInternalConnector,
+  deleteDomainRoute,
   deletePublishedService,
   getInternalConnectorInstall,
+  getDomainRoutes,
   getInternalConnectors,
   getPublishedServices,
   getPublishingPortPools,
   renewPublishedService,
   type InternalConnector,
   type ConnectorPlatform,
+  type DomainRoute,
   type PublishedService,
   type PublishingPortPool,
 } from '@/api';
@@ -49,6 +53,7 @@ export default function ServicePublishingPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [services, setServices] = useState<PublishedService[]>([]);
+  const [domainRoutes, setDomainRoutes] = useState<DomainRoute[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [serviceModal, setServiceModal] = useState(false);
@@ -59,23 +64,27 @@ export default function ServicePublishingPage() {
   const [commandConnectorId, setCommandConnectorId] = useState<number | null>(null);
   const [commandPlatform, setCommandPlatform] = useState<ConnectorPlatform>('linux');
   const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
+  const [activeView, setActiveView] = useState('services');
+  const [domainModal, setDomainModal] = useState(false);
   const [serviceForm, setServiceForm] = useState({
     name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent' as 'timed' | 'permanent', leaseDuration: '24', leaseUnit: 'hours' as 'hours' | 'days', requestedPort: '',
   });
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
     name: '', allowedCidrs: '', platform: 'linux',
   });
+  const [domainForm, setDomainForm] = useState({ name: '', domain: '', publishedServiceId: '', listenPort: '443' });
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [serviceRes, connectorRes, poolRes] = await Promise.all([
-        getPublishedServices(), getInternalConnectors(), getPublishingPortPools(),
+      const [serviceRes, connectorRes, poolRes, domainRes] = await Promise.all([
+        getPublishedServices(), getInternalConnectors(), getPublishingPortPools(), getDomainRoutes(),
       ]);
       if (serviceRes.code === 0) setServices(serviceRes.data || []);
       if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
       if (poolRes.code === 0) setPools(poolRes.data || []);
-      const failed = [serviceRes, connectorRes, poolRes].find(item => item.code !== 0);
+      if (domainRes.code === 0) setDomainRoutes(domainRes.data || []);
+      const failed = [serviceRes, connectorRes, poolRes, domainRes].find(item => item.code !== 0);
       if (failed) toast.error(failed.msg || '加载内网映射数据失败');
     } finally {
       setLoading(false);
@@ -87,6 +96,7 @@ export default function ServicePublishingPage() {
   const activeCount = useMemo(() => services.filter(item => item.state === 'active').length, [services]);
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
   const selectedPool = useMemo(() => pools.find(item => `${item.id}:${item.grantId || 'admin'}` === serviceForm.poolAccessKey), [pools, serviceForm.poolAccessKey]);
+  const selectedDomainMapping = useMemo(() => services.find(item => String(item.id) === domainForm.publishedServiceId), [services, domainForm.publishedServiceId]);
 
   const submitService = async () => {
     if (!serviceForm.name.trim() || !serviceForm.connectorId || !selectedPool || !serviceForm.targetHost || !serviceForm.targetPort) {
@@ -192,6 +202,34 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
+  const submitDomainRoute = async () => {
+    if (!domainForm.name.trim() || !domainForm.domain.trim() || !domainForm.publishedServiceId) return toast.error('请填写完整的域名入口配置');
+    const listenPort = Number(domainForm.listenPort);
+    if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) return toast.error('监听端口必须在 1-65535 之间');
+    setSubmitting(true);
+    const res = await createDomainRoute({
+      name: domainForm.name.trim(),
+      domain: domainForm.domain.trim(),
+      publishedServiceId: Number(domainForm.publishedServiceId),
+      listenPort,
+    });
+    setSubmitting(false);
+    if (res.code !== 0) return toast.error(res.msg || '创建域名入口失败');
+    toast.success('域名入口已创建');
+    setDomainModal(false);
+    setDomainForm({ name: '', domain: '', publishedServiceId: '', listenPort: '443' });
+    loadData();
+  };
+
+  const removeDomainRoute = async (id: number) => {
+    if (!window.confirm('确认删除该域名入口吗？原有内网映射不会被删除。')) return;
+    const res = await deleteDomainRoute(id);
+    if (res.code !== 0) return toast.error(res.msg || '删除域名入口失败');
+    if (res.data?.state === 'delete_pending') toast('公网节点离线，恢复连接后将自动删除域名入口');
+    else toast.success('域名入口已删除');
+    loadData();
+  };
+
   const removeConnector = async (id: number) => {
     if (!window.confirm('确认删除该内网接入端吗？')) return;
     const res = await deleteInternalConnector(id);
@@ -207,14 +245,18 @@ export default function ServicePublishingPage() {
           <p className="text-sm text-default-500">内网穿透</p>
           <h1 className="mt-1 text-2xl font-semibold">内网映射</h1>
         </div>
-        <Button color="primary" startContent={<Plus size={18} />} onPress={() => setServiceModal(true)}>
-          新建映射
+        <Button color="primary" startContent={<Plus size={18} />} onPress={() => {
+          if (activeView === 'domains') setDomainModal(true);
+          else if (activeView === 'connectors') setConnectorModal(true);
+          else setServiceModal(true);
+        }}>
+          {activeView === 'domains' ? '新增域名入口' : activeView === 'connectors' ? '添加接入端' : '新建映射'}
         </Button>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行映射', activeCount], ['全部映射', services.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
+          ['运行映射', activeCount], ['域名入口', domainRoutes.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-content1 px-4 py-4">
             <div className="text-xs text-default-500">{label}</div>
@@ -223,7 +265,7 @@ export default function ServicePublishingPage() {
         ))}
       </section>
 
-      <Tabs aria-label="内网映射视图" variant="underlined">
+      <Tabs aria-label="内网映射视图" variant="underlined" selectedKey={activeView} onSelectionChange={key => setActiveView(String(key))}>
         <Tab key="services" title={`映射列表 ${services.length}`}>
           {loading ? (
             <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
@@ -267,10 +309,55 @@ export default function ServicePublishingPage() {
             </div>
           )}
         </Tab>
+        <Tab key="domains" title={`域名入口 ${domainRoutes.length}`}>
+          {loading ? (
+            <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
+          ) : domainRoutes.length === 0 ? (
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+              <Globe2 size={30} />
+              <span>暂无域名入口</span>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-divider">
+              <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
+                <span>域名</span><span>公网入口</span><span>后端映射</span><span>状态</span><span>操作</span>
+              </div>
+              {domainRoutes.map(route => {
+                const status = route.state === 'delete_pending'
+                  ? { label: '待删除', color: 'warning' as const, detail: route.lastError || '等待公网节点处理' }
+                  : !route.nodeOnline
+                    ? { label: '节点离线', color: 'danger' as const, detail: '公网入口节点离线' }
+                    : route.mappingState !== 'active'
+                      ? { label: '映射不可用', color: 'danger' as const, detail: `后端映射状态：${stateMeta[route.mappingState]?.label || route.mappingState}` }
+                      : !route.connectorOnline
+                        ? { label: '接入端离线', color: 'danger' as const, detail: '内网接入端离线' }
+                        : { label: '运行中', color: 'success' as const, detail: 'TLS 透传正常' };
+                return (
+                  <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] lg:items-center">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{route.name}</span><Chip size="sm" variant="flat" color="primary">TLS 透传</Chip></div>
+                      <div className="mt-1 truncate font-mono text-sm text-default-600">{route.domain}</div>
+                      <div className="mt-1 text-xs text-default-500">{route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
+                    </div>
+                    <div className="min-w-0 text-sm">
+                      <div className="truncate font-mono">{route.domain}:{route.listenPort}</div>
+                      <div className="mt-1 truncate text-xs text-default-500">DNS → {route.publicHost || '未配置'}</div>
+                    </div>
+                    <div className="min-w-0 text-sm">
+                      <div className="truncate">{route.mappingName}</div>
+                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.publicHost}:{route.mappingPublicPort}</div>
+                    </div>
+                    <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
+                    <div className="flex justify-end">
+                      {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </Tab>
         <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
-          <div className="mb-4 flex justify-end">
-            <Button variant="flat" startContent={<Plus size={17} />} onPress={() => setConnectorModal(true)}>添加接入端</Button>
-          </div>
           <div className="overflow-hidden rounded-lg border border-divider">
             <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
               <span>名称</span><span>连接状态</span><span>最近地址</span><span>操作</span>
@@ -295,6 +382,33 @@ export default function ServicePublishingPage() {
           </div>
         </Tab>
       </Tabs>
+
+      <Modal isOpen={domainModal} onOpenChange={setDomainModal} size="2xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>新增 TLS 域名入口</ModalHeader>
+          <ModalBody className="grid gap-4 sm:grid-cols-2">
+            <Input label="入口名称" value={domainForm.name} onValueChange={value => setDomainForm({ ...domainForm, name: value })} />
+            <Input label="访问域名" placeholder="app.example.com" value={domainForm.domain} onValueChange={value => setDomainForm({ ...domainForm, domain: value })} />
+            <Select className="sm:col-span-2" label="后端内网映射" selectedKeys={domainForm.publishedServiceId ? [domainForm.publishedServiceId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, publishedServiceId: String(Array.from(keys)[0] || '') })}>
+              {services.filter(item => item.state === 'active').map(item => (
+                <SelectItem key={String(item.id)} textValue={`${item.name} ${item.publicHost}:${item.publicPort}`}>
+                  {item.name} · {item.publicHost}:{item.publicPort} · {item.connectorOnline ? '接入端在线' : '接入端离线'}
+                </SelectItem>
+              ))}
+            </Select>
+            <Input label="TLS 监听端口" type="number" min={1} max={65535} value={domainForm.listenPort} onValueChange={value => setDomainForm({ ...domainForm, listenPort: value })} />
+            <div className="rounded-md border border-divider bg-default-100 px-4 py-3 text-sm">
+              <div className="text-xs text-default-500">DNS 解析目标</div>
+              <div className="mt-1 truncate font-mono">{selectedDomainMapping?.publicHost || '选择后端映射后显示'}</div>
+            </div>
+            <div className="sm:col-span-2 grid gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-2">
+              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">传输方式</div><div className="mt-1 text-sm">TLS 原样透传</div></div>
+              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">证书位置</div><div className="mt-1 text-sm">后端服务管理域名证书</div></div>
+            </div>
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setDomainModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainRoute}>创建入口</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
 
       <Modal isOpen={serviceModal} onOpenChange={setServiceModal} size="2xl" scrollBehavior="inside">
         <ModalContent>

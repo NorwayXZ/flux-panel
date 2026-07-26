@@ -6,6 +6,7 @@ import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.entity.Forward;
+import com.admin.entity.DomainRoute;
 import com.admin.entity.Node;
 import com.admin.entity.PortLease;
 import com.admin.entity.PortPool;
@@ -14,6 +15,7 @@ import com.admin.entity.PublishedService;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
+import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseMapper;
 import com.admin.mapper.PortPoolGrantMapper;
@@ -47,6 +49,7 @@ public class PortLedgerService {
     @Resource private PortLeaseMapper leaseMapper;
     @Resource private PublishedServiceMapper serviceMapper;
     @Resource private UserMapper userMapper;
+    @Resource private DomainRouteMapper domainRouteMapper;
 
     public Map<String, Object> list(PortLedgerQueryDto query) {
         List<Node> nodes = nodeMapper.selectList(null);
@@ -65,6 +68,7 @@ public class PortLedgerService {
         addPools(entries, nodeMap, pools);
         addGrants(entries, nodeMap, poolMap, userMap);
         addLeases(entries, nodeMap, poolMap, publishedMap, userMap);
+        addDomainIngresses(entries, nodeMap, userMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -163,6 +167,23 @@ public class PortLedgerService {
                     service == null ? lease.getId() : service.getId(), service == null ? "服务记录已删除" : service.getName(),
                     service == null ? "内网映射端口" : service.getTargetHost() + ":" + service.getTargetPort(),
                     lease.getCreatedTime(), lease.getExpiresAt()));
+        }
+    }
+
+    private void addDomainIngresses(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
+        Map<String, List<DomainRoute>> groups = domainRouteMapper.selectList(new QueryWrapper<DomainRoute>().ne("state", "deleted"))
+                .stream().collect(Collectors.groupingBy(item -> item.getNodeId() + ":" + item.getListenPort(), LinkedHashMap::new, Collectors.toList()));
+        for (List<DomainRoute> routes : groups.values()) {
+            if (routes.isEmpty()) continue;
+            DomainRoute first = routes.get(0);
+            User owner = users.get(first.getUserId());
+            String ownerName = routes.stream().map(DomainRoute::getUserId).distinct().count() > 1
+                    ? "多个用户" : owner == null ? "未知用户" : owner.getUser();
+            String domains = routes.stream().map(DomainRoute::getDomain).limit(3).collect(Collectors.joining("、"));
+            if (routes.size() > 3) domains += " 等 " + routes.size() + " 个域名";
+            add(entries, nodeEntry("domain_ingress", "occupied", nodes.get(first.getNodeId()),
+                    first.getListenPort(), first.getListenPort(), "tcp", first.getUserId(), ownerName,
+                    first.getId(), "TLS 域名入口", domains, first.getCreatedTime(), null));
         }
     }
 

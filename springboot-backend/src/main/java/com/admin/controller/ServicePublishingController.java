@@ -3,6 +3,7 @@ package com.admin.controller;
 import com.admin.common.annotation.RequireRole;
 import com.admin.common.aop.LogAnnotation;
 import com.admin.common.dto.InternalConnectorCreateDto;
+import com.admin.common.dto.DomainRouteCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
@@ -104,6 +105,21 @@ public class ServicePublishingController {
     @LogAnnotation @PostMapping("/service/delete")
     public R deleteService(@RequestBody Map<String, Object> params) {
         return service.deletePublishedService(Long.valueOf(params.get("id").toString()));
+    }
+
+    @LogAnnotation @PostMapping("/domain/create")
+    public R createDomainRoute(@Validated @RequestBody DomainRouteCreateDto dto) {
+        return service.createDomainRoute(dto);
+    }
+
+    @LogAnnotation @PostMapping("/domain/list")
+    public R listDomainRoutes() {
+        return service.listDomainRoutes();
+    }
+
+    @LogAnnotation @PostMapping("/domain/delete")
+    public R deleteDomainRoute(@RequestBody Map<String, Object> params) {
+        return service.deleteDomainRoute(Long.valueOf(params.get("id").toString()));
     }
 
     @PostMapping("/service/events")

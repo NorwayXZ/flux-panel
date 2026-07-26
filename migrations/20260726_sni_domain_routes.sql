@@ -1,0 +1,19 @@
+CREATE TABLE IF NOT EXISTS domain_route (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  user_id int NOT NULL,
+  name varchar(100) NOT NULL,
+  domain varchar(253) NOT NULL,
+  published_service_id bigint NOT NULL,
+  node_id bigint NOT NULL,
+  listen_port int NOT NULL DEFAULT 443,
+  service_name varchar(120) NOT NULL,
+  state varchar(24) NOT NULL,
+  last_error varchar(500) DEFAULT NULL,
+  created_time bigint NOT NULL,
+  updated_time bigint NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_domain_node_port (node_id, listen_port, domain),
+  KEY idx_domain_user (user_id, state),
+  KEY idx_domain_entry (node_id, listen_port, state),
+  KEY idx_domain_mapping (published_service_id, state)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

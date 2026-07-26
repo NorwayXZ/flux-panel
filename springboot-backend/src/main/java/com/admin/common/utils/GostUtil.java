@@ -2,6 +2,7 @@ package com.admin.common.utils;
 
 import com.admin.common.dto.GostConfigDto;
 import com.admin.common.dto.GostDto;
+import com.admin.common.dto.SniRouteTargetDto;
 import com.admin.entity.Tunnel;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
@@ -12,6 +13,21 @@ import java.util.Objects;
 import java.util.List;
 
 public class GostUtil {
+
+    public static GostDto ConfigureDomainIngress(Long nodeId, String serviceName, String bindIp, Integer port,
+                                                 List<SniRouteTargetDto> targets, boolean update) {
+        JSONArray services = new JSONArray();
+        services.add(SniDomainUtil.buildIngressService(serviceName, bindIp, port, targets));
+        return WebSocketServer.send_msg(nodeId, services, update ? "UpdateService" : "AddService");
+    }
+
+    public static GostDto DeleteDomainIngress(Long nodeId, String serviceName) {
+        JSONObject data = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        data.put("services", services);
+        return WebSocketServer.send_msg(nodeId, data, "DeleteService");
+    }
 
     public static GostDto AddPublishingGateway(Long nodeId, String name, String bindIp, Integer port,
                                                String username, String password) {

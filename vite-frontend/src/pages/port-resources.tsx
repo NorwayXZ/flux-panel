@@ -180,6 +180,7 @@ export default function PortResourcesPage() {
             <SelectItem key="forward_entry">转发入口</SelectItem>
             <SelectItem key="tunnel_hop">隧道跳点</SelectItem>
             <SelectItem key="published_service">内网映射</SelectItem>
+            <SelectItem key="domain_ingress">域名入口</SelectItem>
             <SelectItem key="pool_control">控制端口</SelectItem>
             <SelectItem key="pool_range">端口池范围</SelectItem>
             <SelectItem key="user_grant">用户授权</SelectItem>
@@ -241,7 +242,7 @@ export default function PortResourcesPage() {
 
 const typeLabels: Record<string, string> = {
   forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '内网映射',
-  pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权',
+  pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权', domain_ingress: '域名入口',
 };
 
 const statusColors: Record<string, 'danger' | 'primary' | 'secondary' | 'warning' | 'default'> = {

@@ -2493,6 +2493,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             }
         }
 
+        if (!namespaceNodeIds.isEmpty()) {
+            String placeholders = namespaceNodeIds.stream().map(item -> "?").collect(Collectors.joining(","));
+            List<Object> args = new ArrayList<>(namespaceNodeIds);
+            List<Integer> domainPorts = jdbcTemplate.queryForList(
+                    "SELECT DISTINCT listen_port FROM domain_route WHERE node_id IN (" + placeholders + ") AND state<>'deleted'",
+                    Integer.class, args.toArray());
+            usedPorts.addAll(domainPorts);
+        }
+
         return usedPorts;
     }
 

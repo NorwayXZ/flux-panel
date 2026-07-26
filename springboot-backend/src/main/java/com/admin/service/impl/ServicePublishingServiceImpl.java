@@ -1,10 +1,13 @@
 package com.admin.service.impl;
 
 import com.admin.common.dto.GostDto;
+import com.admin.common.dto.DomainRouteCreateDto;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
+import com.admin.common.dto.PortLedgerEntryDto;
+import com.admin.common.dto.SniRouteTargetDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.AgentVersionUtil;
@@ -12,8 +15,10 @@ import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.ConnectorInstallCommandUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
+import com.admin.common.utils.SniDomainUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.InternalConnector;
+import com.admin.entity.DomainRoute;
 import com.admin.entity.Node;
 import com.admin.entity.PortLease;
 import com.admin.entity.PortLeaseEvent;
@@ -23,6 +28,7 @@ import com.admin.entity.PublishedService;
 import com.admin.entity.User;
 import com.admin.entity.ViteConfig;
 import com.admin.mapper.InternalConnectorMapper;
+import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseEventMapper;
 import com.admin.mapper.PortLeaseMapper;
@@ -67,6 +73,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Resource private PortLeaseMapper leaseMapper;
     @Resource private PortLeaseEventMapper eventMapper;
     @Resource private PublishedServiceMapper publishedServiceMapper;
+    @Resource private DomainRouteMapper domainRouteMapper;
     @Resource private NodeMapper nodeMapper;
     @Resource private UserMapper userMapper;
     @Resource private ViteConfigMapper viteConfigMapper;
@@ -157,6 +164,12 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         }
         if (forwardRangeConflict(namespaceNodeIds, dto.getStartPort(), dto.getEndPort(), dto.getControlPort())) {
             return R.err("端口范围或控制端口已被现有转发使用");
+        }
+        if (domainRangeConflict(namespaceNodeIds, dto.getStartPort(), dto.getEndPort(), dto.getControlPort())) {
+            return R.err("端口范围或控制端口已被域名入口使用");
+        }
+        if (ledgerRangeConflict(dto.getNodeId(), dto.getStartPort(), dto.getEndPort(), dto.getControlPort())) {
+            return R.err("端口范围或控制端口已被转发、隧道跳点或其他端口资源使用");
         }
         AgentPortCheckUtil.Result controlCheck = AgentPortCheckUtil.check(node,
                 List.of(new AgentPortCheckUtil.Check("tcp", bindIp, dto.getControlPort())));
@@ -404,9 +417,109 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         PublishedService service = ownedService(id);
         if (service == null) return R.err("内网映射不存在或无权访问");
         if ("deleted".equals(service.getState())) return R.ok();
+        Integer domainCount = domainRouteMapper.selectCount(new QueryWrapper<DomainRoute>()
+                .eq("published_service_id", id).ne("state", "deleted"));
+        if (domainCount != null && domainCount > 0) {
+            return R.err("该映射仍被域名入口使用，请先删除相关域名入口");
+        }
         if (!cleanupService(service, true)) {
             return R.ok(enrich(publishedServiceMapper.selectById(id)));
         }
+        return R.ok();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R createDomainRoute(DomainRouteCreateDto dto) {
+        portAllocationLockMapper.lockForUpdate();
+        jdbcTemplate.queryForObject("SELECT id FROM service_publish_lock WHERE id=1 FOR UPDATE", Integer.class);
+        PublishedService mapping = publishedServiceMapper.selectById(dto.getPublishedServiceId());
+        if (mapping == null || !"active".equals(mapping.getState())
+                || (!isAdmin() && !Objects.equals(mapping.getUserId(), currentUserId()))) {
+            return R.err("内网映射不存在、不可用或无权访问");
+        }
+        PortPool pool = poolMapper.selectById(mapping.getPoolId());
+        if (pool == null || pool.getStatus() == 0) return R.err("映射对应的端口资源已停用");
+        Node requestedNode = nodeMapper.selectById(pool.getNodeId());
+        if (requestedNode == null) return R.err("映射对应的公网节点不存在");
+
+        final String domain;
+        try {
+            domain = SniDomainUtil.normalizeDomain(dto.getDomain());
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+        Set<Long> namespaceIds = namespaceNodeIds(requestedNode.getId());
+        List<DomainRoute> entryRoutes = domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
+                .in("node_id", namespaceIds).eq("listen_port", dto.getListenPort()).ne("state", "deleted")
+                .orderByAsc("created_time"));
+        if (entryRoutes.stream().anyMatch(item -> domain.equalsIgnoreCase(item.getDomain()))) {
+            return R.err("该公网入口已经配置了相同域名");
+        }
+
+        DomainRoute existingEntry = entryRoutes.stream()
+                .filter(item -> List.of("active", "provisioning").contains(item.getState()))
+                .findFirst().orElse(null);
+        Long entryNodeId = existingEntry == null ? requestedNode.getId() : existingEntry.getNodeId();
+        Node entryNode = nodeMapper.selectById(entryNodeId);
+        if (entryNode == null) return R.err("域名入口节点不存在");
+        if (!WebSocketServer.isNodeOnline(entryNodeId)) return R.err("公网节点离线，暂时不能配置域名入口");
+
+        if (existingEntry == null) {
+            Map<String, Object> ledger = portLedgerService.diagnose(entryNodeId, dto.getListenPort());
+            if (Boolean.TRUE.equals(ledger.get("occupied"))) return R.err("监听端口已被转发、隧道跳点或端口资源占用");
+            AgentPortCheckUtil.Result check = AgentPortCheckUtil.check(entryNode,
+                    List.of(new AgentPortCheckUtil.Check("tcp", "", dto.getListenPort())));
+            if (!check.isAvailable()) return R.err(check.getMessage() + conflictSuffix(check));
+        }
+
+        long now = System.currentTimeMillis();
+        DomainRoute route = new DomainRoute();
+        route.setUserId(currentUserId());
+        route.setName(dto.getName().trim());
+        route.setDomain(domain);
+        route.setPublishedServiceId(mapping.getId());
+        route.setNodeId(entryNodeId);
+        route.setListenPort(dto.getListenPort());
+        route.setServiceName(existingEntry == null ? domainIngressName(entryNodeId, dto.getListenPort()) : existingEntry.getServiceName());
+        route.setState("provisioning");
+        route.setCreatedTime(now);
+        route.setUpdatedTime(now);
+        try {
+            domainRouteMapper.insert(route);
+        } catch (DuplicateKeyException e) {
+            return R.err("该域名入口刚刚被其他任务创建，请刷新后重试");
+        }
+
+        GostDto result = configureDomainIngress(entryNodeId, dto.getListenPort(), route.getServiceName(), existingEntry != null);
+        if (!gostSuccess(result)) throw new IllegalStateException("创建域名入口失败：" + gostMessage(result));
+        route.setState("active");
+        route.setLastError(null);
+        route.setUpdatedTime(System.currentTimeMillis());
+        domainRouteMapper.updateById(route);
+        return R.ok(enrichDomainRoute(route));
+    }
+
+    @Override
+    public R listDomainRoutes() {
+        QueryWrapper<DomainRoute> query = new QueryWrapper<DomainRoute>().ne("state", "deleted").orderByDesc("created_time");
+        if (!isAdmin()) query.eq("user_id", currentUserId());
+        List<DomainRoute> routes = domainRouteMapper.selectList(query);
+        routes.replaceAll(this::enrichDomainRoute);
+        return R.ok(routes);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R deleteDomainRoute(Long id) {
+        DomainRoute route = ownedDomainRoute(id);
+        if (route == null) return R.err("域名入口不存在或无权访问");
+        if ("deleted".equals(route.getState())) return R.ok();
+        route.setState("delete_pending");
+        route.setLastError("等待公网节点移除域名入口");
+        route.setUpdatedTime(System.currentTimeMillis());
+        domainRouteMapper.updateById(route);
+        if (!cleanupDomainRoute(route)) return R.ok(enrichDomainRoute(route));
         return R.ok();
     }
 
@@ -456,6 +569,14 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
                 service.setUpdatedTime(now);
                 publishedServiceMapper.updateById(service);
                 recordEvent(lease, service, "released", "端口冷却结束，已返回端口池");
+            }
+        }
+        for (DomainRoute route : domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
+                .eq("state", "delete_pending").orderByAsc("updated_time").last("LIMIT 100"))) {
+            try {
+                cleanupDomainRoute(route);
+            } catch (Exception e) {
+                log.warn("清理域名入口 {} 失败: {}", route.getId(), e.getMessage());
             }
         }
     }
@@ -520,6 +641,84 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         return service;
     }
 
+    private DomainRoute enrichDomainRoute(DomainRoute route) {
+        User owner = userMapper.selectById(route.getUserId());
+        Node node = nodeMapper.selectById(route.getNodeId());
+        PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
+        PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
+        InternalConnector connector = mapping == null ? null : connectorMapper.selectById(mapping.getConnectorId());
+        route.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+        route.setOwnerRoleId(owner == null ? null : owner.getRoleId());
+        route.setNodeName(node == null ? "节点已删除" : node.getName());
+        route.setNodeOnline(node != null && WebSocketServer.isNodeOnline(node.getId()));
+        route.setPublicHost(pool == null ? null : pool.getPublicHost());
+        route.setMappingName(mapping == null ? "映射已删除" : mapping.getName());
+        route.setMappingState(mapping == null ? "deleted" : mapping.getState());
+        route.setMappingPublicPort(mapping == null ? null : mapping.getPublicPort());
+        route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
+        return route;
+    }
+
+    private GostDto configureDomainIngress(Long nodeId, Integer listenPort, String serviceName, boolean update) {
+        List<SniRouteTargetDto> targets = new ArrayList<>();
+        List<DomainRoute> routes = domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
+                .eq("node_id", nodeId).eq("listen_port", listenPort)
+                .in("state", "active", "provisioning").orderByAsc("created_time"));
+        for (DomainRoute route : routes) {
+            PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
+            PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
+            if (mapping == null || pool == null || mapping.getPublicPort() == null) continue;
+            targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), localPublishedTarget(pool, mapping.getPublicPort())));
+        }
+        if (targets.isEmpty()) return GostUtil.DeleteDomainIngress(nodeId, serviceName);
+        return GostUtil.ConfigureDomainIngress(nodeId, serviceName, "", listenPort, targets, update);
+    }
+
+    private boolean cleanupDomainRoute(DomainRoute route) {
+        if (nodeMapper.selectById(route.getNodeId()) == null) {
+            route.setState("deleted");
+            route.setLastError(null);
+            route.setUpdatedTime(System.currentTimeMillis());
+            domainRouteMapper.updateById(route);
+            return true;
+        }
+        if (!WebSocketServer.isNodeOnline(route.getNodeId())) {
+            route.setLastError("公网节点离线，恢复连接后将自动删除");
+            route.setUpdatedTime(System.currentTimeMillis());
+            domainRouteMapper.updateById(route);
+            return false;
+        }
+        GostDto result = configureDomainIngress(route.getNodeId(), route.getListenPort(), route.getServiceName(), true);
+        if (!gostCleanupSuccess(result)) {
+            route.setLastError("删除域名入口失败：" + gostMessage(result));
+            route.setUpdatedTime(System.currentTimeMillis());
+            domainRouteMapper.updateById(route);
+            return false;
+        }
+        route.setState("deleted");
+        route.setLastError(null);
+        route.setUpdatedTime(System.currentTimeMillis());
+        domainRouteMapper.updateById(route);
+        return true;
+    }
+
+    private String localPublishedTarget(PortPool pool, int port) {
+        String bindIp = StringUtils.trimToEmpty(pool.getBindIp());
+        String host = StringUtils.isBlank(bindIp) || "0.0.0.0".equals(bindIp) || "::".equals(bindIp)
+                || "[::]".equals(bindIp) ? "127.0.0.1" : stripBrackets(bindIp);
+        return hostPort(host, port);
+    }
+
+    private DomainRoute ownedDomainRoute(Long id) {
+        DomainRoute route = domainRouteMapper.selectById(id);
+        if (route == null || (!isAdmin() && !Objects.equals(route.getUserId(), currentUserId()))) return null;
+        return route;
+    }
+
+    private String domainIngressName(Long nodeId, Integer port) {
+        return "domain_ingress_" + nodeId + "_" + port;
+    }
+
     private int allocatePort(PortPool pool, Integer requested, PortPoolGrant grant) {
         int startPort = grant == null ? pool.getStartPort() : grant.getStartPort();
         int endPort = grant == null ? pool.getEndPort() : grant.getEndPort();
@@ -531,14 +730,16 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         Set<Integer> grantedToUsers = grant == null ? portPoolGrantService.grantedPorts(pool.getId()) : Set.of();
         if (requested != null) {
             if (used.contains(requested) || grantedToUsers.contains(requested)
-                    || forwardPortConflict(namespaceNodeIds(pool.getNodeId()), requested)) {
+                    || forwardPortConflict(namespaceNodeIds(pool.getNodeId()), requested)
+                    || domainPortConflict(namespaceNodeIds(pool.getNodeId()), requested)) {
                 throw new IllegalStateException("指定端口已被占用");
             }
             return requested;
         }
         for (int port = startPort; port <= endPort; port++) {
             if (!used.contains(port) && !grantedToUsers.contains(port)
-                    && !forwardPortConflict(namespaceNodeIds(pool.getNodeId()), port)) return port;
+                    && !forwardPortConflict(namespaceNodeIds(pool.getNodeId()), port)
+                    && !domainPortConflict(namespaceNodeIds(pool.getNodeId()), port)) return port;
         }
         throw new IllegalStateException("当前端口资源没有可用端口");
     }
@@ -571,6 +772,33 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             if (count != null && count > 0) return true;
         }
         return false;
+    }
+
+    private boolean domainPortConflict(Set<Long> nodeIds, int port) {
+        Integer count = domainRouteMapper.selectCount(new QueryWrapper<DomainRoute>()
+                .in("node_id", nodeIds).eq("listen_port", port).ne("state", "deleted"));
+        return count != null && count > 0;
+    }
+
+    private boolean domainRangeConflict(Set<Long> nodeIds, int start, int end, int controlPort) {
+        Integer count = domainRouteMapper.selectCount(new QueryWrapper<DomainRoute>()
+                .in("node_id", nodeIds).ne("state", "deleted")
+                .and(q -> q.between("listen_port", start, end).or().eq("listen_port", controlPort)));
+        return count != null && count > 0;
+    }
+
+    private boolean ledgerRangeConflict(Long nodeId, int start, int end, int controlPort) {
+        PortLedgerQueryDto query = new PortLedgerQueryDto();
+        query.setNodeId(nodeId);
+        Map<String, Object> result = portLedgerService.list(query);
+        @SuppressWarnings("unchecked")
+        List<PortLedgerEntryDto> entries = (List<PortLedgerEntryDto>) result.get("entries");
+        return entries != null && entries.stream().anyMatch(item -> rangesOverlap(start, end, item.getPortStart(), item.getPortEnd())
+                || (controlPort >= item.getPortStart() && controlPort <= item.getPortEnd()));
+    }
+
+    private boolean rangesOverlap(int firstStart, int firstEnd, int secondStart, int secondEnd) {
+        return firstStart <= secondEnd && firstEnd >= secondStart;
     }
 
     private Set<Long> namespaceNodeIds(Long nodeId) {

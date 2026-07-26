@@ -357,7 +357,27 @@ export interface PublishedService {
   lastError?: string;
 }
 
-export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service';
+export interface DomainRoute {
+  id: number;
+  name: string;
+  domain: string;
+  ownerUserName: string;
+  ownerRoleId?: number;
+  publishedServiceId: number;
+  mappingName: string;
+  mappingState: string;
+  mappingPublicPort?: number;
+  nodeId: number;
+  nodeName: string;
+  nodeOnline: boolean;
+  connectorOnline: boolean;
+  publicHost?: string;
+  listenPort: number;
+  state: string;
+  lastError?: string;
+}
+
+export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress';
 
 export interface PortLedgerEntry {
   key: string;
@@ -416,6 +436,12 @@ export const renewPublishedService = (id: number, hours?: number, permanent = fa
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
+export const createDomainRoute = (data: { name: string; domain: string; publishedServiceId: number; listenPort: number }) =>
+  Network.post<DomainRoute>("/service-publishing/domain/create", data);
+export const getDomainRoutes = () =>
+  Network.post<DomainRoute[]>("/service-publishing/domain/list");
+export const deleteDomainRoute = (id: number) =>
+  Network.post("/service-publishing/domain/delete", { id });
 
 
 // 验证码相关接口

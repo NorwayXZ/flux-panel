@@ -3,9 +3,12 @@ package com.admin.service;
 import com.admin.common.dto.PortLedgerEntryDto;
 import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.entity.Forward;
+import com.admin.entity.DomainRoute;
 import com.admin.entity.Node;
 import com.admin.entity.Tunnel;
+import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
+import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseMapper;
 import com.admin.mapper.PortPoolGrantMapper;
@@ -38,6 +41,7 @@ class PortLedgerServiceTests {
     @Mock private PortLeaseMapper leaseMapper;
     @Mock private PublishedServiceMapper serviceMapper;
     @Mock private UserMapper userMapper;
+    @Mock private DomainRouteMapper domainRouteMapper;
 
     @InjectMocks private PortLedgerService service;
 
@@ -73,6 +77,7 @@ class PortLedgerServiceTests {
         when(forwardMapper.selectList(any())).thenReturn(List.of(forward));
         when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(domainRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         PortLedgerQueryDto query = new PortLedgerQueryDto();
         query.setNodeId(2L);
@@ -83,6 +88,48 @@ class PortLedgerServiceTests {
         assertEquals(2, entries.size());
         assertTrue(entries.stream().anyMatch(item -> item.getPortStart() == 12000 && "forward_entry".equals(item.getType())));
         assertTrue(entries.stream().anyMatch(item -> item.getPortStart() == 13000 && "tunnel_hop".equals(item.getType())));
+    }
+
+    @Test
+    void groupsDomainsSharingOneTlsIngressIntoOneLedgerEntry() {
+        Node node = node(8L, "公网入口", "203.0.113.8");
+        User user = new User();
+        user.setId(7L);
+        user.setUser("user-a");
+        DomainRoute first = domainRoute(1L, 7, "a.example.com");
+        DomainRoute second = domainRoute(2L, 7, "b.example.com");
+
+        when(nodeMapper.selectList(null)).thenReturn(List.of(node));
+        when(tunnelMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(userMapper.selectList(null)).thenReturn(List.of(user));
+        when(poolMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(serviceMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(forwardMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(domainRouteMapper.selectList(any())).thenReturn(List.of(first, second));
+
+        Map<String, Object> result = service.list(new PortLedgerQueryDto());
+        @SuppressWarnings("unchecked")
+        List<PortLedgerEntryDto> entries = (List<PortLedgerEntryDto>) result.get("entries");
+
+        assertEquals(1, entries.size());
+        assertEquals("domain_ingress", entries.get(0).getType());
+        assertEquals(443, entries.get(0).getPortStart());
+        assertTrue(entries.get(0).getDetail().contains("a.example.com"));
+        assertTrue(entries.get(0).getDetail().contains("b.example.com"));
+    }
+
+    private DomainRoute domainRoute(Long id, Integer userId, String domain) {
+        DomainRoute route = new DomainRoute();
+        route.setId(id);
+        route.setUserId(userId);
+        route.setDomain(domain);
+        route.setNodeId(8L);
+        route.setListenPort(443);
+        route.setState("active");
+        route.setCreatedTime(1000L + id);
+        return route;
     }
 
     private Node node(Long id, String name, String serverIp) {
