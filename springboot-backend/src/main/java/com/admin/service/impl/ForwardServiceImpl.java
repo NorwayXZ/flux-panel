@@ -8,6 +8,7 @@ import com.admin.common.dto.ForwardWithTunnelDto;
 import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.ForwardRouteFailoverPolicy;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
@@ -156,6 +157,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         );
         if (routeAllocation.isHasError()) {
             return R.err(routeAllocation.getErrorMessage());
+        }
+        R systemPortCheck = validateAgentPorts(routeValidation.getTunnels(), routeAllocation.getRoutes(),
+                portAllocation.getInPort(), normalizeProtocolMode(forwardDto.getProtocolMode()));
+        if (systemPortCheck.getCode() != 0) {
+            return systemPortCheck;
         }
 
         // 5. 创建并保存Forward对象
@@ -1203,6 +1209,55 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return protocolMode;
         }
         return PROTOCOL_MODE_TCP_UDP;
+    }
+
+    private R validateAgentPorts(List<Tunnel> tunnels, List<ForwardRouteDto> routes, Integer inPort, String protocolMode) {
+        if (tunnels.isEmpty() || inPort == null) return R.err("端口分配结果不完整");
+        Map<Long, Node> nodes = nodeService.list().stream()
+                .collect(Collectors.toMap(Node::getId, node -> node, (a, b) -> a));
+        Map<Integer, Tunnel> tunnelMap = tunnels.stream()
+                .collect(Collectors.toMap(tunnel -> tunnel.getId().intValue(), tunnel -> tunnel, (a, b) -> a));
+        Map<Long, List<AgentPortCheckUtil.Check>> checksByNode = new LinkedHashMap<>();
+
+        Tunnel primary = tunnels.get(0);
+        if ("tcp".equals(protocolMode) || PROTOCOL_MODE_TCP_UDP.equals(protocolMode)) {
+            addAgentPortCheck(checksByNode, primary.getInNodeId(), "tcp", primary.getTcpListenAddr(), inPort);
+        }
+        if ("udp".equals(protocolMode) || PROTOCOL_MODE_TCP_UDP.equals(protocolMode)) {
+            addAgentPortCheck(checksByNode, primary.getInNodeId(), "udp", primary.getUdpListenAddr(), inPort);
+        }
+
+        for (ForwardRouteDto route : routes) {
+            Tunnel tunnel = tunnelMap.get(route.getTunnelId());
+            if (tunnel == null) continue;
+            List<Long> path = TunnelRouteUtil.parseNodePath(tunnel);
+            List<Integer> ports = TunnelRouteUtil.parseHopPorts(route.getHopPorts());
+            String network = "quic".equalsIgnoreCase(tunnel.getProtocol()) ? "udp" : "tcp";
+            for (int i = 1; i < path.size() && i - 1 < ports.size(); i++) {
+                addAgentPortCheck(checksByNode, path.get(i), network, "", ports.get(i - 1));
+            }
+        }
+
+        for (Map.Entry<Long, List<AgentPortCheckUtil.Check>> item : checksByNode.entrySet()) {
+            Node node = nodes.get(item.getKey());
+            AgentPortCheckUtil.Result result = AgentPortCheckUtil.check(node, item.getValue());
+            if (!result.isAvailable()) {
+                String nodeName = node == null ? "节点 " + item.getKey() : node.getName();
+                String details = result.getConflicts().isEmpty() ? "" : "（" + String.join("；", result.getConflicts()) + "）";
+                return R.err(nodeName + "：" + result.getMessage() + details);
+            }
+        }
+        return R.ok();
+    }
+
+    private void addAgentPortCheck(Map<Long, List<AgentPortCheckUtil.Check>> checksByNode, Long nodeId,
+                                   String network, String host, Integer port) {
+        if (nodeId == null || port == null) return;
+        AgentPortCheckUtil.Check check = new AgentPortCheckUtil.Check(network, host, port);
+        List<AgentPortCheckUtil.Check> checks = checksByNode.computeIfAbsent(nodeId, key -> new ArrayList<>());
+        boolean duplicate = checks.stream().anyMatch(existing -> Objects.equals(existing.getNetwork(), check.getNetwork())
+                && Objects.equals(existing.getHost(), check.getHost()) && Objects.equals(existing.getPort(), check.getPort()));
+        if (!duplicate) checks.add(check);
     }
 
     private RouteAllocationResult allocateRouteConfigs(List<Tunnel> tunnels, PortAllocation primaryAllocation, Long excludeForwardId) {

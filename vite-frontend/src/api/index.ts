@@ -322,6 +322,37 @@ export interface PublishedService {
   lastError?: string;
 }
 
+export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service';
+
+export interface PortLedgerEntry {
+  key: string;
+  type: PortLedgerType;
+  status: 'occupied' | 'reserved' | 'granted' | 'cooldown';
+  nodeId: number;
+  nodeName: string;
+  namespace: string;
+  serverAddress: string;
+  portStart: number;
+  portEnd: number;
+  protocol: string;
+  ownerUserId?: number;
+  ownerUserName: string;
+  resourceId: number;
+  resourceName: string;
+  detail: string;
+  createdTime?: number;
+  expiresAt?: number;
+}
+
+export interface PortLedgerResult {
+  entries: PortLedgerEntry[];
+  summary: Record<string, number>;
+  total: number;
+  occupied?: boolean;
+  nodeId?: number;
+  port?: number;
+}
+
 export const createInternalConnector = (data: { name: string; allowedCidrs?: string; platform: ConnectorPlatform }) =>
   Network.post<{ connector: InternalConnector; installCommand: string }>("/service-publishing/connector/create", data);
 export const getInternalConnectors = () =>
@@ -338,6 +369,10 @@ export const getPublishingPortGrants = (userId?: number) =>
   Network.post<PublishingPortGrant[]>("/service-publishing/grant/list", userId ? { userId } : {});
 export const deletePublishingPortPool = (id: number) =>
   Network.post("/service-publishing/pool/delete", { id });
+export const getPortLedger = (data: { nodeId?: number; port?: number; type?: string; keyword?: string } = {}) =>
+  Network.post<PortLedgerResult>("/service-publishing/ledger/list", data);
+export const diagnosePort = (nodeId: number, port: number) =>
+  Network.post<PortLedgerResult>("/service-publishing/ledger/diagnose", { nodeId, port });
 export const createPublishedService = (data: any) =>
   Network.post<PublishedService>("/service-publishing/service/create", data);
 export const getPublishedServices = () =>

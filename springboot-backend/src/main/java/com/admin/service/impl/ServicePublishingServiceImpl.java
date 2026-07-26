@@ -4,9 +4,11 @@ import com.admin.common.dto.GostDto;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
+import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.AgentVersionUtil;
+import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.ConnectorInstallCommandUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
@@ -31,6 +33,7 @@ import com.admin.mapper.UserMapper;
 import com.admin.mapper.ViteConfigMapper;
 import com.admin.service.ServicePublishingService;
 import com.admin.service.PortPoolGrantService;
+import com.admin.service.PortLedgerService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +73,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Resource private JdbcTemplate jdbcTemplate;
     @Resource private PortAllocationLockMapper portAllocationLockMapper;
     @Resource private PortPoolGrantService portPoolGrantService;
+    @Resource private PortLedgerService portLedgerService;
 
     @Override
     public R createConnector(InternalConnectorCreateDto dto) {
@@ -153,6 +157,11 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         }
         if (forwardRangeConflict(namespaceNodeIds, dto.getStartPort(), dto.getEndPort(), dto.getControlPort())) {
             return R.err("端口范围或控制端口已被现有转发使用");
+        }
+        AgentPortCheckUtil.Result controlCheck = AgentPortCheckUtil.check(node,
+                List.of(new AgentPortCheckUtil.Check("tcp", bindIp, dto.getControlPort())));
+        if (!controlCheck.isAvailable()) {
+            return R.err(controlCheck.getMessage() + conflictSuffix(controlCheck));
         }
 
         long now = System.currentTimeMillis();
@@ -281,6 +290,12 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             if (grant == null) return R.err("端口资源未分配给当前用户或已被收回");
         }
         int port = allocatePort(pool, dto.getRequestedPort(), grant);
+        Node publicNode = nodeMapper.selectById(pool.getNodeId());
+        AgentPortCheckUtil.Result publicPortCheck = AgentPortCheckUtil.check(publicNode,
+                List.of(new AgentPortCheckUtil.Check("tcp", pool.getBindIp(), port)));
+        if (!publicPortCheck.isAvailable()) {
+            return R.err(publicPortCheck.getMessage() + conflictSuffix(publicPortCheck));
+        }
         long now = System.currentTimeMillis();
         Long expiresAt = permanent ? null : now + leaseHours * 3600000L;
 
@@ -401,6 +416,17 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (service == null) return R.err("发布服务不存在或无权访问");
         return R.ok(eventMapper.selectList(new QueryWrapper<PortLeaseEvent>()
                 .eq("service_id", serviceId).orderByDesc("created_time").last("LIMIT 100")));
+    }
+
+    @Override
+    public R listPortLedger(PortLedgerQueryDto query) {
+        return R.ok(portLedgerService.list(query));
+    }
+
+    @Override
+    public R diagnosePort(Long nodeId, Integer port) {
+        if (nodeId == null || port == null || port < 1 || port > 65535) return R.err("节点和端口参数不正确");
+        return R.ok(portLedgerService.diagnose(nodeId, port));
     }
 
     @Override
@@ -661,6 +687,10 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
 
     private String gostMessage(GostDto result) {
         return result == null ? "Agent 无响应" : StringUtils.defaultIfBlank(result.getMsg(), "Agent 无响应");
+    }
+
+    private String conflictSuffix(AgentPortCheckUtil.Result result) {
+        return result.getConflicts().isEmpty() ? "" : "（" + String.join("；", result.getConflicts()) + "）";
     }
 
     private String randomHex(int bytes) {

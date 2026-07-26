@@ -4,7 +4,8 @@ import { Input } from '@heroui/input';
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
-import { Boxes, Plus, Share2, Trash2 } from 'lucide-react';
+import { Chip } from '@heroui/chip';
+import { Boxes, CircleGauge, Plus, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -13,6 +14,10 @@ import {
   getNodeList,
   getPublishingPortGrants,
   getPublishingPortPools,
+  getPortLedger,
+  diagnosePort,
+  type PortLedgerEntry,
+  type PortLedgerResult,
   type PublishingPortGrant,
   type PublishingPortPool,
 } from '@/api';
@@ -26,6 +31,11 @@ export default function PortResourcesPage() {
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [grants, setGrants] = useState<PublishingPortGrant[]>([]);
   const [nodes, setNodes] = useState<NodeOption[]>([]);
+  const [ledger, setLedger] = useState<PortLedgerResult>({ entries: [], summary: {}, total: 0 });
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [diagnosis, setDiagnosis] = useState<PortLedgerResult | null>(null);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [filters, setFilters] = useState({ nodeId: '', port: '', type: 'all', keyword: '' });
   const [form, setForm] = useState({
     name: '', nodeId: '', publicHost: '', bindIp: '', startPort: '20000', endPort: '20999', controlPort: '21000', cooldownSeconds: '60',
   });
@@ -38,7 +48,37 @@ export default function PortResourcesPage() {
     if (nodeRes.code === 0) setNodes(nodeRes.data || []);
     setLoading(false);
   };
-  useEffect(() => { loadData(); }, []);
+  const loadLedger = async () => {
+    setLedgerLoading(true);
+    const response = await getPortLedger({
+      nodeId: filters.nodeId ? Number(filters.nodeId) : undefined,
+      port: filters.port ? Number(filters.port) : undefined,
+      type: filters.type === 'all' ? undefined : filters.type,
+      keyword: filters.keyword.trim() || undefined,
+    });
+    setLedgerLoading(false);
+    if (response.code === 0) setLedger(response.data || { entries: [], summary: {}, total: 0 });
+    else toast.error(response.msg || '加载全局端口账本失败');
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+      void loadLedger();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const runDiagnosis = async () => {
+    if (!filters.nodeId || !filters.port) return toast.error('请先选择节点并填写端口');
+    const port = Number(filters.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast.error('端口范围应为 1-65535');
+    const response = await diagnosePort(Number(filters.nodeId), port);
+    if (response.code !== 0) return toast.error(response.msg || '端口检查失败');
+    setDiagnosis(response.data);
+    setDiagnosisOpen(true);
+  };
 
   const selectNode = (id: string) => {
     const node = nodes.find(item => String(item.id) === id);
@@ -115,6 +155,52 @@ export default function PortResourcesPage() {
         )}
       </section>
 
+      <section className="space-y-4 border-t border-divider pt-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-base font-semibold"><CircleGauge size={18} className="text-primary" />全局端口账本</h2>
+            <p className="mt-1 text-xs text-default-500">同一服务器地址下的节点共用端口命名空间。账本同时追踪转发入口、隧道跳点、服务发布和用户授权。</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <Chip size="sm" variant="flat" color="danger">占用 {ledger.summary.occupied || 0}</Chip>
+            <Chip size="sm" variant="flat" color="primary">保留 {ledger.summary.reserved || 0}</Chip>
+            <Chip size="sm" variant="flat" color="secondary">授权 {ledger.summary.granted || 0}</Chip>
+            <Chip size="sm" variant="flat" color="warning">冷却 {ledger.summary.cooldown || 0}</Chip>
+          </div>
+        </div>
+
+        <div className="grid gap-3 border-y border-divider py-4 md:grid-cols-2 xl:grid-cols-[1.2fr_.8fr_1fr_1.4fr_auto_auto]">
+          <Select label="服务器节点" placeholder="全部节点" selectedKeys={filters.nodeId ? [filters.nodeId] : []}
+            onSelectionChange={keys => setFilters({ ...filters, nodeId: String(Array.from(keys)[0] || '') })}>
+            {nodes.map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · {node.serverIp || node.ip || '未设置地址'}</SelectItem>)}
+          </Select>
+          <Input label="端口" type="number" placeholder="例如 20000" value={filters.port} onValueChange={value => setFilters({ ...filters, port: value })} />
+          <Select label="记录类型" selectedKeys={[filters.type]} onSelectionChange={keys => setFilters({ ...filters, type: String(Array.from(keys)[0] || 'all') })}>
+            <SelectItem key="all">全部类型</SelectItem>
+            <SelectItem key="forward_entry">转发入口</SelectItem>
+            <SelectItem key="tunnel_hop">隧道跳点</SelectItem>
+            <SelectItem key="published_service">发布服务</SelectItem>
+            <SelectItem key="pool_control">控制端口</SelectItem>
+            <SelectItem key="pool_range">端口池范围</SelectItem>
+            <SelectItem key="user_grant">用户授权</SelectItem>
+          </Select>
+          <Input label="关键词" placeholder="名称、用户、地址" value={filters.keyword} onValueChange={value => setFilters({ ...filters, keyword: value })} />
+          <Button className="h-14" color="primary" startContent={<Search size={17} />} isLoading={ledgerLoading} onPress={loadLedger}>查询</Button>
+          <Button className="h-14" variant="flat" startContent={<ShieldCheck size={17} />} onPress={runDiagnosis}>检查端口</Button>
+        </div>
+
+        {ledgerLoading ? <div className="flex min-h-40 items-center justify-center"><Spinner /></div> : ledger.entries.length === 0 ? (
+          <div className="border-b border-divider py-12 text-center text-sm text-default-500">当前条件下没有端口占用记录</div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-divider">
+            <div className="hidden grid-cols-[1.1fr_.8fr_1fr_1fr_1.2fr_1.5fr] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 xl:grid">
+              <span>服务器</span><span>端口</span><span>用途</span><span>归属</span><span>资源</span><span>说明</span>
+            </div>
+            {ledger.entries.map(entry => <LedgerRow key={entry.key} entry={entry} />)}
+          </div>
+        )}
+      </section>
+
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>新建端口池</ModalHeader>
@@ -133,6 +219,43 @@ export default function PortResourcesPage() {
           <ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建</Button></ModalFooter>
         </ModalContent>
       </Modal>
+      <Modal isOpen={diagnosisOpen} onOpenChange={setDiagnosisOpen} size="2xl">
+        <ModalContent>
+          <ModalHeader>端口冲突诊断</ModalHeader>
+          <ModalBody>
+            <div className="flex items-center justify-between border-y border-divider py-4">
+              <div><div className="text-sm text-default-500">检查端口</div><div className="mt-1 font-mono text-xl">{diagnosis?.port}</div></div>
+              <Chip color={diagnosis?.occupied ? 'danger' : 'success'} variant="flat">{diagnosis?.occupied ? '面板账本已占用' : '面板账本可用'}</Chip>
+            </div>
+            {diagnosis?.entries?.length ? <div className="overflow-hidden rounded-lg border border-divider">
+              {diagnosis.entries.map(entry => <LedgerRow key={entry.key} entry={entry} compact />)}
+            </div> : <div className="py-8 text-center text-sm text-default-500">没有发现面板管理范围内的冲突</div>}
+            <p className="text-xs text-default-500">创建资源时，新版 Agent 还会检查服务器操作系统中的真实监听端口；这里展示的是面板全局账本。</p>
+          </ModalBody>
+          <ModalFooter><Button color="primary" onPress={() => setDiagnosisOpen(false)}>完成</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
+}
+
+const typeLabels: Record<string, string> = {
+  forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '发布服务',
+  pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权',
+};
+
+const statusColors: Record<string, 'danger' | 'primary' | 'secondary' | 'warning' | 'default'> = {
+  occupied: 'danger', reserved: 'primary', granted: 'secondary', cooldown: 'warning',
+};
+
+function LedgerRow({ entry, compact = false }: { entry: PortLedgerEntry; compact?: boolean }) {
+  const port = entry.portStart === entry.portEnd ? String(entry.portStart) : `${entry.portStart}-${entry.portEnd}`;
+  return <div className={`grid gap-3 border-t border-divider px-4 py-3 first:border-t-0 ${compact ? 'sm:grid-cols-[1fr_.8fr_1fr]' : 'xl:grid-cols-[1.1fr_.8fr_1fr_1fr_1.2fr_1.5fr] xl:items-center'}`}>
+    <div><div className="text-sm font-medium">{entry.nodeName}</div><div className="truncate text-xs text-default-500">{entry.serverAddress}</div></div>
+    <div><div className="font-mono text-sm">{port}</div><div className="text-xs uppercase text-default-500">{entry.protocol.replace('_', '+')}</div></div>
+    <div><Chip size="sm" variant="flat" color={statusColors[entry.status] || 'default'}>{typeLabels[entry.type] || entry.type}</Chip></div>
+    {!compact && <div><div className="text-sm">{entry.ownerUserName}</div><div className="text-xs text-default-500">用户 ID {entry.ownerUserId || '-'}</div></div>}
+    {!compact && <div><div className="truncate text-sm">{entry.resourceName}</div><div className="text-xs text-default-500">ID {entry.resourceId}</div></div>}
+    <div className="min-w-0 text-sm text-default-600">{entry.detail}</div>
+  </div>;
 }

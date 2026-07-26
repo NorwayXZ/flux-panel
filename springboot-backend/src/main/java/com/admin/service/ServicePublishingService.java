@@ -3,6 +3,7 @@ package com.admin.service;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
+import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.lang.R;
 
 public interface ServicePublishingService {
@@ -19,5 +20,7 @@ public interface ServicePublishingService {
     R renewPublishedService(Long id, Integer hours, boolean permanent);
     R deletePublishedService(Long id);
     R listLeaseEvents(Long serviceId);
+    R listPortLedger(PortLedgerQueryDto query);
+    R diagnosePort(Long nodeId, Integer port);
     void processLeaseLifecycle();
 }

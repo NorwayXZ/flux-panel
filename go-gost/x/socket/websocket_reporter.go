@@ -85,6 +85,28 @@ type TcpPingResponse struct {
 	RequestId    string  `json:"requestId,omitempty"`
 }
 
+type PortCheckRequest struct {
+	Checks []PortCheckItem `json:"checks"`
+}
+
+type PortCheckItem struct {
+	Network string `json:"network"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+}
+
+type PortCheckResult struct {
+	Network   string `json:"network"`
+	Address   string `json:"address"`
+	Available bool   `json:"available"`
+	Error     string `json:"error,omitempty"`
+}
+
+type PortCheckResponse struct {
+	Available bool              `json:"available"`
+	Results   []PortCheckResult `json:"results"`
+}
+
 type WebSocketReporter struct {
 	url             string
 	addr            string // 保存服务器地址
@@ -566,6 +588,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		tcpPingResult, err = w.handleTcpPing(cmd.Data)
 		response.Type = "TcpPingResponse"
 		response.Data = tcpPingResult
+
+	case "PortCheck":
+		var portCheckResult PortCheckResponse
+		portCheckResult, err = w.handlePortCheck(cmd.Data)
+		response.Type = "PortCheckResponse"
+		response.Data = portCheckResult
 
 	// Protocol blocking switches
 	case "SetProtocol":
@@ -1191,6 +1219,62 @@ func (w *WebSocketReporter) handleTcpPing(data interface{}) (TcpPingResponse, er
 	}
 
 	return response, nil
+}
+
+func (w *WebSocketReporter) handlePortCheck(data interface{}) (PortCheckResponse, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return PortCheckResponse{}, fmt.Errorf("serialize port check: %w", err)
+	}
+	var request PortCheckRequest
+	if err := json.Unmarshal(jsonData, &request); err != nil {
+		return PortCheckResponse{}, fmt.Errorf("parse port check: %w", err)
+	}
+	if len(request.Checks) == 0 || len(request.Checks) > 32 {
+		return PortCheckResponse{}, fmt.Errorf("port check requires 1-32 items")
+	}
+
+	response := PortCheckResponse{Available: true, Results: make([]PortCheckResult, 0, len(request.Checks))}
+	for _, check := range request.Checks {
+		result := checkLocalPort(check)
+		if !result.Available {
+			response.Available = false
+		}
+		response.Results = append(response.Results, result)
+	}
+	return response, nil
+}
+
+func checkLocalPort(check PortCheckItem) PortCheckResult {
+	network := strings.ToLower(strings.TrimSpace(check.Network))
+	if network != "tcp" && network != "udp" {
+		return PortCheckResult{Network: network, Available: false, Error: "network must be tcp or udp"}
+	}
+	if check.Port < 1 || check.Port > 65535 {
+		return PortCheckResult{Network: network, Available: false, Error: "port must be between 1 and 65535"}
+	}
+	host := strings.TrimSpace(check.Host)
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	address := net.JoinHostPort(host, strconv.Itoa(check.Port))
+	result := PortCheckResult{Network: network, Address: address, Available: true}
+	if network == "tcp" {
+		listener, err := net.Listen("tcp", address)
+		if err != nil {
+			result.Available = false
+			result.Error = err.Error()
+			return result
+		}
+		_ = listener.Close()
+		return result
+	}
+	listener, err := net.ListenPacket("udp", address)
+	if err != nil {
+		result.Available = false
+		result.Error = err.Error()
+		return result
+	}
+	_ = listener.Close()
+	return result
 }
 
 // tcpPingHost 执行TCP连接测试，返回平均连接时间和失败率

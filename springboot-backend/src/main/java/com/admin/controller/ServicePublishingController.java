@@ -5,6 +5,7 @@ import com.admin.common.aop.LogAnnotation;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
+import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.lang.R;
 import com.admin.service.ServicePublishingService;
 import org.springframework.validation.annotation.Validated;
@@ -63,6 +64,18 @@ public class ServicePublishingController {
     public R listGrants(@RequestBody(required = false) Map<String, Object> params) {
         Integer userId = params == null || params.get("userId") == null ? null : Integer.valueOf(params.get("userId").toString());
         return service.listPortGrants(userId);
+    }
+
+    @PostMapping("/ledger/list")
+    @RequireRole
+    public R listLedger(@RequestBody(required = false) PortLedgerQueryDto query) {
+        return service.listPortLedger(query == null ? new PortLedgerQueryDto() : query);
+    }
+
+    @PostMapping("/ledger/diagnose")
+    @RequireRole
+    public R diagnosePort(@RequestBody PortLedgerQueryDto query) {
+        return service.diagnosePort(query.getNodeId(), query.getPort());
     }
 
     @LogAnnotation @RequireRole @PostMapping("/pool/delete")
