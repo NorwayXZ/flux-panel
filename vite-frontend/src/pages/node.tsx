@@ -133,6 +133,7 @@ export default function NodePage() {
   const [protocolDisabled, setProtocolDisabled] = useState(false);
   const [protocolDisabledReason, setProtocolDisabledReason] = useState('');
   const [upgradeItems, setUpgradeItems] = useState<Record<number, AgentUpgradeStatusItem>>({});
+  const upgradeItemsRef = useRef<Record<number, AgentUpgradeStatusItem>>({});
   const [upgradeTargetVersion, setUpgradeTargetVersion] = useState('');
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
@@ -183,7 +184,15 @@ export default function NodePage() {
       const result = await getAgentUpgradeStatus();
       if (result.code !== 0) return;
       setUpgradeTargetVersion(result.data.targetVersion);
-      setUpgradeItems(Object.fromEntries((result.data.items || []).map(item => [item.nodeId, item])));
+      const nextItems = Object.fromEntries((result.data.items || []).map(item => [item.nodeId, item]));
+      (result.data.items || []).forEach(item => {
+        const previousState = upgradeItemsRef.current[item.nodeId]?.task?.state;
+        if (activeUpgradeStates.has(previousState || '') && item.task?.state === 'success') {
+          toast.success(`${item.nodeName} Agent 已升级到 ${item.currentVersion || item.targetVersion}`);
+        }
+      });
+      upgradeItemsRef.current = nextItems;
+      setUpgradeItems(nextItems);
     } catch {
       // 节点列表仍可独立使用，轮询将在下一周期重试。
     }
@@ -786,7 +795,14 @@ export default function NodePage() {
         const upgradeStatus = upgradeItems[node.id];
         const upgradeTask = upgradeStatus?.task;
         const upgradeActive = activeUpgradeStates.has(upgradeTask?.state || '');
-        const upgradeRetry = ['failed', 'rolled_back', 'timeout'].includes(upgradeTask?.state || '');
+        const upgradeTaskTargetsCurrent = upgradeTask?.targetVersion === upgradeTargetVersion;
+        const upgradeRetry = upgradeTaskTargetsCurrent
+          && ['failed', 'rolled_back', 'timeout'].includes(upgradeTask?.state || '');
+        const showUpgradeTask = Boolean(
+          upgradeTask
+          && !upgradeStatus?.upToDate
+          && (upgradeActive || upgradeRetry)
+        );
         const manualUpgrade = upgradeStatus?.mode === 'manual';
 
         return (
@@ -863,13 +879,6 @@ export default function NodePage() {
                   </div>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>版本</span>
-                  <div className="flex min-w-0 items-center justify-end gap-1.5">
-                    <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.version || '未知'}</span>
-                    {adminMode && upgradeStatus?.upToDate && <Chip size="sm" color="success" variant="flat" className="h-5 text-[10px]">最新</Chip>}
-                  </div>
-                </div>
-                <div className="flex justify-between text-sm">
                   <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>开机时间</span>
                   <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>
                     {node.connectionStatus === 'online' && node.systemInfo
@@ -878,9 +887,16 @@ export default function NodePage() {
                     }
                   </span>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>Agent 版本</span>
+                  <div className="flex min-w-0 items-center justify-end gap-1.5">
+                    <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.version || '未知'}</span>
+                    {adminMode && upgradeStatus?.upToDate && <Chip size="sm" color="success" variant="flat" className="h-5 text-[10px]">最新</Chip>}
+                  </div>
+                </div>
               </div>
 
-              {adminMode && upgradeTask && !upgradeStatus?.upToDate && (
+              {adminMode && showUpgradeTask && upgradeTask && (
                 <div className="mb-4 flex min-h-9 items-center justify-between gap-2 border-y border-divider py-2 text-xs">
                   <div className="min-w-0">
                     <div className="truncate font-medium">Agent {upgradeTask.fromVersion || node.version || '未知'} → {upgradeTask.targetVersion}</div>
