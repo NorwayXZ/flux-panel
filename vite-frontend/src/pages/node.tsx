@@ -11,7 +11,7 @@ import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { RefreshCw, SquareTerminal } from 'lucide-react';
+import { RefreshCw, ServerCog, SquareTerminal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
@@ -155,6 +155,7 @@ export default function NodePage() {
   const [installCommandModal, setInstallCommandModal] = useState(false);
   const [installCommand, setInstallCommand] = useState('');
   const [currentNodeName, setCurrentNodeName] = useState('');
+  const [installCommandAction, setInstallCommandAction] = useState<'install' | 'upgrade'>('install');
   
   const websocketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -634,7 +635,8 @@ export default function NodePage() {
   };
 
   // 复制安装命令
-  const handleCopyInstallCommand = async (node: Node) => {
+  const handleCopyInstallCommand = async (node: Node, action: 'install' | 'upgrade') => {
+    const actionLabel = action === 'upgrade' ? '升级' : '安装';
     setNodeList(prev => prev.map(n => 
       n.id === node.id ? { ...n, copyLoading: true } : n
     ));
@@ -644,18 +646,19 @@ export default function NodePage() {
       if (res.code === 0 && res.data) {
         try {
           await navigator.clipboard.writeText(res.data);
-          toast.success('安装命令已复制到剪贴板');
+          toast.success(`${actionLabel}命令已复制到剪贴板`);
         } catch (copyError) {
           // 复制失败，显示安装命令模态框
           setInstallCommand(res.data);
           setCurrentNodeName(node.name);
+          setInstallCommandAction(action);
           setInstallCommandModal(true);
         }
       } else {
-        toast.error(res.msg || '获取安装命令失败');
+        toast.error(res.msg || `获取${actionLabel}命令失败`);
       }
     } catch (error) {
-      toast.error('获取安装命令失败');
+      toast.error(`获取${actionLabel}命令失败`);
     } finally {
       setNodeList(prev => prev.map(n => 
         n.id === node.id ? { ...n, copyLoading: false } : n
@@ -667,7 +670,7 @@ export default function NodePage() {
   const handleManualCopy = async () => {
     try {
       await navigator.clipboard.writeText(installCommand);
-      toast.success('安装命令已复制到剪贴板');
+      toast.success(`${installCommandAction === 'upgrade' ? '升级' : '安装'}命令已复制到剪贴板`);
       setInstallCommandModal(false);
     } catch (error) {
       toast.error('复制失败，请手动选择文本复制');
@@ -1005,15 +1008,17 @@ export default function NodePage() {
                   >
                     {upgradeActive ? (upgradeStateLabels[upgradeTask?.state || ''] || '升级中') : '升级'}
                   </Button>}
-                  {node.editable !== false && (node.connectionStatus !== 'online' || manualUpgrade) && <Button
+                  {node.editable !== false && (nodeOffline || manualUpgrade) && <Button
                     size="sm"
                     variant="flat"
-                    color="success"
-                    onPress={() => handleCopyInstallCommand(node)}
+                    color={nodeOffline ? 'success' : 'warning'}
+                    onPress={() => handleCopyInstallCommand(node, nodeOffline ? 'install' : 'upgrade')}
                     isLoading={node.copyLoading}
+                    startContent={node.copyLoading ? undefined : nodeOffline ? <ServerCog size={15} /> : <RefreshCw size={15} />}
                     className="flex-1 min-h-8"
+                    title={nodeOffline ? '获取 Agent 安装命令' : `升级到 Agent ${upgradeTargetVersion}`}
                   >
-                    {manualUpgrade ? '升级命令' : '安装'}
+                    {nodeOffline ? '安装' : '升级'}
                   </Button>}
                   {node.editable !== false && <Button
                     size="sm"
@@ -1409,11 +1414,11 @@ export default function NodePage() {
         placement="center"
         >
           <ModalContent>
-            <ModalHeader>安装命令 - {currentNodeName}</ModalHeader>
+            <ModalHeader>{installCommandAction === 'upgrade' ? '升级' : '安装'} Agent - {currentNodeName}</ModalHeader>
             <ModalBody>
               <div className="space-y-4">
                 <p className="text-sm text-default-600">
-                  请复制以下安装命令到服务器上执行：
+                  请复制以下{installCommandAction === 'upgrade' ? '升级' : '安装'}命令到该节点服务器执行：
                 </p>
                 <div className="relative">
                   <Textarea
