@@ -6,7 +6,23 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Tab, Tabs } from '@heroui/tabs';
-import { Clock3, Copy, Globe2, Plus, RadioTower, ServerCog, Trash2 } from 'lucide-react';
+import {
+  Clock3,
+  Copy,
+  Database,
+  Gamepad2,
+  Globe2,
+  HardDrive,
+  LockKeyhole,
+  Monitor,
+  Plus,
+  RadioTower,
+  Settings2,
+  ServerCog,
+  SquareTerminal,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -49,6 +65,43 @@ const platformMeta: Record<ConnectorPlatform, { label: string; commandLabel: str
   macos: { label: 'macOS', commandLabel: '终端命令' },
 };
 
+type ServiceTemplateId = 'http' | 'https' | 'ssh' | 'rdp' | 'minecraft-java' | 'synology-dsm' | 'mysql' | 'postgresql' | 'custom-tcp';
+
+type ServiceTemplate = {
+  id: ServiceTemplateId;
+  name: string;
+  category: string;
+  summary: string;
+  suggestedName: string;
+  targetPort: string;
+  icon: LucideIcon;
+  notice?: string;
+};
+
+const serviceTemplates: ServiceTemplate[] = [
+  { id: 'http', name: 'Web HTTP', category: 'Web', summary: 'HTTP · 80', suggestedName: 'Web HTTP', targetPort: '80', icon: Globe2 },
+  { id: 'https', name: 'Web HTTPS', category: 'Web', summary: 'TLS · 443', suggestedName: 'Web HTTPS', targetPort: '443', icon: LockKeyhole, notice: 'HTTPS 证书由内网 Web 服务负责配置和续期。' },
+  { id: 'ssh', name: 'SSH', category: '远程管理', summary: '终端 · 22', suggestedName: 'SSH', targetPort: '22', icon: SquareTerminal, notice: 'SSH 属于敏感服务，建议限制接入端允许访问网段并使用密钥登录。' },
+  { id: 'rdp', name: 'Windows RDP', category: '远程管理', summary: '远程桌面 · 3389', suggestedName: 'Windows RDP', targetPort: '3389', icon: Monitor, notice: 'RDP 属于敏感服务，建议限制接入端允许访问网段并启用系统账户保护。' },
+  { id: 'minecraft-java', name: 'Minecraft Java', category: '游戏', summary: 'Java 版 · 25565', suggestedName: 'Minecraft Java', targetPort: '25565', icon: Gamepad2, notice: '此模板仅适用于使用 TCP 的 Java 版；基岩版需要 UDP，当前内网映射暂不支持。' },
+  { id: 'synology-dsm', name: '群晖 DSM', category: 'NAS', summary: 'HTTPS · 5001', suggestedName: '群晖 DSM', targetPort: '5001', icon: HardDrive, notice: '管理后台不宜直接暴露给所有来源，建议限制接入端允许访问网段。' },
+  { id: 'mysql', name: 'MySQL', category: '数据库', summary: 'TCP · 3306', suggestedName: 'MySQL', targetPort: '3306', icon: Database, notice: '数据库端口属于敏感服务，必须设置强密码并限制允许访问网段。' },
+  { id: 'postgresql', name: 'PostgreSQL', category: '数据库', summary: 'TCP · 5432', suggestedName: 'PostgreSQL', targetPort: '5432', icon: Database, notice: '数据库端口属于敏感服务，必须设置强密码并限制允许访问网段。' },
+  { id: 'custom-tcp', name: '自定义 TCP', category: '自定义', summary: '手动填写端口', suggestedName: '', targetPort: '', icon: Settings2 },
+];
+
+const createEmptyServiceForm = () => ({
+  name: '',
+  connectorId: '',
+  poolAccessKey: '',
+  targetHost: '127.0.0.1',
+  targetPort: '',
+  leaseMode: 'permanent' as 'timed' | 'permanent',
+  leaseDuration: '24',
+  leaseUnit: 'hours' as 'hours' | 'days',
+  requestedPort: '',
+});
+
 export default function ServicePublishingPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -66,9 +119,8 @@ export default function ServicePublishingPage() {
   const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
   const [activeView, setActiveView] = useState('services');
   const [domainModal, setDomainModal] = useState(false);
-  const [serviceForm, setServiceForm] = useState({
-    name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent' as 'timed' | 'permanent', leaseDuration: '24', leaseUnit: 'hours' as 'hours' | 'days', requestedPort: '',
-  });
+  const [serviceForm, setServiceForm] = useState(createEmptyServiceForm);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<ServiceTemplateId>('custom-tcp');
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
     name: '', allowedCidrs: '', platform: 'linux',
   });
@@ -97,12 +149,27 @@ export default function ServicePublishingPage() {
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
   const selectedPool = useMemo(() => pools.find(item => `${item.id}:${item.grantId || 'admin'}` === serviceForm.poolAccessKey), [pools, serviceForm.poolAccessKey]);
   const selectedDomainMapping = useMemo(() => services.find(item => String(item.id) === domainForm.publishedServiceId), [services, domainForm.publishedServiceId]);
+  const selectedTemplate = useMemo(() => serviceTemplates.find(item => item.id === selectedTemplateId) || serviceTemplates[serviceTemplates.length - 1], [selectedTemplateId]);
+
+  const applyServiceTemplate = (template: ServiceTemplate) => {
+    const previousTemplate = serviceTemplates.find(item => item.id === selectedTemplateId);
+    setSelectedTemplateId(template.id);
+    setServiceForm(current => ({
+      ...current,
+      name: !current.name.trim() || current.name === previousTemplate?.suggestedName ? template.suggestedName : current.name,
+      targetPort: template.targetPort,
+    }));
+  };
 
   const submitService = async () => {
     if (!serviceForm.name.trim() || !serviceForm.connectorId || !selectedPool || !serviceForm.targetHost || !serviceForm.targetPort) {
       toast.error('请填写完整的内网映射配置');
       return;
     }
+    const targetPort = Number(serviceForm.targetPort);
+    const requestedPort = serviceForm.requestedPort ? Number(serviceForm.requestedPort) : undefined;
+    if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) return toast.error('内网目标端口必须在 1-65535 之间');
+    if (requestedPort !== undefined && (!Number.isInteger(requestedPort) || requestedPort < 1 || requestedPort > 65535)) return toast.error('指定公网端口必须在 1-65535 之间');
     const permanent = serviceForm.leaseMode === 'permanent';
     const duration = Number(serviceForm.leaseDuration);
     if (!permanent && (!Number.isFinite(duration) || duration < 1)) return toast.error('定时服务的有效期至少为 1 小时');
@@ -114,16 +181,17 @@ export default function ServicePublishingPage() {
       poolId: selectedPool.id,
       grantId: selectedPool.grantId,
       targetHost: serviceForm.targetHost.trim(),
-      targetPort: Number(serviceForm.targetPort),
+      targetPort,
       permanent,
       leaseHours,
-      requestedPort: serviceForm.requestedPort ? Number(serviceForm.requestedPort) : undefined,
+      requestedPort,
     });
     setSubmitting(false);
     if (res.code !== 0) return toast.error(res.msg || '创建映射失败');
     toast.success('内网映射已创建');
     setServiceModal(false);
-    setServiceForm({ name: '', connectorId: '', poolAccessKey: '', targetHost: '127.0.0.1', targetPort: '', leaseMode: 'permanent', leaseDuration: '24', leaseUnit: 'hours', requestedPort: '' });
+    setServiceForm(createEmptyServiceForm());
+    setSelectedTemplateId('custom-tcp');
     loadData();
   };
 
@@ -283,7 +351,7 @@ export default function ServicePublishingPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">{service.name}</h2>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500"><span>{service.ownerRoleId === 1 ? `普通用户 · ${service.ownerUserName}` : '管理员'}</span>{service.grantId && <Chip size="sm" color="secondary" variant="flat">共享端口</Chip>}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500"><span>{service.ownerRoleId === 1 ? `普通用户 · ${service.ownerUserName}` : '管理员'}</span><Chip size="sm" variant="flat">{service.protocol?.toUpperCase() || 'TCP'}</Chip>{service.grantId && <Chip size="sm" color="secondary" variant="flat">共享端口</Chip>}</div>
                       </div>
                       <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
                     </div>
@@ -410,35 +478,66 @@ export default function ServicePublishingPage() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={serviceModal} onOpenChange={setServiceModal} size="2xl" scrollBehavior="inside">
+      <Modal isOpen={serviceModal} onOpenChange={setServiceModal} size="3xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>映射内网服务</ModalHeader>
-          <ModalBody className="grid gap-4 sm:grid-cols-2">
-            <Input label="映射名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
-            <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
-              {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
-            </Select>
-            <Select label="公网端口资源" selectedKeys={serviceForm.poolAccessKey ? [serviceForm.poolAccessKey] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolAccessKey: String(Array.from(keys)[0] || '') })}>
-              {pools.map(item => {
-                const key = `${item.id}:${item.grantId || 'admin'}`;
-                const range = item.grantId ? `${item.grantStartPort}-${item.grantEndPort}` : `${item.startPort}-${item.endPort}`;
-                return <SelectItem key={key} textValue={`${item.name} ${range}`}>{item.name} · {item.nodeName} · {range} · 剩余 {item.availablePorts}</SelectItem>;
-              })}
-            </Select>
-            <div>
-              <div className="mb-2 text-sm text-default-600">映射有效期</div>
-              <Tabs fullWidth size="sm" selectedKey={serviceForm.leaseMode} onSelectionChange={key => setServiceForm({ ...serviceForm, leaseMode: String(key) as 'timed' | 'permanent' })} aria-label="映射有效期">
-                <Tab key="permanent" title="永久" />
-                <Tab key="timed" title="定时" />
-              </Tabs>
+          <ModalBody className="gap-5">
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold">服务模板</h3>
+                <Chip size="sm" color="primary" variant="flat">TCP</Chip>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                {serviceTemplates.map(template => {
+                  const Icon = template.icon;
+                  const selected = template.id === selectedTemplateId;
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      aria-pressed={selected}
+                      className={`min-h-16 rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${selected ? 'border-primary bg-primary/10 text-primary' : 'border-divider bg-content1 hover:bg-default-100'}`}
+                      onClick={() => applyServiceTemplate(template)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Icon aria-hidden="true" className="shrink-0" size={17} />
+                        <span className="truncate text-sm font-medium">{template.name}</span>
+                      </div>
+                      <div className={`mt-1 truncate text-xs ${selected ? 'text-primary/80' : 'text-default-500'}`}>{template.category} · {template.summary}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedTemplate.notice && <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-700 dark:text-warning-400">{selectedTemplate.notice}</div>}
+            </section>
+
+            <div className="grid gap-4 border-t border-divider pt-5 sm:grid-cols-2">
+              <Input label="映射名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
+              <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
+                {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
+              </Select>
+              <Select className="sm:col-span-2" label="公网端口资源" selectedKeys={serviceForm.poolAccessKey ? [serviceForm.poolAccessKey] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolAccessKey: String(Array.from(keys)[0] || '') })}>
+                {pools.map(item => {
+                  const key = `${item.id}:${item.grantId || 'admin'}`;
+                  const range = item.grantId ? `${item.grantStartPort}-${item.grantEndPort}` : `${item.startPort}-${item.endPort}`;
+                  return <SelectItem key={key} textValue={`${item.name} ${range}`}>{item.name} · {item.nodeName} · {range} · 剩余 {item.availablePorts}</SelectItem>;
+                })}
+              </Select>
+              <Input label="内网目标 IP" value={serviceForm.targetHost} onValueChange={value => setServiceForm({ ...serviceForm, targetHost: value })} />
+              <Input label="内网目标端口" type="number" min={1} max={65535} value={serviceForm.targetPort} onValueChange={value => setServiceForm({ ...serviceForm, targetPort: value })} />
+              <Input label="指定公网端口（可选）" type="number" min={1} max={65535} value={serviceForm.requestedPort} onValueChange={value => setServiceForm({ ...serviceForm, requestedPort: value })} />
+              <div>
+                <div className="mb-2 text-sm text-default-600">映射有效期</div>
+                <Tabs fullWidth size="sm" selectedKey={serviceForm.leaseMode} onSelectionChange={key => setServiceForm({ ...serviceForm, leaseMode: String(key) as 'timed' | 'permanent' })} aria-label="映射有效期">
+                  <Tab key="permanent" title="永久" />
+                  <Tab key="timed" title="定时" />
+                </Tabs>
+              </div>
+              {serviceForm.leaseMode === 'timed' && <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2 sm:col-span-2">
+                <Input label="有效时长" type="number" min={1} value={serviceForm.leaseDuration} onValueChange={value => setServiceForm({ ...serviceForm, leaseDuration: value })} />
+                <Select label="单位" selectedKeys={[serviceForm.leaseUnit]} onSelectionChange={keys => setServiceForm({ ...serviceForm, leaseUnit: String(Array.from(keys)[0] || 'hours') as 'hours' | 'days' })}><SelectItem key="hours">小时</SelectItem><SelectItem key="days">天</SelectItem></Select>
+              </div>}
             </div>
-            {serviceForm.leaseMode === 'timed' && <div className="grid grid-cols-[1fr_120px] gap-2 sm:col-span-2">
-              <Input label="有效时长" type="number" min={1} value={serviceForm.leaseDuration} onValueChange={value => setServiceForm({ ...serviceForm, leaseDuration: value })} />
-              <Select label="单位" selectedKeys={[serviceForm.leaseUnit]} onSelectionChange={keys => setServiceForm({ ...serviceForm, leaseUnit: String(Array.from(keys)[0] || 'hours') as 'hours' | 'days' })}><SelectItem key="hours">小时</SelectItem><SelectItem key="days">天</SelectItem></Select>
-            </div>}
-            <Input label="内网目标 IP" value={serviceForm.targetHost} onValueChange={value => setServiceForm({ ...serviceForm, targetHost: value })} />
-            <Input label="内网目标端口" type="number" min={1} max={65535} value={serviceForm.targetPort} onValueChange={value => setServiceForm({ ...serviceForm, targetPort: value })} />
-            <Input className="sm:col-span-2" label="指定公网端口（可选）" type="number" min={1} max={65535} value={serviceForm.requestedPort} onValueChange={value => setServiceForm({ ...serviceForm, requestedPort: value })} />
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setServiceModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitService}>创建映射</Button></ModalFooter>
         </ModalContent>
