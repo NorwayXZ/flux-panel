@@ -1,12 +1,16 @@
-## Intranet service templates
+## Cross-entry failover groups
 
-- Adds presets for HTTP, HTTPS, SSH, Windows RDP, Minecraft Java, Synology DSM, MySQL, and PostgreSQL.
-- Selecting a template pre-fills the mapping name and target port while preserving the selected connector, public port resource, and lease settings.
-- Keeps custom TCP mappings available and clearly identifies the current TCP-only protocol support.
-- Adds focused security notices for remote administration, NAS, and database templates.
-- Uses a stable responsive template grid so service names and port details remain readable without truncation.
+- Adds independent cross-entry groups that bind existing forwards from different ingress nodes without changing same-ingress route candidates.
+- Performs parallel node-presence and public TCP probes with a 2-second fast profile and two-failure confirmation.
+- Updates a Cloudflare DNS-only A or AAAA record to the healthiest available ingress and records every successful or failed switch.
+- Prevents route flapping with recovery confirmation, switch cooldown, and optional automatic failback.
+- Encrypts the Cloudflare API token with AES-GCM and never returns it to the browser.
+- Adds a responsive status page with active ingress, member latency, failure counters, manual checks, editing, and history.
+- Uses the existing Telegram forward-notification switch for concise failover and DNS-update failure notices.
 
 ## Upgrade impact
 
-- Contains no database migration and does not change existing mappings, tunnels, or ordinary port forwarding.
-- Existing Agents do not need to upgrade for this frontend-only feature.
+- Creates three isolated failover tables and does not rewrite nodes, tunnels, forwards, port allocations, or users.
+- Adds only short TCP probes from the panel server. Probe load grows with enabled group members and is bounded by four group workers and eight probe workers.
+- Existing Agent 2.14.4 remains supported and does not need to upgrade. Panel and Agent release targets are now tracked separately.
+- DNS detection and API updates complete in seconds, but client and resolver caches can delay traffic convergence; established sessions must reconnect.

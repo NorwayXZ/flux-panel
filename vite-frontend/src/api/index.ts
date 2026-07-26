@@ -126,6 +126,87 @@ export const resumeForwardService = (forwardId: number) => Network.post("/forwar
 export const diagnoseForward = (forwardId: number) => Network.post("/forward/diagnose", { forwardId });
 export const getForwardRouteEvents = (forwardId: number) => Network.post("/forward/route-events", { forwardId });
 
+export interface CrossEntryForwardOption {
+  id: number;
+  name: string;
+  inPort: number;
+  protocolMode: string;
+  inNodeId: number;
+  nodeName: string;
+  entryHost: string;
+  tunnelName: string;
+}
+
+export interface CrossEntryMember {
+  id: number;
+  forwardId: number;
+  priority: number;
+  entryNodeId: number;
+  entryHost: string;
+  entryAddress: string;
+  entryPort: number;
+  forwardName: string;
+  nodeName: string;
+  status: 'unknown' | 'healthy' | 'unhealthy';
+  failCount: number;
+  successCount: number;
+  latencyMs?: number;
+  lastError?: string;
+  lastCheckedAt?: number;
+}
+
+export interface CrossEntryGroup {
+  id: number;
+  name: string;
+  domain: string;
+  zoneId: string;
+  recordId: string;
+  recordType: 'A' | 'AAAA';
+  ttl: number;
+  probeIntervalMs: number;
+  connectTimeoutMs: number;
+  failureThreshold: number;
+  recoveryThreshold: number;
+  cooldownSeconds: number;
+  autoFailback: boolean | number;
+  enabled: boolean | number;
+  state: 'unknown' | 'healthy' | 'degraded' | 'offline' | 'switching' | 'error';
+  activeMemberId?: number;
+  lastError?: string;
+  lastCheckedAt?: number;
+  lastSwitchAt?: number;
+  apiTokenConfigured: boolean | number;
+  members: CrossEntryMember[];
+}
+
+export interface CrossEntrySummary {
+  total: number;
+  enabled: number;
+  healthy: number;
+  degraded: number;
+  switches: number;
+}
+
+export interface CrossEntryEvent {
+  id: number;
+  reason: string;
+  status: 'success' | 'failed';
+  detail?: string;
+  fromNodeName?: string;
+  toNodeName?: string;
+  createdTime: number;
+}
+
+export const getCrossEntryGroups = () =>
+  Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/list");
+export const getCrossEntryForwardOptions = () =>
+  Network.post<CrossEntryForwardOption[]>("/cross-entry-failover/eligible-forwards");
+export const saveCrossEntryGroup = (data: any) => Network.post<{ id: number }>("/cross-entry-failover/save", data);
+export const deleteCrossEntryGroup = (id: number) => Network.post("/cross-entry-failover/delete", { id });
+export const checkCrossEntryGroup = (id: number) =>
+  Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/check", { id });
+export const getCrossEntryEvents = (id: number) => Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
+
 // 转发排序操作
 export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.post("/forward/update-order", data);
 

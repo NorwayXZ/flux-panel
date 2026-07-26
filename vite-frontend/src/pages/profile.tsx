@@ -9,7 +9,7 @@ import { isWebViewFunc } from '@/utils/panel';
 import { siteConfig } from '@/config/site';
 import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
-import { Boxes, RadioTower } from 'lucide-react';
+import { Boxes, RadioTower, ShieldCheck } from 'lucide-react';
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -58,6 +58,13 @@ export default function ProfilePage() {
 
   // 管理员菜单项
   const adminMenuItems: MenuItem[] = [
+    {
+      path: '/cross-entry-failover',
+      label: '入口容灾',
+      icon: <ShieldCheck className="h-5 w-5" />,
+      color: 'bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400',
+      description: '管理跨入口自动切换'
+    },
     {
       path: '/port-resources',
       label: '端口资源',

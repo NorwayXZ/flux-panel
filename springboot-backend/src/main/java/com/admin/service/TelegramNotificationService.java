@@ -174,6 +174,29 @@ public class TelegramNotificationService {
         }
     }
 
+    @Async
+    public void notifyCrossEntrySwitch(long groupId, String groupName, String domain,
+                                       String fromEntry, String toEntry, String reason,
+                                       boolean success, long occurredAt) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !settings.forwardEnabled()) return;
+            String eventKey = shortenKey("cross-entry:" + groupId + ":" + occurredAt + ":" + success);
+            synchronized (deliveryLock) {
+                if (loadDelivery(eventKey).sendCount() > 0) return;
+                String message = "[入口容灾" + (success ? "切换" : "失败") + "]\n"
+                        + "业务：" + clean(groupName) + "\n"
+                        + "域名：" + clean(domain) + "\n"
+                        + "入口：" + clean(fromEntry) + " -> " + clean(toEntry) + "\n"
+                        + "原因：" + clean(reason) + "\n"
+                        + "时间：" + formatTime(occurredAt);
+                deliver(settings, eventKey, "cross_entry", "forward", groupId, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("Telegram cross-entry notification failed for group {}: {}", groupId, e.getMessage());
+        }
+    }
+
     @org.springframework.scheduling.annotation.Scheduled(cron = "0 40 3 * * ?")
     public void cleanupDeliveries() {
         jdbcTemplate.update("DELETE FROM telegram_notification_delivery WHERE updated_at < ?",

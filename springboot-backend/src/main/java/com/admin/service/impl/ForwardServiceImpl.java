@@ -351,6 +351,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (existForward == null) {
             return R.err("转发不存在");
         }
+        if (isUsedByCrossEntryFailover(existForward.getId())) {
+            return R.err("该转发正在被入口容灾组使用，请先从容灾组移除后再编辑");
+        }
 
         RouteValidationResult routeValidation = validateRouteTunnels(
                 forwardUpdateDto.getTunnelId(),
@@ -486,6 +489,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (forward == null) {
             return R.err("端口转发不存在");
         }
+        if (isUsedByCrossEntryFailover(forward.getId())) {
+            return R.err("该转发正在被入口容灾组使用，请先从容灾组移除后再删除");
+        }
 
         List<ForwardRouteDto> forwardRoutes = getForwardRoutes(forward);
         ForwardRouteDto activeRoute = getActiveRoute(forward, forwardRoutes);
@@ -547,6 +553,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         Forward forward = validateForwardExists(id, currentUser);
         if (forward == null) {
             return R.err("端口转发不存在");
+        }
+        if (isUsedByCrossEntryFailover(forward.getId())) {
+            return R.err("该转发正在被入口容灾组使用，请先从容灾组移除后再强制删除");
         }
 
         // 3. 直接删除转发记录，跳过GOST服务删除
@@ -667,6 +676,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         boolean result = this.updateById(forward);
 
         return result ? R.ok("服务已" + operation) : R.err("更新状态失败");
+    }
+
+    private boolean isUsedByCrossEntryFailover(Long forwardId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM cross_entry_failover_member WHERE forward_id=?", Integer.class, forwardId);
+        return count != null && count > 0;
     }
 
     @Override

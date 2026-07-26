@@ -16,6 +16,7 @@ import UpdatePage from "@/pages/update";
 import MonitoringPage from "@/pages/monitoring";
 import ServicePublishingPage from "@/pages/service-publishing";
 import PortResourcesPage from "@/pages/port-resources";
+import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -177,6 +178,10 @@ function App() {
             <ForwardPage />
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/cross-entry-failover"
+        element={<ProtectedRoute><CrossEntryFailoverPage /></ProtectedRoute>}
       />
       <Route 
         path="/tunnel" 
