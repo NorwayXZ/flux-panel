@@ -88,11 +88,13 @@ func worker(id int, args []string, ctx *context.Context, ret *int) {
 
 func init() {
 	var printVersion bool
+	var printAgentVersion bool
 
 	flag.Var(&services, "L", "service list")
 	flag.Var(&nodes, "F", "chain node list")
 	flag.StringVar(&cfgFile, "C", "", "configuration file")
 	flag.BoolVar(&printVersion, "V", false, "print version")
+	flag.BoolVar(&printAgentVersion, "agent-version", false, "print Flux Agent version")
 	flag.StringVar(&outputFormat, "O", "", "output format, one of yaml|json format")
 	flag.BoolVar(&debug, "D", false, "debug mode")
 	flag.BoolVar(&trace, "DD", false, "trace mode")
@@ -104,6 +106,10 @@ func init() {
 	if printVersion {
 		fmt.Fprintf(os.Stdout, "gost %s (%s %s/%s)\n",
 			version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		os.Exit(0)
+	}
+	if printAgentVersion {
+		fmt.Fprintln(os.Stdout, agentVersion)
 		os.Exit(0)
 	}
 }

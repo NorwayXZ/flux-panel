@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.12.0}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.13.0}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -16,6 +16,10 @@ SECRET="${SECRET:-}"
 AGENT_ROLE="${AGENT_ROLE:-node}"
 SERVICE_MANAGER=""
 UNINSTALL_ONLY=0
+UPDATE_ONLY=0
+DOWNLOAD_URL=""
+CHECKSUM_URL=""
+BINARY_NAME=""
 
 configure_role_paths() {
   if [ "$AGENT_ROLE" = "connector" ]; then
@@ -53,20 +57,24 @@ get_architecture() {
 }
 
 build_download_url() {
-  printf 'https://github.com/%s/releases/download/%s/gost-%s\n' \
-    "$AGENT_REPOSITORY" "$AGENT_RELEASE" "$(get_architecture)"
+  printf 'https://github.com/%s/releases/download/%s/%s\n' \
+    "$AGENT_REPOSITORY" "$AGENT_RELEASE" "$BINARY_NAME"
 }
 
 detect_download_url() {
+  BINARY_NAME="gost-$(get_architecture)"
   if [ -n "${GOST_DOWNLOAD_URL:-}" ]; then
     DOWNLOAD_URL="$GOST_DOWNLOAD_URL"
+    CHECKSUM_URL=""
     return
   fi
 
   DOWNLOAD_URL="$(build_download_url)"
+  CHECKSUM_URL="https://github.com/$AGENT_REPOSITORY/releases/download/$AGENT_RELEASE/SHA256SUMS"
   country="$(curl -fsS --connect-timeout 3 --max-time 5 https://ipinfo.io/country 2>/dev/null || true)"
   if [ "$country" = "CN" ]; then
     DOWNLOAD_URL="https://ghfast.top/$DOWNLOAD_URL"
+    CHECKSUM_URL="https://ghfast.top/$CHECKSUM_URL"
   fi
 }
 
@@ -274,7 +282,49 @@ download_binary() {
   log "下载 GOST Agent: $(get_architecture)"
   curl -fL --retry 3 --connect-timeout 15 "$DOWNLOAD_URL" -o "$destination"
   [ -s "$destination" ] || fail "下载失败，请检查网络或下载地址"
+  verify_binary_checksum "$destination"
   chmod 755 "$destination"
+  verify_binary_version "$destination"
+}
+
+calculate_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail "缺少 SHA256 校验工具（sha256sum 或 shasum）"
+  fi
+}
+
+verify_binary_checksum() {
+  destination="$1"
+  expected="${GOST_SHA256:-}"
+  checksum_file="$destination.sha256sums"
+  if [ -z "$expected" ] && [ -n "$CHECKSUM_URL" ]; then
+    curl -fL --retry 3 --connect-timeout 15 "$CHECKSUM_URL" -o "$checksum_file" \
+      || fail "无法下载 Agent SHA256 校验文件"
+    expected="$(awk -v file="$BINARY_NAME" '$2 == file || $2 == "*" file {print $1; exit}' "$checksum_file")"
+    rm -f "$checksum_file"
+    [ -n "$expected" ] || fail "校验文件中缺少 $BINARY_NAME"
+  fi
+  if [ -z "$expected" ]; then
+    log "使用自定义下载地址，未提供 GOST_SHA256，跳过校验"
+    return 0
+  fi
+  actual="$(calculate_sha256 "$destination")"
+  [ "$actual" = "$expected" ] || fail "Agent SHA256 校验失败"
+  log "Agent SHA256 校验通过"
+}
+
+verify_binary_version() {
+  destination="$1"
+  if [ -n "${GOST_DOWNLOAD_URL:-}" ]; then
+    return 0
+  fi
+  actual_version="$($destination --agent-version 2>/dev/null || true)"
+  [ "$actual_version" = "$AGENT_RELEASE" ] || fail "Agent 版本校验失败，期望 $AGENT_RELEASE，实际 ${actual_version:-未知}"
+  log "Agent 版本校验通过: $actual_version"
 }
 
 json_escape() {
@@ -414,26 +464,34 @@ EOF
 }
 
 usage() {
-  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]，或 $0 -r connector -u 卸载"
+  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]，$0 -U 更新，或 $0 -r connector -u 卸载"
 }
 
 main() {
   require_root
   require_command curl
   require_command sed
+  require_command awk
 
-  while getopts "a:s:r:uh" opt; do
+  while getopts "a:s:r:uUh" opt; do
     case "$opt" in
       a) SERVER_ADDR="$OPTARG" ;;
       s) SECRET="$OPTARG" ;;
       r) AGENT_ROLE="$OPTARG" ;;
       u) UNINSTALL_ONLY=1 ;;
+      U) UPDATE_ONLY=1 ;;
       h) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
   done
 
   configure_role_paths
+
+  if [ "$UPDATE_ONLY" = "1" ]; then
+    update_gost
+    delete_self
+    exit 0
+  fi
 
   if [ "$UNINSTALL_ONLY" = "1" ]; then
     uninstall_gost

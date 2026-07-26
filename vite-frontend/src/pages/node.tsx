@@ -11,7 +11,7 @@ import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { SquareTerminal } from 'lucide-react';
+import { RefreshCw, SquareTerminal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
@@ -24,7 +24,11 @@ import {
   updateNode, 
   deleteNode,
   getNodeInstallCommand,
-  checkNodeStatus
+  checkNodeStatus,
+  getAgentUpgradeStatus,
+  startAgentUpgrade,
+  startBatchAgentUpgrade,
+  type AgentUpgradeStatusItem,
 } from "@/api";
 
 interface Node {
@@ -90,6 +94,29 @@ const getNodeOwnerBadge = (node: Node) => {
   return { label: `归属 · ${ownerName}`, title: `资源所有者：${ownerName}`, color: 'default' as const };
 };
 
+const activeUpgradeStates = new Set(['queued', 'bootstrapping', 'accepted', 'downloading', 'verified', 'restarting', 'installing']);
+const upgradeStateLabels: Record<string, string> = {
+  queued: '等待接收',
+  bootstrapping: '启动助手',
+  accepted: '准备升级',
+  downloading: '下载中',
+  verified: '校验完成',
+  restarting: '重启中',
+  installing: '安装中',
+  success: '升级成功',
+  rolled_back: '已回滚',
+  failed: '升级失败',
+  timeout: '等待超时',
+};
+
+const upgradeStateColor = (state?: string): 'default' | 'primary' | 'success' | 'warning' | 'danger' => {
+  if (!state) return 'default';
+  if (state === 'success') return 'success';
+  if (state === 'failed' || state === 'rolled_back' || state === 'timeout') return 'danger';
+  if (state === 'restarting' || state === 'installing') return 'warning';
+  return 'primary';
+};
+
 export default function NodePage() {
   const navigate = useNavigate();
   const adminMode = isAdmin();
@@ -105,6 +132,12 @@ export default function NodePage() {
   const [nodeToDelete, setNodeToDelete] = useState<Node | null>(null);
   const [protocolDisabled, setProtocolDisabled] = useState(false);
   const [protocolDisabledReason, setProtocolDisabledReason] = useState('');
+  const [upgradeItems, setUpgradeItems] = useState<Record<number, AgentUpgradeStatusItem>>({});
+  const [upgradeTargetVersion, setUpgradeTargetVersion] = useState('');
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
+  const [upgradeBatch, setUpgradeBatch] = useState(false);
+  const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
   const [form, setForm] = useState<NodeForm>({
     id: null,
     name: '',
@@ -136,6 +169,24 @@ export default function NodePage() {
       closeWebSocket();
     };
   }, []);
+
+  useEffect(() => {
+    if (!adminMode) return;
+    loadUpgradeStatus();
+    const timer = window.setInterval(loadUpgradeStatus, 3000);
+    return () => window.clearInterval(timer);
+  }, [adminMode]);
+
+  async function loadUpgradeStatus() {
+    try {
+      const result = await getAgentUpgradeStatus();
+      if (result.code !== 0) return;
+      setUpgradeTargetVersion(result.data.targetVersion);
+      setUpgradeItems(Object.fromEntries((result.data.items || []).map(item => [item.nodeId, item])));
+    } catch {
+      // 节点列表仍可独立使用，轮询将在下一周期重试。
+    }
+  }
 
   // 加载节点列表
   const loadNodes = async () => {
@@ -514,6 +565,45 @@ export default function NodePage() {
     }
   };
 
+  const openNodeUpgrade = (node: Node) => {
+    setUpgradeNode(node);
+    setUpgradeBatch(false);
+    setUpgradeModalOpen(true);
+  };
+
+  const openBatchUpgrade = () => {
+    setUpgradeNode(null);
+    setUpgradeBatch(true);
+    setUpgradeModalOpen(true);
+  };
+
+  const confirmUpgrade = async () => {
+    setUpgradeSubmitting(true);
+    try {
+      if (upgradeBatch) {
+        const result = await startBatchAgentUpgrade();
+        if (result.code !== 0) {
+          toast.error(result.msg || '批量升级提交失败');
+          return;
+        }
+        toast.success(`已提交 ${result.data.submitted} 个节点升级任务`);
+      } else if (upgradeNode) {
+        const result = await startAgentUpgrade(upgradeNode.id);
+        if (result.code !== 0) {
+          toast.error(result.msg || '升级任务提交失败');
+          return;
+        }
+        toast.success(`${upgradeNode.name} 已开始升级`);
+      }
+      setUpgradeModalOpen(false);
+      await loadUpgradeStatus();
+    } catch {
+      toast.error('升级任务提交失败');
+    } finally {
+      setUpgradeSubmitting(false);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!nodeToDelete) return;
     
@@ -678,6 +768,10 @@ export default function NodePage() {
     .filter(node => node.connectionStatus === 'online')
     .sort(compareCreatedTimeDesc), node => node.id);
 
+  const batchEligibleCount = Object.values(upgradeItems).filter(item =>
+    item.online && !item.upToDate && item.mode !== 'manual' && !activeUpgradeStates.has(item.task?.state || '')
+  ).length;
+
   const renderNodeGrid = (nodes: Node[]) => (
     <SortableCardGrid
       items={nodes}
@@ -686,6 +780,10 @@ export default function NodePage() {
       renderItem={(node, dragHandle) => {
         const nodeOffline = node.connectionStatus !== 'online';
         const ownerBadge = getNodeOwnerBadge(node);
+        const upgradeStatus = upgradeItems[node.id];
+        const upgradeTask = upgradeStatus?.task;
+        const upgradeActive = activeUpgradeStates.has(upgradeTask?.state || '');
+        const manualUpgrade = upgradeStatus?.mode === 'manual';
 
         return (
           <Card
@@ -762,7 +860,10 @@ export default function NodePage() {
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>版本</span>
-                  <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.version || '未知'}</span>
+                  <div className="flex min-w-0 items-center justify-end gap-1.5">
+                    <span className={nodeOffline ? "text-xs text-danger-800 dark:text-danger-200" : "text-xs"}>{node.version || '未知'}</span>
+                    {adminMode && upgradeStatus?.upToDate && <Chip size="sm" color="success" variant="flat" className="h-5 text-[10px]">最新</Chip>}
+                  </div>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className={nodeOffline ? "text-danger-700 dark:text-danger-300" : "text-default-600"}>开机时间</span>
@@ -774,6 +875,18 @@ export default function NodePage() {
                   </span>
                 </div>
               </div>
+
+              {adminMode && upgradeTask && (
+                <div className="mb-4 flex min-h-9 items-center justify-between gap-2 border-y border-divider py-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">Agent {upgradeTask.fromVersion || node.version || '未知'} → {upgradeTask.targetVersion}</div>
+                    <div className="mt-0.5 truncate text-default-500" title={upgradeTask.message}>{upgradeTask.message || '升级状态已更新'}</div>
+                  </div>
+                  <Chip size="sm" variant="flat" color={upgradeStateColor(upgradeTask.state)} className="shrink-0 text-[10px]">
+                    {upgradeStateLabels[upgradeTask.state] || upgradeTask.state}
+                  </Chip>
+                </div>
+              )}
 
               {/* 系统监控 */}
               <div className="space-y-3 mb-4">
@@ -879,7 +992,20 @@ export default function NodePage() {
                   >
                     终端
                   </Button>}
-                  {node.editable !== false && <Button
+                  {adminMode && node.editable !== false && node.connectionStatus === 'online' && !upgradeStatus?.upToDate && !manualUpgrade && <Button
+                    size="sm"
+                    variant="flat"
+                    color="warning"
+                    onPress={() => openNodeUpgrade(node)}
+                    isLoading={upgradeActive}
+                    isDisabled={upgradeActive}
+                    startContent={upgradeActive ? undefined : <RefreshCw size={15} />}
+                    className="flex-1 min-h-8"
+                    title={`升级到 Agent ${upgradeTargetVersion}`}
+                  >
+                    {upgradeActive ? (upgradeStateLabels[upgradeTask?.state || ''] || '升级中') : '升级'}
+                  </Button>}
+                  {node.editable !== false && (node.connectionStatus !== 'online' || manualUpgrade) && <Button
                     size="sm"
                     variant="flat"
                     color="success"
@@ -887,7 +1013,7 @@ export default function NodePage() {
                     isLoading={node.copyLoading}
                     className="flex-1 min-h-8"
                   >
-                    安装
+                    {manualUpgrade ? '升级命令' : '安装'}
                   </Button>}
                   {node.editable !== false && <Button
                     size="sm"
@@ -926,6 +1052,16 @@ export default function NodePage() {
         </div>
 
         <div className="flex gap-2">
+          {adminMode && <Button
+              size="sm"
+              variant="flat"
+              color="warning"
+              onPress={openBatchUpgrade}
+              isDisabled={batchEligibleCount === 0}
+              startContent={<RefreshCw size={15} />}
+            >
+              批量升级{batchEligibleCount > 0 ? ` ${batchEligibleCount}` : ''}
+          </Button>}
           <Button
               size="sm"
               variant="flat"
@@ -1215,6 +1351,47 @@ export default function NodePage() {
                     isLoading={deleteLoading}
                   >
                     {deleteLoading ? '删除中...' : '确认删除'}
+                  </Button>
+                </ModalFooter>
+              </>
+            )}
+          </ModalContent>
+        </Modal>
+
+        <Modal
+          isOpen={upgradeModalOpen}
+          onOpenChange={setUpgradeModalOpen}
+          size="lg"
+          backdrop="blur"
+          placement="center"
+        >
+          <ModalContent>
+            {(onClose) => (
+              <>
+                <ModalHeader>{upgradeBatch ? '批量升级 Agent' : `升级 ${upgradeNode?.name || '节点'} Agent`}</ModalHeader>
+                <ModalBody>
+                  <div className="grid grid-cols-2 gap-3 border-y border-divider py-4 text-sm">
+                    <div>
+                      <div className="text-xs text-default-500">升级范围</div>
+                      <div className="mt-1 font-medium">{upgradeBatch ? `${batchEligibleCount} 个在线节点` : upgradeNode?.name}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-default-500">目标版本</div>
+                      <div className="mt-1 font-medium">Agent {upgradeTargetVersion || '最新版本'}</div>
+                    </div>
+                  </div>
+                  <Alert
+                    color="warning"
+                    variant="flat"
+                    title="升级期间连接会短暂中断"
+                    description="Agent 将校验新版本、备份旧版本并重启服务。该节点上的现有 TCP 连接可能断开；启动失败时会自动恢复旧版本。"
+                  />
+                </ModalBody>
+                <ModalFooter>
+                  <Button variant="flat" onPress={onClose}>取消</Button>
+                  <Button color="warning" onPress={confirmUpgrade} isLoading={upgradeSubmitting}
+                    startContent={upgradeSubmitting ? undefined : <RefreshCw size={16} />}>
+                    确认升级
                   </Button>
                 </ModalFooter>
               </>

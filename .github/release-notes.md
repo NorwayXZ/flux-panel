@@ -1,13 +1,12 @@
-## Cross-platform internal connectors
+## Agent one-click upgrades
 
-- Adds Linux, Windows, and macOS choices when creating an internal connector.
-- Generates the correct shell or administrator PowerShell command and allows switching platforms from the install dialog.
-- Provides separate install/update and uninstall commands for each platform without touching a co-located node Agent.
-- Publishes native amd64 and arm64 Agent binaries for all three operating systems.
-- Installs the Windows connector as the automatic `FluxConnector` service under `%ProgramData%\FluxConnector`.
-- Installs the macOS connector as the `com.fluxpanel.connector` LaunchDaemon under `/Library/Application Support/FluxConnector`.
-- Keeps the existing Linux systemd and OpenRC installation path unchanged.
-- Preserves `gost.json` during connector upgrades and uses an explicit Agent configuration path so services do not depend on their launch directory.
-- Stores the selected connector platform without changing the forwarding protocol, port allocation, or existing published services.
+- Adds single-node and batch Agent upgrades to the node management page.
+- Shows the installed version, latest-version state, live upgrade progress, failures, and rollback results on each node card.
+- Uses a dedicated self-update command on Agent 2.13.0 and newer.
+- Bootstraps Agent 2.8.0 through 2.12.x through the existing encrypted terminal channel with a fixed, non-editable update command.
+- Verifies both the release SHA256 checksum and the binary's embedded Agent version before replacement.
+- Runs the updater outside the Agent process lifecycle on systemd and OpenRC hosts.
+- Backs up the current binary and automatically restores it when the replacement service cannot start.
+- Keeps Agent 2.7.x and older on the manual upgrade path because they do not provide the required secure terminal channel.
 
-The backend migration adds only `internal_connector.platform` with a default of `linux`. Existing connectors and all node, tunnel, forwarding, user, lease, and traffic records remain intact.
+Agent restart can briefly interrupt traffic handled by that node. The release adds only the `agent_upgrade_task` audit table and temporary update files; it does not rewrite node, tunnel, forwarding, port, user, or traffic data and adds no persistent Agent resource usage.

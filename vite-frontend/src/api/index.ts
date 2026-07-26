@@ -33,6 +33,41 @@ export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
   return Network.post("/node/check-status", params);
 };
+export interface AgentUpgradeTask {
+  taskId: string;
+  fromVersion?: string;
+  targetVersion: string;
+  state: string;
+  message?: string;
+  requestedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+}
+
+export interface AgentUpgradeStatusItem {
+  nodeId: number;
+  nodeName: string;
+  currentVersion?: string;
+  targetVersion: string;
+  online: boolean;
+  upToDate: boolean;
+  mode: 'self' | 'terminal' | 'manual';
+  task?: AgentUpgradeTask | null;
+}
+
+export interface AgentUpgradeStatus {
+  targetVersion: string;
+  items: AgentUpgradeStatusItem[];
+}
+
+export const getAgentUpgradeStatus = (nodeId?: number) =>
+  Network.post<AgentUpgradeStatus>("/node/upgrade/status", nodeId ? { nodeId } : {});
+export const startAgentUpgrade = (nodeId: number) =>
+  Network.post<AgentUpgradeStatusItem>("/node/upgrade/start", { nodeId });
+export const startBatchAgentUpgrade = () =>
+  Network.post<{ submitted: number; results: Array<{ nodeId: number; nodeName: string; accepted: boolean; message: string }> }>("/node/upgrade/batch");
+export const getAgentUpgradeHistory = (nodeId?: number) =>
+  Network.post<AgentUpgradeTask[]>("/node/upgrade/history", nodeId ? { nodeId } : {});
 export interface TerminalTicket {
   ticket: string;
   expiresAt: number;

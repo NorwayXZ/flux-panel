@@ -271,6 +271,7 @@ func (w *WebSocketReporter) connect() error {
 
 	w.conn = conn
 	w.connected = true
+	go w.reportPendingAgentUpgrade()
 
 	// 设置关闭处理器来检测连接状态
 	w.conn.SetCloseHandler(func(code int, text string) error {
@@ -594,6 +595,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		portCheckResult, err = w.handlePortCheck(cmd.Data)
 		response.Type = "PortCheckResponse"
 		response.Data = portCheckResult
+
+	case "AgentUpgrade":
+		var upgradeResult agentUpgradeResponse
+		upgradeResult, err = w.handleAgentUpgrade(cmd.Data)
+		response.Type = "AgentUpgradeResponse"
+		response.Data = upgradeResult
 
 	// Protocol blocking switches
 	case "SetProtocol":

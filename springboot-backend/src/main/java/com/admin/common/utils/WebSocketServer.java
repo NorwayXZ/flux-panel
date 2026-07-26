@@ -9,6 +9,7 @@ import com.admin.entity.InternalConnector;
 import com.admin.mapper.InternalConnectorMapper;
 import com.admin.service.NodeService;
 import com.admin.service.TerminalSessionManager;
+import com.admin.service.AgentUpgradeService;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.SneakyThrows;
@@ -39,6 +40,9 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     @Resource
     TerminalSessionManager terminalSessionManager;
+
+    @Resource
+    AgentUpgradeService agentUpgradeService;
 
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
@@ -89,11 +93,18 @@ public class WebSocketServer extends TextWebSocketHandler {
 
                 if (Objects.equals(type, "1")) {
                     try {
-                        JSONObject terminalMessage = JSONObject.parseObject(decryptedPayload);
-                        String terminalType = terminalMessage.getString("type");
-                        if (terminalType != null && terminalType.startsWith("Terminal")) {
+                        JSONObject agentMessage = JSONObject.parseObject(decryptedPayload);
+                        String agentMessageType = agentMessage.getString("type");
+                        if (agentMessageType != null && agentMessageType.startsWith("AgentUpgrade")
+                                && StringUtils.isBlank(agentMessage.getString("requestId"))) {
+                            agentUpgradeService.handleAgentMessage(Long.valueOf(id), agentMessage);
+                            return;
+                        }
+                        if (agentMessageType != null && agentMessageType.startsWith("Terminal")) {
                             try {
-                                terminalSessionManager.handleAgentMessage(Long.valueOf(id), terminalMessage);
+                                if (!agentUpgradeService.handleTerminalEvent(Long.valueOf(id), agentMessage)) {
+                                    terminalSessionManager.handleAgentMessage(Long.valueOf(id), agentMessage);
+                                }
                             } catch (Exception terminalError) {
                                 log.warn("处理节点 {} 终端事件失败: {}", id, terminalError.getMessage());
                             }
@@ -321,6 +332,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                     
                     if (updateResult) {
                         log.info("节点 {} 连接建立成功，状态更新为在线，版本: {}", nodeId, version);
+                        agentUpgradeService.handleNodeConnected(nodeId, version);
                         
                         // 广播节点上线状态给所有管理员
                         JSONObject res = new JSONObject();

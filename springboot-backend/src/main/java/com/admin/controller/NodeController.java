@@ -6,6 +6,7 @@ import com.admin.common.aop.LogAnnotation;
 import com.admin.common.dto.NodeDto;
 import com.admin.common.dto.NodeUpdateDto;
 import com.admin.common.lang.R;
+import com.admin.service.AgentUpgradeService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +24,12 @@ import java.util.Map;
 @CrossOrigin
 @RequestMapping("/api/v1/node")
 public class NodeController extends BaseController {
+
+    private final AgentUpgradeService agentUpgradeService;
+
+    public NodeController(AgentUpgradeService agentUpgradeService) {
+        this.agentUpgradeService = agentUpgradeService;
+    }
 
     @LogAnnotation
     @PostMapping("/create")
@@ -65,6 +72,36 @@ public class NodeController extends BaseController {
     public R getInstallCommand(@RequestBody Map<String, Object> params) {
         Long id = Long.valueOf(params.get("id").toString());
         return nodeService.getInstallCommand(id);
+    }
+
+    @RequireRole
+    @PostMapping("/upgrade/status")
+    public R upgradeStatus(@RequestBody(required = false) Map<String, Object> params) {
+        Long nodeId = params != null && params.get("nodeId") != null
+                ? Long.valueOf(params.get("nodeId").toString()) : null;
+        return R.ok(agentUpgradeService.getStatus(nodeId));
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/upgrade/start")
+    public R startUpgrade(@RequestBody Map<String, Object> params) {
+        return agentUpgradeService.start(Long.valueOf(params.get("nodeId").toString()));
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/upgrade/batch")
+    public R startBatchUpgrade() {
+        return agentUpgradeService.startBatch();
+    }
+
+    @RequireRole
+    @PostMapping("/upgrade/history")
+    public R upgradeHistory(@RequestBody(required = false) Map<String, Object> params) {
+        Long nodeId = params != null && params.get("nodeId") != null
+                ? Long.valueOf(params.get("nodeId").toString()) : null;
+        return R.ok(agentUpgradeService.history(nodeId));
     }
 
     @LogAnnotation
