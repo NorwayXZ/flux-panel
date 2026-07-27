@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS private_proxy (
   user_id int NOT NULL,
   name varchar(100) NOT NULL,
   node_id bigint NOT NULL,
-  proxy_type varchar(12) NOT NULL,
+  proxy_type varchar(32) NOT NULL,
   bind_ip varchar(128) NOT NULL DEFAULT '',
   listen_port int NOT NULL,
   auth_username varchar(64) NOT NULL,
@@ -24,3 +24,5 @@ CREATE TABLE IF NOT EXISTS private_proxy (
   KEY idx_private_proxy_node_port (node_id, listen_port, state),
   KEY idx_private_proxy_expiry (state, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE private_proxy MODIFY COLUMN proxy_type varchar(32) NOT NULL;

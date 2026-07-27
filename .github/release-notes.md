@@ -74,3 +74,8 @@
 
 - Keeps the full Shadowsocks and VLESS+REALITY labels on desktop while using compact `SS` and `VLESS` labels on narrow screens.
 - Removes horizontal overflow from the private-proxy creation dialog without changing the 2.20.0 Agent protocol or database format.
+
+## 2.20.2 VLESS+REALITY schema compatibility
+
+- Expands the existing `private_proxy.proxy_type` column from 12 to 32 characters so upgraded installations can store the `vless_reality` protocol identifier.
+- The migration is additive and preserves all existing private proxy records. Startup only alters older columns that are shorter than 32 characters.

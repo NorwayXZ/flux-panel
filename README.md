@@ -74,7 +74,7 @@
 
 诊断请求只接受合法 IP 或主机名，使用固定程序和固定参数，不接受 Shell 命令；单次最多探测 10 次、超时 30 秒、输出 32 KB。SOCKS5、HTTP、Shadowsocks 和网络诊断要求所选节点 Agent `2.19.0` 或更高版本；VLESS+REALITY 要求 Agent `2.20.0`，旧 Agent 的现有业务不受影响。
 
-升级仅新增 `private_proxy` 表及一个可空的加密连接配置列，不删除或改写现有业务记录；手动维护数据库时可执行 [`migrations/20260727_private_proxy.sql`](migrations/20260727_private_proxy.sql)。旧版面板会忽略该表和新增列。回退前建议先删除 Shadowsocks 和 VLESS+REALITY；如果节点离线，应等待其上线并完成清理，避免旧版无法继续管理仍在 Agent 中运行的代理服务。面板出现异常时可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
+升级仅新增 `private_proxy` 表、一个可空的加密连接配置列，并将旧安装的协议名称字段无损扩宽到 32 个字符，不删除或改写现有业务记录；手动维护数据库时可执行 [`migrations/20260727_private_proxy.sql`](migrations/20260727_private_proxy.sql)。旧版面板会忽略该表和新增列。回退前建议先删除 Shadowsocks 和 VLESS+REALITY；如果节点离线，应等待其上线并完成清理，避免旧版无法继续管理仍在 Agent 中运行的代理服务。面板出现异常时可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
 
 ### 节点 Agent 一键升级
 
