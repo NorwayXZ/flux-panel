@@ -42,6 +42,27 @@
 - 节点卡片支持单节点或批量一键升级 Agent，并提供校验、回滚和升级状态记录
 - 支持带强制认证、来源白名单和有效期的 SOCKS5、HTTP、Shadowsocks 与 VLESS+REALITY 私人代理
 - 提供由指定节点执行的 Ping、TCP、DNS 和路由诊断工具箱
+- 服务器资产中心统一记录厂商、地区、配置、成本、到期、线路、套餐、标签和续费提醒
+- 动态 DNS 支持 Cloudflare、DNSPod、阿里云 DNS，以及 IPv4/IPv6 变更历史和失败告警
+
+### 服务器资产与动态 DNS
+
+`2.21.0` 在“系统管理”新增两个彼此独立的模块。服务器资产只保存管理资料，不会修改、重启或删除关联节点；删除资产资料也不会删除节点。动态 DNS 只在检测到公网地址变化时更新 DNS，不改变现有隧道、转发、端口池或域名入口。
+
+服务器资产支持关联现有节点，也可以登记尚未接入面板的服务器。每项资产可以填写厂商、地区、CPU、内存、磁盘、带宽、IPv4/IPv6、ASN、网络线路、流量套餐、月度费用、购买和到期日期、标签与备注。顶部按币种分别汇总月度费用，不会把人民币、美元等不同币种错误相加。到期提醒默认在提前 `30、7、3、1、0` 天各发送一次，可按资产修改或关闭；总开关位于“告警中心 -> 通知设置 -> 服务器到期”。
+
+动态 DNS 的使用步骤：
+
+1. 将负责检测公网地址的节点 Agent 升级到 `2.21.0` 或更高版本。
+2. Cloudflare 可以直接选择“DNS 与域名”中已登记的账户和 Zone；DNSPod 使用腾讯云 `SecretId / SecretKey`，阿里云使用 `AccessKey ID / AccessKey Secret`。额外凭据在“动态 DNS -> DNS 配置”中保存。
+3. 新建规则，选择检测节点、DNS 配置、主域名、A/AAAA 记录和检测间隔。最低间隔为 `30` 秒，默认 `60` 秒。
+4. 点击规则右侧的执行按钮完成首次检测。后续只有公网地址变化时才调用 DNS 更新接口，不会每分钟反复写记录。
+
+Agent 只向面板返回检测到的公网 IPv4 或 IPv6，DNS 密钥不会下发到节点。面板优先使用 `api4/api6.ipify.org`，失败时回退到对应的 `icanhazip.com` 地址，并强制按 IPv4 或 IPv6 网络族发起请求。检测节点离线、Agent 版本过旧、地址查询失败或 DNS API 拒绝请求时，规则会进入失败状态，写入最近 200 条历史并进入告警中心；Telegram 的“动态 DNS”开关开启时，每次故障只通知一次，恢复后再通知一次。
+
+凭据使用面板 `JWT_SECRET` 派生密钥进行 AES-GCM 加密，接口不会回传明文。Cloudflare Token 建议仅授予目标 Zone 的 `Zone:Read` 与 `DNS:Edit`；DNSPod 和阿里云密钥也应使用最小 DNS 权限的子账号。面板服务器必须能够访问相应 DNS API，节点必须能够出站访问公网地址查询服务。未创建规则时没有 Agent 探测；启用规则后每条规则每次检测只有一个很小的 HTTPS 请求，默认配置不会明显提高服务器要求。
+
+升级只新增 `server_asset`、`dynamic_dns_provider`、`dynamic_dns_rule` 和 `dynamic_dns_history` 表，并向 Telegram 配置增加两个开关，不改写现有业务表。手动维护数据库时可执行 [`migrations/20260728_server_assets_dynamic_dns.sql`](migrations/20260728_server_assets_dynamic_dns.sql)。回退到旧版时新表会被忽略；动态 DNS 将停止自动更新，但 DNS 服务商中最后一次成功写入的记录会保留。出现异常可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
 
 ### 私人代理与网络诊断
 

@@ -21,6 +21,8 @@ import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
 import DnsSettingsPage from "@/pages/dns-settings";
 import PrivateProxyPage from "@/pages/private-proxy";
 import NetworkToolsPage from "@/pages/network-tools";
+import ServerAssetsPage from "@/pages/server-assets";
+import DynamicDnsPage from "@/pages/dynamic-dns";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -192,6 +194,8 @@ function App() {
         path="/dns-settings"
         element={<ProtectedRoute useSimpleLayout={true}><DnsSettingsPage /></ProtectedRoute>}
       />
+      <Route path="/dynamic-dns" element={<ProtectedRoute useSimpleLayout={true}><DynamicDnsPage /></ProtectedRoute>} />
+      <Route path="/server-assets" element={<ProtectedRoute useSimpleLayout={true}><ServerAssetsPage /></ProtectedRoute>} />
       <Route 
         path="/tunnel" 
         element={

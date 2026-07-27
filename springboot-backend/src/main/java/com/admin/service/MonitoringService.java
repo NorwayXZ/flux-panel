@@ -89,12 +89,14 @@ public class MonitoringService {
         Map<Long, ResourceState> tunnelStates = evaluateTunnels(nodeStates);
         Map<Long, ResourceState> forwardStates = evaluateForwards(tunnelStates);
         Map<Long, ResourceState> certificateStates = evaluateCertificates();
+        Map<Long, ResourceState> dynamicDnsStates = evaluateDynamicDns();
 
         List<ResourceState> states = new ArrayList<>();
         states.addAll(nodeStates.values());
         states.addAll(tunnelStates.values());
         states.addAll(forwardStates.values());
         states.addAll(certificateStates.values());
+        states.addAll(dynamicDnsStates.values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -215,7 +217,7 @@ public class MonitoringService {
             where.append(" AND a.status = ?");
             args.add(status);
         }
-        if (Set.of("node", "tunnel", "forward").contains(resourceType)) {
+        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns").contains(resourceType)) {
             where.append(" AND a.resource_type = ?");
             args.add(resourceType);
         }
@@ -462,6 +464,25 @@ public class MonitoringService {
             }
             states.put(id, new ResourceState("certificate", id, stringValue(row.get("domain")),
                     intValue(row.get("owner_user_id")), status, detail));
+        }
+        return states;
+    }
+
+    private Map<Long, ResourceState> evaluateDynamicDns() {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,name,enabled,last_status,last_error,last_applied_ip FROM dynamic_dns_rule ORDER BY id");
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("id"));
+            boolean enabled = intValue(row.get("enabled")) == 1;
+            String lastStatus = stringValue(row.get("last_status"));
+            String status = !enabled ? PAUSED : "error".equals(lastStatus) ? OFFLINE
+                    : "success".equals(lastStatus) ? HEALTHY : UNKNOWN;
+            String detail = !enabled ? "动态 DNS 规则已停用"
+                    : "error".equals(lastStatus) ? stringValue(row.get("last_error"))
+                    : "success".equals(lastStatus) ? "当前地址：" + stringValue(row.get("last_applied_ip"))
+                    : "等待首次检测";
+            states.put(id, new ResourceState("dynamic_dns", id, stringValue(row.get("name")), 1, status, detail));
         }
         return states;
     }
@@ -813,6 +834,7 @@ public class MonitoringService {
             case "tunnel" -> "隧道";
             case "forward" -> "转发";
             case "certificate" -> "证书";
+            case "dynamic_dns" -> "动态 DNS";
             default -> "资源";
         };
     }

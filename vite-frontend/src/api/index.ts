@@ -68,6 +68,48 @@ export const startBatchAgentUpgrade = () =>
   Network.post<{ submitted: number; results: Array<{ nodeId: number; nodeName: string; accepted: boolean; message: string }> }>("/node/upgrade/batch");
 export const getAgentUpgradeHistory = (nodeId?: number) =>
   Network.post<AgentUpgradeTask[]>("/node/upgrade/history", nodeId ? { nodeId } : {});
+
+export interface ServerAsset {
+  id: number; nodeId?: number; nodeName?: string; nodeStatus?: number; name: string; provider?: string; region?: string;
+  cpuSpec?: string; memoryMb?: number; diskGb?: number; bandwidthMbps?: number; currency: string; monthlyCost: number;
+  purchaseDate?: number; expiryDate?: number; remainingDays?: number; autoRenew: boolean; ipv4?: string; ipv6?: string;
+  asn?: string; networkLine?: string; trafficPlan?: string; tags?: string; notes?: string;
+  reminderEnabled: boolean; reminderDays: string; createdTime: number; updatedTime: number;
+}
+
+export interface ServerAssetOverview {
+  items: ServerAsset[];
+  summary: { total: number; expiringSoon: number; expired: number; costByCurrency: Array<{ currency: string; monthlyCost: number }> };
+}
+
+export const getServerAssets = () => Network.post<ServerAssetOverview>("/server-assets/list");
+export const saveServerAsset = (data: Partial<ServerAsset>) => Network.post("/server-assets/save", data);
+export const deleteServerAsset = (id: number) => Network.post("/server-assets/delete", { id });
+
+export type DynamicDnsProviderType = 'cloudflare' | 'dnspod' | 'aliyun';
+export interface DynamicDnsProviderOption {
+  optionKey: string; source: 'dns' | 'dynamic'; id: number; name: string; provider: DynamicDnsProviderType;
+  enabled: boolean; zoneRefId?: number; zoneName?: string; lastError?: string; credentialConfigured?: boolean;
+}
+export interface DynamicDnsRule {
+  id: number; name: string; nodeId: number; nodeName: string; nodeVersion?: string; nodeOnline: boolean;
+  providerSource: 'dns' | 'dynamic'; providerRefId: number; provider: DynamicDnsProviderType; providerAccountName?: string;
+  zoneRefId?: number; zoneName: string; recordName: string; recordType: 'A' | 'AAAA'; ttl: number;
+  checkIntervalSeconds: number; enabled: boolean; lastDetectedIp?: string; lastAppliedIp?: string;
+  lastStatus: 'pending' | 'success' | 'error'; lastError?: string; lastCheckedAt?: number; lastUpdatedAt?: number;
+}
+export interface DynamicDnsOverview {
+  rules: DynamicDnsRule[]; providers: DynamicDnsProviderOption[];
+  summary: { rules: number; active: number; healthy: number; errors: number }; minimumAgentVersion: string;
+}
+export interface DynamicDnsHistoryItem { id: number; ruleId: number; oldIp?: string; newIp?: string; status: string; error?: string; createdTime: number }
+export const getDynamicDnsOverview = () => Network.post<DynamicDnsOverview>("/dynamic-dns/overview");
+export const getDynamicDnsHistory = (id: number) => Network.post<DynamicDnsHistoryItem[]>("/dynamic-dns/history", { id });
+export const saveDynamicDnsProvider = (data: any) => Network.post("/dynamic-dns/provider/save", data);
+export const deleteDynamicDnsProvider = (id: number) => Network.post("/dynamic-dns/provider/delete", { id });
+export const saveDynamicDnsRule = (data: any) => Network.post("/dynamic-dns/rule/save", data);
+export const deleteDynamicDnsRule = (id: number) => Network.post("/dynamic-dns/rule/delete", { id });
+export const runDynamicDnsRule = (id: number) => Network.post("/dynamic-dns/rule/run", { id });
 export interface TerminalTicket {
   ticket: string;
   expiresAt: number;
@@ -399,7 +441,7 @@ export const getLayoutOrder = (scope: string) => Network.post<string[]>("/layout
 export const saveLayoutOrder = (scope: string, order: string[]) => Network.post<string[]>("/layout/order/save", { scope, order });
 
 export type MonitoringRange = '24h' | '7d' | '30d';
-export type MonitoringResourceType = 'node' | 'tunnel' | 'forward';
+export type MonitoringResourceType = 'node' | 'tunnel' | 'forward' | 'certificate' | 'dynamic_dns';
 export type MonitoringStatus = 'healthy' | 'degraded' | 'offline' | 'paused' | 'unknown';
 
 export interface MonitoringSummary {
@@ -501,6 +543,8 @@ export interface TelegramNotificationSettings {
   forwardEnabled: boolean;
   forwardRepeatLimit: number;
   recoveryEnabled: boolean;
+  assetExpiryEnabled: boolean;
+  dynamicDnsEnabled: boolean;
   loginOutsideWhitelistEnabled: boolean;
   loginAllowedCidrs: string;
   repeatIntervalMinutes: number;

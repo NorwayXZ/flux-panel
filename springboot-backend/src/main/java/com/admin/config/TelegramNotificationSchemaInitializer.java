@@ -40,6 +40,8 @@ public class TelegramNotificationSchemaInitializer implements ApplicationRunner 
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.update("INSERT IGNORE INTO telegram_notification_config (id, updated_at) VALUES (1, ?)",
                     System.currentTimeMillis());
+            addColumn("telegram_notification_config", "asset_expiry_enabled", "tinyint NOT NULL DEFAULT 1");
+            addColumn("telegram_notification_config", "dynamic_dns_enabled", "tinyint NOT NULL DEFAULT 1");
 
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS telegram_notification_delivery ("
                     + "event_key varchar(191) NOT NULL, "
@@ -57,5 +59,12 @@ public class TelegramNotificationSchemaInitializer implements ApplicationRunner 
         } catch (DataAccessException e) {
             log.error("Telegram notification storage initialization failed", e);
         }
+    }
+
+    private void addColumn(String table, String column, String definition) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?",
+                Integer.class, table, column);
+        if (count != null && count == 0) jdbcTemplate.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition);
     }
 }

@@ -9,6 +9,7 @@ import {
   BellRing,
   CheckCheck,
   CircleCheck,
+  CloudCog,
   Clock3,
   Network,
   RefreshCw,
@@ -88,6 +89,8 @@ const EMPTY_NOTIFICATION_SETTINGS: TelegramNotificationSettings = {
   forwardEnabled: true,
   forwardRepeatLimit: 1,
   recoveryEnabled: true,
+  assetExpiryEnabled: true,
+  dynamicDnsEnabled: true,
   loginOutsideWhitelistEnabled: false,
   loginAllowedCidrs: '',
   repeatIntervalMinutes: 30,
@@ -103,6 +106,8 @@ const RESOURCE_LABELS: Record<MonitoringResourceType, string> = {
   node: '节点',
   tunnel: '隧道',
   forward: '转发',
+  certificate: '证书',
+  dynamic_dns: '动态 DNS',
 };
 
 const STATUS_LABELS: Record<MonitoringStatus, string> = {
@@ -124,6 +129,7 @@ const statusStyles: Record<MonitoringStatus, string> = {
 const resourceIcon = (type: MonitoringResourceType, className = 'h-4 w-4') => {
   if (type === 'node') return <Server className={className} />;
   if (type === 'tunnel') return <Network className={className} />;
+  if (type === 'certificate' || type === 'dynamic_dns') return <CloudCog className={className} />;
   return <ArrowRightLeft className={className} />;
 };
 
@@ -569,6 +575,14 @@ function NotificationSettings() {
               </label>
             </div>
           ))}
+          <div className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div><p className="font-medium text-foreground">动态 DNS</p><p className="mt-1 text-sm text-default-500">更新失败和恢复，每次故障只通知一次</p></div>
+            <Switch size="sm" isSelected={settings.dynamicDnsEnabled} onValueChange={value => update('dynamicDnsEnabled', value)}>{settings.dynamicDnsEnabled ? '通知' : '关闭'}</Switch>
+          </div>
+          <div className="grid gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div><p className="font-medium text-foreground">服务器到期</p><p className="mt-1 text-sm text-default-500">按资产中心设置的提前天数提醒</p></div>
+            <Switch size="sm" isSelected={settings.assetExpiryEnabled} onValueChange={value => update('assetExpiryEnabled', value)}>{settings.assetExpiryEnabled ? '通知' : '关闭'}</Switch>
+          </div>
         </div>
         <div className="mt-4 max-w-sm">
           <Input
@@ -646,6 +660,8 @@ function AlertList(props: AlertListProps) {
             <option value="node">节点</option>
             <option value="tunnel">隧道</option>
             <option value="forward">转发</option>
+            <option value="certificate">证书</option>
+            <option value="dynamic_dns">动态 DNS</option>
           </select>
           <select value={props.severityFilter} onChange={event => props.onSeverityChange(event.target.value as AlertListProps['severityFilter'])} className={controlClass} aria-label="严重程度">
             <option value="all">全部级别</option>

@@ -15,6 +15,8 @@ public class TelegramNotificationSettingsDto {
     private boolean forwardEnabled;
     private int forwardRepeatLimit;
     private boolean recoveryEnabled;
+    private boolean assetExpiryEnabled;
+    private boolean dynamicDnsEnabled;
     private boolean loginOutsideWhitelistEnabled;
     private String loginAllowedCidrs;
     private int repeatIntervalMinutes;

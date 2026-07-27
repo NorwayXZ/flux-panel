@@ -68,6 +68,8 @@ public class TelegramNotificationService {
         dto.setForwardEnabled(settings.forwardEnabled());
         dto.setForwardRepeatLimit(settings.forwardRepeatLimit());
         dto.setRecoveryEnabled(settings.recoveryEnabled());
+        dto.setAssetExpiryEnabled(settings.assetExpiryEnabled());
+        dto.setDynamicDnsEnabled(settings.dynamicDnsEnabled());
         dto.setLoginOutsideWhitelistEnabled(settings.loginOutsideWhitelistEnabled());
         dto.setLoginAllowedCidrs(settings.loginAllowedCidrs());
         dto.setRepeatIntervalMinutes(settings.repeatIntervalMinutes());
@@ -88,13 +90,13 @@ public class TelegramNotificationService {
         int interval = clamp(dto.getRepeatIntervalMinutes(), MIN_REPEAT_MINUTES, MAX_REPEAT_MINUTES);
         jdbcTemplate.update("UPDATE telegram_notification_config SET enabled=?, bot_token=?, chat_id=?, "
                         + "node_enabled=?, node_repeat_limit=?, tunnel_enabled=?, tunnel_repeat_limit=?, "
-                        + "forward_enabled=?, forward_repeat_limit=?, recovery_enabled=?, "
+                        + "forward_enabled=?, forward_repeat_limit=?, recovery_enabled=?, asset_expiry_enabled=?, dynamic_dns_enabled=?, "
                         + "login_outside_whitelist_enabled=?, login_allowed_cidrs=?, repeat_interval_minutes=?, updated_at=? WHERE id=?",
                 dto.isEnabled(), encryptedToken, chatId,
                 dto.isNodeEnabled(), repeatLimit(dto.getNodeRepeatLimit()),
                 dto.isTunnelEnabled(), repeatLimit(dto.getTunnelRepeatLimit()),
                 dto.isForwardEnabled(), repeatLimit(dto.getForwardRepeatLimit()),
-                dto.isRecoveryEnabled(), dto.isLoginOutsideWhitelistEnabled(),
+                dto.isRecoveryEnabled(), dto.isAssetExpiryEnabled(), dto.isDynamicDnsEnabled(), dto.isLoginOutsideWhitelistEnabled(),
                 StringUtils.trimToEmpty(dto.getLoginAllowedCidrs()), interval, System.currentTimeMillis(), CONFIG_ID);
         return getSettings();
     }
@@ -197,6 +199,67 @@ public class TelegramNotificationService {
         }
     }
 
+    @Async
+    public void notifyServerAssetExpiry(long assetId, String assetName, String provider, long expiryAt, long remainingDays) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !settings.assetExpiryEnabled()) return;
+            String eventKey = shortenKey("asset-expiry:" + assetId + ":" + expiryAt + ":" + remainingDays);
+            synchronized (deliveryLock) {
+                if (loadDelivery(eventKey).sendCount() > 0) return;
+                String state = remainingDays == 0 ? "今天到期" : "剩余 " + remainingDays + " 天";
+                String message = "[服务器到期]\n"
+                        + "资产：" + clean(assetName) + "\n"
+                        + "厂商：" + clean(provider) + "\n"
+                        + "状态：" + state + "\n"
+                        + "到期：" + formatTime(expiryAt);
+                deliver(settings, eventKey, "asset_expiry", "asset", assetId, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("Telegram asset expiry notification failed for {}: {}", assetId, e.getMessage());
+        }
+    }
+
+    @Async
+    public void notifyDynamicDnsFailure(long ruleId, String ruleName, String detail) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !settings.dynamicDnsEnabled()) return;
+            String eventKey = shortenKey("dynamic-dns:" + ruleId + ":open");
+            synchronized (deliveryLock) {
+                if (loadDelivery(eventKey).sendCount() > 0) return;
+                String message = "[动态 DNS 失败]\n"
+                        + "规则：" + clean(ruleName) + "\n"
+                        + "原因：" + clean(detail) + "\n"
+                        + "时间：" + formatTime(System.currentTimeMillis());
+                deliver(settings, eventKey, "dynamic_dns", "dynamic_dns", ruleId, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("Telegram dynamic DNS notification failed for {}: {}", ruleId, e.getMessage());
+        }
+    }
+
+    @Async
+    public void notifyDynamicDnsRecovery(long ruleId, String ruleName, String address) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !settings.dynamicDnsEnabled() || !settings.recoveryEnabled()) return;
+            String eventKey = shortenKey("dynamic-dns:" + ruleId + ":open");
+            synchronized (deliveryLock) {
+                Delivery delivery = loadDelivery(eventKey);
+                if (delivery.sendCount() == 0 || delivery.recoverySent()) return;
+                String message = "[动态 DNS 恢复]\n"
+                        + "规则：" + clean(ruleName) + "\n"
+                        + "地址：" + clean(address) + "\n"
+                        + "状态：更新正常";
+                deliver(settings, eventKey, "dynamic_dns", "dynamic_dns", ruleId, message, true);
+                jdbcTemplate.update("DELETE FROM telegram_notification_delivery WHERE event_key=?", eventKey);
+            }
+        } catch (Exception e) {
+            log.warn("Telegram dynamic DNS recovery failed for {}: {}", ruleId, e.getMessage());
+        }
+    }
+
     @org.springframework.scheduling.annotation.Scheduled(cron = "0 40 3 * * ?")
     public void cleanupDeliveries() {
         jdbcTemplate.update("DELETE FROM telegram_notification_delivery WHERE updated_at < ?",
@@ -248,7 +311,8 @@ public class TelegramNotificationService {
                 bool(row.get("node_enabled")), integer(row.get("node_repeat_limit"), 1),
                 bool(row.get("tunnel_enabled")), integer(row.get("tunnel_repeat_limit"), 1),
                 bool(row.get("forward_enabled")), integer(row.get("forward_repeat_limit"), 1),
-                bool(row.get("recovery_enabled")), bool(row.get("login_outside_whitelist_enabled")),
+                bool(row.get("recovery_enabled")), bool(row.get("asset_expiry_enabled")), bool(row.get("dynamic_dns_enabled")),
+                bool(row.get("login_outside_whitelist_enabled")),
                 value(row.get("login_allowed_cidrs")), integer(row.get("repeat_interval_minutes"), 30)
         );
     }
@@ -346,6 +410,7 @@ public class TelegramNotificationService {
             case "tunnel" -> "隧道";
             case "forward" -> "转发";
             case "certificate" -> "证书";
+            case "dynamic_dns" -> "动态 DNS";
             default -> "资源";
         };
     }
@@ -389,7 +454,8 @@ public class TelegramNotificationService {
                             boolean nodeEnabled, int nodeRepeatLimit,
                             boolean tunnelEnabled, int tunnelRepeatLimit,
                             boolean forwardEnabled, int forwardRepeatLimit,
-                            boolean recoveryEnabled, boolean loginOutsideWhitelistEnabled,
+                            boolean recoveryEnabled, boolean assetExpiryEnabled, boolean dynamicDnsEnabled,
+                            boolean loginOutsideWhitelistEnabled,
                             String loginAllowedCidrs, int repeatIntervalMinutes) { }
 
     private record Delivery(int sendCount, long lastSentAt, boolean recoverySent) { }

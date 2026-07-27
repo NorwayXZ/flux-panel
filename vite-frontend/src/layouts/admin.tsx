@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, ShieldCheck, Wrench } from 'lucide-react';
+import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -142,6 +142,18 @@ export default function AdminLayout({
       adminOnly: true
     },
     {
+      path: '/dynamic-dns',
+      label: '动态 DNS',
+      icon: <RefreshCw className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
+      path: '/server-assets',
+      label: '服务器资产',
+      icon: <Server className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/user',
       label: '用户管理',
       icon: (
@@ -177,7 +189,7 @@ export default function AdminLayout({
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/cross-entry-failover', '/topology'] },
     { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools'] },
-    { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/user', '/config'] },
+    { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/dynamic-dns', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
 
