@@ -28,6 +28,7 @@ import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -96,12 +97,10 @@ public class PrivateProxyService {
         proxy.setAllowedCidrs(String.join(",", cidrs));
         proxy.setState("provisioning");
         proxy.setExpiresAt(Boolean.TRUE.equals(dto.getPermanent()) ? null : now + dto.getLeaseHours() * 3_600_000L);
+        assignRuntimeNames(proxy, !cidrs.isEmpty());
         proxy.setCreatedTime(now);
         proxy.setUpdatedTime(now);
         proxyMapper.insert(proxy);
-        proxy.setServiceName("private-proxy-" + proxy.getId());
-        proxy.setAdmissionName(cidrs.isEmpty() ? null : "private-proxy-admission-" + proxy.getId());
-        proxyMapper.updateById(proxy);
 
         try {
             if (proxy.getAdmissionName() != null) {
@@ -246,6 +245,12 @@ public class PrivateProxyService {
             admissionClean = gostCleanupSuccess(GostUtil.DeleteAdmission(node.getId(), proxy.getAdmissionName()));
         }
         return serviceClean && admissionClean;
+    }
+
+    static void assignRuntimeNames(PrivateProxy proxy, boolean withAdmission) {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        proxy.setServiceName("private-proxy-" + suffix);
+        proxy.setAdmissionName(withAdmission ? "private-proxy-admission-" + suffix : null);
     }
 
     private List<String> parseCidrs(String value) {

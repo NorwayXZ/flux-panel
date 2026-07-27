@@ -1,3 +1,8 @@
+## 2.19.1 private proxy compatibility fix
+
+- Generates private-proxy service and admission identifiers before the first database insert, fixing creation on strict MySQL 5.7 and MySQL 8 installations.
+- Keeps Agent `2.19.0` as the minimum version; this panel-only fix does not require another Agent restart.
+
 ## 2.19.0 private proxy, diagnostics, and panel rollback
 
 - Adds authenticated SOCKS5 and HTTP private proxies on owned or shared nodes, with optional source CIDR allowlists and permanent or timed leases.
