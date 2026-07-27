@@ -1,3 +1,8 @@
+## 2.17.1 display fix
+
+- Ensures the full-chain topology canvas fills its available panel and runs automatic framing after the graph nodes are rendered.
+- Lowers the overview zoom floor for large installations so the complete graph remains reachable before the operator zooms into a chain.
+
 ## Managed HTTPS
 
 - Adds Cloudflare DNS-01 certificate issuance and automatic renewal through the centralized DNS credential store.

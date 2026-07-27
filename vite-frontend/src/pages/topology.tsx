@@ -111,8 +111,7 @@ function TopologyCanvas() {
     setResourceNodes(response.data.nodes || []);
     setResourceEdges(response.data.edges || []);
     setSummary(response.data.summary || { nodes: 0, links: 0, healthy: 0, abnormal: 0 });
-    window.setTimeout(() => flow.fitView({ padding: 0.15, duration: 350 }), 80);
-  }, [flow]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -149,7 +148,11 @@ function TopologyCanvas() {
     .filter(node => visible.has(node.id))
     .map(node => ({ id: node.id, type: 'resource', position: { x: 0, y: 0 }, data: node })), edges), [edges, resourceNodes, visible]);
 
-  useEffect(() => { window.setTimeout(() => flow.fitView({ padding: 0.16, duration: 300 }), 60); }, [flow, mode]);
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const timer = window.setTimeout(() => flow.fitView({ padding: 0.16, duration: 300 }), 80);
+    return () => window.clearTimeout(timer);
+  }, [edges.length, flow, mode, nodes.length]);
 
   if (loading && resourceNodes.length === 0) return <div className="flex h-[70vh] items-center justify-center"><Spinner label="加载全链路拓扑" /></div>;
 
@@ -174,7 +177,7 @@ function TopologyCanvas() {
         {nodes.length === 0 ? (
           <div className="flex h-full min-h-[620px] flex-col items-center justify-center gap-3 text-default-500"><Network size={34} /><span>{mode === 'abnormal' ? '当前没有异常链路' : '暂无可展示的资源关系'}</span></div>
         ) : (
-          <ReactFlow<Node<TopologyResourceNode>, Edge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView minZoom={0.15} maxZoom={1.8} onNodeClick={(_, node) => navigate(String(node.data.path))} proOptions={{ hideAttribution: true }}>
+          <ReactFlow<Node<TopologyResourceNode>, Edge> className="h-full w-full" nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView minZoom={0.05} maxZoom={1.8} onNodeClick={(_, node) => navigate(String(node.data.path))} proOptions={{ hideAttribution: true }}>
             <Background gap={22} size={1} color="rgba(113,113,122,.22)" />
             <MiniMap pannable zoomable nodeColor={node => {
               const status = (node.data as unknown as TopologyResourceNode).status;
