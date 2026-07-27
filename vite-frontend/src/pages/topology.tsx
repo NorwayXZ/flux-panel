@@ -173,7 +173,7 @@ function TopologyCanvas() {
           <div key={String(label)} className="bg-background px-4 py-3"><div className="text-xs text-default-500">{label}</div><div className={`mt-1 text-xl font-semibold ${index === 3 && Number(value) > 0 ? 'text-danger' : ''}`}>{value}</div></div>
         ))}
       </div>
-      <div className="relative min-h-[620px] flex-1 bg-default-50">
+      <div className="relative shrink-0 bg-default-50" style={{ height: 'clamp(520px, calc(100dvh - 250px), 900px)' }}>
         {nodes.length === 0 ? (
           <div className="flex h-full min-h-[620px] flex-col items-center justify-center gap-3 text-default-500"><Network size={34} /><span>{mode === 'abnormal' ? '当前没有异常链路' : '暂无可展示的资源关系'}</span></div>
         ) : (

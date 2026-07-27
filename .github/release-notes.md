@@ -1,6 +1,7 @@
-## 2.17.1 display fix
+## 2.17.2 display fix
 
-- Ensures the full-chain topology canvas fills its available panel and runs automatic framing after the graph nodes are rendered.
+- Gives the full-chain topology canvas an explicit responsive height so percentage sizing resolves correctly in desktop and mobile flex layouts.
+- Runs automatic framing after the graph nodes are rendered.
 - Lowers the overview zoom floor for large installations so the complete graph remains reachable before the operator zooms into a chain.
 
 ## Managed HTTPS
