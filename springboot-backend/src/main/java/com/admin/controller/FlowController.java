@@ -5,6 +5,7 @@ import com.admin.common.dto.FlowDto;
 import com.admin.common.dto.GostConfigDto;
 import com.admin.common.lang.R;
 import com.admin.service.UserQuotaService;
+import com.admin.service.PrivateProxyService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
@@ -69,6 +70,9 @@ public class FlowController extends BaseController {
 
     @Resource
     UserQuotaService userQuotaService;
+
+    @Resource
+    PrivateProxyService privateProxyService;
 
     /**
      * 加密消息包装器
@@ -218,7 +222,14 @@ public class FlowController extends BaseController {
      * 处理流量数据的核心逻辑
      */
     private String processFlowData(FlowDto flowDataList) {
-        String[] serviceIds = parseServiceName(flowDataList.getN());
+        String serviceName = flowDataList.getN();
+        if (serviceName == null || serviceName.isBlank()) return SUCCESS_RESPONSE;
+        if (serviceName.startsWith("private-proxy-")) {
+            privateProxyService.recordTraffic(serviceName, flowDataList.getD(), flowDataList.getU());
+            return SUCCESS_RESPONSE;
+        }
+        String[] serviceIds = parseServiceName(serviceName);
+        if (serviceIds.length < 3) return SUCCESS_RESPONSE;
         String forwardId = serviceIds[0];
         String userId = serviceIds[1];
         String userTunnelId = serviceIds[2];

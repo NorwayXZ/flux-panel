@@ -141,4 +141,11 @@ grep -Fq "PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "${NEXT_VERSION}" "${INSTALL_DIR}/VERSION"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
+: > "${EVENT_LOG}"
+run_manager rollback >/dev/null
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq "PREVIOUS_PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
+grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
+
 printf 'Panel manager tests passed\n'

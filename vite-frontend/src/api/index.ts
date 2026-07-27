@@ -118,6 +118,68 @@ export const updateForward = (data: any) => Network.post("/forward/update", data
 export const deleteForward = (id: number) => Network.post("/forward/delete", { id });
 export const forceDeleteForward = (id: number) => Network.post("/forward/force-delete", { id });
 
+export interface PrivateProxyItem {
+  id: number;
+  userId: number;
+  ownerUserName: string;
+  name: string;
+  nodeId: number;
+  nodeName: string;
+  publicHost?: string;
+  nodeOnline: boolean;
+  proxyType: 'socks5' | 'http';
+  bindIp?: string;
+  listenPort: number;
+  authUsername: string;
+  passwordConfigured: boolean;
+  allowedCidrs?: string;
+  state: 'provisioning' | 'active' | 'paused' | 'error' | 'delete_pending' | 'expired';
+  expiresAt?: number;
+  lastError?: string;
+  inFlow?: number;
+  outFlow?: number;
+  createdTime: number;
+}
+
+export interface PrivateProxyCreateRequest {
+  name: string;
+  nodeId: number;
+  proxyType: 'socks5' | 'http';
+  bindIp?: string;
+  listenPort: number;
+  authUsername: string;
+  authPassword: string;
+  allowedCidrs?: string;
+  leaseHours?: number;
+  permanent: boolean;
+}
+
+export const getPrivateProxies = () => Network.post<PrivateProxyItem[]>("/private-proxy/list");
+export const createPrivateProxy = (data: PrivateProxyCreateRequest) => Network.post<PrivateProxyItem>("/private-proxy/create", data);
+export const pausePrivateProxy = (id: number) => Network.post("/private-proxy/pause", { id });
+export const resumePrivateProxy = (id: number) => Network.post("/private-proxy/resume", { id });
+export const deletePrivateProxy = (id: number) => Network.post("/private-proxy/delete", { id });
+
+export interface NetworkDiagnosticResult {
+  mode: 'ping' | 'tcp' | 'dns' | 'trace';
+  target: string;
+  success: boolean;
+  summary: string;
+  output?: string;
+  addresses?: string[];
+  durationMs: number;
+}
+
+export const runNetworkDiagnostic = (data: {
+  nodeId: number;
+  mode: 'ping' | 'tcp' | 'dns' | 'trace';
+  target: string;
+  port?: number;
+  recordType?: string;
+  count?: number;
+  timeoutMs?: number;
+}) => Network.post<NetworkDiagnosticResult>("/network-tools/run", data);
+
 // 转发服务控制操作 - 通过Java后端接口
 export const pauseForwardService = (forwardId: number) => Network.post("/forward/pause", { id: forwardId });
 export const resumeForwardService = (forwardId: number) => Network.post("/forward/resume", { id: forwardId });

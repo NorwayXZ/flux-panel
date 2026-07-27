@@ -614,6 +614,13 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleDeleteLimiter(cmd.Data)
 		response.Type = "DeleteLimitersResponse"
 
+	case "AddAdmissions":
+		err = w.handleAddAdmission(cmd.Data)
+		response.Type = "AddAdmissionsResponse"
+	case "DeleteAdmissions":
+		err = w.handleDeleteAdmission(cmd.Data)
+		response.Type = "DeleteAdmissionsResponse"
+
 	// TCP Ping 诊断命令
 	case "TcpPing":
 		var tcpPingResult TcpPingResponse
@@ -626,6 +633,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		portCheckResult, err = w.handlePortCheck(cmd.Data)
 		response.Type = "PortCheckResponse"
 		response.Data = portCheckResult
+
+	case "NetworkDiagnostic":
+		var diagnosticResult networkDiagnosticResponse
+		diagnosticResult, err = w.handleNetworkDiagnostic(cmd.Data)
+		response.Type = "NetworkDiagnosticResponse"
+		response.Data = diagnosticResult
 
 	case "AgentUpgrade":
 		var upgradeResult agentUpgradeResponse
@@ -949,6 +962,30 @@ func (w *WebSocketReporter) handleAddLimiter(data interface{}) error {
 
 	req := createLimiterRequest{Data: limiterConfig}
 	return createLimiter(req)
+}
+
+func (w *WebSocketReporter) handleAddAdmission(data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("serialize admission: %v", err)
+	}
+	var admissionConfig config.AdmissionConfig
+	if err := json.Unmarshal(jsonData, &admissionConfig); err != nil {
+		return fmt.Errorf("parse admission: %v", err)
+	}
+	return createAdmission(createAdmissionRequest{Data: admissionConfig})
+}
+
+func (w *WebSocketReporter) handleDeleteAdmission(data interface{}) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("serialize admission delete request: %v", err)
+	}
+	var request deleteAdmissionRequest
+	if err := json.Unmarshal(jsonData, &request); err != nil {
+		return fmt.Errorf("parse admission delete request: %v", err)
+	}
+	return deleteAdmission(request)
 }
 
 func (w *WebSocketReporter) handleUpdateLimiter(data interface{}) error {

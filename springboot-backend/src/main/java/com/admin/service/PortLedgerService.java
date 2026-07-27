@@ -12,6 +12,7 @@ import com.admin.entity.PortLease;
 import com.admin.entity.PortPool;
 import com.admin.entity.PortPoolGrant;
 import com.admin.entity.PublishedService;
+import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
@@ -21,6 +22,7 @@ import com.admin.mapper.PortLeaseMapper;
 import com.admin.mapper.PortPoolGrantMapper;
 import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.PublishedServiceMapper;
+import com.admin.mapper.PrivateProxyMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.alibaba.fastjson.JSON;
@@ -50,6 +52,7 @@ public class PortLedgerService {
     @Resource private PublishedServiceMapper serviceMapper;
     @Resource private UserMapper userMapper;
     @Resource private DomainRouteMapper domainRouteMapper;
+    @Resource private PrivateProxyMapper privateProxyMapper;
 
     public Map<String, Object> list(PortLedgerQueryDto query) {
         List<Node> nodes = nodeMapper.selectList(null);
@@ -69,6 +72,7 @@ public class PortLedgerService {
         addGrants(entries, nodeMap, poolMap, userMap);
         addLeases(entries, nodeMap, poolMap, publishedMap, userMap);
         addDomainIngresses(entries, nodeMap, userMap);
+        addPrivateProxies(entries, nodeMap, userMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -184,6 +188,18 @@ public class PortLedgerService {
             add(entries, nodeEntry("domain_ingress", "occupied", nodes.get(first.getNodeId()),
                     first.getListenPort(), first.getListenPort(), "tcp", first.getUserId(), ownerName,
                     first.getId(), "TLS 域名入口", domains, first.getCreatedTime(), null));
+        }
+    }
+
+    private void addPrivateProxies(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
+        for (PrivateProxy proxy : privateProxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .notIn("state", "deleted", "expired", "error"))) {
+            User owner = users.get(proxy.getUserId());
+            String detail = ("http".equals(proxy.getProxyType()) ? "HTTP" : "SOCKS5") + " 私人代理";
+            add(entries, nodeEntry("private_proxy", "occupied", nodes.get(proxy.getNodeId()),
+                    proxy.getListenPort(), proxy.getListenPort(), "tcp", proxy.getUserId(),
+                    owner == null ? "未知用户" : owner.getUser(), proxy.getId(), proxy.getName(), detail,
+                    proxy.getCreatedTime(), proxy.getExpiresAt()));
         }
     }
 

@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, Network, RadioTower, ShieldCheck } from 'lucide-react';
+import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, ShieldCheck, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -91,6 +91,17 @@ export default function AdminLayout({
       icon: <RadioTower className="h-5 w-5" />
     },
     {
+      path: '/private-proxy',
+      label: '私人代理',
+      icon: <LockKeyhole className="h-5 w-5" />
+    },
+    {
+      path: '/network-tools',
+      label: '网络诊断',
+      icon: <Wrench className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/tunnel',
       label: '隧道组建',
       icon: (
@@ -165,6 +176,7 @@ export default function AdminLayout({
   const menuGroups = [
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/cross-entry-failover', '/topology'] },
     { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
+    { label: '实用工具', paths: ['/private-proxy', '/network-tools'] },
     { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];

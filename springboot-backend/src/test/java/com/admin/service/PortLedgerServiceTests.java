@@ -14,6 +14,7 @@ import com.admin.mapper.PortLeaseMapper;
 import com.admin.mapper.PortPoolGrantMapper;
 import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.PublishedServiceMapper;
+import com.admin.mapper.PrivateProxyMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class PortLedgerServiceTests {
     @Mock private PublishedServiceMapper serviceMapper;
     @Mock private UserMapper userMapper;
     @Mock private DomainRouteMapper domainRouteMapper;
+    @Mock private PrivateProxyMapper privateProxyMapper;
 
     @InjectMocks private PortLedgerService service;
 
@@ -78,6 +80,7 @@ class PortLedgerServiceTests {
         when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
         when(domainRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         PortLedgerQueryDto query = new PortLedgerQueryDto();
         query.setNodeId(2L);
@@ -108,6 +111,7 @@ class PortLedgerServiceTests {
         when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
         when(domainRouteMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         Map<String, Object> result = service.list(new PortLedgerQueryDto());
         @SuppressWarnings("unchecked")

@@ -440,6 +440,36 @@ update_panel() {
   log "update complete"
 }
 
+rollback_panel() {
+  check_host
+  require_command flock
+  [[ -f "${ENV_FILE}" ]] || fail "configuration not found: ${ENV_FILE}"
+  COMPOSE_FILE="$(installed_compose_file)"
+  [[ -n "${COMPOSE_FILE}" ]] || fail "installation not found: ${INSTALL_DIR}"
+
+  exec 9>/run/flux-panel-update.lock
+  flock -n 9 || fail "another Flux Panel update or rollback is already running"
+
+  local current_version previous_version
+  current_version="$(read_env_value PANEL_VERSION)"
+  previous_version="$(read_env_value PREVIOUS_PANEL_VERSION)"
+  [[ -n "${previous_version}" ]] || fail "no previous release is recorded; update successfully once before using rollback"
+  [[ "${previous_version}" != "${current_version}" ]] || fail "previous release is the same as the current release"
+
+  log "rolling back Flux Panel ${current_version} -> ${previous_version}"
+  set_env_value PANEL_VERSION "${previous_version}"
+  set_env_value PREVIOUS_PANEL_VERSION "${current_version}"
+  if ! deploy_release; then
+    log "rollback target failed health checks; restoring ${current_version}"
+    set_env_value PANEL_VERSION "${current_version}"
+    set_env_value PREVIOUS_PANEL_VERSION "${previous_version}"
+    deploy_release || fail "rollback and recovery both failed; inspect the container logs immediately"
+    fail "rollback failed and ${current_version} was restored"
+  fi
+  cleanup_old_release_images "${previous_version}" "${current_version}"
+  log "rollback complete; current release: ${previous_version}"
+}
+
 uninstall_panel() {
   check_host
   remove_update_service 0
@@ -484,7 +514,7 @@ show_status() {
 
 usage() {
   cat <<'EOF'
-Usage: flux-panel.sh <install|update|uninstall|purge|status>
+Usage: flux-panel.sh <install|update|rollback|uninstall|purge|status>
 
 Environment variables:
   FLUX_PANEL_FRONTEND_PORT  Public web port, default: 6366
@@ -502,6 +532,7 @@ main() {
   case "${1:-}" in
     install) install_panel ;;
     update) update_panel ;;
+    rollback) rollback_panel ;;
     uninstall) uninstall_panel ;;
     purge) purge_panel ;;
     status) show_status ;;

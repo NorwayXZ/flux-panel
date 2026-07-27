@@ -4,11 +4,13 @@ import com.admin.common.dto.ForwardRouteDto;
 import com.admin.common.lang.R;
 import com.admin.entity.Forward;
 import com.admin.entity.Node;
+import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserNode;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.NodeMapper;
+import com.admin.mapper.PrivateProxyMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserNodeMapper;
@@ -37,6 +39,7 @@ class UserQuotaServiceTests {
     @Mock private TunnelMapper tunnelMapper;
     @Mock private NodeMapper nodeMapper;
     @Mock private ForwardMapper forwardMapper;
+    @Mock private PrivateProxyMapper privateProxyMapper;
 
     @InjectMocks private UserQuotaService userQuotaService;
 
@@ -80,6 +83,29 @@ class UserQuotaServiceTests {
         assertEquals(1, userQuotaService.countForwardsUsingNode(7, 12, null));
         assertEquals(1, userQuotaService.countForwardsUsingNode(7, 23, null));
         assertEquals(1, userQuotaService.countForwardsUsingNode(7, 19, null));
+    }
+
+    @Test
+    void countsPrivateProxyAsOneSharedNodeForwardSlot() {
+        User user = activeUser(7);
+        Node sharedNode = node(12L, "共享入口");
+        sharedNode.setOwnerUserId(1);
+        UserNode permission = permission(7, 12, false, 1);
+        PrivateProxy proxy = new PrivateProxy();
+        proxy.setId(55L);
+        proxy.setUserId(7);
+        proxy.setNodeId(12L);
+        proxy.setState("active");
+
+        when(userMapper.selectById(7)).thenReturn(user);
+        when(userNodeMapper.selectOne(any(Wrapper.class))).thenReturn(permission);
+        when(forwardMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+        when(privateProxyMapper.selectList(any(Wrapper.class))).thenReturn(List.of(proxy));
+
+        R result = userQuotaService.checkNodeQuota(7, sharedNode, null);
+
+        assertTrue(result.getCode() != 0);
+        assertTrue(result.getMsg().contains("共享节点转发名额已用尽"));
     }
 
     private User activeUser(int id) {

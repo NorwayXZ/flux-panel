@@ -5,12 +5,14 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.entity.Forward;
 import com.admin.entity.Node;
+import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserNode;
 import com.admin.entity.UserTunnel;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.NodeMapper;
+import com.admin.mapper.PrivateProxyMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserNodeMapper;
@@ -39,16 +41,33 @@ public class UserQuotaService {
     private final TunnelMapper tunnelMapper;
     private final NodeMapper nodeMapper;
     private final ForwardMapper forwardMapper;
+    private final PrivateProxyMapper privateProxyMapper;
 
     public UserQuotaService(UserMapper userMapper, UserTunnelMapper userTunnelMapper,
                             UserNodeMapper userNodeMapper, TunnelMapper tunnelMapper,
-                            NodeMapper nodeMapper, ForwardMapper forwardMapper) {
+                            NodeMapper nodeMapper, ForwardMapper forwardMapper,
+                            PrivateProxyMapper privateProxyMapper) {
         this.userMapper = userMapper;
         this.userTunnelMapper = userTunnelMapper;
         this.userNodeMapper = userNodeMapper;
         this.tunnelMapper = tunnelMapper;
         this.nodeMapper = nodeMapper;
         this.forwardMapper = forwardMapper;
+        this.privateProxyMapper = privateProxyMapper;
+    }
+
+    public R checkNodeQuota(Integer userId, Node node, Long excludeProxyId) {
+        if (node == null) return R.err("节点不存在");
+        User user = userMapper.selectById(userId);
+        if (user == null || !Objects.equals(user.getStatus(), 1)) return R.err("当前账号已禁用");
+        if (user.getExpTime() != null && user.getExpTime() <= System.currentTimeMillis()) return R.err("当前账号已到期");
+        if (Objects.equals(node.getOwnerUserId(), userId)) {
+            return checkOwnedPool(user, null, excludeProxyId);
+        }
+        UserNode permission = userNodeMapper.selectOne(new QueryWrapper<UserNode>()
+                .eq("user_id", userId).eq("node_id", node.getId()));
+        if (permission == null) return R.err("你没有该节点权限");
+        return checkNodePermission(permission, node.getName(), null, excludeProxyId);
     }
 
     public R checkTunnelQuota(Integer userId, Tunnel tunnel, Long excludeForwardId) {
@@ -65,12 +84,12 @@ public class UserQuotaService {
 
         List<UserNode> sharedNodes = sharedNodesOnPath(userId, tunnel);
         if (sharedNodes.isEmpty()) {
-            return checkOwnedPool(user, excludeForwardId);
+            return checkOwnedPool(user, excludeForwardId, null);
         }
         for (UserNode permission : sharedNodes) {
             Node node = nodeMapper.selectById(permission.getNodeId());
             String nodeName = node == null ? "节点" + permission.getNodeId() : node.getName();
-            R result = checkNodePermission(permission, nodeName, excludeForwardId);
+            R result = checkNodePermission(permission, nodeName, excludeForwardId, null);
             if (result.getCode() != 0) return result;
         }
         return R.ok();
@@ -104,6 +123,19 @@ public class UserQuotaService {
         }
     }
 
+    public void recordPrivateProxyFlow(PrivateProxy proxy, long inFlow, long outFlow) {
+        if (proxy == null) return;
+        Node node = nodeMapper.selectById(proxy.getNodeId());
+        if (node == null) return;
+        if (Objects.equals(node.getOwnerUserId(), proxy.getUserId())) {
+            incrementOwned(proxy.getUserId(), inFlow, outFlow);
+            return;
+        }
+        UserNode permission = userNodeMapper.selectOne(new QueryWrapper<UserNode>()
+                .eq("user_id", proxy.getUserId()).eq("node_id", proxy.getNodeId()));
+        if (permission != null) incrementNode(permission.getId(), inFlow, outFlow);
+    }
+
     public UserTunnel getTunnelPermission(Integer userId, Integer tunnelId) {
         return userTunnelMapper.selectOne(new QueryWrapper<UserTunnel>()
                 .eq("user_id", userId).eq("tunnel_id", tunnelId));
@@ -133,7 +165,7 @@ public class UserQuotaService {
         return R.ok();
     }
 
-    private R checkNodePermission(UserNode permission, String nodeName, Long excludeForwardId) {
+    private R checkNodePermission(UserNode permission, String nodeName, Long excludeForwardId, Long excludeProxyId) {
         if (!Objects.equals(permission.getStatus(), 1)) return R.err("共享节点权限已禁用：" + nodeName);
         if (permission.getExpTime() != null && permission.getExpTime() <= System.currentTimeMillis()) {
             return R.err("共享节点权限已到期：" + nodeName);
@@ -143,18 +175,24 @@ public class UserQuotaService {
             return R.err("共享节点流量额度已用尽：" + nodeName);
         }
         int usedForwards = countForwardsUsingNode(permission.getUserId(), permission.getNodeId(), excludeForwardId);
+        if (excludeProxyId != null) {
+            usedForwards -= privateProxyMapper.selectCount(new QueryWrapper<PrivateProxy>()
+                    .eq("id", excludeProxyId).eq("user_id", permission.getUserId())
+                    .eq("node_id", permission.getNodeId()).notIn("state", "deleted", "expired", "error"));
+        }
         if (!isUnlimited(permission.getForwardUnlimited()) && usedForwards >= intValue(permission.getNum())) {
             return R.err("共享节点转发名额已用尽：" + nodeName);
         }
         return R.ok();
     }
 
-    private R checkOwnedPool(User user, Long excludeForwardId) {
+    private R checkOwnedPool(User user, Long excludeForwardId, Long excludeProxyId) {
         long used = value(user.getOwnedInFlow()) + value(user.getOwnedOutFlow());
         if (!isUnlimited(user.getFlowUnlimited()) && used >= value(user.getFlow()) * BYTES_TO_GB) {
             return R.err("自有资源流量额度已用尽");
         }
-        int usedForwards = countOwnedPoolForwards(user.getId().intValue(), excludeForwardId);
+        int usedForwards = countOwnedPoolForwards(user.getId().intValue(), excludeForwardId)
+                + countPrivateProxies(user.getId().intValue(), null, excludeProxyId);
         if (!isUnlimited(user.getForwardUnlimited()) && usedForwards >= intValue(user.getNum())) {
             return R.err("自有资源转发名额已用尽");
         }
@@ -190,6 +228,11 @@ public class UserQuotaService {
             }
             usedByForward.forEach(nodeId -> counts.merge(nodeId, 1, Integer::sum));
         }
+        for (PrivateProxy proxy : privateProxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .eq("user_id", userId).in("node_id", requestedNodeIds)
+                .notIn("state", "deleted", "expired", "error"))) {
+            counts.merge(proxy.getNodeId().intValue(), 1, Integer::sum);
+        }
         return counts;
     }
 
@@ -212,6 +255,15 @@ public class UserQuotaService {
         QueryWrapper<Forward> query = new QueryWrapper<Forward>().eq("user_id", userId);
         if (excludeForwardId != null) query.ne("id", excludeForwardId);
         return forwardMapper.selectList(query);
+    }
+
+    private int countPrivateProxies(Integer userId, Integer nodeId, Long excludeProxyId) {
+        QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>()
+                .eq("user_id", userId).notIn("state", "deleted", "expired", "error");
+        if (nodeId != null) query.eq("node_id", nodeId);
+        if (excludeProxyId != null) query.ne("id", excludeProxyId);
+        Integer count = privateProxyMapper.selectCount(query);
+        return count == null ? 0 : count;
     }
 
     private Set<Integer> routeTunnelIds(Forward forward) {

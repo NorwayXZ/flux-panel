@@ -1,3 +1,19 @@
+## 2.19.0 private proxy, diagnostics, and panel rollback
+
+- Adds authenticated SOCKS5 and HTTP private proxies on owned or shared nodes, with optional source CIDR allowlists and permanent or timed leases.
+- Integrates proxy listeners into the global port ledger and user forward quotas. Proxy traffic is charged to the user and the relevant owned/shared node quota; exhausted quotas pause only the affected proxy.
+- Keeps ports reserved when an offline Agent cannot remove a proxy, then retries cleanup after that node reconnects.
+- Adds an administrator-only network toolbox for bounded Ping, TCP, DNS, and traceroute checks executed by a selected Agent without accepting arbitrary shell commands.
+- Encrypts proxy passwords at rest and never returns them through list APIs.
+- Adds `flux-panel-manager rollback`, which switches to the previous successful panel image and restores the current image automatically if the rollback target fails health checks.
+
+### Upgrade and rollback impact
+
+- Adds only the `private_proxy` table. Existing nodes, tunnels, forwards, internal mappings, domains, users, and port allocations are not rewritten.
+- Existing features continue working with older Agents; private proxies and network diagnostics require Agent 2.19.0 on the selected node.
+- No new panel container or persistent probe is added. Proxy traffic consumes resources on its selected node, while diagnostics run only when requested and have bounded time and output.
+- Back up MySQL before updating. To return to the previous successful panel release, run `sudo /usr/local/sbin/flux-panel-manager rollback`. Version 2.18.0 safely ignores the additive table, but remove active private proxies before rollback so the older panel is not left unable to manage their Agent-side listeners.
+
 ## 2.18.0 fast Agent recovery
 
 - Starts Linux Agents after the basic network stack is available instead of waiting for `network-online.target` to finish.

@@ -19,6 +19,8 @@ import TopologyPage from "@/pages/topology";
 import PortResourcesPage from "@/pages/port-resources";
 import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
 import DnsSettingsPage from "@/pages/dns-settings";
+import PrivateProxyPage from "@/pages/private-proxy";
+import NetworkToolsPage from "@/pages/network-tools";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -262,6 +264,8 @@ function App() {
         path="/service-publishing"
         element={<ProtectedRoute><ServicePublishingPage /></ProtectedRoute>}
       />
+      <Route path="/private-proxy" element={<ProtectedRoute><PrivateProxyPage /></ProtectedRoute>} />
+      <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
       <Route
         path="/port-resources"
         element={<ProtectedRoute useSimpleLayout={true}><PortResourcesPage /></ProtectedRoute>}
