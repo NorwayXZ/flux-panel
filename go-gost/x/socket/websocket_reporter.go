@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync" // 新增：用于管理连接状态的互斥锁
@@ -607,6 +608,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleSetProtocol(cmd.Data)
 		response.Type = "SetProtocolResponse"
 
+	case "DeployCertificates":
+		var deployed map[string]certificatePaths
+		deployed, err = w.handleDeployCertificates(cmd.Data)
+		response.Type = "DeployCertificatesResponse"
+		response.Data = deployed
+
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)
 		response.Type = "UnknownCommandResponse"
@@ -624,6 +631,74 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+type managedCertificatePayload struct {
+	Name    string `json:"name"`
+	CertPEM string `json:"certPem"`
+	KeyPEM  string `json:"keyPem"`
+}
+
+type certificatePaths struct {
+	CertFile string `json:"certFile"`
+	KeyFile  string `json:"keyFile"`
+}
+
+func (w *WebSocketReporter) handleDeployCertificates(data interface{}) (map[string]certificatePaths, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("serialize certificate payload: %w", err)
+	}
+	var request struct {
+		Certificates []managedCertificatePayload `json:"certificates"`
+	}
+	if err := json.Unmarshal(jsonData, &request); err != nil {
+		return nil, fmt.Errorf("parse certificate payload: %w", err)
+	}
+	if len(request.Certificates) == 0 {
+		return nil, fmt.Errorf("certificate payload is empty")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locate agent executable: %w", err)
+	}
+	directory := filepath.Join(filepath.Dir(executable), "managed-certs")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, fmt.Errorf("create certificate directory: %w", err)
+	}
+	result := make(map[string]certificatePaths, len(request.Certificates))
+	for _, item := range request.Certificates {
+		name := strings.TrimSpace(item.Name)
+		if name == "" || strings.ContainsAny(name, `/\\`) || item.CertPEM == "" || item.KeyPEM == "" {
+			return nil, fmt.Errorf("invalid managed certificate payload")
+		}
+		certFile := filepath.Join(directory, name+".crt")
+		keyFile := filepath.Join(directory, name+".key")
+		if err := writePrivateFile(certFile, []byte(item.CertPEM)); err != nil {
+			return nil, err
+		}
+		if err := writePrivateFile(keyFile, []byte(item.KeyPEM)); err != nil {
+			return nil, err
+		}
+		result[name] = certificatePaths{CertFile: certFile, KeyFile: keyFile}
+	}
+	return result, nil
+}
+
+func writePrivateFile(path string, content []byte) error {
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, content, 0600); err != nil {
+		return fmt.Errorf("write managed certificate: %w", err)
+	}
+	if err := os.Chmod(temporary, 0600); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("secure managed certificate: %w", err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("activate managed certificate: %w", err)
+	}
+	return nil
 }
 
 func (w *WebSocketReporter) routeTerminalCommand(cmd CommandMessage) {

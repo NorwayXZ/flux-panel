@@ -18,6 +18,10 @@ public class DomainRoute implements Serializable {
     private Long nodeId;
     private Integer listenPort;
     private String serviceName;
+    private String ingressMode;
+    private Long dnsZoneId;
+    private String dnsRecordId;
+    private Long certificateId;
     private String state;
     private String lastError;
     private Long createdTime;
@@ -41,4 +45,10 @@ public class DomainRoute implements Serializable {
     private Integer mappingPublicPort;
     @TableField(exist = false)
     private Boolean connectorOnline;
+    @TableField(exist = false)
+    private String certificateState;
+    @TableField(exist = false)
+    private Long certificateExpiresAt;
+    @TableField(exist = false)
+    private String certificateIssuer;
 }

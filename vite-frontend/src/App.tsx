@@ -15,6 +15,7 @@ import ConfigPage from "@/pages/config";
 import UpdatePage from "@/pages/update";
 import MonitoringPage from "@/pages/monitoring";
 import ServicePublishingPage from "@/pages/service-publishing";
+import TopologyPage from "@/pages/topology";
 import PortResourcesPage from "@/pages/port-resources";
 import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
 import DnsSettingsPage from "@/pages/dns-settings";
@@ -184,6 +185,7 @@ function App() {
         path="/cross-entry-failover"
         element={<ProtectedRoute><CrossEntryFailoverPage /></ProtectedRoute>}
       />
+      <Route path="/topology" element={<ProtectedRoute><TopologyPage /></ProtectedRoute>} />
       <Route
         path="/dns-settings"
         element={<ProtectedRoute useSimpleLayout={true}><DnsSettingsPage /></ProtectedRoute>}

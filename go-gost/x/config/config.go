@@ -104,17 +104,24 @@ type MetricsConfig struct {
 }
 
 type TLSConfig struct {
-	CertFile   string      `yaml:"certFile,omitempty" json:"certFile,omitempty"`
-	KeyFile    string      `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
-	CAFile     string      `yaml:"caFile,omitempty" json:"caFile,omitempty"`
-	Secure     bool        `yaml:",omitempty" json:"secure,omitempty"`
-	ServerName string      `yaml:"serverName,omitempty" json:"serverName,omitempty"`
-	Options    *TLSOptions `yaml:",omitempty" json:"options,omitempty"`
+	CertFile     string                 `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile      string                 `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
+	CAFile       string                 `yaml:"caFile,omitempty" json:"caFile,omitempty"`
+	Secure       bool                   `yaml:",omitempty" json:"secure,omitempty"`
+	ServerName   string                 `yaml:"serverName,omitempty" json:"serverName,omitempty"`
+	Options      *TLSOptions            `yaml:",omitempty" json:"options,omitempty"`
+	Certificates []TLSCertificateConfig `yaml:"certificates,omitempty" json:"certificates,omitempty"`
 
 	// for auto-generated default certificate.
 	Validity     time.Duration `yaml:",omitempty" json:"validity,omitempty"`
 	CommonName   string        `yaml:"commonName,omitempty" json:"commonName,omitempty"`
 	Organization string        `yaml:",omitempty" json:"organization,omitempty"`
+}
+
+type TLSCertificateConfig struct {
+	Names    []string `yaml:"names,omitempty" json:"names,omitempty"`
+	CertFile string   `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile  string   `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
 }
 
 type TLSOptions struct {

@@ -1,17 +1,21 @@
-## Cross-entry failover groups
+## Managed HTTPS
 
-- Prevents browser password managers from inserting panel login credentials into Cloudflare Zone ID and API Token fields.
-- Adds independent cross-entry groups that bind existing forwards from different ingress nodes without changing same-ingress route candidates.
-- Performs parallel node-presence and public TCP probes with a 2-second fast profile and two-failure confirmation.
-- Updates a Cloudflare DNS-only A or AAAA record to the healthiest available ingress and records every successful or failed switch.
-- Prevents route flapping with recovery confirmation, switch cooldown, and optional automatic failback.
-- Encrypts the Cloudflare API token with AES-GCM and never returns it to the browser.
-- Adds a responsive status page with active ingress, member latency, failure counters, manual checks, editing, and history.
-- Uses the existing Telegram forward-notification switch for concise failover and DNS-update failure notices.
+- Adds Cloudflare DNS-01 certificate issuance and automatic renewal through the centralized DNS credential store.
+- Creates DNS-only A/AAAA records and temporary ACME TXT records without requiring public port 80.
+- Encrypts ACME account keys, private keys, and certificate chains at rest and deploys them through the encrypted Agent channel.
+- Supports multiple exact SNI certificates on one public HTTPS listener and routes HTTP/1.1 requests to existing internal mappings.
+- Reports certificate expiry, issuance failures, renewal failures, and deployment failures through the alert center and Telegram notifications.
+
+## Full-chain topology
+
+- Visualizes users, domains, public entries, forwards, tunnels, nodes, connectors, and internal targets in one interactive graph.
+- Colors failed components and links from live Agent state and configuration health.
+- Includes a focused abnormal view, automatic layout, zoom controls, minimap, and navigation to each resource page.
+- Applies role-aware filtering so ordinary users only see their own business chains.
 
 ## Upgrade impact
 
-- Creates three isolated failover tables and does not rewrite nodes, tunnels, forwards, port allocations, or users.
-- Adds only short TCP probes from the panel server. Probe load grows with enabled group members and is bounded by four group workers and eight probe workers.
-- Existing Agent 2.14.4 remains supported and does not need to upgrade. Panel and Agent release targets are now tracked separately.
-- DNS detection and API updates complete in seconds, but client and resolver caches can delay traffic convergence; established sessions must reconnect.
+- Creates one certificate table and adds nullable fields to existing domain routes; it does not rewrite nodes, tunnels, forwards, port allocations, or users.
+- Existing features and TLS passthrough continue to work with older Agents. Managed HTTPS requires Agent 2.17.0 on the selected public entry node.
+- Certificate maintenance uses bounded scheduled retries and does not add a new container or permanent probing process.
+- Upgrade the standby entry first when using production failover because restarting an Agent can interrupt connections on that node.

@@ -147,6 +147,10 @@ public class DnsProviderService {
                 "SELECT COUNT(*) FROM cross_entry_failover_group WHERE dns_zone_id IN (SELECT id FROM dns_zone WHERE account_id=?)",
                 Integer.class, id);
         if (used != null && used > 0) return R.err("该配置仍被入口容灾使用，请先迁移或删除相关容灾组");
+        Integer certificateUsed = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM managed_certificate WHERE zone_id IN (SELECT id FROM dns_zone WHERE account_id=?)",
+                Integer.class, id);
+        if (certificateUsed != null && certificateUsed > 0) return R.err("该配置仍被托管 HTTPS 证书使用，请先删除相关域名入口");
         jdbcTemplate.update("DELETE FROM dns_managed_record WHERE zone_id IN (SELECT id FROM dns_zone WHERE account_id=?)", id);
         jdbcTemplate.update("DELETE FROM dns_zone WHERE account_id=?", id);
         int deleted = jdbcTemplate.update("DELETE FROM dns_provider_account WHERE id=?", id);
@@ -182,6 +186,55 @@ public class DnsProviderService {
 
     public String ensureManagedRecord(Long zoneRefId, String requestedRecordId, String domain, String type,
                                       String content, int ttl, Long ownerId) {
+        return ensureOwnedRecord(zoneRefId, requestedRecordId, domain, type, content, ttl, "cross_entry", ownerId);
+    }
+
+    public String ensureDomainRouteRecord(Long zoneRefId, String requestedRecordId, String domain,
+                                          String content, Long ownerId) {
+        String type;
+        try {
+            InetAddress address = InetAddress.getByName(content);
+            type = address instanceof Inet6Address ? "AAAA" : "A";
+            content = address.getHostAddress();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("公网入口必须是可解析的 IPv4 或 IPv6 地址");
+        }
+        return ensureOwnedRecord(zoneRefId, requestedRecordId, domain, type, content, 60, "domain_route", ownerId);
+    }
+
+    public String createDnsChallenge(Long zoneRefId, String recordName, String value) {
+        ZoneAccess zone = loadZoneAccess(zoneRefId);
+        String fqdn = normalizeChallengeName(zone, recordName);
+        // Always create an owned TXT record so cleanup never removes a record created outside the panel.
+        return createRecord(zone, fqdn, "TXT", value, 60);
+    }
+
+    String normalizeChallengeName(ZoneAccess zone, String recordName) {
+        String fqdn = StringUtils.trimToEmpty(recordName).toLowerCase(Locale.ROOT);
+        while (fqdn.endsWith(".")) fqdn = fqdn.substring(0, fqdn.length() - 1);
+        if (!fqdn.matches("^[a-z0-9_.-]+$")
+                || (!fqdn.equals(zone.zoneName()) && !fqdn.endsWith("." + zone.zoneName()))) {
+            throw new IllegalArgumentException("DNS 验证记录不属于所选域名 Zone");
+        }
+        return fqdn;
+    }
+
+    public void deleteDnsChallenge(Long zoneRefId, String recordId) {
+        if (zoneRefId == null || StringUtils.isBlank(recordId)) return;
+        ZoneAccess zone = loadZoneAccess(zoneRefId);
+        exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records/" + recordId,
+                HttpMethod.DELETE, new HttpEntity<>(headers(zone.token())));
+    }
+
+    public void releaseDomainRouteRecord(Long ownerId) {
+        if (ownerId == null) return;
+        jdbcTemplate.update("UPDATE dns_managed_record SET owner_type=NULL,owner_id=NULL,updated_time=? "
+                        + "WHERE owner_type='domain_route' AND owner_id=?",
+                System.currentTimeMillis(), ownerId);
+    }
+
+    private String ensureOwnedRecord(Long zoneRefId, String requestedRecordId, String domain, String type,
+                                     String content, int ttl, String ownerType, Long ownerId) {
         ZoneAccess zone = loadZoneAccess(zoneRefId);
         String fqdn = normalizeDomain(zoneRefId, domain);
         validateRecord(type, content);
@@ -193,7 +246,7 @@ public class DnsProviderService {
             Long existingOwner = nullableLong(row.get("ownerId"));
             if (StringUtils.isNotBlank(Objects.toString(row.get("ownerType"), null)) && existingOwner != null
                     && ownerId != null && !ownerId.equals(existingOwner)) {
-                throw new IllegalArgumentException("该域名已经被其他入口容灾组使用");
+                throw new IllegalArgumentException("该域名已经被其他面板资源使用");
             }
             requestedRecordId = Objects.toString(row.get("providerRecordId"), requestedRecordId);
         }
@@ -216,9 +269,9 @@ public class DnsProviderService {
         updateRecord(zone, recordId, fqdn, type, content, ttl);
         long now = System.currentTimeMillis();
         jdbcTemplate.update("INSERT INTO dns_managed_record (zone_id,provider_record_id,fqdn,record_type,content,ttl,owner_type,owner_id,status,last_error,created_time,updated_time) "
-                        + "VALUES (?,?,?,?,?,?,'cross_entry',?,'active',NULL,?,?) ON DUPLICATE KEY UPDATE provider_record_id=VALUES(provider_record_id),"
-                        + "content=VALUES(content),ttl=VALUES(ttl),owner_type='cross_entry',owner_id=VALUES(owner_id),status='active',last_error=NULL,updated_time=VALUES(updated_time)",
-                zoneRefId, recordId, fqdn, type, content, ttl, ownerId, now, now);
+                        + "VALUES (?,?,?,?,?,?,?,?, 'active',NULL,?,?) ON DUPLICATE KEY UPDATE provider_record_id=VALUES(provider_record_id),"
+                        + "content=VALUES(content),ttl=VALUES(ttl),owner_type=VALUES(owner_type),owner_id=VALUES(owner_id),status='active',last_error=NULL,updated_time=VALUES(updated_time)",
+                zoneRefId, recordId, fqdn, type, content, ttl, ownerType, ownerId, now, now);
         return recordId;
     }
 

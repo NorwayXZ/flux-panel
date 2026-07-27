@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, RadioTower, ShieldCheck } from 'lucide-react';
+import { BellRing, Boxes, CloudCog, Network, RadioTower, ShieldCheck } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -79,6 +79,11 @@ export default function AdminLayout({
       label: '入口容灾',
       icon: <ShieldCheck className="h-5 w-5" />,
       adminOnly: true
+    },
+    {
+      path: '/topology',
+      label: '全链路拓扑',
+      icon: <Network className="h-5 w-5" />
     },
     {
       path: '/service-publishing',
@@ -158,7 +163,7 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/cross-entry-failover'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/cross-entry-failover', '/topology'] },
     { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
     { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }

@@ -278,6 +278,34 @@ export const syncDnsProviderAccount = (id: number) =>
   Network.post<{ zoneCount: number }>("/dns-provider/account/sync", { id });
 export const deleteDnsProviderAccount = (id: number) => Network.post("/dns-provider/account/delete", { id });
 
+export interface TopologyResourceNode {
+  [key: string]: unknown;
+  id: string;
+  type: 'user' | 'domain' | 'forward' | 'tunnel' | 'node' | 'mapping' | 'connector' | 'service';
+  label: string;
+  subtitle: string;
+  status: 'healthy' | 'degraded' | 'offline' | 'failed' | 'paused';
+  path: string;
+  ownerUserId: number;
+}
+
+export interface TopologyResourceEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  status: string;
+  active: boolean;
+}
+
+export interface TopologyGraph {
+  nodes: TopologyResourceNode[];
+  edges: TopologyResourceEdge[];
+  summary: { nodes: number; links: number; healthy: number; abnormal: number };
+}
+
+export const getTopologyGraph = () => Network.post<TopologyGraph>("/topology/graph");
+
 // 转发排序操作
 export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.post("/forward/update-order", data);
 
@@ -527,6 +555,13 @@ export interface DomainRoute {
   listenPort: number;
   state: string;
   lastError?: string;
+  ingressMode?: 'passthrough' | 'managed_https';
+  dnsZoneId?: number;
+  dnsRecordId?: string;
+  certificateId?: number;
+  certificateState?: string;
+  certificateExpiresAt?: number;
+  certificateIssuer?: string;
 }
 
 export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress';
@@ -588,7 +623,7 @@ export const renewPublishedService = (id: number, hours?: number, permanent = fa
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
-export const createDomainRoute = (data: { name: string; domain: string; publishedServiceId: number; listenPort: number }) =>
+export const createDomainRoute = (data: { name: string; domain: string; publishedServiceId: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");

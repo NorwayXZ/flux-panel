@@ -49,4 +49,14 @@ class DnsProviderServiceTests {
     void rejectsDomainOutsideSelectedZone() {
         assertThrows(IllegalArgumentException.class, () -> service.normalizeDomain(7L, "api.example.com"));
     }
+
+    @Test
+    void acceptsAcmeChallengeOnlyInsideSelectedZone() {
+        DnsProviderService.ZoneAccess zone = new DnsProviderService.ZoneAccess(
+                7L, "zone-424982", "424982.xyz", "token");
+        assertEquals("_acme-challenge.app.424982.xyz",
+                service.normalizeChallengeName(zone, "_acme-challenge.app.424982.xyz."));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.normalizeChallengeName(zone, "_acme-challenge.example.com"));
+    }
 }

@@ -6,6 +6,7 @@ import com.alibaba.fastjson.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,5 +33,22 @@ class SniDomainUtilTests {
         assertEquals(2, nodes.size());
         assertEquals("tls", nodes.getJSONObject(0).getJSONObject("filter").getString("protocol"));
         assertEquals("a.example.com", nodes.getJSONObject(0).getJSONObject("filter").getString("host"));
+    }
+
+    @Test
+    void buildsManagedHttpsIngressWithSniCertificatesAndHttpFilters() {
+        JSONObject service = SniDomainUtil.buildManagedHttpsService(
+                "managed_https_8_443", "", 443,
+                List.of(new SniRouteTargetDto(1L, "app.example.com", "127.0.0.1:20001")),
+                List.of(Map.of("names", List.of("app.example.com"),
+                        "certFile", "/etc/gost/managed-certs/1.crt",
+                        "keyFile", "/etc/gost/managed-certs/1.key")));
+
+        JSONObject listener = service.getJSONObject("listener");
+        assertEquals("tls", listener.getString("type"));
+        assertEquals("VersionTLS12", listener.getJSONObject("tls").getJSONObject("options").getString("minVersion"));
+        assertEquals(1, listener.getJSONObject("tls").getJSONArray("certificates").size());
+        assertEquals("http", service.getJSONObject("forwarder").getJSONArray("nodes")
+                .getJSONObject(0).getJSONObject("filter").getString("protocol"));
     }
 }

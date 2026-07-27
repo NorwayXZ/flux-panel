@@ -11,6 +11,7 @@ import org.aspectj.apache.bcel.generic.RET;
 
 import java.util.Objects;
 import java.util.List;
+import java.util.Map;
 
 public class GostUtil {
 
@@ -27,6 +28,20 @@ public class GostUtil {
         services.add(serviceName);
         data.put("services", services);
         return WebSocketServer.send_msg(nodeId, data, "DeleteService");
+    }
+
+    public static GostDto DeployCertificates(Long nodeId, List<Map<String, Object>> certificates) {
+        JSONObject payload = new JSONObject();
+        payload.put("certificates", certificates);
+        return WebSocketServer.send_msg(nodeId, payload, "DeployCertificates");
+    }
+
+    public static GostDto ConfigureManagedHttpsIngress(Long nodeId, String serviceName, String bindIp, Integer port,
+                                                       List<SniRouteTargetDto> targets,
+                                                       List<Map<String, Object>> certificates, boolean update) {
+        JSONArray services = new JSONArray();
+        services.add(SniDomainUtil.buildManagedHttpsService(serviceName, bindIp, port, targets, certificates));
+        return WebSocketServer.send_msg(nodeId, services, update ? "UpdateService" : "AddService");
     }
 
     public static GostDto AddPublishingGateway(Long nodeId, String name, String bindIp, Integer port,

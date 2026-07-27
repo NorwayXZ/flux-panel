@@ -280,6 +280,7 @@ public class TelegramNotificationService {
             case "node" -> settings.nodeEnabled();
             case "tunnel" -> settings.tunnelEnabled();
             case "forward" -> settings.forwardEnabled();
+            case "certificate" -> settings.forwardEnabled();
             default -> false;
         };
     }
@@ -344,6 +345,7 @@ public class TelegramNotificationService {
             case "node" -> "节点";
             case "tunnel" -> "隧道";
             case "forward" -> "转发";
+            case "certificate" -> "证书";
             default -> "资源";
         };
     }

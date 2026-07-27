@@ -42,9 +42,9 @@ func getDeviceID() string {
 			deviceID = string(data)
 			return
 		}
-		
+
 		deviceID = generateDeviceID()
-		
+
 		if err := os.WriteFile(idFile, []byte(deviceID), 0644); err != nil {
 			if log := logger.Default(); log != nil {
 				log.Warnf("Failed to save device ID: %v", err)
@@ -59,14 +59,14 @@ func generateDeviceID() string {
 	if hostname == "" {
 		hostname = "unknown"
 	}
-	
+
 	randomBytes := make([]byte, 16)
 	if _, err := rand.Read(randomBytes); err != nil {
 		randomBytes = []byte(fmt.Sprintf("%d", time.Now().UnixNano()))
 	}
-	
+
 	uniqueStr := fmt.Sprintf("%s-%d-%s", hostname, time.Now().UnixNano(), hex.EncodeToString(randomBytes))
-	
+
 	hash := sha256.New()
 	hash.Write([]byte(uniqueStr))
 	return hex.EncodeToString(hash.Sum(nil))[:16]
@@ -77,15 +77,15 @@ func generateDisguisedDomain(deviceID string) string {
 		"com", "net", "org", "top", "cc", "info", "biz", "co", "me", "io",
 		"us", "cn", "uk", "de", "fr", "jp", "ru", "br", "au", "ca",
 	}
-	
+
 	prefixes := []string{
 		"api", "app", "web", "www", "cdn", "static", "assets", "media", "img", "imgcdn",
 		"secure", "ssl", "tls", "https", "gateway", "proxy", "service", "portal", "hub",
 		"cloud", "server", "node", "host", "site", "page", "view", "load", "cache",
 	}
-	
+
 	seed := deviceID[:8]
-	
+
 	seedInt := int64(0)
 	for _, char := range seed {
 		var val int64
@@ -96,15 +96,15 @@ func generateDisguisedDomain(deviceID string) string {
 		}
 		seedInt = seedInt*16 + val
 	}
-	
+
 	domainIndex := seedInt % int64(len(domains))
 	domain := domains[domainIndex]
-	
+
 	prefixIndex := (seedInt / int64(len(domains))) % int64(len(prefixes))
 	prefix := prefixes[prefixIndex]
-	
+
 	randomSuffix := fmt.Sprintf("%d", seedInt%9999+1000)
-	
+
 	return fmt.Sprintf("%s.%s.%s", prefix, randomSuffix, domain)
 }
 
@@ -114,15 +114,15 @@ func generateDisguisedOrganization(deviceID string) string {
 		"Tech", "Data", "Network", "System", "Service", "Solution", "Platform",
 		"Smart", "Fast", "Reliable", "Modern", "Innovative", "Dynamic",
 	}
-	
+
 	companySuffixes := []string{
 		"Technologies", "Systems", "Solutions", "Services", "Corporation", "Corp",
 		"Inc", "Ltd", "LLC", "Group", "International", "Global", "Enterprises",
 		"Software", "Networks", "Security", "Communications", "Infrastructure",
 	}
-	
+
 	seed := deviceID[:8]
-	
+
 	seedInt := int64(0)
 	for _, char := range seed {
 		var val int64
@@ -133,15 +133,15 @@ func generateDisguisedOrganization(deviceID string) string {
 		}
 		seedInt = seedInt*16 + val
 	}
-	
+
 	prefixIndex := seedInt % int64(len(companyPrefixes))
 	suffixIndex := (seedInt / int64(len(companyPrefixes))) % int64(len(companySuffixes))
-	
+
 	prefix := companyPrefixes[prefixIndex]
 	suffix := companySuffixes[suffixIndex]
-	
+
 	randomSuffix := fmt.Sprintf("%d", seedInt%999+100)
-	
+
 	return fmt.Sprintf("%s %s %s", prefix, randomSuffix, suffix)
 }
 
@@ -259,16 +259,49 @@ func LoadDefaultConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 
 // LoadServerConfig loads the certificate from cert & key files and client CA file.
 func LoadServerConfig(config *config.TLSConfig) (*tls.Config, error) {
-	if config.CertFile == "" && config.KeyFile == "" {
+	if config.CertFile == "" && config.KeyFile == "" && len(config.Certificates) == 0 {
 		return nil, nil
 	}
 
-	cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
-	if err != nil {
-		return nil, err
+	var certificates []tls.Certificate
+	nameCertificates := make(map[string]*tls.Certificate)
+	if config.CertFile != "" || config.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, cert)
+	}
+	for _, item := range config.Certificates {
+		cert, err := tls.LoadX509KeyPair(item.CertFile, item.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, cert)
+		loaded := &certificates[len(certificates)-1]
+		for _, name := range item.Names {
+			name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+			if name != "" {
+				nameCertificates[name] = loaded
+			}
+		}
 	}
 
-	cfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	cfg := &tls.Config{Certificates: certificates}
+	if len(nameCertificates) > 0 {
+		cfg.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			name := strings.ToLower(strings.TrimSuffix(hello.ServerName, "."))
+			if cert := nameCertificates[name]; cert != nil {
+				return cert, nil
+			}
+			for pattern, cert := range nameCertificates {
+				if strings.HasPrefix(pattern, "*.") && strings.HasSuffix(name, pattern[1:]) && strings.Count(name, ".") == strings.Count(pattern, ".") {
+					return cert, nil
+				}
+			}
+			return nil, fmt.Errorf("no certificate configured for server name %q", hello.ServerName)
+		}
+	}
 
 	pool, err := loadCA(config.CAFile)
 	if err != nil {

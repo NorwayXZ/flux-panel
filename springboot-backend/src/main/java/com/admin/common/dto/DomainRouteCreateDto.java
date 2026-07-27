@@ -25,4 +25,8 @@ public class DomainRouteCreateDto {
     @Min(value = 1, message = "监听端口不能小于1")
     @Max(value = 65535, message = "监听端口不能大于65535")
     private Integer listenPort;
+
+    private String ingressMode = "passthrough";
+
+    private Long dnsZoneId;
 }

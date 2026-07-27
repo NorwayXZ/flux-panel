@@ -88,11 +88,13 @@ public class MonitoringService {
         Map<Long, ResourceState> nodeStates = evaluateNodes();
         Map<Long, ResourceState> tunnelStates = evaluateTunnels(nodeStates);
         Map<Long, ResourceState> forwardStates = evaluateForwards(tunnelStates);
+        Map<Long, ResourceState> certificateStates = evaluateCertificates();
 
         List<ResourceState> states = new ArrayList<>();
         states.addAll(nodeStates.values());
         states.addAll(tunnelStates.values());
         states.addAll(forwardStates.values());
+        states.addAll(certificateStates.values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -422,6 +424,44 @@ public class MonitoringService {
             states.put(id, new ResourceState(
                     "forward", id, stringValue(row.get("name")), intValue(row.get("user_id")), status, detail
             ));
+        }
+        return states;
+    }
+
+    private Map<Long, ResourceState> evaluateCertificates() {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT c.id,c.domain,c.state,c.expires_at,c.last_error,COALESCE(MIN(r.user_id),1) AS owner_user_id "
+                        + "FROM managed_certificate c LEFT JOIN domain_route r ON r.certificate_id=c.id AND r.state<>'deleted' "
+                        + "GROUP BY c.id,c.domain,c.state,c.expires_at,c.last_error ORDER BY c.id");
+        long now = System.currentTimeMillis();
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("id"));
+            String certificateState = stringValue(row.get("state"));
+            Long expiresAt = row.get("expires_at") == null ? null : longValue(row.get("expires_at"));
+            String status;
+            String detail;
+            if (List.of("failed", "deployment_failed").contains(certificateState)) {
+                status = OFFLINE;
+                detail = stringValue(row.get("last_error"));
+            } else if (expiresAt != null && expiresAt <= now) {
+                status = OFFLINE;
+                detail = "HTTPS 证书已经过期";
+            } else if ("renewal_failed".equals(certificateState)) {
+                status = DEGRADED;
+                detail = "HTTPS 证书续签失败，当前证书仍继续使用";
+            } else if (expiresAt != null && expiresAt - now <= 14L * 86_400_000L) {
+                status = DEGRADED;
+                detail = "HTTPS 证书将在 " + Math.max(0, (expiresAt - now) / 86_400_000L) + " 天内到期";
+            } else if ("active".equals(certificateState)) {
+                status = HEALTHY;
+                detail = "HTTPS 证书有效，自动续期已启用";
+            } else {
+                status = UNKNOWN;
+                detail = "HTTPS 证书正在申请或部署";
+            }
+            states.put(id, new ResourceState("certificate", id, stringValue(row.get("domain")),
+                    intValue(row.get("owner_user_id")), status, detail));
         }
         return states;
     }
@@ -772,6 +812,7 @@ public class MonitoringService {
             case "node" -> "节点";
             case "tunnel" -> "隧道";
             case "forward" -> "转发";
+            case "certificate" -> "证书";
             default -> "资源";
         };
     }

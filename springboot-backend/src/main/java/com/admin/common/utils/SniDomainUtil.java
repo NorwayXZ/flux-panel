@@ -7,6 +7,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.net.IDN;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 
 public final class SniDomainUtil {
@@ -71,6 +72,27 @@ public final class SniDomainUtil {
         forwarder.put("selector", selector);
         forwarder.put("nodes", nodes);
         service.put("forwarder", forwarder);
+        return service;
+    }
+
+    public static JSONObject buildManagedHttpsService(String serviceName, String bindIp, int listenPort,
+                                                       List<SniRouteTargetDto> targets,
+                                                       List<Map<String, Object>> certificates) {
+        JSONObject service = buildIngressService(serviceName, bindIp, listenPort, targets);
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tls");
+        JSONObject tls = new JSONObject();
+        tls.put("certificates", certificates);
+        JSONObject options = new JSONObject();
+        options.put("minVersion", "VersionTLS12");
+        options.put("alpn", List.of("http/1.1"));
+        tls.put("options", options);
+        listener.put("tls", tls);
+        service.put("listener", listener);
+        JSONArray nodes = service.getJSONObject("forwarder").getJSONArray("nodes");
+        for (int i = 0; i < nodes.size(); i++) {
+            nodes.getJSONObject(i).getJSONObject("filter").put("protocol", "http");
+        }
         return service;
     }
 }
