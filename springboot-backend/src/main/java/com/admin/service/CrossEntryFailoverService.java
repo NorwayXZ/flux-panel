@@ -61,6 +61,7 @@ public class CrossEntryFailoverService {
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
     private final TelegramNotificationService telegramNotificationService;
+    private final DnsProviderService dnsProviderService;
     private final ExecutorService probeExecutor = boundedExecutor(8, 64, "cross-entry-probe");
     private final ExecutorService groupExecutor = boundedExecutor(4, 100, "cross-entry-group");
     private final AtomicBoolean checking = new AtomicBoolean(false);
@@ -71,10 +72,12 @@ public class CrossEntryFailoverService {
     private String encryptionSecret;
 
     public CrossEntryFailoverService(JdbcTemplate jdbcTemplate, RestTemplate restTemplate,
-                                     TelegramNotificationService telegramNotificationService) {
+                                     TelegramNotificationService telegramNotificationService,
+                                     DnsProviderService dnsProviderService) {
         this.jdbcTemplate = jdbcTemplate;
         this.restTemplate = restTemplate;
         this.telegramNotificationService = telegramNotificationService;
+        this.dnsProviderService = dnsProviderService;
     }
 
     public R listEligibleForwards() {
@@ -88,13 +91,13 @@ public class CrossEntryFailoverService {
 
     public R listGroups() {
         List<Map<String, Object>> groups = jdbcTemplate.queryForList(
-                "SELECT id,name,domain,zone_id AS zoneId,record_id AS recordId,record_type AS recordType,ttl,"
+                "SELECT g.id,g.name,g.domain,g.dns_zone_id AS dnsZoneId,g.zone_id AS zoneId,z.zone_name AS zoneName,g.record_id AS recordId,g.record_type AS recordType,g.ttl,"
                         + "probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                         + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,"
                         + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,enabled,state,active_member_id AS activeMemberId,"
-                        + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,created_time AS createdTime,"
-                        + "CASE WHEN api_token IS NULL OR api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
-                        + "FROM cross_entry_failover_group ORDER BY created_time DESC");
+                        + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
+                        + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
+                        + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
             long id = number(group.get("id")).longValue();
             group.put("members", loadMembers(id));
@@ -117,53 +120,60 @@ public class CrossEntryFailoverService {
             if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该域名已配置跨入口容灾");
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
             long now = System.currentTimeMillis();
-            String encryptedToken;
+            boolean managedDns = dto.getDnsZoneId() != null;
+            DnsProviderService.ZoneAccess zoneAccess = managedDns ? dnsProviderService.loadZoneAccess(dto.getDnsZoneId()) : null;
+            String encryptedToken = "";
+            String providerZoneId = managedDns ? zoneAccess.providerZoneId() : StringUtils.trimToEmpty(dto.getZoneId());
             Long id = dto.getId();
             Long previousActiveForwardId = null;
             String previousActiveName = null;
             String requestedRecordId = dto.getRecordId();
             if (id == null) {
-                if (StringUtils.isBlank(dto.getApiToken())) return R.err("首次创建需要填写 Cloudflare API Token");
-                encryptedToken = crypto().encrypt(dto.getApiToken().trim());
+                if (!managedDns) return R.err("请选择已在 DNS 与域名中登记的 Cloudflare Zone");
             } else {
                 List<Map<String, Object>> existing = jdbcTemplate.queryForList(
-                        "SELECT g.api_token,g.domain,g.zone_id,g.record_type,g.record_id,m.forward_id AS activeForwardId,m.node_name AS activeName "
+                        "SELECT g.api_token,g.domain,g.dns_zone_id,g.zone_id,g.record_type,g.record_id,m.forward_id AS activeForwardId,m.node_name AS activeName "
                                 + "FROM cross_entry_failover_group g LEFT JOIN cross_entry_failover_member m ON m.id=g.active_member_id WHERE g.id=?", id);
                 if (existing.isEmpty()) return R.err("容灾组不存在");
                 Map<String, Object> old = existing.get(0);
-                encryptedToken = StringUtils.isBlank(dto.getApiToken())
-                        ? Objects.toString(old.get("api_token"), "")
-                        : crypto().encrypt(dto.getApiToken().trim());
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
                 previousActiveName = Objects.toString(old.get("activeName"), null);
+                if (!managedDns) {
+                    Long oldZoneRef = nullableLong(old.get("dns_zone_id"));
+                    if (oldZoneRef != null) {
+                        dto.setDnsZoneId(oldZoneRef);
+                        managedDns = true;
+                        zoneAccess = dnsProviderService.loadZoneAccess(oldZoneRef);
+                        providerZoneId = zoneAccess.providerZoneId();
+                    } else {
+                        encryptedToken = StringUtils.isBlank(dto.getApiToken())
+                                ? Objects.toString(old.get("api_token"), "")
+                                : crypto().encrypt(dto.getApiToken().trim());
+                        providerZoneId = Objects.toString(old.get("zone_id"), "");
+                    }
+                }
                 boolean recordIdentityChanged = !dto.getDomain().equalsIgnoreCase(Objects.toString(old.get("domain"), ""))
-                        || !dto.getZoneId().trim().equals(Objects.toString(old.get("zone_id"), ""))
+                        || !Objects.equals(dto.getDnsZoneId(), nullableLong(old.get("dns_zone_id")))
                         || !dto.getRecordType().equalsIgnoreCase(Objects.toString(old.get("record_type"), ""));
                 requestedRecordId = recordIdentityChanged ? null : Objects.toString(old.get("record_id"), null);
             }
-            String token;
-            try {
-                token = crypto().decryptString(encryptedToken);
-            } catch (RuntimeException e) {
-                throw new IllegalArgumentException("Cloudflare Token 无法解密，请重新填写 Token");
-            }
-            String recordId = discoverRecord(token, dto.getZoneId(), requestedRecordId, dto.getDomain(), dto.getRecordType());
+            String recordId = StringUtils.defaultString(requestedRecordId);
 
             if (id == null) {
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_group "
-                                + "(user_id,name,domain,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
+                                + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
                                 + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getZoneId().trim(), recordId,
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(),
                         dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
-                jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,dns_zone_id=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
                                 + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,cooldown_seconds=?,"
                                 + "auto_failback=?,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
-                        dto.getName().trim(), dto.getDomain(), dto.getZoneId().trim(), recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
+                        dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
                         dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getEnabled(), now, id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -191,6 +201,21 @@ public class CrossEntryFailoverService {
                     activeMemberId, configuredEntryChanged, now, id);
 
             Map<String, Object> selectedEntry = loadMember(activeMemberId);
+            if (managedDns) {
+                dnsProviderService.releaseRecord(id);
+                recordId = dnsProviderService.ensureManagedRecord(dto.getDnsZoneId(), requestedRecordId, dto.getDomain(), dto.getRecordType(),
+                        Objects.toString(selectedEntry.get("entryAddress")), dto.getTtl(), id);
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET record_id=? WHERE id=?", recordId, id);
+            } else {
+                String token;
+                try {
+                    token = crypto().decryptString(encryptedToken);
+                } catch (RuntimeException e) {
+                    throw new IllegalArgumentException("Cloudflare Token 无法解密，请重新填写 Token");
+                }
+                recordId = discoverRecord(token, providerZoneId, requestedRecordId, dto.getDomain(), dto.getRecordType());
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET record_id=? WHERE id=?", recordId, id);
+            }
             if (dto.getId() == null) {
                 addEvent(id, null, activeMemberId, "初始化主入口", "success", "DNS 已指向 " + selectedEntry.get("entryAddress"));
             } else if (configuredEntryChanged) {
@@ -208,6 +233,7 @@ public class CrossEntryFailoverService {
     @Transactional
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        dnsProviderService.releaseRecord(id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", id);
@@ -376,6 +402,13 @@ public class CrossEntryFailoverService {
     }
 
     private void updateCloudflareDns(Map<String, Object> group, Map<String, Object> member) {
+        Long dnsZoneId = nullableLong(group.get("dnsZoneId"));
+        if (dnsZoneId != null) {
+            dnsProviderService.updateManagedRecord(dnsZoneId, Objects.toString(group.get("recordId")), Objects.toString(group.get("domain")),
+                    Objects.toString(group.get("recordType")), Objects.toString(member.get("entryAddress")),
+                    number(group.get("ttl")).intValue(), number(group.get("id")).longValue());
+            return;
+        }
         String token = crypto().decryptString(Objects.toString(group.get("apiToken")));
         HttpHeaders headers = cloudflareHeaders(token);
         Map<String, Object> body = new LinkedHashMap<>();
@@ -459,7 +492,9 @@ public class CrossEntryFailoverService {
     }
 
     private void normalizeAndValidate(CrossEntryFailoverSaveDto dto) {
-        dto.setDomain(StringUtils.lowerCase(StringUtils.trim(dto.getDomain()), Locale.ROOT));
+        dto.setDomain(dto.getDnsZoneId() == null
+                ? StringUtils.lowerCase(StringUtils.trim(dto.getDomain()), Locale.ROOT)
+                : dnsProviderService.normalizeDomain(dto.getDnsZoneId(), dto.getDomain()));
         dto.setRecordType(StringUtils.upperCase(StringUtils.defaultIfBlank(dto.getRecordType(), "A"), Locale.ROOT));
         if (!dto.getDomain().matches("(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$")) {
             throw new IllegalArgumentException("业务域名格式不正确");
@@ -477,7 +512,7 @@ public class CrossEntryFailoverService {
     }
 
     private Map<String, Object> loadGroup(long id) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,name,domain,zone_id AS zoneId,record_id AS recordId,api_token AS apiToken,"
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,name,domain,dns_zone_id AS dnsZoneId,zone_id AS zoneId,record_id AS recordId,api_token AS apiToken,"
                 + "record_type AS recordType,ttl,probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                 + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,cooldown_seconds AS cooldownSeconds,"
                 + "auto_failback AS autoFailback,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"

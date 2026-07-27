@@ -18,7 +18,9 @@ public class CrossEntryFailoverSaveDto {
     @NotBlank(message = "请输入业务域名")
     private String domain;
 
-    @NotBlank(message = "请输入 Cloudflare Zone ID")
+    private Long dnsZoneId;
+
+    /** 兼容 2.15.1 及更早版本的容灾配置。 */
     private String zoneId;
 
     private String recordId;

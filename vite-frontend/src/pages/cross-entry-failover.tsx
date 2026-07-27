@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@heroui/button';
 import { Card, CardBody } from '@heroui/card';
 import { Chip } from '@heroui/chip';
@@ -16,11 +17,13 @@ import {
   getCrossEntryEvents,
   getCrossEntryForwardOptions,
   getCrossEntryGroups,
+  getDnsZoneOptions,
   saveCrossEntryGroup,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
   type CrossEntryGroup,
   type CrossEntrySummary,
+  type DnsZoneOption,
 } from '@/api';
 
 type PresetProfileKey = 'fast' | 'standard' | 'stable';
@@ -35,7 +38,7 @@ const profiles: Record<PresetProfileKey, { label: string; interval: number; time
 const emptySummary: CrossEntrySummary = { total: 0, enabled: 0, healthy: 0, degraded: 0, switches: 0 };
 const emptyForm = {
   id: undefined as number | undefined,
-  name: '', domain: '', zoneId: '', recordId: '', apiToken: '', recordType: 'A' as 'A' | 'AAAA', ttl: '60',
+  name: '', domain: '', dnsZoneId: '', recordId: '', recordType: 'A' as 'A' | 'AAAA', ttl: '60',
   profile: 'fast' as ProfileKey, probeIntervalMs: '2000', connectTimeoutMs: '1200', failureThreshold: '2',
   recoveryThreshold: '3', cooldownSeconds: '30', autoFailback: false, enabled: true, memberForwardIds: ['', ''],
 };
@@ -52,10 +55,12 @@ const stateMeta = (state: CrossEntryGroup['state']) => ({
 })[state] || { label: '等待检测', color: 'default' as const };
 
 export default function CrossEntryFailoverPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<CrossEntryGroup[]>([]);
   const [summary, setSummary] = useState<CrossEntrySummary>(emptySummary);
   const [forwardOptions, setForwardOptions] = useState<CrossEntryForwardOption[]>([]);
+  const [zoneOptions, setZoneOptions] = useState<DnsZoneOption[]>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [events, setEvents] = useState<CrossEntryEvent[]>([]);
@@ -66,12 +71,13 @@ export default function CrossEntryFailoverPage() {
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    const [groupRes, optionRes] = await Promise.all([getCrossEntryGroups(), getCrossEntryForwardOptions()]);
+    const [groupRes, optionRes, zoneRes] = await Promise.all([getCrossEntryGroups(), getCrossEntryForwardOptions(), getDnsZoneOptions()]);
     if (groupRes.code === 0) {
       setGroups(groupRes.data?.groups || []);
       setSummary(groupRes.data?.summary || emptySummary);
     } else if (!quiet) toast.error(groupRes.msg || '加载入口容灾失败');
     if (optionRes.code === 0) setForwardOptions(optionRes.data || []);
+    if (zoneRes.code === 0) setZoneOptions(zoneRes.data || []);
     if (!quiet) setLoading(false);
   }, []);
 
@@ -82,6 +88,7 @@ export default function CrossEntryFailoverPage() {
   }, [loadData]);
 
   const selectedOptions = useMemo(() => form.memberForwardIds.map(id => forwardOptions.find(item => String(item.id) === id)), [form.memberForwardIds, forwardOptions]);
+  const selectedZone = useMemo(() => zoneOptions.find(item => String(item.id) === form.dnsZoneId), [form.dnsZoneId, zoneOptions]);
   const selectedPort = selectedOptions.find(Boolean)?.inPort;
   const selectionProblem = useMemo(() => {
     const selected = selectedOptions.filter(Boolean) as CrossEntryForwardOption[];
@@ -100,7 +107,7 @@ export default function CrossEntryFailoverPage() {
     const profile = (Object.entries(profiles).find(([, item]) => item.interval === group.probeIntervalMs
       && item.timeout === group.connectTimeoutMs && item.failures === group.failureThreshold)?.[0] || 'custom') as ProfileKey;
     setForm({
-      id: group.id, name: group.name, domain: group.domain, zoneId: group.zoneId, recordId: group.recordId, apiToken: '',
+      id: group.id, name: group.name, domain: group.domain, dnsZoneId: group.dnsZoneId ? String(group.dnsZoneId) : '', recordId: group.recordId,
       recordType: group.recordType, ttl: String(group.ttl), profile, probeIntervalMs: String(group.probeIntervalMs),
       connectTimeoutMs: String(group.connectTimeoutMs), failureThreshold: String(group.failureThreshold),
       recoveryThreshold: String(group.recoveryThreshold), cooldownSeconds: String(group.cooldownSeconds),
@@ -115,12 +122,12 @@ export default function CrossEntryFailoverPage() {
   };
 
   const submit = async () => {
-    if (!form.name.trim() || !form.domain.trim() || !form.zoneId.trim()) return toast.error('请填写名称、域名和 Zone ID');
-    if (!form.id && !form.apiToken.trim()) return toast.error('首次创建需要填写 Cloudflare API Token');
+    if (!form.name.trim() || !form.domain.trim() || !form.dnsZoneId) return toast.error('请选择 Cloudflare Zone 并填写业务域名');
     if (selectionProblem) return toast.error(selectionProblem);
     setSubmitting(true);
     const response = await saveCrossEntryGroup({
       ...form,
+      dnsZoneId: Number(form.dnsZoneId),
       ttl: Number(form.ttl), probeIntervalMs: Number(form.probeIntervalMs), connectTimeoutMs: Number(form.connectTimeoutMs),
       failureThreshold: Number(form.failureThreshold), recoveryThreshold: Number(form.recoveryThreshold),
       cooldownSeconds: Number(form.cooldownSeconds), memberForwardIds: form.memberForwardIds.map(Number),
@@ -235,25 +242,31 @@ export default function CrossEntryFailoverPage() {
           <ModalBody className="gap-5">
             <section className="grid gap-3 sm:grid-cols-2">
               <Input label="容灾组名称" value={form.name} onValueChange={name => setForm({ ...form, name })} />
-              <Input label="业务域名" placeholder="service.example.com" value={form.domain} onValueChange={domain => setForm({ ...form, domain })} />
+              <Select
+                label="Cloudflare Zone"
+                placeholder="选择已登记的域名区域"
+                selectedKeys={form.dnsZoneId ? [form.dnsZoneId] : []}
+                onSelectionChange={keys => setForm({ ...form, dnsZoneId: String(Array.from(keys)[0] || '') })}
+              >
+                {zoneOptions.map(zone => <SelectItem key={String(zone.id)} textValue={`${zone.accountName} ${zone.zoneName}`}>{zone.zoneName} · {zone.accountName}</SelectItem>)}
+              </Select>
               <Input
-                label="Cloudflare Zone ID"
-                name="cloudflare-zone-id"
-                autoComplete="off"
-                value={form.zoneId}
-                onValueChange={zoneId => setForm({ ...form, zoneId })}
-              />
-              <Input
-                type="password"
-                label={form.id ? 'Cloudflare API Token（留空不修改）' : 'Cloudflare API Token'}
-                name="cloudflare-api-token"
-                autoComplete="new-password"
-                value={form.apiToken}
-                onValueChange={apiToken => setForm({ ...form, apiToken })}
+                label="业务域名或主机记录"
+                placeholder={selectedZone ? `例如 glglg 或 glglg.${selectedZone.zoneName}` : '先选择 Cloudflare Zone'}
+                description={selectedZone ? `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录` : '凭据和 Zone 在“DNS 与域名”中统一管理'}
+                value={form.domain}
+                onValueChange={domain => setForm({ ...form, domain })}
               />
               <Select label="DNS 记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
             </section>
+
+            {zoneOptions.length === 0 && (
+              <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
+                <span>尚未登记 Cloudflare 凭据。先同步 Zone，之后这里直接选择即可。</span>
+                <Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings'); }}>前往 DNS 与域名</Button>
+              </div>
+            )}
 
             <section className="border-t border-divider pt-4"><div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">入口顺序</h3><p className="mt-1 text-xs text-default-500">第一条为主入口，其余按顺序作为备用入口。公网端口必须相同。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>
               <div className="space-y-2">
@@ -276,7 +289,7 @@ export default function CrossEntryFailoverPage() {
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch><Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch></div>
             </section>
 
-            <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">Cloudflare 记录必须关闭代理，仅使用 DNS。请确保面板服务器能访问各公网入口端口。检测和 DNS 更新可在数秒内完成，但运营商及客户端 DNS 缓存仍可能延迟实际生效；已经建立的连接需要重新连接。</div>
+            <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">面板会自动创建或更新仅 DNS 记录，不开启 Cloudflare 代理。请确保面板服务器能访问各公网入口端口。检测和 DNS 更新可在数秒内完成，但运营商及客户端 DNS 缓存仍可能延迟实际生效；已经建立的连接需要重新连接。</div>
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setFormOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>保存并同步 DNS</Button></ModalFooter>
         </ModalContent>

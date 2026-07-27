@@ -159,6 +159,8 @@ export interface CrossEntryGroup {
   id: number;
   name: string;
   domain: string;
+  dnsZoneId?: number;
+  zoneName?: string;
   zoneId: string;
   recordId: string;
   recordType: 'A' | 'AAAA';
@@ -206,6 +208,75 @@ export const deleteCrossEntryGroup = (id: number) => Network.post("/cross-entry-
 export const checkCrossEntryGroup = (id: number) =>
   Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/check", { id });
 export const getCrossEntryEvents = (id: number) => Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
+
+export interface DnsProviderAccount {
+  id: number;
+  name: string;
+  provider: 'cloudflare';
+  enabled: boolean | number;
+  apiTokenConfigured: boolean | number;
+  zoneCount: number;
+  lastSyncAt?: number;
+  lastError?: string;
+  createdTime: number;
+}
+
+export interface DnsZone {
+  id: number;
+  accountId: number;
+  accountName: string;
+  providerZoneId: string;
+  zoneName: string;
+  status: 'active' | 'inactive';
+  recordCount: number;
+  failoverCount: number;
+  updatedTime: number;
+}
+
+export interface DnsManagedRecord {
+  id: number;
+  zoneId: number;
+  zoneName: string;
+  providerRecordId: string;
+  fqdn: string;
+  recordType: 'A' | 'AAAA';
+  content: string;
+  ttl: number;
+  ownerType?: string;
+  ownerId?: number;
+  ownerName?: string;
+  status: string;
+  lastError?: string;
+  updatedTime: number;
+}
+
+export interface DnsProviderSummary {
+  accounts: number;
+  zones: number;
+  records: number;
+  errors: number;
+}
+
+export interface DnsZoneOption {
+  id: number;
+  accountId: number;
+  accountName: string;
+  zoneName: string;
+  providerZoneId: string;
+}
+
+export const getDnsProviderData = () => Network.post<{
+  accounts: DnsProviderAccount[];
+  zones: DnsZone[];
+  records: DnsManagedRecord[];
+  summary: DnsProviderSummary;
+}>("/dns-provider/list");
+export const getDnsZoneOptions = () => Network.post<DnsZoneOption[]>("/dns-provider/zones");
+export const saveDnsProviderAccount = (data: { id?: number; name: string; apiToken?: string; enabled: boolean }) =>
+  Network.post<{ id: number; zoneCount: number }>("/dns-provider/account/save", data);
+export const syncDnsProviderAccount = (id: number) =>
+  Network.post<{ zoneCount: number }>("/dns-provider/account/sync", { id });
+export const deleteDnsProviderAccount = (id: number) => Network.post("/dns-provider/account/delete", { id });
 
 // 转发排序操作
 export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.post("/forward/update-order", data);

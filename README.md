@@ -225,25 +225,28 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 
 `2.15.0` 新增独立的“入口容灾”页面。它将不同入口节点上的现有 TCP 转发组成一个公网入口组，并通过 Cloudflare DNS 将业务域名始终指向当前健康入口。原有转发内的候选线路仍要求使用同一入口节点，两套容灾分别处理“入口后的线路故障”和“整个公网入口故障”，不会互相覆盖。
 
+`2.16.0` 增加“DNS 与域名”凭据中心。Cloudflare Token、Zone 和面板受管记录在一个页面统一管理，容灾组只选择已同步的 Zone；Zone 下不存在的子域名会在保存容灾组时自动创建，不再要求逐组填写 Zone ID、Token 或先到 Cloudflare 手工建立记录。
+
 使用顺序：
 
 1. 先在不同公网节点创建至少两条转发，例如 `入口 A:10000 -> 目标` 和 `入口 D:10000 -> 目标`。所有候选入口必须使用相同公网端口并支持 TCP。
-2. 在 Cloudflare 为业务域名创建一个 DNS-only 的 `A` 或 `AAAA` 记录，关闭橙云代理。
-3. 创建最小权限 API Token，只授予目标 Zone 的 `DNS:Edit` 和 `Zone:Read` 权限，并准备 Zone ID。
-4. 在“入口容灾”新建容灾组，第一条转发作为主入口，其余按顺序作为备用入口。保存时面板会验证 Cloudflare 记录并立即同步主入口地址。
+2. 在“DNS 与域名”添加 Cloudflare 配置。创建最小权限 API Token，只授予目标 Zone 的 `DNS:Edit` 和 `Zone:Read` 权限；面板会验证 Token 并自动读取 Zone，不需要手动填写 Zone ID。
+3. 在“入口容灾”选择已登记的 Zone，输入完整业务域名或主机记录，例如选择 `424982.xyz` 后填写 `glglg`。
+4. 第一条转发作为主入口，其余按顺序作为备用入口。保存时如果 `glglg.424982.xyz` 不存在，面板会自动创建 DNS-only 记录并指向主入口；后续切换直接更新同一记录。
 
 - 极速策略默认每 `2` 秒检测一次，连接超时 `1200 ms`；入口节点离线或公网监听连续失败 `2` 次后触发切换，通常在 `3-6` 秒内提交 DNS 更新。
 - 探测同时检查 Agent WebSocket 在线状态和面板到公网入口端口的 TCP 连接。容灾组与组内入口均使用有界并行队列，组调度最多 `4` 个并发、入口探测最多 `8` 个并发，不会为每个组创建独立常驻线程。
 - 面板服务器必须能够访问每个候选公网入口端口；如果节点防火墙仅允许特定客户地址，应同时允许面板服务器探测，否则该入口会被判定为不可用。
 - 主入口恢复需要至少连续成功 `3` 次；启用自动回切后还必须经过切换冷却期，避免短时抖动造成 A/B 反复切换。
 - 每次 DNS 切换及失败都会写入历史。Telegram 的“转发通知”开启后，也会发送简短的入口切换或 DNS 更新失败通知。
-- Cloudflare Token 使用面板 `JWT_SECRET` 派生密钥进行 AES-GCM 加密，接口只返回“已配置”，不会返回原 Token。更换 `JWT_SECRET` 后需要重新填写。
+- Cloudflare Token 统一保存在“DNS 与域名”，使用面板 `JWT_SECRET` 派生密钥进行 AES-GCM 加密，接口只返回“已配置”，不会返回原 Token。一个配置可以同步多个 Zone，并被多个容灾组复用；更换 `JWT_SECRET` 后需要重新填写。
+- 面板只自动接管自己创建的记录，或者内容已经与所选主入口完全一致的 DNS-only 记录。同名记录开启了代理、内容不同或存在多条时会停止保存，不会覆盖其他业务。
 - 容灾组只引用现有转发，不新增或占用端口。删除容灾组不会删除转发；删除或修改被引用转发前，应先更新容灾组。
 - DNS 只保存 IP，不保存端口，因此所有入口必须使用同一公网端口。第一版不支持仅 UDP 转发，也不支持 Cloudflare 橙云代理或任意 TCP 代理。
 
 故障确认与 Cloudflare API 更新可以在数秒内完成，但 DNS 不是连接迁移协议。递归 DNS、操作系统和应用可能继续缓存旧地址，TTL 也不能强制所有客户端立即刷新；已经建立的 TCP 会话不会无缝迁移，需要客户端重新连接。需要严格秒级、无 DNS 缓存影响的业务，应在域名前增加 Anycast、四层负载均衡或支持健康检查的权威 DNS 服务。
 
-升级后端会自动创建 `cross_entry_failover_group`、`cross_entry_failover_member` 和 `cross_entry_failover_event`，不修改现有节点、隧道、转发或端口账本。手动维护数据库时可执行 [`migrations/20260727_cross_entry_failover.sql`](migrations/20260727_cross_entry_failover.sql)。现有 Agent `2.14.4` 已具备所需在线状态能力，不需要为此功能升级。
+升级后端会自动创建 `cross_entry_failover_group`、`cross_entry_failover_member`、`cross_entry_failover_event`、`dns_provider_account`、`dns_zone` 和 `dns_managed_record`，不修改现有节点、隧道、转发或端口账本。旧容灾组继续使用原凭据运行，重新保存时可以迁移到中央 Zone。手动维护数据库时可依次执行 [`migrations/20260727_cross_entry_failover.sql`](migrations/20260727_cross_entry_failover.sql) 和 [`migrations/20260727_dns_provider_accounts.sql`](migrations/20260727_dns_provider_accounts.sql)。现有 Agent `2.14.4` 已具备所需在线状态能力，不需要为此功能升级。
 
 ### 告警中心与历史监控
 

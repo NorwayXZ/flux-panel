@@ -49,6 +49,7 @@ public class CrossEntryFailoverSchemaInitializer {
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("cross_entry_failover_event", "from_node_name", "varchar(100) DEFAULT NULL AFTER to_member_id");
             ensureColumn("cross_entry_failover_event", "to_node_name", "varchar(100) DEFAULT NULL AFTER from_node_name");
+            ensureColumn("cross_entry_failover_group", "dns_zone_id", "bigint DEFAULT NULL AFTER domain");
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);
         }
