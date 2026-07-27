@@ -336,6 +336,69 @@ export const checkCrossEntryGroup = (id: number) =>
   Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/check", { id });
 export const getCrossEntryEvents = (id: number) => Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
 
+export interface SmartEntryRoute {
+  id: number;
+  carrier: 'default' | 'telecom' | 'unicom' | 'mobile';
+  forwardId: number;
+  entryNodeId: number;
+  entryHost: string;
+  entryAddress: string;
+  entryPort: number;
+  forwardName: string;
+  nodeName: string;
+  recordId?: string;
+  currentForwardId?: number;
+  currentAddress?: string;
+  status: 'unknown' | 'healthy' | 'unhealthy';
+  failCount: number;
+  successCount: number;
+  latencyMs?: number;
+  lastError?: string;
+  lastCheckedAt?: number;
+}
+
+export interface SmartEntryGroup {
+  id: number;
+  name: string;
+  providerRefId: number;
+  provider: 'dnspod' | 'aliyun';
+  providerName: string;
+  zoneName: string;
+  domain: string;
+  recordType: 'A' | 'AAAA';
+  ttl: number;
+  publicPort: number;
+  probeIntervalMs: number;
+  connectTimeoutMs: number;
+  failureThreshold: number;
+  recoveryThreshold: number;
+  enabled: boolean | number;
+  state: 'unknown' | 'healthy' | 'degraded' | 'offline' | 'error';
+  lastError?: string;
+  lastCheckedAt?: number;
+  routes: SmartEntryRoute[];
+}
+
+export interface SmartEntryProviderOption { id: number; name: string; provider: 'dnspod' | 'aliyun'; }
+export interface SmartEntryForwardOption {
+  id: number; name: string; inPort: number; protocolMode: string; inNodeId: number;
+  nodeName: string; entryHost: string; tunnelName: string;
+}
+export interface SmartEntryEvent { id: number; carrier?: string; eventType: string; status: string; detail: string; createdTime: number; }
+
+export const getSmartEntryOverview = () => Network.post<{
+  groups: SmartEntryGroup[];
+  summary: { total: number; enabled: number; healthy: number; degraded: number; lineRecords: number };
+}>("/smart-entry/overview");
+export const getSmartEntryOptions = () => Network.post<{
+  providers: SmartEntryProviderOption[];
+  forwards: SmartEntryForwardOption[];
+}>("/smart-entry/options");
+export const saveSmartEntry = (data: any) => Network.post<{ id: number }>("/smart-entry/save", data);
+export const checkSmartEntry = (id: number) => Network.post("/smart-entry/check", { id });
+export const getSmartEntryEvents = (id: number) => Network.post<SmartEntryEvent[]>("/smart-entry/events", { id });
+export const deleteSmartEntry = (id: number) => Network.post("/smart-entry/delete", { id });
+
 export interface DnsProviderAccount {
   id: number;
   name: string;

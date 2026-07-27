@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Wrench } from 'lucide-react';
+import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -73,6 +73,12 @@ export default function AdminLayout({
       path: '/monitoring',
       label: '告警中心',
       icon: <BellRing className="h-5 w-5" />
+    },
+    {
+      path: '/smart-entry',
+      label: '入口接入',
+      icon: <Waypoints className="h-5 w-5" />,
+      adminOnly: true
     },
     {
       path: '/cross-entry-failover',
@@ -186,7 +192,7 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/cross-entry-failover', '/topology'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover', '/topology'] },
     { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools'] },
     { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/dynamic-dns', '/server-assets', '/user', '/config'] },

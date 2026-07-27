@@ -1,0 +1,51 @@
+package com.admin.config;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.PostConstruct;
+
+@Slf4j
+@Component
+public class SmartEntrySchemaInitializer {
+    private final JdbcTemplate jdbcTemplate;
+
+    public SmartEntrySchemaInitializer(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @PostConstruct
+    public void initialize() {
+        try {
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS smart_entry_group ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,user_id int NOT NULL,name varchar(100) NOT NULL,"
+                    + "provider_ref_id bigint NOT NULL,provider varchar(24) NOT NULL,zone_name varchar(253) NOT NULL,domain varchar(253) NOT NULL,"
+                    + "record_type varchar(8) NOT NULL DEFAULT 'A',ttl int NOT NULL DEFAULT 60,public_port int NOT NULL,"
+                    + "probe_interval_ms int NOT NULL DEFAULT 5000,connect_timeout_ms int NOT NULL DEFAULT 1500,"
+                    + "failure_threshold int NOT NULL DEFAULT 2,recovery_threshold int NOT NULL DEFAULT 3,enabled tinyint NOT NULL DEFAULT 1,"
+                    + "state varchar(24) NOT NULL DEFAULT 'unknown',last_error varchar(500) DEFAULT NULL,last_checked_at bigint DEFAULT NULL,"
+                    + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY(id),"
+                    + "UNIQUE KEY uk_smart_entry_domain(provider_ref_id,zone_name,domain,record_type),KEY idx_smart_entry_due(enabled,last_checked_at)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS smart_entry_route ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,carrier varchar(16) NOT NULL,forward_id bigint NOT NULL,"
+                    + "entry_node_id bigint NOT NULL,entry_host varchar(253) NOT NULL,entry_address varchar(128) NOT NULL,entry_port int NOT NULL,"
+                    + "forward_name varchar(100) NOT NULL,node_name varchar(100) NOT NULL,record_id varchar(128) DEFAULT NULL,"
+                    + "managed_created tinyint NOT NULL DEFAULT 1,original_address varchar(128) DEFAULT NULL,original_ttl int DEFAULT NULL,"
+                    + "current_forward_id bigint DEFAULT NULL,current_address varchar(128) DEFAULT NULL,status varchar(24) NOT NULL DEFAULT 'unknown',"
+                    + "fail_count int NOT NULL DEFAULT 0,success_count int NOT NULL DEFAULT 0,latency_ms int DEFAULT NULL,last_error varchar(500) DEFAULT NULL,"
+                    + "last_checked_at bigint DEFAULT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY(id),"
+                    + "UNIQUE KEY uk_smart_entry_carrier(group_id,carrier),KEY idx_smart_entry_forward(forward_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS smart_entry_event ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,carrier varchar(16) DEFAULT NULL,event_type varchar(32) NOT NULL,"
+                    + "status varchar(24) NOT NULL,detail varchar(500) DEFAULT NULL,created_time bigint NOT NULL,PRIMARY KEY(id),"
+                    + "KEY idx_smart_entry_event(group_id,created_time)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } catch (DataAccessException e) {
+            log.error("Smart entry storage initialization failed", e);
+        }
+    }
+}

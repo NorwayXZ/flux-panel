@@ -101,6 +101,41 @@ public class DynamicDnsService {
                         + "FROM dynamic_dns_history WHERE rule_id=? ORDER BY created_time DESC LIMIT 200", ruleId));
     }
 
+    public R lineRoutingProviders() {
+        return R.ok(jdbcTemplate.queryForList(
+                "SELECT id,name,provider,enabled,last_error AS lastError FROM dynamic_dns_provider "
+                        + "WHERE enabled=1 AND provider IN ('dnspod','aliyun') ORDER BY provider,name"));
+    }
+
+    public String normalizeLineRoutingDomain(String zone, String input) {
+        String normalizedZone = StringUtils.trimToEmpty(zone).toLowerCase(Locale.ROOT);
+        if (!validDomain(normalizedZone)) throw new IllegalArgumentException("主域名格式不正确");
+        return normalizeRecord(input, normalizedZone);
+    }
+
+    public LineRoutingRecord ensureLineRoutingRecord(Long providerRefId, String zone, String fqdn, String type,
+                                                     String carrier, String value, int ttl, String knownRecordId) {
+        ProviderAccess access = loadProvider("dynamic", providerRefId, null, null);
+        if (!List.of("dnspod", "aliyun").contains(access.provider)) {
+            throw new IllegalArgumentException("运营商线路解析仅支持 DNSPod 和阿里云 DNS");
+        }
+        String line = normalizeCarrierLine(access.provider, carrier);
+        validateIp(type, value);
+        return "dnspod".equals(access.provider)
+                ? updateDnsPodLine(access, zone, fqdn, type, value, ttl, knownRecordId, line)
+                : updateAliyunLine(access, zone, fqdn, type, value, ttl, knownRecordId, line);
+    }
+
+    public void deleteLineRoutingRecord(Long providerRefId, String zone, String recordId) {
+        if (providerRefId == null || StringUtils.isBlank(recordId)) return;
+        ProviderAccess access = loadProvider("dynamic", providerRefId, null, null);
+        if ("dnspod".equals(access.provider)) {
+            dnsPod(access, "DeleteRecord", Map.of("Domain", zone, "RecordId", Long.parseLong(recordId)));
+        } else if ("aliyun".equals(access.provider)) {
+            aliyun(access, "DeleteDomainRecord", Map.of("RecordId", recordId));
+        }
+    }
+
     public R saveProvider(DynamicDnsProviderSaveDto dto) {
         String provider = normalizeProvider(dto.getProvider());
         String name = StringUtils.trimToEmpty(dto.getName());
@@ -130,6 +165,9 @@ public class DynamicDnsService {
         Integer used = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM dynamic_dns_rule WHERE provider_source='dynamic' AND provider_ref_id=?", Integer.class, id);
         if (used != null && used > 0) return R.err("该配置仍被动态 DNS 规则使用");
+        Integer smartEntryUsed = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=?", Integer.class, id);
+        if (smartEntryUsed != null && smartEntryUsed > 0) return R.err("该配置仍被入口接入使用");
         return jdbcTemplate.update("DELETE FROM dynamic_dns_provider WHERE id=?", id) > 0 ? R.ok() : R.err("DNS 提供商配置不存在");
     }
 
@@ -354,6 +392,44 @@ public class DynamicDnsService {
         return recordId;
     }
 
+    private LineRoutingRecord updateDnsPodLine(ProviderAccess access, String zone, String fqdn, String type,
+                                               String value, int ttl, String knownRecordId, String line) {
+        String sub = relativeName(fqdn, zone);
+        String recordId = StringUtils.trimToNull(knownRecordId);
+        String originalValue = null;
+        Integer originalTtl = null;
+        if (recordId == null) {
+            JSONObject result = dnsPod(access, "DescribeRecordList",
+                    Map.of("Domain", zone, "Subdomain", sub, "RecordType", type, "Limit", 3000));
+            JSONArray records = result.getJSONObject("Response").getJSONArray("RecordList");
+            if (records != null) {
+                for (int index = 0; index < records.size(); index++) {
+                    JSONObject item = records.getJSONObject(index);
+                    if (line.equals(item.getString("Line"))) {
+                        recordId = item.getString("RecordId");
+                        originalValue = item.getString("Value");
+                        originalTtl = item.getInteger("TTL");
+                        break;
+                    }
+                }
+            }
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("Domain", zone);
+        payload.put("SubDomain", sub);
+        payload.put("RecordType", type);
+        payload.put("RecordLine", line);
+        payload.put("Value", value);
+        payload.put("TTL", Math.max(60, ttl));
+        if (recordId == null) {
+            JSONObject created = dnsPod(access, "CreateRecord", payload);
+            return new LineRoutingRecord(created.getJSONObject("Response").getString("RecordId"), true, null, null);
+        }
+        payload.put("RecordId", Long.parseLong(recordId));
+        dnsPod(access, "ModifyRecord", payload);
+        return new LineRoutingRecord(recordId, false, originalValue, originalTtl);
+    }
+
     private JSONObject dnsPod(ProviderAccess access, String action, Map<String, Object> payload) {
         try {
             long timestamp = Instant.now().getEpochSecond();
@@ -404,6 +480,61 @@ public class DynamicDnsService {
         params.put("RecordId", recordId);
         aliyun(access, "UpdateDomainRecord", params);
         return recordId;
+    }
+
+    private LineRoutingRecord updateAliyunLine(ProviderAccess access, String zone, String fqdn, String type,
+                                               String value, int ttl, String knownRecordId, String line) {
+        String rr = relativeName(fqdn, zone);
+        String recordId = StringUtils.trimToNull(knownRecordId);
+        String originalValue = null;
+        Integer originalTtl = null;
+        if (recordId == null) {
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("DomainName", zone);
+            query.put("RRKeyWord", rr);
+            query.put("TypeKeyWord", type);
+            query.put("PageSize", "500");
+            JSONObject records = aliyun(access, "DescribeDomainRecords", query);
+            JSONArray list = records.getJSONObject("DomainRecords").getJSONArray("Record");
+            if (list != null) {
+                for (int index = 0; index < list.size(); index++) {
+                    JSONObject item = list.getJSONObject(index);
+                    if (line.equalsIgnoreCase(StringUtils.defaultString(item.getString("Line"), "default"))) {
+                        recordId = item.getString("RecordId");
+                        originalValue = item.getString("Value");
+                        originalTtl = item.getInteger("TTL");
+                        break;
+                    }
+                }
+            }
+        }
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("RR", rr);
+        params.put("Type", type);
+        params.put("Value", value);
+        params.put("TTL", Integer.toString(Math.max(60, ttl)));
+        params.put("Line", line);
+        if (recordId == null) {
+            params.put("DomainName", zone);
+            return new LineRoutingRecord(aliyun(access, "AddDomainRecord", params).getString("RecordId"), true, null, null);
+        }
+        params.put("RecordId", recordId);
+        aliyun(access, "UpdateDomainRecord", params);
+        return new LineRoutingRecord(recordId, false, originalValue, originalTtl);
+    }
+
+    private String normalizeCarrierLine(String provider, String carrier) {
+        String normalized = StringUtils.defaultIfBlank(carrier, "default").toLowerCase(Locale.ROOT);
+        if (!List.of("default", "telecom", "unicom", "mobile").contains(normalized)) {
+            throw new IllegalArgumentException("不支持的运营商线路");
+        }
+        if ("aliyun".equals(provider)) return normalized;
+        return switch (normalized) {
+            case "telecom" -> "电信";
+            case "unicom" -> "联通";
+            case "mobile" -> "移动";
+            default -> "默认";
+        };
     }
 
     private JSONObject aliyun(ProviderAccess access, String action, Map<String, String> actionParams) {
@@ -496,6 +627,8 @@ public class DynamicDnsService {
     private long number(Object value) { return value == null ? 0 : ((Number) value).longValue(); }
     private Long nullableLong(Object value) { return value == null ? null : ((Number) value).longValue(); }
     private boolean truth(Object value) { return value != null && ("1".equals(value.toString()) || Boolean.parseBoolean(value.toString())); }
+
+    public record LineRoutingRecord(String recordId, boolean created, String originalValue, Integer originalTtl) { }
 
     private static class ProviderAccess {
         final String provider;

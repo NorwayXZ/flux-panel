@@ -18,6 +18,7 @@ import ServicePublishingPage from "@/pages/service-publishing";
 import TopologyPage from "@/pages/topology";
 import PortResourcesPage from "@/pages/port-resources";
 import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
+import SmartEntryPage from "@/pages/smart-entry";
 import DnsSettingsPage from "@/pages/dns-settings";
 import PrivateProxyPage from "@/pages/private-proxy";
 import NetworkToolsPage from "@/pages/network-tools";
@@ -184,6 +185,10 @@ function App() {
             <ForwardPage />
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/smart-entry"
+        element={<ProtectedRoute><SmartEntryPage /></ProtectedRoute>}
       />
       <Route
         path="/cross-entry-failover"

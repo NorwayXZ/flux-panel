@@ -1,0 +1,276 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@heroui/button';
+import { Card, CardBody } from '@heroui/card';
+import { Chip } from '@heroui/chip';
+import { Input } from '@heroui/input';
+import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
+import { Select, SelectItem } from '@heroui/select';
+import { Spinner } from '@heroui/spinner';
+import { Switch } from '@heroui/switch';
+import { CheckCircle2, History, Pencil, Plus, RefreshCw, Route, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+import {
+  checkSmartEntry,
+  deleteSmartEntry,
+  getSmartEntryEvents,
+  getSmartEntryOptions,
+  getSmartEntryOverview,
+  saveSmartEntry,
+  type SmartEntryEvent,
+  type SmartEntryForwardOption,
+  type SmartEntryGroup,
+  type SmartEntryProviderOption,
+} from '@/api';
+
+type Carrier = 'default' | 'telecom' | 'unicom' | 'mobile';
+type RouteForm = Record<Carrier, string>;
+
+const carriers: { key: Carrier; label: string; note: string; color: 'default' | 'primary' | 'secondary' | 'success' }[] = [
+  { key: 'default', label: '默认入口', note: '无法识别或没有专线记录时使用', color: 'default' },
+  { key: 'telecom', label: '电信入口', note: '电信线路 DNS 查询优先返回', color: 'primary' },
+  { key: 'unicom', label: '联通入口', note: '联通线路 DNS 查询优先返回', color: 'secondary' },
+  { key: 'mobile', label: '移动入口', note: '移动线路 DNS 查询优先返回', color: 'success' },
+];
+
+const blankRoutes = (): RouteForm => ({ default: '', telecom: '', unicom: '', mobile: '' });
+const emptyForm = {
+  id: undefined as number | undefined,
+  name: '', providerRefId: '', zoneName: '', domain: '', recordType: 'A' as 'A' | 'AAAA', ttl: '60',
+  probeIntervalMs: '5000', connectTimeoutMs: '1500', failureThreshold: '2', recoveryThreshold: '3',
+  enabled: true, routes: blankRoutes(),
+};
+const emptySummary = { total: 0, enabled: 0, healthy: 0, degraded: 0, lineRecords: 0 };
+const truthy = (value: boolean | number) => value === true || value === 1;
+const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
+const carrierLabel = (value?: string) => carriers.find(item => item.key === value)?.label || '线路';
+const providerLabel = (value: string) => value === 'dnspod' ? 'DNSPod' : '阿里云 DNS';
+const stateMeta = (state: SmartEntryGroup['state']) => ({
+  healthy: { label: '线路正常', color: 'success' as const },
+  degraded: { label: '部分回退', color: 'warning' as const },
+  offline: { label: '入口中断', color: 'danger' as const },
+  error: { label: 'DNS 异常', color: 'danger' as const },
+  unknown: { label: '等待检测', color: 'default' as const },
+}[state] || { label: '等待检测', color: 'default' as const });
+
+export default function SmartEntryPage() {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [groups, setGroups] = useState<SmartEntryGroup[]>([]);
+  const [providers, setProviders] = useState<SmartEntryProviderOption[]>([]);
+  const [forwards, setForwards] = useState<SmartEntryForwardOption[]>([]);
+  const [summary, setSummary] = useState(emptySummary);
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [checkingId, setCheckingId] = useState<number>();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyName, setHistoryName] = useState('');
+  const [events, setEvents] = useState<SmartEntryEvent[]>([]);
+
+  const loadData = useCallback(async (quiet = false) => {
+    const [overview, options] = await Promise.all([getSmartEntryOverview(), getSmartEntryOptions()]);
+    if (overview.code === 0) {
+      setGroups(overview.data?.groups || []);
+      setSummary(overview.data?.summary || emptySummary);
+    } else if (!quiet) toast.error(overview.msg || '加载入口接入失败');
+    if (options.code === 0) {
+      setProviders(options.data?.providers || []);
+      setForwards(options.data?.forwards || []);
+    } else if (!quiet) toast.error(options.msg || '加载入口选项失败');
+    if (!quiet) setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadData();
+    const timer = window.setInterval(() => void loadData(true), 5000);
+    return () => window.clearInterval(timer);
+  }, [loadData]);
+
+  const selected = useMemo(() => Object.fromEntries(carriers.map(item => [item.key, forwards.find(option => String(option.id) === form.routes[item.key])])) as Record<Carrier, SmartEntryForwardOption | undefined>, [form.routes, forwards]);
+  const selectionProblem = useMemo(() => {
+    if (!selected.default) return '必须选择默认入口';
+    const values = carriers.map(item => selected[item.key]).filter(Boolean) as SmartEntryForwardOption[];
+    if (new Set(values.map(item => item.id)).size < 2) return '至少配置一条不同于默认入口的运营商线路';
+    if (new Set(values.map(item => item.inNodeId)).size < 2) return '入口接入至少需要两台不同的公网入口节点';
+    if (new Set(values.map(item => item.inPort)).size > 1) return '所有入口转发必须使用相同公网端口';
+    return '';
+  }, [selected]);
+  const selectedPort = selected.default?.inPort;
+
+  const openCreate = () => {
+    setForm(emptyForm);
+    setFormOpen(true);
+  };
+
+  const openEdit = (group: SmartEntryGroup) => {
+    const routes = blankRoutes();
+    group.routes.forEach(route => { routes[route.carrier] = String(route.forwardId); });
+    setForm({
+      id: group.id, name: group.name, providerRefId: String(group.providerRefId), zoneName: group.zoneName,
+      domain: group.domain, recordType: group.recordType, ttl: String(group.ttl),
+      probeIntervalMs: String(group.probeIntervalMs), connectTimeoutMs: String(group.connectTimeoutMs),
+      failureThreshold: String(group.failureThreshold), recoveryThreshold: String(group.recoveryThreshold),
+      enabled: truthy(group.enabled), routes,
+    });
+    setFormOpen(true);
+  };
+
+  const submit = async () => {
+    if (!form.name.trim() || !form.providerRefId || !form.zoneName.trim() || !form.domain.trim()) return toast.error('请填写名称、DNS 配置和业务域名');
+    if (selectionProblem) return toast.error(selectionProblem);
+    setSaving(true);
+    const response = await saveSmartEntry({
+      ...form,
+      providerRefId: Number(form.providerRefId), ttl: Number(form.ttl), probeIntervalMs: Number(form.probeIntervalMs),
+      connectTimeoutMs: Number(form.connectTimeoutMs), failureThreshold: Number(form.failureThreshold),
+      recoveryThreshold: Number(form.recoveryThreshold),
+      routes: carriers.filter(item => form.routes[item.key]).map(item => ({ carrier: item.key, forwardId: Number(form.routes[item.key]) })),
+    });
+    setSaving(false);
+    if (response.code !== 0) return toast.error(response.msg || '保存入口接入失败');
+    toast.success(form.id ? '入口接入已更新' : '入口接入已创建，运营商 DNS 已同步');
+    setFormOpen(false);
+    void loadData();
+  };
+
+  const checkNow = async (id: number) => {
+    setCheckingId(id);
+    const response = await checkSmartEntry(id);
+    setCheckingId(undefined);
+    if (response.code !== 0) return toast.error(response.msg || '检测失败');
+    toast.success('入口线路检测完成');
+    void loadData(true);
+  };
+
+  const remove = async (group: SmartEntryGroup) => {
+    if (!window.confirm(`确认删除“${group.name}”吗？面板会同时删除它创建的运营商线路记录，现有转发不会删除。`)) return;
+    const response = await deleteSmartEntry(group.id);
+    if (response.code !== 0) return toast.error(response.msg || '删除失败');
+    toast.success('入口接入已删除');
+    void loadData();
+  };
+
+  const showHistory = async (group: SmartEntryGroup) => {
+    const response = await getSmartEntryEvents(group.id);
+    if (response.code !== 0) return toast.error(response.msg || '加载线路历史失败');
+    setHistoryName(group.name);
+    setEvents(response.data || []);
+    setHistoryOpen(true);
+  };
+
+  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载入口接入" /></div>;
+
+  return (
+    <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div><p className="text-sm text-default-500">运营商线路入口</p><h1 className="mt-1 text-2xl font-semibold">入口接入</h1></div>
+        <Button color="primary" startContent={<Plus size={18} />} onPress={openCreate}>新建入口接入</Button>
+      </header>
+
+      <section className="grid grid-cols-2 border-y border-divider sm:grid-cols-4" aria-label="入口接入概况">
+        {[
+          ['运行策略', summary.enabled, <Waypoints key="enabled" className="h-5 w-5 text-primary" />],
+          ['线路正常', summary.healthy, <CheckCircle2 key="healthy" className="h-5 w-5 text-success" />],
+          ['需要处理', summary.degraded, <TriangleAlert key="degraded" className={`h-5 w-5 ${summary.degraded ? 'text-warning' : 'text-default-400'}`} />],
+          ['线路记录', summary.lineRecords, <Route key="records" className="h-5 w-5 text-secondary" />],
+        ].map(([label, value, icon], index) => (
+          <div key={String(label)} className={`flex min-h-24 items-center justify-between px-4 py-4 sm:px-6 ${index % 2 ? '' : 'border-r border-divider'} ${index === 1 ? 'sm:border-r' : ''}`}>
+            <div><p className="text-xs text-default-500">{label}</p><p className="mt-1 text-2xl font-semibold">{value}</p></div>{icon}
+          </div>
+        ))}
+      </section>
+
+      <div className="border-y border-divider px-1 py-3 text-xs leading-5 text-default-500">
+        同一域名按访问者 DNS 线路返回对应入口。切换只影响新连接，已建立的 TCP 连接不会被强制中断。该能力依赖 DNSPod 或阿里云 DNS 的运营商线路解析，Cloudflare 域名不支持此模式。
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500"><Waypoints className="h-9 w-9" /><p>暂无入口接入策略</p></div>
+      ) : (
+        <section className="grid gap-4 xl:grid-cols-2">
+          {groups.map(group => {
+            const meta = truthy(group.enabled) ? stateMeta(group.state) : { label: '已停用', color: 'default' as const };
+            return (
+              <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
+                <CardBody className="gap-4 p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat">{providerLabel(group.provider)}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.publicPort}</p></div>
+                    <div className="flex items-center gap-1">
+                      <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="线路历史" aria-label="线路历史" onPress={() => showHistory(group)}><History size={17} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="编辑" aria-label="编辑" onPress={() => openEdit(group)}><Pencil size={17} /></Button>
+                      <Button isIconOnly size="sm" variant="light" color="danger" title="删除" aria-label="删除" onPress={() => remove(group)}><Trash2 size={17} /></Button>
+                    </div>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {group.routes.map(route => {
+                      const activeOnOwnEntry = route.currentForwardId === route.forwardId;
+                      return (
+                        <div key={route.id} className={`min-h-24 border-l-2 px-3 py-2 ${route.status === 'unhealthy' ? 'border-warning bg-warning-50/60 dark:bg-warning-500/5' : 'border-divider'}`}>
+                          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">{carrierLabel(route.carrier)}</span><Chip size="sm" variant="flat" color={route.status === 'healthy' ? 'success' : route.status === 'unhealthy' ? 'warning' : 'default'}>{route.status === 'healthy' ? '可用' : route.status === 'unhealthy' ? '已回退' : '确认中'}</Chip></div>
+                          <p className="mt-2 truncate text-xs text-default-500">配置：{route.nodeName} · {route.entryAddress}</p>
+                          <div className="mt-1 flex items-center justify-between gap-2 text-xs"><span className={activeOnOwnEntry ? 'text-default-500' : 'text-warning'}>{activeOnOwnEntry ? '当前使用本线路' : `当前回退到 ${route.currentAddress}`}</span><span>{route.latencyMs ? `${route.latencyMs} ms` : '-'}</span></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3 text-xs text-default-500"><span>主域名：{group.zoneName}</span><span>最近检测：{timeText(group.lastCheckedAt)}</span></div>
+                  {group.lastError && <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">{group.lastError}</p>}
+                </CardBody>
+              </Card>
+            );
+          })}
+        </section>
+      )}
+
+      <Modal isOpen={formOpen} onOpenChange={setFormOpen} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>{form.id ? '编辑入口接入' : '新建入口接入'}</ModalHeader>
+          <ModalBody className="gap-5">
+            <section className="grid gap-3 sm:grid-cols-2">
+              <Input label="策略名称" placeholder="例如：家庭宽带智能入口" value={form.name} onValueChange={name => setForm({ ...form, name })} />
+              <Select label="DNS 服务商配置" placeholder="选择 DNSPod 或阿里云 DNS" selectedKeys={form.providerRefId ? [form.providerRefId] : []} onSelectionChange={keys => setForm({ ...form, providerRefId: String(Array.from(keys)[0] || '') })}>
+                {providers.map(provider => <SelectItem key={String(provider.id)} textValue={`${providerLabel(provider.provider)} ${provider.name}`}>{providerLabel(provider.provider)} · {provider.name}</SelectItem>)}
+              </Select>
+              <Input label="主域名" placeholder="例如 example.com" value={form.zoneName} onValueChange={zoneName => setForm({ ...form, zoneName })} />
+              <Input label="业务域名或主机记录" placeholder="例如 access 或 access.example.com" value={form.domain} onValueChange={domain => setForm({ ...form, domain })} />
+              <Select label="记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
+              <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
+            </section>
+
+            {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dynamic-dns'); }}>前往动态 DNS 添加</Button></div>}
+
+            <section className="border-t border-divider pt-4">
+              <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">运营商入口</h3><p className="mt-1 text-xs text-default-500">留空的运营商会自动使用默认入口；所有已选转发必须使用同一公网端口。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {carriers.map(carrier => (
+                  <div key={carrier.key} className="border-l-2 border-divider pl-3">
+                    <Select label={carrier.label} description={carrier.note} placeholder={carrier.key === 'default' ? '必须选择' : '留空使用默认入口'} selectedKeys={form.routes[carrier.key] ? [form.routes[carrier.key]] : []} onSelectionChange={keys => setForm({ ...form, routes: { ...form.routes, [carrier.key]: String(Array.from(keys)[0] || '') } })}>
+                      {forwards.map(option => <SelectItem key={String(option.id)} textValue={`${option.nodeName} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
+                    </Select>
+                  </div>
+                ))}
+              </div>
+              {selectionProblem && <p className="mt-3 text-xs text-warning">{selectionProblem}</p>}
+            </section>
+
+            <section className="border-t border-divider pt-4">
+              <div className="mb-3"><h3 className="text-sm font-semibold">入口健康检测</h3><p className="mt-1 text-xs text-default-500">连续失败后回退，连续恢复后回到对应运营商入口。</p></div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Input type="number" label="探测间隔（毫秒）" min={2000} value={form.probeIntervalMs} onValueChange={probeIntervalMs => setForm({ ...form, probeIntervalMs })} /><Input type="number" label="连接超时（毫秒）" min={300} value={form.connectTimeoutMs} onValueChange={connectTimeoutMs => setForm({ ...form, connectTimeoutMs })} /><Input type="number" label="连续失败次数" min={1} max={10} value={form.failureThreshold} onValueChange={failureThreshold => setForm({ ...form, failureThreshold })} /><Input type="number" label="恢复确认次数" min={1} max={10} value={form.recoveryThreshold} onValueChange={recoveryThreshold => setForm({ ...form, recoveryThreshold })} /></div>
+              <div className="mt-4"><Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测和线路回退</Switch></div>
+            </section>
+
+            <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">DNSPod 或阿里云 DNS 必须是该主域名当前实际使用的权威 DNS。运营商识别由 DNS 服务商完成，不读取或保存客户 IP。DNS 缓存可能延迟新连接切换，已有连接不会迁移；TTL 的实际下限由 DNS 套餐决定。</div>
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setFormOpen(false)}>取消</Button><Button color="primary" isLoading={saving} onPress={submit}>保存并同步线路 DNS</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={historyOpen} onOpenChange={setHistoryOpen} size="2xl" scrollBehavior="inside">
+        <ModalContent><ModalHeader>{historyName} · 线路历史</ModalHeader><ModalBody>{events.length === 0 ? <div className="py-12 text-center text-sm text-default-500">暂无线路事件</div> : <div className="divide-y divide-divider">{events.map(event => <div key={event.id} className="flex gap-3 py-3"><div className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === 'failed' ? 'bg-danger' : event.status === 'recovered' ? 'bg-success' : 'bg-primary'}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{carrierLabel(event.carrier)} · {event.eventType === 'health' ? '健康状态' : event.eventType === 'route_switch' ? '线路切换' : 'DNS 同步'}</p><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div><p className="mt-1 text-xs text-default-500">{event.detail}</p></div></div>)}</div>}</ModalBody><ModalFooter><Button variant="flat" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent>
+      </Modal>
+    </div>
+  );
+}
