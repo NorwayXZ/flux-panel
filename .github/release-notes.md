@@ -69,3 +69,8 @@
 - Shadowsocks adds no new runtime. Each REALITY instance adds one Xray process, and the first instance on a node caches roughly 20-30 MB of runtime files.
 - Existing services continue working on older Agents. VLESS+REALITY specifically requires Agent `2.20.0`.
 - Back up MySQL before updating. A failed panel deployment can roll back directly to 2.19.1. After creating a Shadowsocks or VLESS+REALITY instance, delete it before rollback when possible, then run `sudo /usr/local/sbin/flux-panel-manager rollback`; the previous panel safely ignores the additive column but cannot manage a 2.20.0-only Agent runtime.
+
+## 2.20.1 Mobile protocol selector layout
+
+- Keeps the full Shadowsocks and VLESS+REALITY labels on desktop while using compact `SS` and `VLESS` labels on narrow screens.
+- Removes horizontal overflow from the private-proxy creation dialog without changing the 2.20.0 Agent protocol or database format.

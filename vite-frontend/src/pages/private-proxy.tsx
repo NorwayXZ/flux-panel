@@ -196,7 +196,8 @@ export default function PrivateProxyPage() {
         <ModalContent><ModalHeader>新建私人代理</ModalHeader><ModalBody className="gap-4">
           <Tabs selectedKey={form.proxyType} onSelectionChange={key => selectProtocol(String(key) as PrivateProxyType)} fullWidth>
             <Tab key="socks5" title="SOCKS5" /><Tab key="http" title="HTTP" />
-            <Tab key="shadowsocks" title="Shadowsocks" /><Tab key="vless_reality" title="VLESS + REALITY" />
+            <Tab key="shadowsocks" title={<><span className="hidden sm:inline">Shadowsocks</span><span className="sm:hidden">SS</span></>} />
+            <Tab key="vless_reality" title={<><span className="hidden sm:inline">VLESS + REALITY</span><span className="sm:hidden">VLESS</span></>} />
           </Tabs>
           <div className="grid gap-4 md:grid-cols-2">
             <Input label="代理名称" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
