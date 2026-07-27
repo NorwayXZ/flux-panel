@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class PrivateProxyService {
+    private static final String DEFAULT_REALITY_SERVER_NAME = "www.cloudflare.com";
     private static final String MIN_AGENT_VERSION = "2.19.0";
     private static final String MIN_REALITY_AGENT_VERSION = "2.20.0";
     private final PrivateProxyMapper proxyMapper;
@@ -81,7 +82,9 @@ public class PrivateProxyService {
         String username = StringUtils.trimToEmpty(dto.getAuthUsername());
         String password = StringUtils.defaultString(dto.getAuthPassword());
         String cipher = StringUtils.defaultIfBlank(dto.getCipher(), "aes-256-gcm");
-        String realityServerName = normalizeServerName(dto.getRealityServerName());
+        String realityServerName = normalizeServerName("vless_reality".equals(proxyType)
+                ? StringUtils.defaultIfBlank(dto.getRealityServerName(), DEFAULT_REALITY_SERVER_NAME)
+                : dto.getRealityServerName());
         if (("socks5".equals(proxyType) || "http".equals(proxyType))
                 && (username.length() < 3 || password.length() < 8)) {
             return R.err("SOCKS5/HTTP 用户名至少 3 位，密码至少 8 位");

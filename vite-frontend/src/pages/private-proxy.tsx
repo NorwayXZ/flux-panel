@@ -22,10 +22,13 @@ interface NodeOption {
 }
 
 type Cipher = 'aes-128-gcm' | 'aes-256-gcm' | 'chacha20-ietf-poly1305';
+type RealityPreset = 'www.cloudflare.com' | 'www.google.com' | 'custom';
+
+const DEFAULT_REALITY_SERVER = 'www.cloudflare.com';
 
 interface ProxyForm {
   name: string; nodeId: string; proxyType: PrivateProxyType; bindIp: string; listenPort: string;
-  authUsername: string; authPassword: string; cipher: Cipher; realityServerName: string;
+  authUsername: string; authPassword: string; cipher: Cipher; realityPreset: RealityPreset; realityServerName: string;
   allowedCidrs: string; permanent: boolean; leaseHours: string;
 }
 
@@ -36,7 +39,8 @@ const randomSecret = () => {
 
 const initialForm = (): ProxyForm => ({
   name: '', nodeId: '', proxyType: 'socks5', bindIp: '', listenPort: '', authUsername: '',
-  authPassword: '', cipher: 'aes-256-gcm', realityServerName: '', allowedCidrs: '',
+  authPassword: '', cipher: 'aes-256-gcm', realityPreset: DEFAULT_REALITY_SERVER,
+  realityServerName: DEFAULT_REALITY_SERVER, allowedCidrs: '',
   permanent: true, leaseHours: '24',
 });
 
@@ -97,6 +101,8 @@ export default function PrivateProxyPage() {
       proxyType,
       authUsername: proxyType === 'socks5' || proxyType === 'http' ? current.authUsername : '',
       authPassword: proxyType === 'vless_reality' ? '' : (current.authPassword || randomSecret()),
+      realityPreset: proxyType === 'vless_reality' ? current.realityPreset : DEFAULT_REALITY_SERVER,
+      realityServerName: proxyType === 'vless_reality' ? (current.realityServerName || DEFAULT_REALITY_SERVER) : DEFAULT_REALITY_SERVER,
     }));
   };
 
@@ -216,7 +222,17 @@ export default function PrivateProxyPage() {
               </Select>
               <Input label="连接密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成随机密码" title="生成随机密码" onPress={() => setForm({ ...form, authPassword: randomSecret() })}><KeyRound size={16} /></Button>} />
             </>}
-            {form.proxyType === 'vless_reality' && <Input className="md:col-span-2" label="REALITY 伪装域名" placeholder="例如 www.microsoft.com" value={form.realityServerName} onValueChange={value => setForm({ ...form, realityServerName: value })} description="首次创建会下载并校验官方 Xray；节点 Agent 需为 2.20.0 或更高版本。" />}
+            {form.proxyType === 'vless_reality' && <>
+              <Select className="md:col-span-2" label="REALITY 伪装站" selectedKeys={[form.realityPreset]} onSelectionChange={keys => {
+                const preset = String(Array.from(keys)[0] || DEFAULT_REALITY_SERVER) as RealityPreset;
+                setForm({ ...form, realityPreset: preset, realityServerName: preset === 'custom' ? '' : preset });
+              }} description="推荐站点已经过真实握手验证；节点 Agent 需为 2.20.0 或更高版本。">
+                <SelectItem key="www.cloudflare.com">Cloudflare（推荐）</SelectItem>
+                <SelectItem key="www.google.com">Google</SelectItem>
+                <SelectItem key="custom">自定义域名</SelectItem>
+              </Select>
+              {form.realityPreset === 'custom' && <Input className="md:col-span-2" label="自定义伪装域名" placeholder="仅填写支持 TLS 1.3 的域名" value={form.realityServerName} onValueChange={value => setForm({ ...form, realityServerName: value })} description="部分 HTTPS 站点不兼容 REALITY；创建后请验证客户端连接。" />}
+            </>}
           </div>
           <Textarea label="来源 IP 白名单（可选）" placeholder="203.0.113.10/32, 2001:db8::/64" value={form.allowedCidrs} onValueChange={value => setForm({ ...form, allowedCidrs: value })} minRows={2} />
           <div className="grid items-center gap-4 border-t border-divider pt-4 md:grid-cols-2">

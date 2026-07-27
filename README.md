@@ -47,6 +47,8 @@
 
 `2.20.0` 为私人代理新增 Shadowsocks 与 VLESS+REALITY。创建 Shadowsocks 时可选择 AES-128-GCM、AES-256-GCM 或 ChaCha20-IETF-Poly1305，并在同一公网端口同时提供 TCP 与 UDP；创建 VLESS+REALITY 时只需填写普通 HTTPS 伪装域名，Agent 会自动生成 UUID、X25519 密钥和 Short ID。连接信息采用按需读取，列表接口不会返回密码、私钥或客户端导入链接。
 
+`2.20.3` 将 REALITY 创建改为可直接使用的站点预设，默认选择已完成真实链路验证的 Cloudflare，并保留 Google 与自定义域名选项。并非所有支持 TLS 1.3 的网站都适合作为 REALITY 目标；自定义站点创建后应实际连接验证，不能只以普通 HTTPS 或 `tls ping` 成功作为判断依据。
+
 - Shadowsocks 继续由内置 GOST 承载，不增加额外常驻程序，每个实例在统一账本中占用同一端口的 TCP 与 UDP。
 - VLESS+REALITY 要求节点 Agent `2.20.0` 或更高版本。节点第一次创建 REALITY 时会从 XTLS 官方 GitHub Release 下载 Xray `v26.3.27`，校验官方 SHA-256 后保存在 Agent 目录；通常增加约 20-30 MB 磁盘占用，并为每个 REALITY 实例运行一个 Xray 进程。
 - REALITY 公网入口仍由 GOST 承载并计量，Xray 只监听 `127.0.0.1`；运行状态、配置与私钥文件权限为 `0600`，Agent 重启后会自动恢复实例。创建中任一步失败都会清理已创建的入口和运行时，端口不会被错误复用。
