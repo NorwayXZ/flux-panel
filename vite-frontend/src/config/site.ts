@@ -4,7 +4,7 @@ export type SiteConfig = typeof siteConfig;
 
 // 缓存相关常量
 const CACHE_PREFIX = 'vite_config_';
-const VERSION = "2.17.2";
+const VERSION = "2.18.0";
 const APP_VERSION = "1.0.4";
 const UPDATE_REPOSITORY = "NorwayXZ/flux-panel";
 

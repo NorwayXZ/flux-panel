@@ -91,6 +91,8 @@ EOF
   grep -Fq '#!/sbin/openrc-run' "$case_root/etc/init.d/flux-connector"
   grep -Fq "command=\"$case_root/etc/gost/gost\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq "command_args=\"-C $case_root/etc/gost/gost.json\"" "$case_root/etc/init.d/flux-connector"
+  grep -Fq 'use net' "$case_root/etc/init.d/flux-connector"
+  ! grep -Fq 'need net' "$case_root/etc/init.d/flux-connector"
   grep -Fq '"addr": "127.0.0.1:6365"' "$case_root/etc/gost/config.json"
   grep -Fq '"role": "connector"' "$case_root/etc/gost/config.json"
   grep -Fq 'rc-update add flux-connector default' "$event_log"
@@ -123,10 +125,61 @@ EOF
 
   test -f "$case_root/etc/systemd/system/gost.service"
   grep -Fq "ExecStart=$case_root/etc/gost/gost -C $case_root/etc/gost/gost.json" "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'After=network.target' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'StartLimitIntervalSec=0' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'Restart=always' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'RestartSec=1' "$case_root/etc/systemd/system/gost.service"
+  ! grep -Fq 'network-online.target' "$case_root/etc/systemd/system/gost.service"
   grep -Fq '"role": "node"' "$case_root/etc/gost/config.json"
   grep -Fq 'systemctl enable gost' "$event_log"
   grep -Fq 'systemctl start gost' "$event_log"
   grep -Fq 'systemctl is-active' "$event_log"
+}
+
+run_systemd_update_test() {
+  case_root="$TEST_ROOT/systemd-update"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$case_root/etc/gost" "$case_root/etc/systemd/system"
+  printf '#!/bin/sh\nexit 0\n' > "$case_root/etc/gost/gost"
+  chmod 755 "$case_root/etc/gost/gost"
+  printf '{}\n' > "$case_root/etc/gost/config.json"
+  cat > "$case_root/etc/systemd/system/gost.service" <<EOF
+[Unit]
+Description=Gost Proxy Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=$case_root/etc/gost/gost -C $case_root/etc/gost/gost.json
+Restart=on-failure
+RestartSec=3
+EOF
+
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/systemctl"
+
+  PATH="$mock_dir:$PATH" \
+    GOST_KEEP_SCRIPT=1 \
+    GOST_SERVICE_MANAGER=systemd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost \
+    GOST_INSTALL_DIR="$case_root/etc/gost" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -U >/dev/null
+
+  grep -Fq 'After=network.target' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'StartLimitIntervalSec=0' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'Restart=always' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'RestartSec=1' "$case_root/etc/systemd/system/gost.service"
+  ! grep -Fq 'network-online.target' "$case_root/etc/systemd/system/gost.service"
+  grep -Fq 'systemctl daemon-reload ' "$event_log"
+  grep -Fq 'systemctl enable gost' "$event_log"
 }
 
 run_connector_uninstall_test() {
@@ -171,5 +224,6 @@ grep -Fq 'gost-windows-$arch.exe' "$PROJECT_DIR/install-connector.ps1"
 grep -Fq 'if ($Uninstall)' "$PROJECT_DIR/install-connector.ps1"
 run_openrc_test
 run_systemd_test
+run_systemd_update_test
 run_connector_uninstall_test
 printf 'Agent installer tests passed\n'

@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,7 +24,14 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	psnet "github.com/shirou/gopsutil/v3/net"
-	"os"
+)
+
+const (
+	fastReconnectWindow   = 30 * time.Second
+	fastReconnectBase     = time.Second
+	fastReconnectJitter   = 500 * time.Millisecond
+	normalReconnectBase   = 5 * time.Second
+	normalReconnectJitter = time.Second
 )
 
 // SystemInfo 系统信息结构体
@@ -115,7 +124,7 @@ type WebSocketReporter struct {
 	version         string // 保存版本号
 	role            string // node 或 connector
 	conn            *websocket.Conn
-	reconnectTime   time.Duration
+	fastRetryUntil  time.Time
 	pingInterval    time.Duration
 	configInterval  time.Duration
 	ctx             context.Context
@@ -142,7 +151,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 
 	reporter := &WebSocketReporter{
 		url:            serverURL,
-		reconnectTime:  5 * time.Second,  // 重连间隔
+		fastRetryUntil: time.Now().Add(fastReconnectWindow),
 		pingInterval:   2 * time.Second,  // 发送间隔改为2秒
 		configInterval: 10 * time.Minute, // 配置上报间隔
 		ctx:            ctx,
@@ -186,9 +195,10 @@ func (w *WebSocketReporter) run() {
 
 			if needConnect {
 				if err := w.connect(); err != nil {
-					fmt.Printf("❌ WebSocket连接失败: %v，%v后重试\n", err, w.reconnectTime)
+					delay := w.nextReconnectDelay()
+					fmt.Printf("❌ WebSocket连接失败: %v，%v后重试\n", err, delay)
 					select {
-					case <-time.After(w.reconnectTime):
+					case <-time.After(delay):
 						continue
 					case <-w.ctx.Done():
 						return
@@ -201,8 +211,9 @@ func (w *WebSocketReporter) run() {
 				w.handleConnection()
 			} else {
 				// 如果连接失败，等待重试
+				delay := w.nextReconnectDelay()
 				select {
-				case <-time.After(w.reconnectTime):
+				case <-time.After(delay):
 					continue
 				case <-w.ctx.Done():
 					return
@@ -210,6 +221,24 @@ func (w *WebSocketReporter) run() {
 			}
 		}
 	}
+}
+
+func reconnectDelay(now, fastUntil time.Time, jitter time.Duration) time.Duration {
+	if now.Before(fastUntil) {
+		return fastReconnectBase + jitter%fastReconnectJitter
+	}
+	return normalReconnectBase + jitter%normalReconnectJitter
+}
+
+func (w *WebSocketReporter) nextReconnectDelay() time.Duration {
+	w.connMutex.Lock()
+	fastUntil := w.fastRetryUntil
+	w.connMutex.Unlock()
+	return reconnectDelay(time.Now(), fastUntil, time.Duration(rand.Int63()))
+}
+
+func (w *WebSocketReporter) beginFastReconnectWindow() {
+	w.fastRetryUntil = time.Now().Add(fastReconnectWindow)
 }
 
 // connect 建立WebSocket连接
@@ -256,8 +285,8 @@ func (w *WebSocketReporter) connect() error {
 		return fmt.Errorf("解析URL失败: %v", err)
 	}
 
-	dialer := websocket.DefaultDialer
-	dialer.HandshakeTimeout = 10 * time.Second
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 3 * time.Second
 
 	conn, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {
@@ -293,6 +322,7 @@ func (w *WebSocketReporter) handleConnection() {
 			w.terminalManager.CloseAll("agent connection lost")
 		}
 		w.connMutex.Lock()
+		w.beginFastReconnectWindow()
 		if w.conn != nil {
 			w.conn.Close()
 			w.conn = nil
@@ -1237,6 +1267,7 @@ func StartWebSocketReporterWithConfig(addr string, secret string, http int, tls 
 	reporter.version = version
 	reporter.role = role
 	reporter.Start()
+	go repairStartupService(role)
 	return reporter
 }
 

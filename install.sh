@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.17.0}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.18.0}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -199,15 +199,15 @@ write_service_definition() {
       cat > "$SYSTEMD_DIR/$SERVICE_NAME.service" <<EOF
 [Unit]
 Description=Gost Proxy Service
-After=network-online.target
-Wants=network-online.target
+After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/gost -C $INSTALL_DIR/gost.json
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=1
 
 [Install]
 WantedBy=multi-user.target
@@ -230,7 +230,7 @@ output_log="/var/log/gost.log"
 error_log="/var/log/gost.log"
 
 depend() {
-  need net
+  use net
   after firewall
 }
 EOF
@@ -412,6 +412,13 @@ update_gost() {
   stop_service
   stop_orphaned_processes
   mv -f "$INSTALL_DIR/gost.new" "$INSTALL_DIR/gost"
+
+  if ! write_service_definition || ! enable_service; then
+    log "服务启动配置更新失败，正在恢复旧版本"
+    mv -f "$INSTALL_DIR/gost.previous" "$INSTALL_DIR/gost"
+    start_service || true
+    fail "更新失败，旧版本已恢复"
+  fi
 
   if start_service && sleep 2 && service_is_active; then
     rm -f "$INSTALL_DIR/gost.previous"
