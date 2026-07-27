@@ -20,6 +20,7 @@ public class PrivateProxyController {
 
     @LogAnnotation @PostMapping("/create") public R create(@Validated @RequestBody PrivateProxyCreateDto dto) { return service.create(dto); }
     @PostMapping("/list") public R list() { return service.list(); }
+    @PostMapping("/client-config") public R clientConfig(@RequestBody Map<String, Long> body) { return service.clientConfig(body.get("id")); }
     @LogAnnotation @PostMapping("/pause") public R pause(@RequestBody Map<String, Long> body) { return service.pause(body.get("id")); }
     @LogAnnotation @PostMapping("/resume") public R resume(@RequestBody Map<String, Long> body) { return service.resume(body.get("id")); }
     @LogAnnotation @PostMapping("/delete") public R delete(@RequestBody Map<String, Long> body) { return service.delete(body.get("id")); }

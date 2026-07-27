@@ -53,23 +53,96 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, services, "AddService");
     }
 
+    public static GostDto AddShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
+                                               String cipher, String password, String admissionName) {
+        JSONArray services = new JSONArray();
+        services.add(createAuthenticatedService(serviceName + "-tcp", bindIp, port, "ss", "tcp",
+                cipher, password, admissionName));
+        services.add(createAuthenticatedService(serviceName + "-udp", bindIp, port, "ssu", "udp",
+                cipher, password, admissionName));
+        return WebSocketServer.send_msg(nodeId, services, "AddService");
+    }
+
+    public static GostDto AddRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,
+                                              Integer runtimePort, String admissionName) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
+        if (StringUtils.isNotBlank(admissionName)) service.put("admission", admissionName);
+        JSONObject handler = new JSONObject();
+        handler.put("type", "tcp");
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+        service.put("forwarder", createForwarder("127.0.0.1:" + runtimePort, "fifo"));
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, "AddService");
+    }
+
+    private static JSONObject createAuthenticatedService(String name, String bindIp, Integer port,
+                                                           String handlerType, String listenerType,
+                                                           String username, String password, String admissionName) {
+        JSONObject service = new JSONObject();
+        service.put("name", name);
+        service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
+        if (StringUtils.isNotBlank(admissionName)) service.put("admission", admissionName);
+        JSONObject auth = new JSONObject();
+        auth.put("username", username);
+        auth.put("password", password);
+        JSONObject handler = new JSONObject();
+        handler.put("type", handlerType);
+        handler.put("auth", auth);
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject();
+        listener.put("type", listenerType);
+        service.put("listener", listener);
+        return service;
+    }
+
+    public static GostDto AddRealityRuntime(Long nodeId, String runtimeName, String serverName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        data.put("serverName", serverName);
+        return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
+    }
+
+    public static GostDto DeleteRealityRuntime(Long nodeId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.send_msg(nodeId, data, "DeleteRealityRuntime", 30);
+    }
+
     public static GostDto DeleteNamedService(Long nodeId, String serviceName) {
+        return DeleteNamedServices(nodeId, List.of(serviceName));
+    }
+
+    public static GostDto DeleteNamedServices(Long nodeId, List<String> serviceNames) {
         JSONObject data = new JSONObject();
         JSONArray services = new JSONArray();
-        services.add(serviceName);
+        services.addAll(serviceNames);
         data.put("services", services);
         return WebSocketServer.send_msg(nodeId, data, "DeleteService");
     }
 
     public static GostDto PauseNamedService(Long nodeId, String serviceName) {
+        return PauseNamedServices(nodeId, List.of(serviceName));
+    }
+
+    public static GostDto PauseNamedServices(Long nodeId, List<String> serviceNames) {
         JSONObject data = new JSONObject();
-        data.put("services", List.of(serviceName));
+        data.put("services", serviceNames);
         return WebSocketServer.send_msg(nodeId, data, "PauseService");
     }
 
     public static GostDto ResumeNamedService(Long nodeId, String serviceName) {
+        return ResumeNamedServices(nodeId, List.of(serviceName));
+    }
+
+    public static GostDto ResumeNamedServices(Long nodeId, List<String> serviceNames) {
         JSONObject data = new JSONObject();
-        data.put("services", List.of(serviceName));
+        data.put("services", serviceNames);
         return WebSocketServer.send_msg(nodeId, data, "ResumeService");
     }
 

@@ -15,16 +15,20 @@ public class PrivateProxyCreateDto {
     private String name;
     @NotNull
     private Long nodeId;
-    @NotBlank @Pattern(regexp = "socks5|http", message = "代理类型仅支持 SOCKS5 或 HTTP")
+    @NotBlank @Pattern(regexp = "socks5|http|shadowsocks|vless_reality", message = "不支持的代理类型")
     private String proxyType;
     @Size(max = 128)
     private String bindIp;
     @NotNull @Min(1) @Max(65535)
     private Integer listenPort;
-    @NotBlank @Size(min = 3, max = 64)
+    @Size(max = 64)
     private String authUsername;
-    @NotBlank @Size(min = 8, max = 128)
+    @Size(max = 128)
     private String authPassword;
+    @Pattern(regexp = "|aes-128-gcm|aes-256-gcm|chacha20-ietf-poly1305", message = "不支持的 Shadowsocks 加密方式")
+    private String cipher;
+    @Size(max = 253)
+    private String realityServerName;
     @Size(max = 1000)
     private String allowedCidrs;
     @Min(1) @Max(876000)

@@ -40,18 +40,25 @@
 - Agent `2.12.0` 起在创建业务前探测服务器真实 TCP/UDP 监听，避免与面板外程序撞端口
 - 支持通过 Agent 加密通道打开管理员网页终端，无需额外开放 SSH 端口
 - 节点卡片支持单节点或批量一键升级 Agent，并提供校验、回滚和升级状态记录
-- 支持带强制认证、来源白名单和有效期的 SOCKS5/HTTP 私人代理
+- 支持带强制认证、来源白名单和有效期的 SOCKS5、HTTP、Shadowsocks 与 VLESS+REALITY 私人代理
 - 提供由指定节点执行的 Ping、TCP、DNS 和路由诊断工具箱
 
 ### 私人代理与网络诊断
+
+`2.20.0` 为私人代理新增 Shadowsocks 与 VLESS+REALITY。创建 Shadowsocks 时可选择 AES-128-GCM、AES-256-GCM 或 ChaCha20-IETF-Poly1305，并在同一公网端口同时提供 TCP 与 UDP；创建 VLESS+REALITY 时只需填写普通 HTTPS 伪装域名，Agent 会自动生成 UUID、X25519 密钥和 Short ID。连接信息采用按需读取，列表接口不会返回密码、私钥或客户端导入链接。
+
+- Shadowsocks 继续由内置 GOST 承载，不增加额外常驻程序，每个实例在统一账本中占用同一端口的 TCP 与 UDP。
+- VLESS+REALITY 要求节点 Agent `2.20.0` 或更高版本。节点第一次创建 REALITY 时会从 XTLS 官方 GitHub Release 下载 Xray `v26.3.27`，校验官方 SHA-256 后保存在 Agent 目录；通常增加约 20-30 MB 磁盘占用，并为每个 REALITY 实例运行一个 Xray 进程。
+- REALITY 公网入口仍由 GOST 承载并计量，Xray 只监听 `127.0.0.1`；运行状态、配置与私钥文件权限为 `0600`，Agent 重启后会自动恢复实例。创建中任一步失败都会清理已创建的入口和运行时，端口不会被错误复用。
+- 删除 REALITY 实例会停止进程并删除该实例的状态、配置和日志；校验后的 Xray 二进制作为缓存保留，避免下一次重复下载。旧节点与现有转发、隧道、内网映射不受影响。
 
 `2.19.1` 修复严格模式 MySQL 5.7/8.0 中私人代理首次写入时运行标识不能为空的问题。这是面板后端修复，不修改表结构，也不需要再次升级 Agent。
 
 `2.19.0` 在侧边栏新增“实用工具”，包含彼此独立的“私人代理”和“网络诊断”。这两个模块不改变原有节点、隧道、转发、内网映射或域名入口的运行方式；未使用时不会新增监听端口或后台探测任务。
 
-私人代理可以在有权限的在线节点上创建 SOCKS5 或 HTTP 代理：
+私人代理可以在有权限的在线节点上创建 SOCKS5、HTTP、Shadowsocks 或 VLESS+REALITY 代理：
 
-- 必须设置代理用户名和至少 8 位密码，密码使用面板 `JWT_SECRET` 派生密钥进行 AES-GCM 加密，接口和列表不会回传明文。
+- SOCKS5/HTTP 使用用户名和至少 8 位密码，Shadowsocks 使用至少 8 位连接密码，VLESS+REALITY 自动生成 UUID、密钥和 Short ID。敏感连接配置使用面板 `JWT_SECRET` 派生密钥进行 AES-GCM 加密，列表接口不会回传明文。
 - 可设置 IPv4/IPv6 CIDR 来源白名单；留空时允许任意来源连接，但仍必须通过代理认证。
 - 支持永久或按小时到期、暂停、恢复和删除。节点离线时删除会进入“待清理”，端口继续占用，节点上线并完成 Agent 清理后才释放，避免旧服务与新业务撞端口。
 - 监听端口接入统一端口账本，不能与转发、隧道跳点、端口池、内网映射或域名入口重复。
@@ -65,9 +72,9 @@
 - `DNS`：查询 A、AAAA、CNAME、MX 或 TXT 记录。
 - `路由`：最多 20 跳的路由跟踪；Linux 节点未安装 `traceroute` 时会明确提示，不会自动修改系统软件。
 
-诊断请求只接受合法 IP 或主机名，使用固定程序和固定参数，不接受 Shell 命令；单次最多探测 10 次、超时 30 秒、输出 32 KB。两项功能都要求所选节点 Agent `2.19.0` 或更高版本，旧 Agent 的现有业务不受影响。
+诊断请求只接受合法 IP 或主机名，使用固定程序和固定参数，不接受 Shell 命令；单次最多探测 10 次、超时 30 秒、输出 32 KB。SOCKS5、HTTP、Shadowsocks 和网络诊断要求所选节点 Agent `2.19.0` 或更高版本；VLESS+REALITY 要求 Agent `2.20.0`，旧 Agent 的现有业务不受影响。
 
-升级仅新增 `private_proxy` 表，不删除或改写现有业务记录；手动维护数据库时可执行 [`migrations/20260727_private_proxy.sql`](migrations/20260727_private_proxy.sql)。旧版面板会忽略该表。回退前建议先删除私人代理；如果节点离线，应等待其上线并完成清理，避免旧版无法继续管理仍在 Agent 中运行的代理服务。
+升级仅新增 `private_proxy` 表及一个可空的加密连接配置列，不删除或改写现有业务记录；手动维护数据库时可执行 [`migrations/20260727_private_proxy.sql`](migrations/20260727_private_proxy.sql)。旧版面板会忽略该表和新增列。回退前建议先删除 Shadowsocks 和 VLESS+REALITY；如果节点离线，应等待其上线并完成清理，避免旧版无法继续管理仍在 Agent 中运行的代理服务。面板出现异常时可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
 
 ### 节点 Agent 一键升级
 

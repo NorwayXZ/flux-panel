@@ -54,3 +54,18 @@
 - Existing features and TLS passthrough continue to work with older Agents. Managed HTTPS requires Agent 2.17.0 on the selected public entry node.
 - Certificate maintenance uses bounded scheduled retries and does not add a new container or permanent probing process.
 - Upgrade the standby entry first when using production failover because restarting an Agent can interrupt connections on that node.
+
+## 2.20.0 Shadowsocks and VLESS+REALITY private proxies
+
+- Adds one-click Shadowsocks services with AES-128-GCM, AES-256-GCM, or ChaCha20-IETF-Poly1305 and TCP+UDP on one public port.
+- Adds one-click VLESS+REALITY services with Agent-generated UUID, X25519 keys, Short ID, and import URI.
+- Downloads Xray `v26.3.27` on demand from the official XTLS release, verifies its published SHA-256, binds Xray to localhost, and restores configured instances after Agent restart.
+- Keeps client secrets out of list APIs and decrypts connection details only for the owning user or administrator when requested.
+- Extends the global port ledger, pause/resume/delete lifecycle, traffic accounting, quota enforcement, offline cleanup, and source CIDR allowlists to both protocols.
+
+### Upgrade and rollback impact
+
+- Adds one nullable encrypted client-configuration column to `private_proxy`; no existing node, tunnel, forward, mapping, domain, user, or port-allocation row is rewritten.
+- Shadowsocks adds no new runtime. Each REALITY instance adds one Xray process, and the first instance on a node caches roughly 20-30 MB of runtime files.
+- Existing services continue working on older Agents. VLESS+REALITY specifically requires Agent `2.20.0`.
+- Back up MySQL before updating. A failed panel deployment can roll back directly to 2.19.1. After creating a Shadowsocks or VLESS+REALITY instance, delete it before rollback when possible, then run `sudo /usr/local/sbin/flux-panel-manager rollback`; the previous panel safely ignores the additive column but cannot manage a 2.20.0-only Agent runtime.

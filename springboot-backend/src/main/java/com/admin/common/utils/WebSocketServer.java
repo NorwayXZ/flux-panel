@@ -541,11 +541,15 @@ public class WebSocketServer extends TextWebSocketHandler {
 
 
     public static GostDto send_msg(Long node_id, Object msg, String type) {
-        return sendCommand(nodeSessions, node_id, msg, type, "节点");
+        return sendCommand(nodeSessions, node_id, msg, type, "节点", 10);
+    }
+
+    public static GostDto send_msg(Long node_id, Object msg, String type, long timeoutSeconds) {
+        return sendCommand(nodeSessions, node_id, msg, type, "节点", timeoutSeconds);
     }
 
     public static GostDto sendConnectorMsg(Long connectorId, Object msg, String type) {
-        return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端");
+        return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端", 10);
     }
 
     public static boolean sendNodeEvent(Long nodeId, String type, Object msg) {
@@ -560,7 +564,7 @@ public class WebSocketServer extends TextWebSocketHandler {
     }
 
     private static GostDto sendCommand(ConcurrentHashMap<Long, WebSocketSession> sessions,
-                                       Long targetId, Object msg, String type, String targetLabel) {
+                                       Long targetId, Object msg, String type, String targetLabel, long timeoutSeconds) {
         WebSocketSession nodeSession = sessions.get(targetId);
 
         if (nodeSession == null) {
@@ -595,7 +599,7 @@ public class WebSocketServer extends TextWebSocketHandler {
             data.put("data", msg);
             data.put("requestId", requestId);
             sendToUser(nodeSession, data.toJSONString(), nodeSecret);
-            GostDto result = future.get(10, TimeUnit.SECONDS);
+            GostDto result = future.get(Math.max(1, timeoutSeconds), TimeUnit.SECONDS);
             
             log.info("成功发送消息到{} {} 并收到响应: {}", targetLabel, targetId, result.getMsg());
             return result;

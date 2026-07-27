@@ -1,25 +1,51 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@heroui/button';
 import { Chip } from '@heroui/chip';
-import { Input } from '@heroui/input';
+import { Input, Textarea } from '@heroui/input';
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Tab, Tabs } from '@heroui/tabs';
-import { Textarea } from '@heroui/input';
-import { Clock3, Globe2, Pause, Play, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Clock3, Copy, Globe2, KeyRound, Pause, Play, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
   createPrivateProxy, deletePrivateProxy, getNodeList, getPrivateProxies,
-  pausePrivateProxy, resumePrivateProxy, type PrivateProxyItem,
+  getPrivateProxyClientConfig, pausePrivateProxy, resumePrivateProxy,
+  type PrivateProxyClientConfig, type PrivateProxyItem, type PrivateProxyType,
 } from '@/api';
 
 interface NodeOption {
   id: number; name: string; ip?: string; serverIp?: string; status: number; version?: string;
   quotaAvailable?: boolean; unavailableReason?: string;
 }
+
+type Cipher = 'aes-128-gcm' | 'aes-256-gcm' | 'chacha20-ietf-poly1305';
+
+interface ProxyForm {
+  name: string; nodeId: string; proxyType: PrivateProxyType; bindIp: string; listenPort: string;
+  authUsername: string; authPassword: string; cipher: Cipher; realityServerName: string;
+  allowedCidrs: string; permanent: boolean; leaseHours: string;
+}
+
+const randomSecret = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+};
+
+const initialForm = (): ProxyForm => ({
+  name: '', nodeId: '', proxyType: 'socks5', bindIp: '', listenPort: '', authUsername: '',
+  authPassword: '', cipher: 'aes-256-gcm', realityServerName: '', allowedCidrs: '',
+  permanent: true, leaseHours: '24',
+});
+
+const protocolMeta: Record<PrivateProxyType, { label: string; access: string }> = {
+  socks5: { label: 'SOCKS5', access: '用户名 / 密码' },
+  http: { label: 'HTTP', access: '用户名 / 密码' },
+  shadowsocks: { label: 'Shadowsocks', access: 'TCP + UDP' },
+  vless_reality: { label: 'VLESS + REALITY', access: 'UUID / Reality' },
+};
 
 const stateMeta: Record<PrivateProxyItem['state'], { label: string; color: 'success' | 'warning' | 'danger' | 'default' }> = {
   active: { label: '运行中', color: 'success' }, paused: { label: '已暂停', color: 'warning' },
@@ -35,13 +61,20 @@ const formatBytes = (value = 0) => {
   return `${size >= 100 || unit === 0 ? size.toFixed(0) : size.toFixed(2)} ${units[unit]}`;
 };
 
+const copyText = async (value: string, label: string) => {
+  await navigator.clipboard.writeText(value);
+  toast.success(`${label}已复制`);
+};
+
 export default function PrivateProxyPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [clientConfig, setClientConfig] = useState<PrivateProxyClientConfig | null>(null);
   const [items, setItems] = useState<PrivateProxyItem[]>([]);
   const [nodes, setNodes] = useState<NodeOption[]>([]);
-  const [form, setForm] = useState({ name: '', nodeId: '', proxyType: 'socks5' as 'socks5' | 'http', bindIp: '', listenPort: '', authUsername: '', authPassword: '', allowedCidrs: '', permanent: true, leaseHours: '24' });
+  const [form, setForm] = useState<ProxyForm>(initialForm);
 
   const load = async () => {
     setLoading(true);
@@ -58,23 +91,46 @@ export default function PrivateProxyPage() {
     attention: items.filter(item => ['error', 'delete_pending'].includes(item.state)).length,
   }), [items]);
 
+  const selectProtocol = (proxyType: PrivateProxyType) => {
+    setForm(current => ({
+      ...current,
+      proxyType,
+      authUsername: proxyType === 'socks5' || proxyType === 'http' ? current.authUsername : '',
+      authPassword: proxyType === 'vless_reality' ? '' : (current.authPassword || randomSecret()),
+    }));
+  };
+
   const submit = async () => {
-    if (!form.name.trim() || !form.nodeId || !form.listenPort || !form.authUsername.trim() || !form.authPassword) return toast.error('请填写完整的代理配置');
+    if (!form.name.trim() || !form.nodeId || !form.listenPort) return toast.error('请填写名称、节点和监听端口');
+    if ((form.proxyType === 'socks5' || form.proxyType === 'http') && (!form.authUsername.trim() || form.authPassword.length < 8)) {
+      return toast.error('用户名不能为空，密码至少 8 位');
+    }
+    if (form.proxyType === 'shadowsocks' && form.authPassword.length < 8) return toast.error('Shadowsocks 密码至少 8 位');
+    if (form.proxyType === 'vless_reality' && !form.realityServerName.trim()) return toast.error('请填写 REALITY 伪装域名');
     const port = Number(form.listenPort);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return toast.error('监听端口应为 1-65535');
     setSubmitting(true);
     const response = await createPrivateProxy({
       name: form.name.trim(), nodeId: Number(form.nodeId), proxyType: form.proxyType,
       bindIp: form.bindIp.trim(), listenPort: port, authUsername: form.authUsername.trim(),
-      authPassword: form.authPassword, allowedCidrs: form.allowedCidrs.trim(), permanent: form.permanent,
+      authPassword: form.authPassword, cipher: form.cipher, realityServerName: form.realityServerName.trim(),
+      allowedCidrs: form.allowedCidrs.trim(), permanent: form.permanent,
       leaseHours: form.permanent ? undefined : Number(form.leaseHours),
     });
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || '创建代理失败');
-    toast.success('私人代理已创建');
+    toast.success(`${protocolMeta[form.proxyType].label} 已创建`);
     setModalOpen(false);
-    setForm({ name: '', nodeId: '', proxyType: 'socks5', bindIp: '', listenPort: '', authUsername: '', authPassword: '', allowedCidrs: '', permanent: true, leaseHours: '24' });
+    setForm(initialForm());
     void load();
+  };
+
+  const showClientConfig = async (item: PrivateProxyItem) => {
+    setConfigLoading(true);
+    const response = await getPrivateProxyClientConfig(item.id);
+    setConfigLoading(false);
+    if (response.code !== 0 || !response.data) return toast.error(response.msg || '读取连接信息失败');
+    setClientConfig(response.data);
   };
 
   const control = async (item: PrivateProxyItem, action: 'pause' | 'resume' | 'delete') => {
@@ -84,6 +140,18 @@ export default function PrivateProxyPage() {
     toast.success(action === 'pause' ? '代理已暂停' : action === 'resume' ? '代理已恢复' : response.data || '代理已删除');
     void load();
   };
+
+  const configRows = clientConfig ? [
+    ['服务器', clientConfig.host], ['端口', String(clientConfig.port)],
+    ...(clientConfig.username ? [['用户名', clientConfig.username]] : []),
+    ...(clientConfig.password ? [['密码', clientConfig.password]] : []),
+    ...(clientConfig.cipher ? [['加密方式', clientConfig.cipher]] : []),
+    ...(clientConfig.clientId ? [['UUID', clientConfig.clientId]] : []),
+    ...(clientConfig.publicKey ? [['REALITY 公钥', clientConfig.publicKey]] : []),
+    ...(clientConfig.shortId ? [['Short ID', clientConfig.shortId]] : []),
+    ...(clientConfig.serverName ? [['伪装域名', clientConfig.serverName]] : []),
+    ...(clientConfig.flow ? [['流控', clientConfig.flow]] : []),
+  ] : [];
 
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
@@ -105,13 +173,15 @@ export default function PrivateProxyPage() {
           <div className="hidden grid-cols-[1.2fr_1fr_1fr_1.2fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid"><span>代理</span><span>节点</span><span>公网入口</span><span>访问控制</span><span>有效期</span><span>操作</span></div>
           {items.map(item => {
             const meta = stateMeta[item.state];
+            const protocol = protocolMeta[item.proxyType];
             return <div key={item.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1fr_1.2fr_1fr_auto] lg:items-center">
-              <div><div className="flex items-center gap-2 font-medium"><span>{item.name}</span><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><div className="mt-1 text-xs text-default-500">{item.proxyType.toUpperCase()} · {item.ownerUserName}</div><div className="mt-1 text-xs text-default-500">上传 {formatBytes(item.outFlow)} · 下载 {formatBytes(item.inFlow)}</div></div>
+              <div><div className="flex flex-wrap items-center gap-2 font-medium"><span>{item.name}</span><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><div className="mt-1 text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 text-xs text-default-500">上传 {formatBytes(item.outFlow)} · 下载 {formatBytes(item.inFlow)}</div></div>
               <div><div className="text-sm">{item.nodeName}</div><div className={`mt-1 text-xs ${item.nodeOnline ? 'text-success' : 'text-danger'}`}>{item.nodeOnline ? '在线' : '离线'}</div></div>
               <div className="font-mono text-sm break-all">{item.publicHost || '未设置'}:{item.listenPort}</div>
-              <div><div className="text-sm">用户 {item.authUsername}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
-              <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
+              <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
+              <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
               <div className="flex gap-1">
+                <Button isIconOnly size="sm" variant="light" aria-label="连接信息" title="连接信息" isLoading={configLoading} onPress={() => showClientConfig(item)}><KeyRound size={17} /></Button>
                 {item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label="暂停代理" title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}
                 {item.state === 'paused' && <Button isIconOnly size="sm" variant="light" color="success" aria-label="恢复代理" title="恢复代理" onPress={() => control(item, 'resume')}><Play size={17} /></Button>}
                 <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除代理" title="删除代理" onPress={() => control(item, 'delete')}><Trash2 size={17} /></Button>
@@ -124,8 +194,9 @@ export default function PrivateProxyPage() {
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl" scrollBehavior="inside">
         <ModalContent><ModalHeader>新建私人代理</ModalHeader><ModalBody className="gap-4">
-          <Tabs selectedKey={form.proxyType} onSelectionChange={key => setForm({ ...form, proxyType: String(key) as 'socks5' | 'http' })} fullWidth>
+          <Tabs selectedKey={form.proxyType} onSelectionChange={key => selectProtocol(String(key) as PrivateProxyType)} fullWidth>
             <Tab key="socks5" title="SOCKS5" /><Tab key="http" title="HTTP" />
+            <Tab key="shadowsocks" title="Shadowsocks" /><Tab key="vless_reality" title="VLESS + REALITY" />
           </Tabs>
           <div className="grid gap-4 md:grid-cols-2">
             <Input label="代理名称" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
@@ -134,8 +205,17 @@ export default function PrivateProxyPage() {
             </Select>
             <Input label="监听端口" type="number" value={form.listenPort} onValueChange={value => setForm({ ...form, listenPort: value })} />
             <Input label="监听 IP（可选）" placeholder="留空监听全部地址" value={form.bindIp} onValueChange={value => setForm({ ...form, bindIp: value })} />
-            <Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} />
-            <Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} />
+            {(form.proxyType === 'socks5' || form.proxyType === 'http') && <>
+              <Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} />
+              <Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} />
+            </>}
+            {form.proxyType === 'shadowsocks' && <>
+              <Select label="加密方式" selectedKeys={[form.cipher]} onSelectionChange={keys => setForm({ ...form, cipher: String(Array.from(keys)[0]) as Cipher })}>
+                <SelectItem key="aes-256-gcm">AES-256-GCM</SelectItem><SelectItem key="aes-128-gcm">AES-128-GCM</SelectItem><SelectItem key="chacha20-ietf-poly1305">ChaCha20-IETF-Poly1305</SelectItem>
+              </Select>
+              <Input label="连接密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成随机密码" title="生成随机密码" onPress={() => setForm({ ...form, authPassword: randomSecret() })}><KeyRound size={16} /></Button>} />
+            </>}
+            {form.proxyType === 'vless_reality' && <Input className="md:col-span-2" label="REALITY 伪装域名" placeholder="例如 www.microsoft.com" value={form.realityServerName} onValueChange={value => setForm({ ...form, realityServerName: value })} description="首次创建会下载并校验官方 Xray；节点 Agent 需为 2.20.0 或更高版本。" />}
           </div>
           <Textarea label="来源 IP 白名单（可选）" placeholder="203.0.113.10/32, 2001:db8::/64" value={form.allowedCidrs} onValueChange={value => setForm({ ...form, allowedCidrs: value })} minRows={2} />
           <div className="grid items-center gap-4 border-t border-divider pt-4 md:grid-cols-2">
@@ -143,6 +223,18 @@ export default function PrivateProxyPage() {
             {!form.permanent && <Input label="有效期（小时）" type="number" value={form.leaseHours} onValueChange={value => setForm({ ...form, leaseHours: value })} />}
           </div>
         </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} startContent={!submitting && <Globe2 size={17} />} onPress={submit}>创建代理</Button></ModalFooter></ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(clientConfig)} onOpenChange={open => { if (!open) setClientConfig(null); }} size="2xl" scrollBehavior="inside">
+        <ModalContent><ModalHeader>{clientConfig ? `${protocolMeta[clientConfig.proxyType].label} 连接信息` : '连接信息'}</ModalHeader><ModalBody>
+          <div className="divide-y divide-divider border-y border-divider">
+            {configRows.map(([label, value]) => <div key={label} className="grid min-h-12 grid-cols-[120px_1fr_auto] items-center gap-3 py-2">
+              <span className="text-sm text-default-500">{label}</span><span className="break-all font-mono text-sm">{value}</span>
+              <Button isIconOnly size="sm" variant="light" aria-label={`复制${label}`} title={`复制${label}`} onPress={() => copyText(value, label)}><Copy size={16} /></Button>
+            </div>)}
+          </div>
+          {clientConfig && <div className="space-y-2 pt-2"><div className="flex items-center justify-between"><span className="text-sm font-medium">一键导入链接</span><Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copyText(clientConfig.uri, '导入链接')}>复制</Button></div><Textarea isReadOnly value={clientConfig.uri} minRows={3} classNames={{ input: 'font-mono text-xs break-all' }} /></div>}
+        </ModalBody><ModalFooter><Button color="primary" onPress={() => setClientConfig(null)}>完成</Button></ModalFooter></ModalContent>
       </Modal>
     </div>
   );

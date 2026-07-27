@@ -195,9 +195,15 @@ public class PortLedgerService {
         for (PrivateProxy proxy : privateProxyMapper.selectList(new QueryWrapper<PrivateProxy>()
                 .notIn("state", "deleted", "expired", "error"))) {
             User owner = users.get(proxy.getUserId());
-            String detail = ("http".equals(proxy.getProxyType()) ? "HTTP" : "SOCKS5") + " 私人代理";
+            String protocol = switch (proxy.getProxyType()) {
+                case "http" -> "HTTP";
+                case "shadowsocks" -> "Shadowsocks";
+                case "vless_reality" -> "VLESS+REALITY";
+                default -> "SOCKS5";
+            };
+            String detail = protocol + " 私人代理";
             add(entries, nodeEntry("private_proxy", "occupied", nodes.get(proxy.getNodeId()),
-                    proxy.getListenPort(), proxy.getListenPort(), "tcp", proxy.getUserId(),
+                    proxy.getListenPort(), proxy.getListenPort(), "shadowsocks".equals(proxy.getProxyType()) ? "tcp_udp" : "tcp", proxy.getUserId(),
                     owner == null ? "未知用户" : owner.getUser(), proxy.getId(), proxy.getName(), detail,
                     proxy.getCreatedTime(), proxy.getExpiresAt()));
         }

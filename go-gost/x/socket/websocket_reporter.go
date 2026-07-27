@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -134,6 +135,7 @@ type WebSocketReporter struct {
 	connMutex       sync.Mutex        // 新增：连接状态锁
 	aesCrypto       *crypto.AESCrypto // 新增：AES加密器
 	terminalManager *TerminalManager
+	realityManager  *realityRuntimeManager
 }
 
 // NewWebSocketReporter 创建一个新的WebSocket报告器
@@ -161,11 +163,15 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 		aesCrypto:      aesCrypto,
 	}
 	reporter.terminalManager = NewTerminalManager(reporter.sendTerminalEvent)
+	reporter.realityManager = newRealityRuntimeManager()
 	return reporter
 }
 
 // Start 启动WebSocket报告器
 func (w *WebSocketReporter) Start() {
+	if w.realityManager != nil {
+		go w.realityManager.restore()
+	}
 	go w.run()
 }
 
@@ -174,6 +180,9 @@ func (w *WebSocketReporter) Stop() {
 	w.cancel()
 	if w.terminalManager != nil {
 		w.terminalManager.CloseAll("agent stopped")
+	}
+	if w.realityManager != nil {
+		w.realityManager.stopAll()
 	}
 	if w.conn != nil {
 		w.conn.Close()
@@ -657,6 +666,16 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "DeployCertificatesResponse"
 		response.Data = deployed
 
+	case "AddRealityRuntime":
+		var result realityRuntimeResponse
+		result, err = w.handleAddRealityRuntime(cmd.Data)
+		response.Type = "AddRealityRuntimeResponse"
+		response.Data = result
+
+	case "DeleteRealityRuntime":
+		err = w.handleDeleteRealityRuntime(cmd.Data)
+		response.Type = "DeleteRealityRuntimeResponse"
+
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)
 		response.Type = "UnknownCommandResponse"
@@ -674,6 +693,38 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) handleAddRealityRuntime(data interface{}) (realityRuntimeResponse, error) {
+	if w.realityManager == nil {
+		return realityRuntimeResponse{}, errors.New("REALITY runtime manager is unavailable")
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	var request realityRuntimeRequest
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	return w.realityManager.add(request)
+}
+
+func (w *WebSocketReporter) handleDeleteRealityRuntime(data interface{}) error {
+	if w.realityManager == nil {
+		return errors.New("REALITY runtime manager is unavailable")
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return err
+	}
+	return w.realityManager.delete(request.Name)
 }
 
 type managedCertificatePayload struct {

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS private_proxy (
   expires_at bigint DEFAULT NULL,
   service_name varchar(120) NOT NULL,
   admission_name varchar(120) DEFAULT NULL,
+  client_config text DEFAULT NULL,
   last_error varchar(500) DEFAULT NULL,
   in_flow bigint NOT NULL DEFAULT 0,
   out_flow bigint NOT NULL DEFAULT 0,

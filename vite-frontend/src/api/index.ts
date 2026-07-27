@@ -118,6 +118,8 @@ export const updateForward = (data: any) => Network.post("/forward/update", data
 export const deleteForward = (id: number) => Network.post("/forward/delete", { id });
 export const forceDeleteForward = (id: number) => Network.post("/forward/force-delete", { id });
 
+export type PrivateProxyType = 'socks5' | 'http' | 'shadowsocks' | 'vless_reality';
+
 export interface PrivateProxyItem {
   id: number;
   userId: number;
@@ -127,7 +129,7 @@ export interface PrivateProxyItem {
   nodeName: string;
   publicHost?: string;
   nodeOnline: boolean;
-  proxyType: 'socks5' | 'http';
+  proxyType: PrivateProxyType;
   bindIp?: string;
   listenPort: number;
   authUsername: string;
@@ -144,18 +146,39 @@ export interface PrivateProxyItem {
 export interface PrivateProxyCreateRequest {
   name: string;
   nodeId: number;
-  proxyType: 'socks5' | 'http';
+  proxyType: PrivateProxyType;
   bindIp?: string;
   listenPort: number;
-  authUsername: string;
-  authPassword: string;
+  authUsername?: string;
+  authPassword?: string;
+  cipher?: 'aes-128-gcm' | 'aes-256-gcm' | 'chacha20-ietf-poly1305';
+  realityServerName?: string;
   allowedCidrs?: string;
   leaseHours?: number;
   permanent: boolean;
 }
 
+export interface PrivateProxyClientConfig {
+  proxyType: PrivateProxyType;
+  name: string;
+  host: string;
+  port: number;
+  uri: string;
+  username?: string;
+  password?: string;
+  cipher?: string;
+  clientId?: string;
+  publicKey?: string;
+  shortId?: string;
+  serverName?: string;
+  fingerprint?: string;
+  flow?: string;
+  runtimeVersion?: string;
+}
+
 export const getPrivateProxies = () => Network.post<PrivateProxyItem[]>("/private-proxy/list");
 export const createPrivateProxy = (data: PrivateProxyCreateRequest) => Network.post<PrivateProxyItem>("/private-proxy/create", data);
+export const getPrivateProxyClientConfig = (id: number) => Network.post<PrivateProxyClientConfig>("/private-proxy/client-config", { id });
 export const pausePrivateProxy = (id: number) => Network.post("/private-proxy/pause", { id });
 export const resumePrivateProxy = (id: number) => Network.post("/private-proxy/resume", { id });
 export const deletePrivateProxy = (id: number) => Network.post("/private-proxy/delete", { id });

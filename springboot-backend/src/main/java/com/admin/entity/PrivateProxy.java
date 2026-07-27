@@ -24,6 +24,7 @@ public class PrivateProxy implements Serializable {
     private Long expiresAt;
     private String serviceName;
     private String admissionName;
+    private String clientConfig;
     private String lastError;
     private Long inFlow;
     private Long outFlow;
