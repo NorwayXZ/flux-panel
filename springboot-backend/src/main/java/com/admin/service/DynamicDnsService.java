@@ -542,7 +542,7 @@ public class DynamicDnsService {
         try {
             Map<String, String> params = new TreeMap<>();
             params.put("Format", "JSON"); params.put("Version", "2015-01-09"); params.put("AccessKeyId", access.keyA);
-            params.put("SignatureMethod", "HMAC-SHA1"); params.put("Timestamp", DateTimeFormatter.ISO_INSTANT.format(Instant.now()));
+            params.put("SignatureMethod", "HMAC-SHA1"); params.put("Timestamp", formatAliyunTimestamp(Instant.now()));
             params.put("SignatureVersion", "1.0"); params.put("SignatureNonce", UUID.randomUUID().toString()); params.put("Action", action);
             params.putAll(actionParams);
             String canonical = params.entrySet().stream().map(entry -> encode(entry.getKey()) + "=" + encode(entry.getValue()))
@@ -573,6 +573,12 @@ public class DynamicDnsService {
             // Provider gateway pages must not be copied into the administrator UI.
         }
         return "阿里云 DNS API 请求失败";
+    }
+
+    static String formatAliyunTimestamp(Instant instant) {
+        return DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+                .withZone(ZoneOffset.UTC)
+                .format(instant);
     }
 
     private void addHistory(long ruleId, String oldIp, String newIp, String status, String error, long now) {

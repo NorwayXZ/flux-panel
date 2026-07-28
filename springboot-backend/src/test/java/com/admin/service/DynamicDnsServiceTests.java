@@ -2,6 +2,8 @@ package com.admin.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DynamicDnsServiceTests {
@@ -15,5 +17,11 @@ class DynamicDnsServiceTests {
     @Test
     void hidesUnexpectedGatewayBodies() {
         assertEquals("阿里云 DNS API 请求失败", DynamicDnsService.formatAliyunApiError("<html>bad gateway</html>"));
+    }
+
+    @Test
+    void formatsAliyunTimestampsWithoutFractionalSeconds() {
+        assertEquals("2026-07-28T07:19:50Z", DynamicDnsService.formatAliyunTimestamp(
+                Instant.parse("2026-07-28T07:19:50.123456Z")));
     }
 }

@@ -1,3 +1,9 @@
+## 2.22.4 Aliyun DNS signature timestamp fix
+
+- Formats Aliyun DNS API timestamps without fractional seconds, as required by the 2015-01-09 API.
+- Fixes `InvalidTimeStamp.Format` when carrier-line records are created or updated.
+- Changes no schema, Agent, tunnel, forward, port, or health-check behavior. Roll back to `2.22.3` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.3 Aliyun carrier DNS diagnostics
 
 - Uses Aliyun DNS's 600-second minimum TTL when creating or updating carrier-line records.
