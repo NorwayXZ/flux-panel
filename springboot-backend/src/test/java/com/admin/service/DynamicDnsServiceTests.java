@@ -24,4 +24,11 @@ class DynamicDnsServiceTests {
         assertEquals("2026-07-28T07:19:50Z", DynamicDnsService.formatAliyunTimestamp(
                 Instant.parse("2026-07-28T07:19:50.123456Z")));
     }
+
+    @Test
+    void keepsAliyunQueryParametersEncodedExactlyOnce() {
+        String rawQuery = DynamicDnsService.buildAliyunRequestUri(
+                "Timestamp=2026-07-28T07%3A19%3A50Z", "abc%2Bdef%3D").getRawQuery();
+        assertEquals("Timestamp=2026-07-28T07%3A19%3A50Z&Signature=abc%2Bdef%3D", rawQuery);
+    }
 }

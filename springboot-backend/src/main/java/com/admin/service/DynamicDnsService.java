@@ -30,6 +30,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -549,7 +550,7 @@ public class DynamicDnsService {
                     .reduce((a, b) -> a + "&" + b).orElse("");
             String signature = java.util.Base64.getEncoder().encodeToString(hmacSha1((access.keyB + "&").getBytes(StandardCharsets.UTF_8),
                     "GET&%2F&" + encode(canonical)));
-            String response = restTemplate.getForObject(ALIYUN_API + "?" + canonical + "&Signature=" + encode(signature), String.class);
+            String response = restTemplate.getForObject(buildAliyunRequestUri(canonical, encode(signature)), String.class);
             JSONObject json = JSON.parseObject(response);
             if (json != null && json.containsKey("Code")) throw new IllegalStateException("阿里云 DNS: " + json.getString("Message"));
             return json;
@@ -579,6 +580,10 @@ public class DynamicDnsService {
         return DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
                 .withZone(ZoneOffset.UTC)
                 .format(instant);
+    }
+
+    static URI buildAliyunRequestUri(String canonical, String encodedSignature) {
+        return URI.create(ALIYUN_API + "?" + canonical + "&Signature=" + encodedSignature);
     }
 
     private void addHistory(long ruleId, String oldIp, String newIp, String status, String error, long now) {

@@ -1,3 +1,9 @@
+## 2.22.5 Aliyun DNS request encoding fix
+
+- Sends the pre-encoded Aliyun RPC query as a `URI`, preventing Spring from encoding `%3A` into `%253A`.
+- Fixes the remaining `InvalidTimeStamp.Format` response after fractional seconds were removed.
+- Changes no schema, Agent, tunnel, forward, port, or health-check behavior. Roll back to `2.22.4` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.4 Aliyun DNS signature timestamp fix
 
 - Formats Aliyun DNS API timestamps without fractional seconds, as required by the 2015-01-09 API.
