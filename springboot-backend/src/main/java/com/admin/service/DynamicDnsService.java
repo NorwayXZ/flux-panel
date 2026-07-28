@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -512,7 +513,7 @@ public class DynamicDnsService {
         params.put("RR", rr);
         params.put("Type", type);
         params.put("Value", value);
-        params.put("TTL", Integer.toString(Math.max(60, ttl)));
+        params.put("TTL", Integer.toString(Math.max(600, ttl)));
         params.put("Line", line);
         if (recordId == null) {
             params.put("DomainName", zone);
@@ -552,8 +553,26 @@ public class DynamicDnsService {
             JSONObject json = JSON.parseObject(response);
             if (json != null && json.containsKey("Code")) throw new IllegalStateException("阿里云 DNS: " + json.getString("Message"));
             return json;
-        } catch (RestClientException e) { throw new IllegalStateException("阿里云 DNS API 请求失败"); }
+        } catch (HttpStatusCodeException e) {
+            throw new IllegalStateException(formatAliyunApiError(e.getResponseBodyAsString()));
+        } catch (RestClientException e) {
+            throw new IllegalStateException("阿里云 DNS API 连接失败");
+        }
         catch (Exception e) { if (e instanceof IllegalStateException) throw (IllegalStateException) e; throw new IllegalStateException("阿里云 DNS 请求签名失败"); }
+    }
+
+    static String formatAliyunApiError(String responseBody) {
+        try {
+            JSONObject body = JSON.parseObject(responseBody);
+            String code = body == null ? null : StringUtils.trimToNull(body.getString("Code"));
+            String message = body == null ? null : StringUtils.trimToNull(body.getString("Message"));
+            if (code != null && message != null) return "阿里云 DNS：" + code + " - " + message;
+            if (code != null) return "阿里云 DNS：" + code;
+            if (message != null) return "阿里云 DNS：" + message;
+        } catch (RuntimeException ignored) {
+            // Provider gateway pages must not be copied into the administrator UI.
+        }
+        return "阿里云 DNS API 请求失败";
     }
 
     private void addHistory(long ruleId, String oldIp, String newIp, String status, String error, long now) {

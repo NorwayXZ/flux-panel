@@ -1,3 +1,9 @@
+## 2.22.3 Aliyun carrier DNS diagnostics
+
+- Uses Aliyun DNS's 600-second minimum TTL when creating or updating carrier-line records.
+- Preserves Aliyun's API error code and short message so credential, permission, signature, domain, and record-limit failures can be diagnosed from the panel.
+- Changes no schema, Agent, tunnel, forward, port, or health-check behavior. Roll back to `2.22.2` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.2 DNS credential autofill protection
 
 - Prevents browser password managers from treating DNS configuration fields as panel login username/password fields.
