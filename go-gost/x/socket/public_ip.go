@@ -43,7 +43,61 @@ func (w *WebSocketReporter) handlePublicIPQuery(data interface{}) (publicIPRespo
 		}
 		failures = append(failures, err.Error())
 	}
+	if req.Family == "ipv6" {
+		address, source, err := discoverLocalPublicIPv6()
+		if err == nil {
+			return publicIPResponse{Family: req.Family, Address: address, Source: source}, nil
+		}
+		failures = append(failures, err.Error())
+	}
 	return publicIPResponse{}, fmt.Errorf("public IP lookup failed: %s", strings.Join(failures, "; "))
+}
+
+func discoverLocalPublicIPv6() (string, string, error) {
+	// A UDP dial to a literal IPv6 address asks the kernel which source address
+	// it would use without depending on DNS or sending application traffic.
+	for _, target := range []string{"[2606:4700:4700::1111]:53", "[2001:4860:4860::8888]:53"} {
+		conn, err := net.DialTimeout("udp6", target, 2*time.Second)
+		if err != nil {
+			continue
+		}
+		address := conn.LocalAddr()
+		_ = conn.Close()
+		if udpAddress, ok := address.(*net.UDPAddr); ok && isUsablePublicIPv6(udpAddress.IP) {
+			return udpAddress.IP.String(), "local-ipv6-route", nil
+		}
+	}
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", "", fmt.Errorf("local IPv6 interface lookup failed: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			var ip net.IP
+			switch value := address.(type) {
+			case *net.IPNet:
+				ip = value.IP
+			case *net.IPAddr:
+				ip = value.IP
+			}
+			if isUsablePublicIPv6(ip) {
+				return ip.String(), "local-interface:" + iface.Name, nil
+			}
+		}
+	}
+	return "", "", errors.New("no globally routable IPv6 address found on local interfaces")
+}
+
+func isUsablePublicIPv6(ip net.IP) bool {
+	return ip != nil && ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsPrivate()
 }
 
 func fetchPublicIP(endpoint, family string) (string, error) {
