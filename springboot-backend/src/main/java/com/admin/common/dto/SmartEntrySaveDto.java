@@ -11,8 +11,8 @@ import java.util.List;
 public class SmartEntrySaveDto {
     private Long id;
 
-    @NotBlank(message = "请输入入口接入名称")
-    @Size(max = 100, message = "入口接入名称不能超过100个字符")
+    @NotBlank(message = "请输入三网优化名称")
+    @Size(max = 100, message = "三网优化名称不能超过100个字符")
     private String name;
 
     private Long providerRefId;

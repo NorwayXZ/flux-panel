@@ -410,7 +410,7 @@ INSERT INTO `service_publish_lock` (`id`) VALUES (1);
 --
 
 INSERT INTO `vite_config` (`id`, `name`, `value`, `time`) VALUES
-(1, 'app_name', 'flux', 1755147963000);
+(1, 'app_name', '云巢 CloudNest', 1755147963000);
 
 --
 -- 转储表的索引

@@ -273,12 +273,12 @@ export default function ProfilePage() {
                <p className="text-xs text-gray-400 dark:text-gray-500">
                  Powered by{' '}
                  <a 
-                   href="https://github.com/bqlpfy/flux-panel" 
+                   href="https://github.com/NorwayXZ/flux-panel"
                    target="_blank" 
                    rel="noopener noreferrer"
                    className="text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                  >
-                   flux-panel
+                   WhySoQuiet
                  </a>
                </p>
                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">

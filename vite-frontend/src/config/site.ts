@@ -4,14 +4,14 @@ export type SiteConfig = typeof siteConfig;
 
 // 缓存相关常量
 const CACHE_PREFIX = 'vite_config_';
-const VERSION = "2.23.1";
+const VERSION = "2.23.2";
 const APP_VERSION = "1.0.4";
 const UPDATE_REPOSITORY = "NorwayXZ/flux-panel";
 
 const getInitialConfig = () => {
   if (typeof window === 'undefined') {
     return {
-      name: "flux",
+      name: "云巢 CloudNest",
       version: VERSION,
       app_version: APP_VERSION,
       updateRepository: UPDATE_REPOSITORY,
@@ -28,7 +28,7 @@ const getInitialConfig = () => {
       };
     }
   return {
-    name: "flux",
+    name: "云巢 CloudNest",
     version: VERSION,
     app_version: APP_VERSION,
     updateRepository: UPDATE_REPOSITORY,

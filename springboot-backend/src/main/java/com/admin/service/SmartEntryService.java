@@ -97,14 +97,14 @@ public class SmartEntryService {
         Long id = dto.getId();
             List<Map<String, Object>> oldRoutes = id == null ? List.of() : routes(id);
             Map<String, Object> oldGroup = id == null ? null : one("SELECT * FROM smart_entry_group WHERE id=?", id);
-            if (id != null && oldGroup == null) return R.err("入口接入策略不存在");
+            if (id != null && oldGroup == null) return R.err("三网优化策略不存在");
 
             Integer duplicate = id == null
                     ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=?",
                     Integer.class, normalized.providerId, normalized.zoneName, normalized.domain, normalized.recordType)
                     : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=? AND id<>?",
                     Integer.class, normalized.providerId, normalized.zoneName, normalized.domain, normalized.recordType, id);
-            if (duplicate != null && duplicate > 0) return R.err("该业务域名已经配置入口接入");
+            if (duplicate != null && duplicate > 0) return R.err("该业务域名已经配置三网优化");
 
             boolean sameIdentity = oldGroup != null
                     && normalized.providerId == number(oldGroup.get("provider_ref_id"))
@@ -176,7 +176,7 @@ public class SmartEntryService {
     }
 
     public R checkNow(Long id) {
-        if (one("SELECT id FROM smart_entry_group WHERE id=?", id) == null) return R.err("入口接入策略不存在");
+        if (one("SELECT id FROM smart_entry_group WHERE id=?", id) == null) return R.err("三网优化策略不存在");
         try {
             checkGroup(id, true);
             return overview();
@@ -264,7 +264,7 @@ public class SmartEntryService {
 
     public R delete(Long id) {
         Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
-        if (group == null) return R.err("入口接入策略不存在");
+        if (group == null) return R.err("三网优化策略不存在");
         List<String> failures = new ArrayList<>();
         for (Map<String, Object> route : routes(id)) {
             try {
@@ -424,7 +424,7 @@ public class SmartEntryService {
             throw new IllegalArgumentException("除默认入口外，至少配置一条不同的运营商入口");
         }
         if (routes.stream().map(route -> route.nodeId).distinct().count() < 2) {
-            throw new IllegalArgumentException("入口接入至少需要两台不同的公网入口节点");
+            throw new IllegalArgumentException("三网优化至少需要两台不同的公网入口节点");
         }
         int port = routes.get(0).entryPort;
         if (routes.stream().anyMatch(route -> route.entryPort != port)) throw new IllegalArgumentException("所有入口转发必须使用相同公网端口");

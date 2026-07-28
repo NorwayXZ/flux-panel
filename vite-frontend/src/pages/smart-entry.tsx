@@ -92,7 +92,7 @@ export default function SmartEntryPage() {
     if (overview.code === 0) {
       setGroups(overview.data?.groups || []);
       setSummary(overview.data?.summary || emptySummary);
-    } else if (!quiet) toast.error(overview.msg || '加载入口接入失败');
+    } else if (!quiet) toast.error(overview.msg || '加载三网优化失败');
     if (options.code === 0) {
       setProviders(options.data?.providers || []);
       setForwards(options.data?.forwards || []);
@@ -111,7 +111,7 @@ export default function SmartEntryPage() {
     if (!selected.default) return '必须选择默认入口';
     const values = carriers.map(item => selected[item.key]).filter(Boolean) as SmartEntryForwardOption[];
     if (new Set(values.map(item => item.id)).size < 2) return '至少配置一条不同于默认入口的运营商线路';
-    if (new Set(values.map(item => item.inNodeId)).size < 2) return '入口接入至少需要两台不同的公网入口节点';
+    if (new Set(values.map(item => item.inNodeId)).size < 2) return '三网优化至少需要两台不同的公网入口节点';
     if (new Set(values.map(item => item.inPort)).size > 1) return '所有入口转发必须使用相同公网端口';
     return '';
   }, [selected]);
@@ -153,8 +153,8 @@ export default function SmartEntryPage() {
       routes: carriers.filter(item => form.routes[item.key]).map(item => ({ carrier: item.key, forwardId: Number(form.routes[item.key]) })),
     });
     setSaving(false);
-    if (response.code !== 0) return toast.error(response.msg || '保存入口接入失败');
-    toast.success(form.id ? '入口接入已更新' : '入口接入已创建，运营商 DNS 已同步');
+    if (response.code !== 0) return toast.error(response.msg || '保存三网优化失败');
+    toast.success(form.id ? '三网优化已更新' : '三网优化已创建，运营商 DNS 已同步');
     setFormOpen(false);
     void loadData();
   };
@@ -172,7 +172,7 @@ export default function SmartEntryPage() {
     if (!window.confirm(`确认删除“${group.name}”吗？面板会同时删除它创建的运营商线路记录，现有转发不会删除。`)) return;
     const response = await deleteSmartEntry(group.id);
     if (response.code !== 0) return toast.error(response.msg || '删除失败');
-    toast.success('入口接入已删除');
+    toast.success('三网优化已删除');
     void loadData();
   };
 
@@ -184,16 +184,16 @@ export default function SmartEntryPage() {
     setHistoryOpen(true);
   };
 
-  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载入口接入" /></div>;
+  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载三网优化" /></div>;
 
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-sm text-default-500">运营商线路入口</p><h1 className="mt-1 text-2xl font-semibold">入口接入</h1></div>
-        <Button color="primary" startContent={<Plus size={18} />} onPress={openCreate}>新建入口接入</Button>
+        <div><p className="text-sm text-default-500">运营商线路入口</p><h1 className="mt-1 text-2xl font-semibold">三网优化</h1></div>
+        <Button color="primary" startContent={<Plus size={18} />} onPress={openCreate}>新建三网优化</Button>
       </header>
 
-      <section className="grid grid-cols-2 border-y border-divider sm:grid-cols-4" aria-label="入口接入概况">
+      <section className="grid grid-cols-2 border-y border-divider sm:grid-cols-4" aria-label="三网优化概况">
         {[
           ['运行策略', summary.enabled, <Waypoints key="enabled" className="h-5 w-5 text-primary" />],
           ['线路正常', summary.healthy, <CheckCircle2 key="healthy" className="h-5 w-5 text-success" />],
@@ -210,7 +210,7 @@ export default function SmartEntryPage() {
         同一域名按访问者 DNS 线路返回对应入口。切换只影响新连接，已建立的 TCP 连接不会被强制中断。该能力依赖 DNSPod 或阿里云 DNS 的运营商线路解析，Cloudflare 域名不支持此模式。
       </div>
 
-      <section className="border-y border-divider" aria-label="入口接入运行规则">
+      <section className="border-y border-divider" aria-label="三网优化运行规则">
         <div className="border-b border-divider px-1 py-3"><h2 className="text-sm font-semibold">实际调度规则</h2><p className="mt-1 text-xs text-default-500">运营商选路与故障回退是两套独立规则。</p></div>
         <div className="grid sm:grid-cols-2 xl:grid-cols-4">
           {[
@@ -224,7 +224,7 @@ export default function SmartEntryPage() {
       </section>
 
       {groups.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500"><Waypoints className="h-9 w-9" /><p>暂无入口接入策略</p></div>
+        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500"><Waypoints className="h-9 w-9" /><p>暂无三网优化策略</p></div>
       ) : (
         <section className="grid gap-4 xl:grid-cols-2">
           {groups.map(group => {
@@ -283,7 +283,7 @@ export default function SmartEntryPage() {
 
       <Modal isOpen={formOpen} onOpenChange={setFormOpen} size="4xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>{form.id ? '编辑入口接入' : '新建入口接入'}</ModalHeader>
+          <ModalHeader>{form.id ? '编辑三网优化' : '新建三网优化'}</ModalHeader>
           <ModalBody className="gap-5">
             <section className="grid gap-3 sm:grid-cols-2">
               <Input label="策略名称" placeholder="例如：家庭宽带智能入口" value={form.name} onValueChange={name => setForm({ ...form, name })} />

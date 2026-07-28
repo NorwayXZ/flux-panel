@@ -169,7 +169,7 @@ public class DynamicDnsService {
         if (used != null && used > 0) return R.err("该配置仍被动态 DNS 规则使用");
         Integer smartEntryUsed = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=?", Integer.class, id);
-        if (smartEntryUsed != null && smartEntryUsed > 0) return R.err("该配置仍被入口接入使用");
+        if (smartEntryUsed != null && smartEntryUsed > 0) return R.err("该配置仍被三网优化使用");
         return jdbcTemplate.update("DELETE FROM dynamic_dns_provider WHERE id=?", id) > 0 ? R.ok() : R.err("DNS 提供商配置不存在");
     }
 

@@ -149,7 +149,7 @@ export default function DnsSettingsPage() {
   };
 
   const removeCarrier = async (provider: DynamicDnsProviderOption) => {
-    if (!window.confirm(`确认删除“${provider.name}”吗？正在被入口接入或动态 DNS 使用的配置不会被删除。`)) return;
+    if (!window.confirm(`确认删除“${provider.name}”吗？正在被三网优化或动态 DNS 使用的配置不会被删除。`)) return;
     const response = await deleteDynamicDnsProvider(provider.id);
     if (response.code !== 0) return toast.error(response.msg || '删除失败');
     toast.success('线路 DNS 配置已删除');
@@ -204,7 +204,7 @@ export default function DnsSettingsPage() {
       </section>
 
       <section>
-        <div className="mb-3 flex items-end justify-between"><div><h2 className="text-base font-semibold">运营商线路 DNS</h2><p className="mt-1 text-xs text-default-500">入口接入与动态 DNS</p></div><div className="flex gap-2"><Chip size="sm" variant="flat">DNSPod</Chip><Chip size="sm" variant="flat">阿里云 DNS</Chip></div></div>
+        <div className="mb-3 flex items-end justify-between"><div><h2 className="text-base font-semibold">运营商线路 DNS</h2><p className="mt-1 text-xs text-default-500">三网优化与动态 DNS</p></div><div className="flex gap-2"><Chip size="sm" variant="flat">DNSPod</Chip><Chip size="sm" variant="flat">阿里云 DNS</Chip></div></div>
         {carrierProviders.length === 0 ? (
           <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><Globe2 className="h-8 w-8" /><span className="text-sm">尚未添加线路 DNS 配置</span><Button size="sm" color="primary" variant="flat" startContent={<Plus size={15} />} onPress={openCarrierCreate}>添加配置</Button></div>
         ) : (
