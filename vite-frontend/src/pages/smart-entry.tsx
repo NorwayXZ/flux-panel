@@ -98,6 +98,12 @@ export default function SmartEntryPage() {
     return '';
   }, [selected]);
   const selectedPort = selected.default?.inPort;
+  const probeIntervalMs = Math.max(2000, Number(form.probeIntervalMs) || 5000);
+  const connectTimeoutMs = Math.max(300, Number(form.connectTimeoutMs) || 1500);
+  const failureThreshold = Math.max(1, Number(form.failureThreshold) || 2);
+  const recoveryThreshold = Math.max(1, Number(form.recoveryThreshold) || 3);
+  const failureWindow = `${Math.ceil(probeIntervalMs * failureThreshold / 1000)}–${Math.ceil((probeIntervalMs * failureThreshold + connectTimeoutMs + 2000) / 1000)} 秒`;
+  const recoveryWindow = `${Math.ceil(probeIntervalMs * recoveryThreshold / 1000)}–${Math.ceil((probeIntervalMs * recoveryThreshold + 2000) / 1000)} 秒`;
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -186,6 +192,19 @@ export default function SmartEntryPage() {
         同一域名按访问者 DNS 线路返回对应入口。切换只影响新连接，已建立的 TCP 连接不会被强制中断。该能力依赖 DNSPod 或阿里云 DNS 的运营商线路解析，Cloudflare 域名不支持此模式。
       </div>
 
+      <section className="border-y border-divider" aria-label="入口接入运行规则">
+        <div className="border-b border-divider px-1 py-3"><h2 className="text-sm font-semibold">实际调度规则</h2><p className="mt-1 text-xs text-default-500">运营商选路与故障回退是两套独立规则。</p></div>
+        <div className="grid sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['何时走移动/电信/联通', '用户重新解析业务域名时，权威 DNS 按递归 DNS 来源返回对应运营商入口；不统计用户流量，也没有 100MB/200MB 门槛。'],
+            ['更换宽带后', '当前连接继续使用原入口；应用重新连接并且 DNS 缓存过期后，才会获取新运营商入口。不同运营商用户可同时走不同入口。'],
+            ['入口故障时', '面板同时检查 Agent 在线与公网 TCP 端口。默认每 5 秒检查，连续失败 2 次，通常约 10–14 秒后修改该运营商 DNS 记录。'],
+            ['入口恢复时', '默认连续成功 3 次，通常约 15–17 秒后恢复原运营商记录。DNS 修改后仍需等待 TTL、运营商和客户端缓存刷新。'],
+          ].map(([title, detail], index) => <div key={title} className={`min-h-36 px-4 py-4 ${index % 2 === 0 ? 'sm:border-r' : ''} ${index < 3 ? 'border-b xl:border-b-0' : ''} ${index > 0 ? 'xl:border-l' : ''} border-divider`}><h3 className="text-sm font-medium">{title}</h3><p className="mt-2 text-xs leading-5 text-default-500">{detail}</p></div>)}
+        </div>
+        <div className="border-t border-divider px-4 py-3 text-xs leading-5 text-warning">健康检测只判断入口是否在线和端口能否建立 TCP 连接，不根据 P95、抖动、丢包或单个用户的实际访问质量自动切换。</div>
+      </section>
+
       {groups.length === 0 ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500"><Waypoints className="h-9 w-9" /><p>暂无入口接入策略</p></div>
       ) : (
@@ -240,7 +259,7 @@ export default function SmartEntryPage() {
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
             </section>
 
-            {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dynamic-dns'); }}>前往动态 DNS 添加</Button></div>}
+            {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings?add=carrier'); }}>前往 DNS 与域名添加</Button></div>}
 
             <section className="border-t border-divider pt-4">
               <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">运营商入口</h3><p className="mt-1 text-xs text-default-500">留空的运营商会自动使用默认入口；所有已选转发必须使用同一公网端口。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>
@@ -259,6 +278,7 @@ export default function SmartEntryPage() {
             <section className="border-t border-divider pt-4">
               <div className="mb-3"><h3 className="text-sm font-semibold">入口健康检测</h3><p className="mt-1 text-xs text-default-500">连续失败后回退，连续恢复后回到对应运营商入口。</p></div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Input type="number" label="探测间隔（毫秒）" min={2000} value={form.probeIntervalMs} onValueChange={probeIntervalMs => setForm({ ...form, probeIntervalMs })} /><Input type="number" label="连接超时（毫秒）" min={300} value={form.connectTimeoutMs} onValueChange={connectTimeoutMs => setForm({ ...form, connectTimeoutMs })} /><Input type="number" label="连续失败次数" min={1} max={10} value={form.failureThreshold} onValueChange={failureThreshold => setForm({ ...form, failureThreshold })} /><Input type="number" label="恢复确认次数" min={1} max={10} value={form.recoveryThreshold} onValueChange={recoveryThreshold => setForm({ ...form, recoveryThreshold })} /></div>
+              <div className="mt-3 grid gap-2 border-y border-divider py-3 text-xs sm:grid-cols-2"><div><span className="text-default-500">预计故障确认：</span><strong>{failureWindow}</strong></div><div><span className="text-default-500">预计恢复确认：</span><strong>{recoveryWindow}</strong></div></div>
               <div className="mt-4"><Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测和线路回退</Switch></div>
             </section>
 
