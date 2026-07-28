@@ -1,3 +1,10 @@
+## 2.22.6 idempotent Aliyun carrier DNS sync
+
+- Identifies existing Aliyun carrier records by `LineCode`, including records whose display line is localized.
+- Recovers from `DomainRecordDuplicate` by discovering and updating the existing record instead of leaving the strategy in an error state.
+- Serializes strategy saves with scheduled health checks so both paths cannot recreate the same carrier records concurrently.
+- Changes no schema, Agent, tunnel, forward, port, or health-check policy. Roll back to `2.22.5` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.5 Aliyun DNS request encoding fix
 
 - Sends the pre-encoded Aliyun RPC query as a `URI`, preventing Spring from encoding `%3A` into `%253A`.

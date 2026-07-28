@@ -491,23 +491,11 @@ public class DynamicDnsService {
         String originalValue = null;
         Integer originalTtl = null;
         if (recordId == null) {
-            Map<String, String> query = new LinkedHashMap<>();
-            query.put("DomainName", zone);
-            query.put("RRKeyWord", rr);
-            query.put("TypeKeyWord", type);
-            query.put("PageSize", "500");
-            JSONObject records = aliyun(access, "DescribeDomainRecords", query);
-            JSONArray list = records.getJSONObject("DomainRecords").getJSONArray("Record");
-            if (list != null) {
-                for (int index = 0; index < list.size(); index++) {
-                    JSONObject item = list.getJSONObject(index);
-                    if (line.equalsIgnoreCase(StringUtils.defaultString(item.getString("Line"), "default"))) {
-                        recordId = item.getString("RecordId");
-                        originalValue = item.getString("Value");
-                        originalTtl = item.getInteger("TTL");
-                        break;
-                    }
-                }
+            JSONObject existing = findAliyunLineRecord(access, zone, rr, type, line);
+            if (existing != null) {
+                recordId = existing.getString("RecordId");
+                originalValue = existing.getString("Value");
+                originalTtl = existing.getInteger("TTL");
             }
         }
         Map<String, String> params = new LinkedHashMap<>();
@@ -518,11 +506,46 @@ public class DynamicDnsService {
         params.put("Line", line);
         if (recordId == null) {
             params.put("DomainName", zone);
-            return new LineRoutingRecord(aliyun(access, "AddDomainRecord", params).getString("RecordId"), true, null, null);
+            try {
+                return new LineRoutingRecord(aliyun(access, "AddDomainRecord", params).getString("RecordId"), true, null, null);
+            } catch (IllegalStateException e) {
+                if (!StringUtils.contains(e.getMessage(), "DomainRecordDuplicate")) throw e;
+                JSONObject existing = findAliyunLineRecord(access, zone, rr, type, line);
+                if (existing == null) throw e;
+                recordId = existing.getString("RecordId");
+                originalValue = existing.getString("Value");
+                originalTtl = existing.getInteger("TTL");
+                params.remove("DomainName");
+            }
         }
         params.put("RecordId", recordId);
         aliyun(access, "UpdateDomainRecord", params);
         return new LineRoutingRecord(recordId, false, originalValue, originalTtl);
+    }
+
+    private JSONObject findAliyunLineRecord(ProviderAccess access, String zone, String rr, String type, String line) {
+        Map<String, String> query = new LinkedHashMap<>();
+        query.put("DomainName", zone);
+        query.put("RRKeyWord", rr);
+        query.put("TypeKeyWord", type);
+        query.put("PageSize", "500");
+        JSONObject records = aliyun(access, "DescribeDomainRecords", query);
+        JSONArray list = records.getJSONObject("DomainRecords").getJSONArray("Record");
+        if (list == null) return null;
+        for (int index = 0; index < list.size(); index++) {
+            JSONObject item = list.getJSONObject(index);
+            if (rr.equalsIgnoreCase(item.getString("RR"))
+                    && type.equalsIgnoreCase(item.getString("Type"))
+                    && aliyunLineMatches(item, line)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    static boolean aliyunLineMatches(JSONObject record, String expectedLine) {
+        String actualLine = StringUtils.defaultIfBlank(record.getString("LineCode"), record.getString("Line"));
+        return expectedLine.equalsIgnoreCase(StringUtils.defaultIfBlank(actualLine, "default"));
     }
 
     private String normalizeCarrierLine(String provider, String carrier) {

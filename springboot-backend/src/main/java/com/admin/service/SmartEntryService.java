@@ -79,8 +79,18 @@ public class SmartEntryService {
     public R save(SmartEntrySaveDto dto) {
         try {
             Normalized normalized = normalize(dto);
-            long now = System.currentTimeMillis();
-            Long id = dto.getId();
+            Object lock = dto.getId() == null ? new Object() : locks.computeIfAbsent(dto.getId(), ignored -> new Object());
+            synchronized (lock) {
+                return saveLocked(dto, normalized);
+            }
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return R.err(e.getMessage());
+        }
+    }
+
+    private R saveLocked(SmartEntrySaveDto dto, Normalized normalized) {
+        long now = System.currentTimeMillis();
+        Long id = dto.getId();
             List<Map<String, Object>> oldRoutes = id == null ? List.of() : routes(id);
             Map<String, Object> oldGroup = id == null ? null : one("SELECT * FROM smart_entry_group WHERE id=?", id);
             if (id != null && oldGroup == null) return R.err("入口接入策略不存在");
@@ -149,9 +159,6 @@ public class SmartEntryService {
                 event(id, null, "dns_error", "failed", message);
                 return R.err("策略已保存，但 DNS 同步失败：" + message);
             }
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return R.err(e.getMessage());
-        }
     }
 
     public R checkNow(Long id) {

@@ -1,5 +1,6 @@
 package com.admin.service;
 
+import com.alibaba.fastjson.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -30,5 +31,11 @@ class DynamicDnsServiceTests {
         String rawQuery = DynamicDnsService.buildAliyunRequestUri(
                 "Timestamp=2026-07-28T07%3A19%3A50Z", "abc%2Bdef%3D").getRawQuery();
         assertEquals("Timestamp=2026-07-28T07%3A19%3A50Z&Signature=abc%2Bdef%3D", rawQuery);
+    }
+
+    @Test
+    void identifiesAliyunCarrierRecordsByLineCode() {
+        JSONObject record = JSONObject.parseObject("{\"Line\":\"中国电信\",\"LineCode\":\"telecom\"}");
+        assertEquals(true, DynamicDnsService.aliyunLineMatches(record, "telecom"));
     }
 }
