@@ -24,6 +24,8 @@ type TrafficReportItem struct {
 	N string `json:"n"` // 服务名（name缩写）
 	U int64  `json:"u"` // 上行流量（up缩写）
 	D int64  `json:"d"` // 下行流量（down缩写）
+	T uint64 `json:"t"` // 累计连接数（total缩写）
+	C uint64 `json:"c"` // 当前连接数（current缩写）
 }
 
 func SetHTTPReportURL(addr string, secret string) {

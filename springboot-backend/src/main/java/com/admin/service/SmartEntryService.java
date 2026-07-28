@@ -35,11 +35,13 @@ import java.util.stream.Collectors;
 public class SmartEntryService {
     private static final List<String> CARRIERS = List.of("default", "telecom", "unicom", "mobile");
     private static final int MAX_GROUPS_PER_TICK = 30;
+    private static final long ACTIVITY_RESUME_AFTER_MS = 30L * 60L * 1000L;
 
     private final JdbcTemplate jdbcTemplate;
     private final DynamicDnsService dynamicDnsService;
     private final AtomicBoolean checking = new AtomicBoolean(false);
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
+    private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
 
     public SmartEntryService(JdbcTemplate jdbcTemplate, DynamicDnsService dynamicDnsService) {
         this.jdbcTemplate = jdbcTemplate;
@@ -54,7 +56,9 @@ public class SmartEntryService {
                         + "g.enabled,g.state,g.last_error AS lastError,g.last_checked_at AS lastCheckedAt,g.created_time AS createdTime "
                         + "FROM smart_entry_group g LEFT JOIN dynamic_dns_provider p ON p.id=g.provider_ref_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
-            group.put("routes", routes(number(group.get("id"))));
+            long groupId = number(group.get("id"));
+            group.put("routes", routes(groupId));
+            group.put("activities", activities(groupId));
         }
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("total", groups.size());
@@ -149,7 +153,16 @@ public class SmartEntryService {
                         route.forwardName, route.nodeName, retained == null ? null : retained.get("recordId"),
                         retained == null || truth(retained.get("managedCreated")), retained == null ? null : retained.get("originalAddress"),
                         retained == null ? null : retained.get("originalTtl"), route.forwardId, route.entryAddress, now, now);
+                if (retained != null) {
+                    jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=?,current_connections=?,"
+                                    + "reported_total_connections=?,pending_connections=?,activity_in_flow=?,activity_out_flow=?,"
+                                    + "last_activity_at=?,last_telemetry_at=? WHERE group_id=? AND carrier=?",
+                            retained.get("telemetryReady"), retained.get("totalConnections"), retained.get("currentConnections"),
+                            retained.get("reportedTotalConnections"), retained.get("pendingConnections"), retained.get("activityInFlow"),
+                            retained.get("activityOutFlow"), retained.get("lastActivityAt"), retained.get("lastTelemetryAt"), id, route.carrier);
+                }
             }
+            activityGroups.clear();
             try {
                 syncRecords(id, "配置同步");
                 return R.ok(Map.of("id", id));
@@ -174,7 +187,72 @@ public class SmartEntryService {
     public R events(Long id) {
         return R.ok(jdbcTemplate.queryForList(
                 "SELECT id,carrier,event_type AS eventType,status,detail,created_time AS createdTime FROM smart_entry_event "
-                        + "WHERE group_id=? ORDER BY created_time DESC LIMIT 200", id));
+                        + "WHERE group_id=? AND event_type IN ('route_switch','first_active','resumed','new_connections') "
+                        + "ORDER BY created_time DESC LIMIT 200", id));
+    }
+
+    public void recordActivity(Long forwardId, Long reportingNodeId, Long reportedTotalConnections,
+                               Long reportedCurrentConnections, Long inbound, Long outbound) {
+        if (forwardId == null || reportingNodeId == null) return;
+        String routeKey = forwardId + ":" + reportingNodeId;
+        List<Long> matches = activityGroups.computeIfAbsent(routeKey, ignored -> List.copyOf(jdbcTemplate.queryForList(
+                "SELECT DISTINCT group_id FROM smart_entry_route WHERE forward_id=? AND entry_node_id=?",
+                Long.class, forwardId, reportingNodeId)));
+        for (Long groupId : matches) {
+            synchronized (locks.computeIfAbsent(groupId, ignored -> new Object())) {
+                Map<String, Object> state = one("SELECT * FROM smart_entry_route WHERE group_id=? AND forward_id=? AND entry_node_id=? ORDER BY id LIMIT 1",
+                        groupId, forwardId, reportingNodeId);
+                if (state == null) continue;
+                long now = System.currentTimeMillis();
+                long inputBytes = Math.max(0L, inbound == null ? 0L : inbound);
+                long outputBytes = Math.max(0L, outbound == null ? 0L : outbound);
+                boolean telemetryReady = truth(state.get("telemetry_ready"));
+                long previousReported = number(state.get("reported_total_connections"));
+                long connectionDelta = reportedTotalConnections == null ? 0L
+                        : connectionDelta(previousReported, Math.max(0L, reportedTotalConnections), telemetryReady);
+                long currentConnections = reportedCurrentConnections == null
+                        ? number(state.get("current_connections")) : Math.max(0L, reportedCurrentConnections);
+                boolean active = inputBytes > 0 || outputBytes > 0 || connectionDelta > 0;
+                Long previousActivity = nullableLong(state.get("last_activity_at"));
+                jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=total_connections+?,current_connections=?,"
+                                + "reported_total_connections=?,pending_connections=pending_connections+?,"
+                                + "activity_in_flow=activity_in_flow+?,activity_out_flow=activity_out_flow+?,"
+                                + "last_activity_at=?,last_telemetry_at=?,updated_time=? WHERE group_id=? AND forward_id=? AND entry_node_id=?",
+                        reportedTotalConnections == null ? (telemetryReady ? 1 : 0) : 1, connectionDelta, currentConnections,
+                        reportedTotalConnections == null ? previousReported : Math.max(0L, reportedTotalConnections), connectionDelta,
+                        inputBytes, outputBytes, active ? now : previousActivity, now, now, groupId, forwardId, reportingNodeId);
+                if (active && previousActivity == null) {
+                    event(groupId, null, "first_active", "active", activityLabel(groupId, forwardId, reportingNodeId)
+                            + "首次检测到连接或流量");
+                } else if (active && now - previousActivity >= ACTIVITY_RESUME_AFTER_MS) {
+                    event(groupId, null, "resumed", "active", activityLabel(groupId, forwardId, reportingNodeId)
+                            + "空闲 30 分钟后重新活跃");
+                }
+            }
+        }
+    }
+
+    @Scheduled(initialDelay = 60_000L, fixedDelay = 60_000L)
+    public void flushConnectionActivity() {
+        List<Map<String, Object>> pending = jdbcTemplate.queryForList(
+                "SELECT group_id AS groupId,forward_id AS forwardId,entry_node_id AS entryNodeId "
+                        + "FROM smart_entry_route WHERE pending_connections>0 GROUP BY group_id,forward_id,entry_node_id");
+        for (Map<String, Object> item : pending) {
+            long groupId = number(item.get("groupId"));
+            long forwardId = number(item.get("forwardId"));
+            long nodeId = number(item.get("entryNodeId"));
+            synchronized (locks.computeIfAbsent(groupId, ignored -> new Object())) {
+                Map<String, Object> state = one("SELECT pending_connections,current_connections FROM smart_entry_route "
+                        + "WHERE group_id=? AND forward_id=? AND entry_node_id=? ORDER BY id LIMIT 1", groupId, forwardId, nodeId);
+                if (state == null) continue;
+                long count = number(state.get("pending_connections"));
+                if (count <= 0) continue;
+                jdbcTemplate.update("UPDATE smart_entry_route SET pending_connections=0 WHERE group_id=? AND forward_id=? AND entry_node_id=?",
+                        groupId, forwardId, nodeId);
+                event(groupId, null, "new_connections", "active", activityLabel(groupId, forwardId, nodeId)
+                        + "最近一分钟新增 " + count + " 个连接，当前 " + number(state.get("current_connections")) + " 个");
+            }
+        }
     }
 
     public R delete(Long id) {
@@ -192,6 +270,7 @@ public class SmartEntryService {
         jdbcTemplate.update("DELETE FROM smart_entry_event WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM smart_entry_route WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM smart_entry_group WHERE id=?", id);
+        activityGroups.clear();
         return R.ok();
     }
 
@@ -361,8 +440,39 @@ public class SmartEntryService {
                         + "entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,record_id AS recordId,"
                         + "managed_created AS managedCreated,original_address AS originalAddress,original_ttl AS originalTtl,"
                         + "current_forward_id AS currentForwardId,current_address AS currentAddress,status,fail_count AS failCount,"
-                        + "success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,last_checked_at AS lastCheckedAt "
+                        + "success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,last_checked_at AS lastCheckedAt,"
+                        + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
+                        + "reported_total_connections AS reportedTotalConnections,pending_connections AS pendingConnections,"
+                        + "activity_in_flow AS activityInFlow,activity_out_flow AS activityOutFlow,last_activity_at AS lastActivityAt,"
+                        + "last_telemetry_at AS lastTelemetryAt "
                         + "FROM smart_entry_route WHERE group_id=? ORDER BY FIELD(carrier,'default','telecom','unicom','mobile')", groupId);
+    }
+
+    private List<Map<String, Object>> activities(Long groupId) {
+        return jdbcTemplate.queryForList("SELECT r.forward_id AS forwardId,r.entry_node_id AS entryNodeId,MAX(r.node_name) AS nodeName,"
+                        + "MAX(r.entry_address) AS entryAddress,MAX(n.version) AS agentVersion,"
+                        + "GROUP_CONCAT(r.carrier ORDER BY FIELD(r.carrier,'default','telecom','unicom','mobile') SEPARATOR ',') AS carriers,"
+                        + "MAX(r.telemetry_ready) AS telemetryReady,MAX(r.total_connections) AS totalConnections,"
+                        + "MAX(r.current_connections) AS currentConnections,MAX(r.activity_in_flow) AS inFlow,"
+                        + "MAX(r.activity_out_flow) AS outFlow,MAX(r.last_activity_at) AS lastActivityAt,MAX(r.last_telemetry_at) AS lastTelemetryAt "
+                        + "FROM smart_entry_route r LEFT JOIN node n ON n.id=r.entry_node_id WHERE r.group_id=? "
+                        + "GROUP BY r.forward_id,r.entry_node_id ORDER BY MIN(FIELD(r.carrier,'default','telecom','unicom','mobile'))", groupId);
+    }
+
+    private String activityLabel(long groupId, long forwardId, long nodeId) {
+        List<String> carrierKeys = jdbcTemplate.queryForList("SELECT carrier FROM smart_entry_route "
+                + "WHERE group_id=? AND forward_id=? AND entry_node_id=? ORDER BY FIELD(carrier,'default','telecom','unicom','mobile')",
+                String.class, groupId, forwardId, nodeId);
+        String labels = carrierKeys.stream().map(this::carrierLabel).collect(Collectors.joining(" / "));
+        Map<String, Object> route = one("SELECT node_name AS nodeName FROM smart_entry_route WHERE group_id=? AND forward_id=? AND entry_node_id=? LIMIT 1",
+                groupId, forwardId, nodeId);
+        String entryType = carrierKeys.size() > 1 ? "共用入口" : "入口";
+        return labels + entryType + " " + Objects.toString(route == null ? null : route.get("nodeName"), "节点" + nodeId) + "：";
+    }
+
+    static long connectionDelta(long previous, long reported, boolean baselineReady) {
+        if (!baselineReady) return 0L;
+        return reported >= previous ? reported - previous : reported;
     }
 
     private Map<String, Object> one(String sql, Object... args) {

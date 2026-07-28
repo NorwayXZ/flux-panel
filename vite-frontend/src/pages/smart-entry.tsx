@@ -8,7 +8,7 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
-import { CheckCircle2, History, Pencil, Plus, RefreshCw, Route, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
+import { Activity, CheckCircle2, History, Pencil, Plus, RefreshCw, Route, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -45,6 +45,24 @@ const emptySummary = { total: 0, enabled: 0, healthy: 0, degraded: 0, lineRecord
 const truthy = (value: boolean | number) => value === true || value === 1;
 const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
 const carrierLabel = (value?: string) => carriers.find(item => item.key === value)?.label || '线路';
+const activityCarriers = (value: string) => value.split(',').filter(Boolean).map(carrierLabel).join(' / ');
+const formatBytes = (value = 0) => {
+  if (value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / (1024 ** index);
+  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
+};
+const supportsConnectionTelemetry = (version?: string) => {
+  const values = String(version || '').replace(/^v/, '').split('.').map(part => Number.parseInt(part, 10) || 0);
+  return (values[0] || 0) > 2 || ((values[0] || 0) === 2 && ((values[1] || 0) > 23 || ((values[1] || 0) === 23 && (values[2] || 0) >= 0)));
+};
+const eventLabel = (event: SmartEntryEvent) => ({
+  route_switch: '入口切换',
+  first_active: '首次活跃',
+  resumed: '重新活跃',
+  new_connections: '新连接摘要',
+}[event.eventType] || '入口活动');
 const providerLabel = (value: string) => value === 'dnspod' ? 'DNSPod' : '阿里云 DNS';
 const stateMeta = (state: SmartEntryGroup['state']) => ({
   healthy: { label: '线路正常', color: 'success' as const },
@@ -160,7 +178,7 @@ export default function SmartEntryPage() {
 
   const showHistory = async (group: SmartEntryGroup) => {
     const response = await getSmartEntryEvents(group.id);
-    if (response.code !== 0) return toast.error(response.msg || '加载线路历史失败');
+    if (response.code !== 0) return toast.error(response.msg || '加载入口活动失败');
     setHistoryName(group.name);
     setEvents(response.data || []);
     setHistoryOpen(true);
@@ -218,7 +236,7 @@ export default function SmartEntryPage() {
                     <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat">{providerLabel(group.provider)}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.publicPort}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
-                      <Button isIconOnly size="sm" variant="light" title="线路历史" aria-label="线路历史" onPress={() => showHistory(group)}><History size={17} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="入口活动记录" aria-label="入口活动记录" onPress={() => showHistory(group)}><History size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="编辑" aria-label="编辑" onPress={() => openEdit(group)}><Pencil size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" color="danger" title="删除" aria-label="删除" onPress={() => remove(group)}><Trash2 size={17} /></Button>
                     </div>
@@ -235,6 +253,25 @@ export default function SmartEntryPage() {
                       );
                     })}
                   </div>
+                  <section className="border-t border-divider pt-3" aria-label="实时入口状态">
+                    <div className="mb-2 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Activity size={16} className="text-primary" /><h3 className="text-sm font-semibold">实时入口状态</h3></div><span className="text-xs text-default-500">每 5 秒更新</span></div>
+                    <div className="divide-y divide-divider border-y border-divider">
+                      {(group.activities || []).map(activity => {
+                        const telemetryReady = truthy(activity.telemetryReady);
+                        const agentReady = supportsConnectionTelemetry(activity.agentVersion);
+                        const stale = Boolean(activity.lastTelemetryAt && Date.now() - activity.lastTelemetryAt > 30_000);
+                        const shared = activity.carriers.includes(',');
+                        return (
+                          <div key={`${activity.forwardId}-${activity.entryNodeId}`} className="grid gap-2 px-1 py-3 text-xs sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(90px,auto))] sm:items-center">
+                            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-medium text-foreground">{activityCarriers(activity.carriers)}</span>{shared && <Chip size="sm" variant="flat">共用入口</Chip>}{stale && <Chip size="sm" variant="flat" color="warning">上报中断</Chip>}</div><p className="mt-1 truncate text-default-500">{activity.nodeName} · {activity.entryAddress}</p></div>
+                            <div><p className="text-default-500">当前连接</p><p className="mt-1 font-medium">{telemetryReady ? `${activity.currentConnections || 0} 个` : agentReady ? '等待业务' : '等待新版 Agent'}</p></div>
+                            <div><p className="text-default-500">累计新增</p><p className="mt-1 font-medium">{telemetryReady ? `${activity.totalConnections || 0} 个` : '-'}</p></div>
+                            <div className="sm:text-right"><p className="text-default-500">累计流量</p><p className="mt-1 font-medium">{formatBytes((activity.inFlow || 0) + (activity.outFlow || 0))}</p><p className="mt-1 text-default-400">{activity.lastActivityAt ? timeText(activity.lastActivityAt) : `Agent ${activity.agentVersion || '未知'} · 等待业务`}</p></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3 text-xs text-default-500"><span>主域名：{group.zoneName}</span><span>最近检测：{timeText(group.lastCheckedAt)}</span></div>
                   {group.lastError && <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">{group.lastError}</p>}
                 </CardBody>
@@ -289,7 +326,7 @@ export default function SmartEntryPage() {
       </Modal>
 
       <Modal isOpen={historyOpen} onOpenChange={setHistoryOpen} size="2xl" scrollBehavior="inside">
-        <ModalContent><ModalHeader>{historyName} · 线路历史</ModalHeader><ModalBody>{events.length === 0 ? <div className="py-12 text-center text-sm text-default-500">暂无线路事件</div> : <div className="divide-y divide-divider">{events.map(event => <div key={event.id} className="flex gap-3 py-3"><div className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === 'failed' ? 'bg-danger' : event.status === 'recovered' ? 'bg-success' : 'bg-primary'}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{carrierLabel(event.carrier)} · {event.eventType === 'health' ? '健康状态' : event.eventType === 'route_switch' ? '线路切换' : 'DNS 同步'}</p><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div><p className="mt-1 text-xs text-default-500">{event.detail}</p></div></div>)}</div>}</ModalBody><ModalFooter><Button variant="flat" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent>
+        <ModalContent><ModalHeader>{historyName} · 入口活动记录</ModalHeader><ModalBody>{events.length === 0 ? <div className="py-12 text-center text-sm text-default-500">暂无入口活动</div> : <div className="divide-y divide-divider">{events.map(event => <div key={event.id} className="flex gap-3 py-3"><div className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.eventType === 'route_switch' ? 'bg-warning' : event.eventType === 'resumed' ? 'bg-success' : 'bg-primary'}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{eventLabel(event)}</p><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div><p className="mt-1 text-xs text-default-500">{event.detail}</p></div></div>)}</div>}</ModalBody><ModalFooter><Button variant="flat" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent>
       </Modal>
     </div>
   );

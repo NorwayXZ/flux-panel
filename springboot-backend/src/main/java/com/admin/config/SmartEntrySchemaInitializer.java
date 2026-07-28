@@ -36,6 +36,10 @@ public class SmartEntrySchemaInitializer {
                     + "managed_created tinyint NOT NULL DEFAULT 1,original_address varchar(128) DEFAULT NULL,original_ttl int DEFAULT NULL,"
                     + "current_forward_id bigint DEFAULT NULL,current_address varchar(128) DEFAULT NULL,status varchar(24) NOT NULL DEFAULT 'unknown',"
                     + "fail_count int NOT NULL DEFAULT 0,success_count int NOT NULL DEFAULT 0,latency_ms int DEFAULT NULL,last_error varchar(500) DEFAULT NULL,"
+                    + "telemetry_ready tinyint NOT NULL DEFAULT 0,total_connections bigint NOT NULL DEFAULT 0,current_connections bigint NOT NULL DEFAULT 0,"
+                    + "reported_total_connections bigint NOT NULL DEFAULT 0,pending_connections bigint NOT NULL DEFAULT 0,"
+                    + "activity_in_flow bigint NOT NULL DEFAULT 0,activity_out_flow bigint NOT NULL DEFAULT 0,"
+                    + "last_activity_at bigint DEFAULT NULL,last_telemetry_at bigint DEFAULT NULL,"
                     + "last_checked_at bigint DEFAULT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY(id),"
                     + "UNIQUE KEY uk_smart_entry_carrier(group_id,carrier),KEY idx_smart_entry_forward(forward_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -44,8 +48,25 @@ public class SmartEntrySchemaInitializer {
                     + "status varchar(24) NOT NULL,detail varchar(500) DEFAULT NULL,created_time bigint NOT NULL,PRIMARY KEY(id),"
                     + "KEY idx_smart_entry_event(group_id,created_time)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            addColumn("smart_entry_route", "telemetry_ready", "tinyint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "total_connections", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "current_connections", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "reported_total_connections", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "pending_connections", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "activity_in_flow", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "activity_out_flow", "bigint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "last_activity_at", "bigint DEFAULT NULL");
+            addColumn("smart_entry_route", "last_telemetry_at", "bigint DEFAULT NULL");
         } catch (DataAccessException e) {
             log.error("Smart entry storage initialization failed", e);
+        }
+    }
+
+    private void addColumn(String table, String column, String definition) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.COLUMNS "
+                + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", Integer.class, table, column);
+        if (count != null && count == 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
         }
     }
 }

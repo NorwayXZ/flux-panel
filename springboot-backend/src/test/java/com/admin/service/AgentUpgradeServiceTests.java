@@ -32,7 +32,7 @@ class AgentUpgradeServiceTests {
         String taskId = "12345678-1234-1234-1234-123456789012";
         String command = service.bootstrapCommand(taskId);
 
-        assertTrue(command.contains("NorwayXZ/flux-panel/2.21.0/install.sh"));
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.23.0/install.sh"));
         assertTrue(command.contains("systemd-run"));
         assertTrue(command.contains("setsid"));
         assertTrue(command.contains(" -U"));

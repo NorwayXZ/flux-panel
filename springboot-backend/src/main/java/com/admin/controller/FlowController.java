@@ -6,6 +6,7 @@ import com.admin.common.dto.GostConfigDto;
 import com.admin.common.lang.R;
 import com.admin.service.UserQuotaService;
 import com.admin.service.PrivateProxyService;
+import com.admin.service.SmartEntryService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
@@ -73,6 +74,9 @@ public class FlowController extends BaseController {
 
     @Resource
     PrivateProxyService privateProxyService;
+
+    @Resource
+    SmartEntryService smartEntryService;
 
     /**
      * 加密消息包装器
@@ -148,7 +152,8 @@ public class FlowController extends BaseController {
     @LogAnnotation
     public String uploadFlowData(@RequestBody String rawData, String secret) {
         // 1. 验证节点权限
-        if (!isValidNode(secret)) {
+        Node reportingNode = nodeService.getOne(new QueryWrapper<Node>().eq("secret", secret).last("LIMIT 1"));
+        if (reportingNode == null) {
             return SUCCESS_RESPONSE;
         }
 
@@ -164,7 +169,7 @@ public class FlowController extends BaseController {
         // 记录日志
         log.info("节点上报流量数据{}", flowDataList);
         // 4. 处理流量数据
-        return processFlowData(flowDataList);
+        return processFlowData(flowDataList, reportingNode.getId());
     }
 
     /**
@@ -221,7 +226,7 @@ public class FlowController extends BaseController {
     /**
      * 处理流量数据的核心逻辑
      */
-    private String processFlowData(FlowDto flowDataList) {
+    private String processFlowData(FlowDto flowDataList, Long reportingNodeId) {
         String serviceName = flowDataList.getN();
         if (serviceName == null || serviceName.isBlank()) return SUCCESS_RESPONSE;
         if (serviceName.startsWith("private-proxy-")) {
@@ -236,6 +241,9 @@ public class FlowController extends BaseController {
 
         Forward forward = forwardService.getById(forwardId);
         if (forward == null) return SUCCESS_RESPONSE;
+
+        smartEntryService.recordActivity(forward.getId(), reportingNodeId, flowDataList.getT(), flowDataList.getC(),
+                flowDataList.getD(), flowDataList.getU());
 
         // 获取流量计费类型
         int flowType = getFlowType(forward);
@@ -409,11 +417,6 @@ public class FlowController extends BaseController {
 
     private Object getForwardLock(String forwardId) {
         return FORWARD_LOCKS.computeIfAbsent(forwardId, k -> new Object());
-    }
-
-    private boolean isValidNode(String secret) {
-        int nodeCount = nodeService.count(new QueryWrapper<Node>().eq("secret", secret));
-        return nodeCount > 0;
     }
 
     private String[] parseServiceName(String serviceName) {

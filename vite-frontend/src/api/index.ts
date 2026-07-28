@@ -357,6 +357,22 @@ export interface SmartEntryRoute {
   lastCheckedAt?: number;
 }
 
+export interface SmartEntryActivity {
+  forwardId: number;
+  entryNodeId: number;
+  nodeName: string;
+  entryAddress: string;
+  agentVersion?: string;
+  carriers: string;
+  telemetryReady: boolean | number;
+  totalConnections: number;
+  currentConnections: number;
+  inFlow: number;
+  outFlow: number;
+  lastActivityAt?: number;
+  lastTelemetryAt?: number;
+}
+
 export interface SmartEntryGroup {
   id: number;
   name: string;
@@ -377,6 +393,7 @@ export interface SmartEntryGroup {
   lastError?: string;
   lastCheckedAt?: number;
   routes: SmartEntryRoute[];
+  activities: SmartEntryActivity[];
 }
 
 export interface SmartEntryProviderOption { id: number; name: string; provider: 'dnspod' | 'aliyun'; }

@@ -381,23 +381,27 @@ func (s *defaultService) observeStats(ctx context.Context) {
 			if isUpdated {
 				inputBytes := st.Get(stats.KindInputBytes)
 				outputBytes := st.Get(stats.KindOutputBytes)
+				totalConns := st.Get(stats.KindTotalConns)
+				currentConns := st.Get(stats.KindCurrentConns)
 
 				evs := []observer.Event{
 					xstats.StatsEvent{
 						Kind:         "service",
 						Service:      s.name,
-						TotalConns:   st.Get(stats.KindTotalConns),
-						CurrentConns: st.Get(stats.KindCurrentConns),
+						TotalConns:   totalConns,
+						CurrentConns: currentConns,
 						InputBytes:   inputBytes,
 						OutputBytes:  outputBytes,
 						TotalErrs:    st.Get(stats.KindTotalErrs),
 					},
 				}
-				if outputBytes > 0 || inputBytes > 0 {
+				if outputBytes > 0 || inputBytes > 0 || totalConns > 0 || currentConns > 0 {
 					reportItems := TrafficReportItem{
 						N: s.name,
 						U: int64(outputBytes),
 						D: int64(inputBytes),
+						T: totalConns,
+						C: currentConns,
 					}
 					success, err := sendTrafficReport(ctx, reportItems)
 					if err != nil {
