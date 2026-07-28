@@ -8,5 +8,6 @@ import lombok.Data;
 public class SniRouteTargetDto {
     private Long routeId;
     private String domain;
+    private String pathPrefix;
     private String targetAddress;
 }

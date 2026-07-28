@@ -759,6 +759,7 @@ export interface DomainRoute {
   id: number;
   name: string;
   domain: string;
+  pathPrefix?: string;
   ownerUserName: string;
   ownerRoleId?: number;
   publishedServiceId: number;
@@ -780,6 +781,25 @@ export interface DomainRoute {
   certificateState?: string;
   certificateExpiresAt?: number;
   certificateIssuer?: string;
+}
+
+export interface ManagedCertificate {
+  id: number;
+  domain: string;
+  zoneName: string;
+  accountName: string;
+  state: string;
+  issuer?: string;
+  serialNumber?: string;
+  notBefore?: number;
+  expiresAt?: number;
+  lastError?: string;
+  lastAttemptAt?: number;
+  nextAttemptAt?: number;
+  routeCount: number;
+  ingressCount: number;
+  createdTime: number;
+  updatedTime: number;
 }
 
 export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy';
@@ -841,12 +861,16 @@ export const renewPublishedService = (id: number, hours?: number, permanent = fa
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
-export const createDomainRoute = (data: { name: string; domain: string; publishedServiceId: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
+export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");
 export const deleteDomainRoute = (id: number) =>
   Network.post("/service-publishing/domain/delete", { id });
+export const getManagedCertificates = () =>
+  Network.post<ManagedCertificate[]>("/service-publishing/certificate/list");
+export const retryManagedCertificate = (id: number) =>
+  Network.post("/service-publishing/certificate/retry", { id });
 
 export interface HomeProxyRoute {
   id: number;

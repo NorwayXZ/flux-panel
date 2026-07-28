@@ -100,6 +100,8 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("domain_route", "dns_zone_id", "bigint DEFAULT NULL AFTER ingress_mode");
             ensureColumn("domain_route", "dns_record_id", "varchar(64) DEFAULT NULL AFTER dns_zone_id");
             ensureColumn("domain_route", "certificate_id", "bigint DEFAULT NULL AFTER dns_record_id");
+            ensureColumn("domain_route", "path_prefix", "varchar(255) NOT NULL DEFAULT '/' AFTER domain");
+            replaceDomainRouteUniqueIndex();
             ensureIndex("domain_route", "idx_domain_certificate", "certificate_id, state");
         } catch (DataAccessException e) {
             log.error("Service publishing storage initialization failed", e);
@@ -130,6 +132,30 @@ public class ServicePublishingSchemaInitializer {
                 Integer.class, table, index);
         if (count == null || count == 0) {
             jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD KEY `" + index + "` (" + columns + ")");
+        }
+    }
+
+    private void replaceDomainRouteUniqueIndex() {
+        Integer oldIndex = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='domain_route' AND index_name='uk_domain_node_port'",
+                Integer.class);
+        if (oldIndex != null && oldIndex > 0) {
+            jdbcTemplate.execute("ALTER TABLE domain_route DROP INDEX uk_domain_node_port");
+        }
+        ensureUniqueIndex("domain_route", "uk_domain_node_port_path", "node_id, listen_port, domain, path_prefix");
+    }
+
+    private void ensureUniqueIndex(String table, String index, String columns) {
+        Integer nonUnique = jdbcTemplate.queryForObject(
+                "SELECT MAX(NON_UNIQUE) FROM information_schema.statistics "
+                        + "WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+                Integer.class, table, index);
+        if (nonUnique != null && nonUnique != 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` DROP INDEX `" + index + "`");
+            nonUnique = null;
+        }
+        if (nonUnique == null) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD UNIQUE KEY `" + index + "` (" + columns + ")");
         }
     }
 }

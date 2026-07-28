@@ -233,6 +233,13 @@ public class DnsProviderService {
                 System.currentTimeMillis(), ownerId);
     }
 
+    public void transferDomainRouteRecord(Long currentOwnerId, Long replacementOwnerId) {
+        if (currentOwnerId == null || replacementOwnerId == null) return;
+        jdbcTemplate.update("UPDATE dns_managed_record SET owner_id=?,updated_time=? "
+                        + "WHERE owner_type='domain_route' AND owner_id=?",
+                replacementOwnerId, System.currentTimeMillis(), currentOwnerId);
+    }
+
     private String ensureOwnedRecord(Long zoneRefId, String requestedRecordId, String domain, String type,
                                      String content, int ttl, String ownerType, Long ownerId) {
         ZoneAccess zone = loadZoneAccess(zoneRefId);

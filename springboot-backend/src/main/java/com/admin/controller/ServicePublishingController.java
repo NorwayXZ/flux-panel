@@ -146,6 +146,18 @@ public class ServicePublishingController {
         return service.deleteDomainRoute(Long.valueOf(params.get("id").toString()));
     }
 
+    @PostMapping("/certificate/list")
+    @RequireRole
+    public R listManagedCertificates() {
+        return service.listManagedCertificates();
+    }
+
+    @LogAnnotation @PostMapping("/certificate/retry")
+    @RequireRole
+    public R retryManagedCertificate(@RequestBody Map<String, Object> params) {
+        return service.retryManagedCertificate(Long.valueOf(params.get("id").toString()));
+    }
+
     @PostMapping("/service/events")
     public R events(@RequestBody Map<String, Object> params) {
         return service.listLeaseEvents(Long.valueOf(params.get("id").toString()));

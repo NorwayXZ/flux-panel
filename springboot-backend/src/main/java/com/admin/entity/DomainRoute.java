@@ -14,6 +14,7 @@ public class DomainRoute implements Serializable {
     private Integer userId;
     private String name;
     private String domain;
+    private String pathPrefix;
     private Long publishedServiceId;
     private Long nodeId;
     private Integer listenPort;

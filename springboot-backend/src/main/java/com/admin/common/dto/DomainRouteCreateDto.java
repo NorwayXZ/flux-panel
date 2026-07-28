@@ -29,4 +29,7 @@ public class DomainRouteCreateDto {
     private String ingressMode = "passthrough";
 
     private Long dnsZoneId;
+
+    @Size(max = 255, message = "匹配路径不能超过255个字符")
+    private String pathPrefix = "/";
 }

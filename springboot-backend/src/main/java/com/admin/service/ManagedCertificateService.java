@@ -4,6 +4,7 @@ import com.admin.common.dto.GostDto;
 import com.admin.common.dto.SniRouteTargetDto;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
+import com.admin.common.utils.SniDomainUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
@@ -97,6 +98,34 @@ public class ManagedCertificateService {
         if (!rows.isEmpty() && rows.get(0).get("certificateId") != null) {
             deployCertificate(number(rows.get(0).get("certificateId")));
         }
+    }
+
+    public List<Map<String, Object>> listCertificates() {
+        return jdbcTemplate.queryForList(
+                "SELECT c.id,c.domain,c.state,c.issuer,c.serial_number AS serialNumber,c.not_before AS notBefore,"
+                        + "c.expires_at AS expiresAt,c.last_error AS lastError,c.last_attempt_at AS lastAttemptAt,"
+                        + "c.next_attempt_at AS nextAttemptAt,c.created_time AS createdTime,c.updated_time AS updatedTime,"
+                        + "z.zone_name AS zoneName,a.name AS accountName,"
+                        + "(SELECT COUNT(*) FROM domain_route r WHERE r.certificate_id=c.id AND r.state<>'deleted') AS routeCount,"
+                        + "(SELECT COUNT(DISTINCT CONCAT(r.node_id,':',r.listen_port)) FROM domain_route r "
+                        + "WHERE r.certificate_id=c.id AND r.state<>'deleted') AS ingressCount "
+                        + "FROM managed_certificate c JOIN dns_zone z ON z.id=c.zone_id "
+                        + "JOIN dns_provider_account a ON a.id=z.account_id ORDER BY c.created_time DESC");
+    }
+
+    public boolean prepareRetry(long certificateId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT certificate_chain AS certificateChain FROM managed_certificate WHERE id=?", certificateId);
+        if (rows.isEmpty()) return false;
+        boolean renewal = rows.get(0).get("certificateChain") != null;
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("UPDATE managed_certificate SET state=?,last_error=NULL,next_attempt_at=?,updated_time=? WHERE id=?",
+                renewal ? "renewal_failed" : "pending", now, now, certificateId);
+        if (!renewal) {
+            jdbcTemplate.update("UPDATE domain_route SET state='certificate_pending',last_error='等待重新申请 HTTPS 证书',updated_time=? "
+                    + "WHERE certificate_id=? AND state<>'deleted'", now, certificateId);
+        }
+        return true;
     }
 
     public void reconfigureEntry(long nodeId, int listenPort, String serviceName) {
@@ -236,39 +265,42 @@ public class ManagedCertificateService {
     private void configureEntry(long nodeId, int listenPort, String serviceName) {
         if (!WebSocketServer.isNodeOnline(nodeId)) throw new IllegalStateException("公网入口节点离线，证书将在节点恢复后自动部署");
         List<Map<String, Object>> routes = jdbcTemplate.queryForList(
-                "SELECT r.id,r.domain,r.state,r.certificate_id AS certificateId,p.public_port AS publicPort,pool.bind_ip AS bindIp,"
+                "SELECT r.id,r.domain,r.path_prefix AS pathPrefix,r.state,r.certificate_id AS certificateId,p.public_port AS publicPort,pool.bind_ip AS bindIp,"
                         + "c.private_key AS privateKey,c.certificate_chain AS certificateChain "
                         + "FROM domain_route r JOIN published_service p ON p.id=r.published_service_id "
                         + "JOIN port_pool pool ON pool.id=p.pool_id JOIN managed_certificate c ON c.id=r.certificate_id "
                         + "WHERE r.node_id=? AND r.listen_port=? AND r.ingress_mode='managed_https' AND r.state<>'deleted' "
                         + "AND c.state IN ('active','deployment_failed') "
-                        + "ORDER BY r.created_time", nodeId, listenPort);
+                        + "ORDER BY CHAR_LENGTH(r.path_prefix) DESC,r.created_time", nodeId, listenPort);
         if (routes.isEmpty()) return;
-        List<Map<String, Object>> payload = new ArrayList<>();
+        Map<Long, Map<String, Object>> payloadByCertificate = new LinkedHashMap<>();
         for (Map<String, Object> route : routes) {
-            payload.add(Map.of("name", certificateName(number(route.get("certificateId"))),
+            long certificateId = number(route.get("certificateId"));
+            payloadByCertificate.putIfAbsent(certificateId, Map.of("name", certificateName(certificateId),
                     "certPem", decrypt(Objects.toString(route.get("certificateChain"))),
                     "keyPem", decrypt(Objects.toString(route.get("privateKey")))));
         }
-        GostDto deployment = GostUtil.DeployCertificates(nodeId, payload);
+        GostDto deployment = GostUtil.DeployCertificates(nodeId, new ArrayList<>(payloadByCertificate.values()));
         if (!success(deployment)) throw new IllegalStateException("证书下发失败：" + message(deployment));
         JSONObject paths = JSON.parseObject(JSON.toJSONString(deployment.getData()));
-        List<Map<String, Object>> tlsCertificates = new ArrayList<>();
+        Map<Long, Map<String, Object>> tlsCertificateById = new LinkedHashMap<>();
         List<SniRouteTargetDto> targets = new ArrayList<>();
         for (Map<String, Object> route : routes) {
             long certId = number(route.get("certificateId"));
             JSONObject certPaths = paths.getJSONObject(certificateName(certId));
             if (certPaths == null) throw new IllegalStateException("Agent 未返回证书文件位置");
-            tlsCertificates.add(Map.of("names", List.of(Objects.toString(route.get("domain"))),
+            tlsCertificateById.putIfAbsent(certId, Map.of("names", List.of(Objects.toString(route.get("domain"))),
                     "certFile", certPaths.getString("certFile"), "keyFile", certPaths.getString("keyFile")));
             String bindIp = StringUtils.trimToEmpty(Objects.toString(route.get("bindIp"), ""));
             String host = bindIp.isBlank() || List.of("0.0.0.0", "::", "[::]").contains(bindIp) ? "127.0.0.1" : bindIp;
             if (host.contains(":")) host = "[" + host.replace("[", "").replace("]", "") + "]";
             targets.add(new SniRouteTargetDto(number(route.get("id")), Objects.toString(route.get("domain")),
+                    SniDomainUtil.normalizePathPrefix(Objects.toString(route.get("pathPrefix"), "/")),
                     host + ":" + route.get("publicPort")));
         }
         boolean update = routes.stream().anyMatch(route -> "active".equals(route.get("state")));
-        GostDto configured = GostUtil.ConfigureManagedHttpsIngress(nodeId, serviceName, "", listenPort, targets, tlsCertificates, update);
+        GostDto configured = GostUtil.ConfigureManagedHttpsIngress(nodeId, serviceName, "", listenPort, targets,
+                new ArrayList<>(tlsCertificateById.values()), update);
         if (!success(configured)) throw new IllegalStateException("HTTPS 入口配置失败：" + message(configured));
         long now = System.currentTimeMillis();
         jdbcTemplate.update("UPDATE domain_route SET state='active',last_error=NULL,updated_time=? "

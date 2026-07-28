@@ -23,6 +23,8 @@ public interface ServicePublishingService {
     R createDomainRoute(DomainRouteCreateDto dto);
     R listDomainRoutes();
     R deleteDomainRoute(Long id);
+    R listManagedCertificates();
+    R retryManagedCertificate(Long id);
     R listLeaseEvents(Long serviceId);
     R listPortLedger(PortLedgerQueryDto query);
     R diagnosePort(Long nodeId, Integer port);

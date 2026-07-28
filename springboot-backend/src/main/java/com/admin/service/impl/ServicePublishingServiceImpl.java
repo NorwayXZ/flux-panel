@@ -459,10 +459,13 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             return R.err("面板托管 HTTPS 仅允许管理员配置");
         }
         final String domain;
+        final String pathPrefix;
         try {
             domain = "managed_https".equals(ingressMode)
                     ? dnsProviderService.normalizeDomain(dto.getDnsZoneId(), dto.getDomain())
                     : SniDomainUtil.normalizeDomain(dto.getDomain());
+            pathPrefix = "managed_https".equals(ingressMode)
+                    ? SniDomainUtil.normalizePathPrefix(dto.getPathPrefix()) : "/";
         } catch (IllegalArgumentException e) {
             return R.err(e.getMessage());
         }
@@ -470,16 +473,24 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         List<DomainRoute> entryRoutes = domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
                 .in("node_id", namespaceIds).eq("listen_port", dto.getListenPort()).ne("state", "deleted")
                 .orderByAsc("created_time"));
-        if (entryRoutes.stream().anyMatch(item -> domain.equalsIgnoreCase(item.getDomain()))) {
-            return R.err("该公网入口已经配置了相同域名");
+        if (entryRoutes.stream().anyMatch(item -> domain.equalsIgnoreCase(item.getDomain())
+                && pathPrefix.equals(SniDomainUtil.normalizePathPrefix(item.getPathPrefix())))) {
+            return R.err("该公网入口已经配置了相同域名和路径");
         }
         if (entryRoutes.stream().anyMatch(item -> !ingressMode.equals(StringUtils.defaultIfBlank(item.getIngressMode(), "passthrough")))) {
             return R.err("同一公网入口端口不能同时使用 TLS 透传和面板托管 HTTPS");
         }
 
         DomainRoute existingEntry = entryRoutes.stream()
-                .filter(item -> List.of("active", "provisioning").contains(item.getState()))
+                .filter(item -> !"delete_pending".equals(item.getState()))
                 .findFirst().orElse(null);
+        DomainRoute sameDomainRoute = entryRoutes.stream()
+                .filter(item -> domain.equalsIgnoreCase(item.getDomain()) && !"delete_pending".equals(item.getState()))
+                .findFirst().orElse(null);
+        if (sameDomainRoute != null && "managed_https".equals(ingressMode)
+                && !Objects.equals(sameDomainRoute.getDnsZoneId(), dto.getDnsZoneId())) {
+            return R.err("同一域名的路径规则必须使用相同 DNS Zone");
+        }
         Long entryNodeId = existingEntry == null ? requestedNode.getId() : existingEntry.getNodeId();
         Node entryNode = nodeMapper.selectById(entryNodeId);
         if (entryNode == null) return R.err("域名入口节点不存在");
@@ -502,6 +513,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setUserId(currentUserId());
         route.setName(dto.getName().trim());
         route.setDomain(domain);
+        route.setPathPrefix(pathPrefix);
         route.setPublishedServiceId(mapping.getId());
         route.setNodeId(entryNodeId);
         route.setListenPort(dto.getListenPort());
@@ -521,10 +533,20 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             try {
                 String address = StringUtils.defaultIfBlank(entryNode.getServerIp(), entryNode.getIp());
                 long certificateId = managedCertificateService.ensureCertificate(dto.getDnsZoneId(), domain);
-                String recordId = dnsProviderService.ensureDomainRouteRecord(dto.getDnsZoneId(), null, domain, address, route.getId());
+                String recordId;
+                if (sameDomainRoute == null) {
+                    recordId = dnsProviderService.ensureDomainRouteRecord(dto.getDnsZoneId(), null, domain, address, route.getId());
+                } else if (StringUtils.isBlank(sameDomainRoute.getDnsRecordId())) {
+                    recordId = dnsProviderService.ensureDomainRouteRecord(dto.getDnsZoneId(), null, domain, address, sameDomainRoute.getId());
+                    sameDomainRoute.setDnsRecordId(recordId);
+                    sameDomainRoute.setUpdatedTime(System.currentTimeMillis());
+                    domainRouteMapper.updateById(sameDomainRoute);
+                } else {
+                    recordId = sameDomainRoute.getDnsRecordId();
+                }
                 route.setDnsRecordId(recordId);
                 route.setCertificateId(certificateId);
-                route.setLastError("正在通过 Cloudflare DNS 验证申请 HTTPS 证书");
+                route.setLastError("正在通过 DNS 验证申请 HTTPS 证书");
                 route.setUpdatedTime(System.currentTimeMillis());
                 domainRouteMapper.updateById(route);
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -554,6 +576,20 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         List<DomainRoute> routes = domainRouteMapper.selectList(query);
         routes.replaceAll(this::enrichDomainRoute);
         return R.ok(routes);
+    }
+
+    @Override
+    public R listManagedCertificates() {
+        if (!isAdmin()) return R.err("仅管理员可以管理 HTTPS 证书");
+        return R.ok(managedCertificateService.listCertificates());
+    }
+
+    @Override
+    public R retryManagedCertificate(Long id) {
+        if (!isAdmin()) return R.err("仅管理员可以管理 HTTPS 证书");
+        if (id == null || !managedCertificateService.prepareRetry(id)) return R.err("托管证书不存在");
+        managedCertificateService.provisionAsync(id);
+        return R.ok();
     }
 
     @Override
@@ -726,7 +762,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
             PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
             if (mapping == null || pool == null || mapping.getPublicPort() == null) continue;
-            targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), localPublishedTarget(pool, mapping.getPublicPort())));
+            targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), null,
+                    localPublishedTarget(pool, mapping.getPublicPort())));
         }
         if (targets.isEmpty()) return GostUtil.DeleteDomainIngress(nodeId, serviceName);
         return GostUtil.ConfigureDomainIngress(nodeId, serviceName, "", listenPort, targets, update);
@@ -739,7 +776,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             route.setUpdatedTime(System.currentTimeMillis());
             domainRouteMapper.updateById(route);
             if ("managed_https".equals(route.getIngressMode())) {
-                dnsProviderService.releaseDomainRouteRecord(route.getId());
+                releaseOrTransferDomainRecord(route);
                 jdbcTemplate.update("DELETE FROM managed_certificate WHERE id=? AND NOT EXISTS "
                                 + "(SELECT 1 FROM domain_route WHERE certificate_id=? AND state<>'deleted')",
                         route.getCertificateId(), route.getCertificateId());
@@ -757,7 +794,6 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             route.setLastError(null);
             route.setUpdatedTime(System.currentTimeMillis());
             domainRouteMapper.updateById(route);
-            dnsProviderService.releaseDomainRouteRecord(route.getId());
             try {
                 managedCertificateService.reconfigureEntry(route.getNodeId(), route.getListenPort(), route.getServiceName());
             } catch (RuntimeException e) {
@@ -766,6 +802,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
                 domainRouteMapper.updateById(route);
                 return false;
             }
+            releaseOrTransferDomainRecord(route);
             Integer references = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM domain_route WHERE certificate_id=? AND state<>'deleted'", Integer.class, route.getCertificateId());
             if (references != null && references == 0) {
@@ -785,6 +822,17 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setUpdatedTime(System.currentTimeMillis());
         domainRouteMapper.updateById(route);
         return true;
+    }
+
+    private void releaseOrTransferDomainRecord(DomainRoute route) {
+        DomainRoute replacement = domainRouteMapper.selectOne(new QueryWrapper<DomainRoute>()
+                .eq("dns_zone_id", route.getDnsZoneId()).eq("domain", route.getDomain()).ne("state", "deleted")
+                .ne("id", route.getId()).orderByAsc("created_time").last("LIMIT 1"));
+        if (replacement == null) {
+            dnsProviderService.releaseDomainRouteRecord(route.getId());
+        } else {
+            dnsProviderService.transferDomainRouteRecord(route.getId(), replacement.getId());
+        }
     }
 
     private String localPublishedTarget(PortPool pool, int port) {

@@ -10,6 +10,7 @@ import {
   Clock3,
   Copy,
   Database,
+  FileKey2,
   Gamepad2,
   Globe2,
   HardDrive,
@@ -17,6 +18,8 @@ import {
   Monitor,
   Plus,
   RadioTower,
+  RefreshCw,
+  Route,
   Settings2,
   ServerCog,
   SquareTerminal,
@@ -34,14 +37,17 @@ import {
   deletePublishedService,
   getInternalConnectorInstall,
   getDomainRoutes,
+  getManagedCertificates,
   getInternalConnectors,
   getPublishedServices,
   getPublishingPortPools,
   getDnsZoneOptions,
   renewPublishedService,
+  retryManagedCertificate,
   type InternalConnector,
   type ConnectorPlatform,
   type DomainRoute,
+  type ManagedCertificate,
   type PublishedService,
   type PublishingPortPool,
   type DnsZoneOption,
@@ -112,6 +118,7 @@ export default function ServicePublishingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [services, setServices] = useState<PublishedService[]>([]);
   const [domainRoutes, setDomainRoutes] = useState<DomainRoute[]>([]);
+  const [certificates, setCertificates] = useState<ManagedCertificate[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [dnsZones, setDnsZones] = useState<DnsZoneOption[]>([]);
@@ -131,7 +138,7 @@ export default function ServicePublishingPage() {
     name: '', allowedCidrs: '', platform: 'linux',
   });
   const isAdmin = localStorage.getItem('admin') === 'true' || localStorage.getItem('role_id') === '0';
-  const emptyDomainForm = () => ({ name: '', domain: '', publishedServiceId: '', listenPort: '443', ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '' });
+  const emptyDomainForm = () => ({ name: '', domain: '', pathPrefix: '/', publishedServiceId: '', listenPort: '443', ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '' });
   const [domainForm, setDomainForm] = useState(emptyDomainForm);
 
   const loadData = async () => {
@@ -145,8 +152,9 @@ export default function ServicePublishingPage() {
       if (poolRes.code === 0) setPools(poolRes.data || []);
       if (domainRes.code === 0) setDomainRoutes(domainRes.data || []);
       if (isAdmin) {
-        const zoneRes = await getDnsZoneOptions();
+        const [zoneRes, certificateRes] = await Promise.all([getDnsZoneOptions(), getManagedCertificates()]);
         if (zoneRes.code === 0) setDnsZones(zoneRes.data || []);
+        if (certificateRes.code === 0) setCertificates(certificateRes.data || []);
       }
       const failed = [serviceRes, connectorRes, poolRes, domainRes].find(item => item.code !== 0);
       if (failed) toast.error(failed.msg || '加载内网映射数据失败');
@@ -295,6 +303,7 @@ export default function ServicePublishingPage() {
       listenPort,
       ingressMode: domainForm.ingressMode,
       dnsZoneId: domainForm.dnsZoneId ? Number(domainForm.dnsZoneId) : undefined,
+      pathPrefix: domainForm.ingressMode === 'managed_https' ? domainForm.pathPrefix.trim() || '/' : '/',
     });
     setSubmitting(false);
     if (res.code !== 0) return toast.error(res.msg || '创建域名入口失败');
@@ -313,6 +322,13 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
+  const retryCertificate = async (id: number) => {
+    const res = await retryManagedCertificate(id);
+    if (res.code !== 0) return toast.error(res.msg || '重新申请证书失败');
+    toast.success('证书任务已重新开始');
+    loadData();
+  };
+
   const removeConnector = async (id: number) => {
     if (!window.confirm('确认删除该内网接入端吗？')) return;
     const res = await deleteInternalConnector(id);
@@ -328,18 +344,19 @@ export default function ServicePublishingPage() {
           <p className="text-sm text-default-500">内网穿透</p>
           <h1 className="mt-1 text-2xl font-semibold">内网映射</h1>
         </div>
-        <Button color="primary" startContent={<Plus size={18} />} onPress={() => {
+        <Button color="primary" startContent={activeView === 'certificates' ? <RefreshCw size={18} /> : <Plus size={18} />} onPress={() => {
           if (activeView === 'domains') setDomainModal(true);
           else if (activeView === 'connectors') setConnectorModal(true);
+          else if (activeView === 'certificates') loadData();
           else setServiceModal(true);
         }}>
-          {activeView === 'domains' ? '新增域名入口' : activeView === 'connectors' ? '添加接入端' : '新建映射'}
+          {activeView === 'domains' ? '新增域名入口' : activeView === 'connectors' ? '添加接入端' : activeView === 'certificates' ? '刷新证书' : '新建映射'}
         </Button>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行映射', activeCount], ['域名入口', domainRoutes.length], ['在线接入端', onlineConnectors], ['可用端口', pools.reduce((sum, pool) => sum + pool.availablePorts, 0)],
+          ['运行映射', activeCount], ['域名入口', domainRoutes.length], ['HTTPS 证书', certificates.length], ['在线接入端', onlineConnectors],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-content1 px-4 py-4">
             <div className="text-xs text-default-500">{label}</div>
@@ -426,7 +443,7 @@ export default function ServicePublishingPage() {
                   <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{route.name}</span><Chip size="sm" variant="flat" color={managedHttps ? 'success' : 'primary'}>{managedHttps ? '托管 HTTPS' : 'TLS 透传'}</Chip></div>
-                      <div className="mt-1 truncate font-mono text-sm text-default-600">{route.domain}</div>
+                      <div className="mt-1 truncate font-mono text-sm text-default-600">{route.domain}{managedHttps ? route.pathPrefix || '/' : ''}</div>
                       <div className="mt-1 text-xs text-default-500">{route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
                     </div>
                     <div className="min-w-0 text-sm">
@@ -447,6 +464,43 @@ export default function ServicePublishingPage() {
             </div>
           )}
         </Tab>
+        {isAdmin ? (
+          <Tab key="certificates" title={`HTTPS 证书 ${certificates.length}`}>
+            {loading ? (
+              <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
+            ) : certificates.length === 0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+                <FileKey2 size={30} />
+                <span>暂无托管证书</span>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-lg border border-divider">
+                <div className="hidden grid-cols-[1.3fr_1fr_1fr_1.1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
+                  <span>域名</span><span>DNS 配置</span><span>使用情况</span><span>有效期</span><span>操作</span>
+                </div>
+                {certificates.map(certificate => {
+                  const failed = ['failed', 'renewal_failed', 'deployment_failed'].includes(certificate.state);
+                  const active = certificate.state === 'active';
+                  const status = active
+                    ? { label: '有效', color: 'success' as const }
+                    : failed
+                      ? { label: certificate.state === 'renewal_failed' ? '续签失败' : '申请失败', color: 'danger' as const }
+                      : { label: certificate.state === 'renewing' ? '续签中' : '申请中', color: 'primary' as const };
+                  return (
+                    <article key={certificate.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1fr_1.1fr_auto] lg:items-center">
+                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate font-mono font-medium">{certificate.domain}</span><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip></div><div className="mt-1 truncate text-xs text-default-500">{certificate.issuer || '等待签发机构'}</div></div>
+                      <div className="min-w-0 text-sm"><div className="truncate">{certificate.zoneName}</div><div className="mt-1 truncate text-xs text-default-500">{certificate.accountName}</div></div>
+                      <div className="text-sm"><div>{certificate.routeCount} 条路径规则</div><div className="mt-1 text-xs text-default-500">部署到 {certificate.ingressCount} 个 HTTPS 入口</div></div>
+                      <div className="min-w-0 text-sm"><div>{certificate.expiresAt ? formatTime(certificate.expiresAt) : '尚未签发'}</div><div className="mt-1 truncate text-xs text-default-500">{certificate.lastAttemptAt ? `上次处理 ${formatTime(certificate.lastAttemptAt)}` : '等待首次处理'}</div></div>
+                      <Button isIconOnly size="sm" variant="light" color={failed ? 'danger' : 'primary'} aria-label="重新申请或续签证书" title="重新申请或续签" onPress={() => retryCertificate(certificate.id)}><RefreshCw size={16} /></Button>
+                      {certificate.lastError && <div className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger lg:col-span-5">{certificate.lastError}</div>}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </Tab>
+        ) : null}
         <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
           <div className="overflow-hidden rounded-lg border border-divider">
             <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
@@ -484,9 +538,12 @@ export default function ServicePublishingPage() {
             <Input label="入口名称" value={domainForm.name} onValueChange={value => setDomainForm({ ...domainForm, name: value })} />
             <Input label="访问域名" placeholder="app.example.com" value={domainForm.domain} onValueChange={value => setDomainForm({ ...domainForm, domain: value })} />
             {domainForm.ingressMode === 'managed_https' && (
-              <Select className="sm:col-span-2" label="Cloudflare Zone" placeholder="选择 DNS 与证书所属域名" selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
-                {dnsZones.map(zone => <SelectItem key={String(zone.id)} textValue={`${zone.zoneName} ${zone.accountName}`}>{zone.zoneName} · {zone.accountName}</SelectItem>)}
-              </Select>
+              <>
+                <Select className="sm:col-span-2" label="Cloudflare Zone" placeholder="选择 DNS 与证书所属域名" selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
+                  {dnsZones.map(zone => <SelectItem key={String(zone.id)} textValue={`${zone.zoneName} ${zone.accountName}`}>{zone.zoneName} · {zone.accountName}</SelectItem>)}
+                </Select>
+                <Input className="sm:col-span-2" label="匹配路径" placeholder="/" value={domainForm.pathPrefix} onValueChange={value => setDomainForm({ ...domainForm, pathPrefix: value })} description="同一域名可添加多条路径规则；最长路径优先，例如 /api 优先于 /。" startContent={<Route size={16} className="text-default-400" />} />
+              </>
             )}
             <Select className="sm:col-span-2" label="后端内网映射" selectedKeys={domainForm.publishedServiceId ? [domainForm.publishedServiceId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, publishedServiceId: String(Array.from(keys)[0] || '') })}>
               {services.filter(item => item.state === 'active').map(item => (
@@ -501,8 +558,8 @@ export default function ServicePublishingPage() {
               <div className="mt-1 truncate font-mono">{selectedDomainMapping?.publicHost || '选择后端映射后显示'}</div>
             </div>
             <div className="sm:col-span-2 grid gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-2">
-              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">入口方式</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? 'Agent 终止 HTTPS' : 'TLS 原样透传'}</div></div>
-              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">证书管理</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? '自动签发与续期' : '由内网服务负责'}</div></div>
+              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">入口方式</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? 'Agent 终止 HTTPS · 按域名和路径分流' : 'TLS 原样透传 · 仅按域名分流'}</div></div>
+              <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">证书管理</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? 'Let’s Encrypt 自动签发与续期' : '由内网服务负责'}</div></div>
             </div>
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setDomainModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainRoute}>创建入口</Button></ModalFooter>

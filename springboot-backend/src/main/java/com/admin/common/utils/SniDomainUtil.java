@@ -36,6 +36,17 @@ public final class SniDomainUtil {
         return domain;
     }
 
+    public static String normalizePathPrefix(String value) {
+        String path = StringUtils.defaultIfBlank(value, "/").trim();
+        if (!path.startsWith("/")) path = "/" + path;
+        while (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        if (path.length() > 255 || path.indexOf('?') >= 0 || path.indexOf('#') >= 0 || path.indexOf('\\') >= 0
+                || path.chars().anyMatch(Character::isWhitespace)) {
+            throw new IllegalArgumentException("匹配路径必须以 / 开头，且不能包含空格、查询参数或片段");
+        }
+        return path;
+    }
+
     public static JSONObject buildIngressService(String serviceName, String bindIp, int listenPort,
                                                   List<SniRouteTargetDto> targets) {
         JSONObject service = new JSONObject();
@@ -92,6 +103,10 @@ public final class SniDomainUtil {
         JSONArray nodes = service.getJSONObject("forwarder").getJSONArray("nodes");
         for (int i = 0; i < nodes.size(); i++) {
             nodes.getJSONObject(i).getJSONObject("filter").put("protocol", "http");
+            String pathPrefix = targets.get(i).getPathPrefix();
+            if (StringUtils.isNotBlank(pathPrefix)) {
+                nodes.getJSONObject(i).getJSONObject("filter").put("path", pathPrefix);
+            }
         }
         return service;
     }

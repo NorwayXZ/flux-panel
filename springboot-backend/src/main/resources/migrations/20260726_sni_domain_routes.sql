@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS domain_route (
   user_id int NOT NULL,
   name varchar(100) NOT NULL,
   domain varchar(253) NOT NULL,
+  path_prefix varchar(255) NOT NULL DEFAULT '/',
   published_service_id bigint NOT NULL,
   node_id bigint NOT NULL,
   listen_port int NOT NULL DEFAULT 443,
@@ -12,7 +13,7 @@ CREATE TABLE IF NOT EXISTS domain_route (
   created_time bigint NOT NULL,
   updated_time bigint NOT NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_domain_node_port (node_id, listen_port, domain),
+  UNIQUE KEY uk_domain_node_port_path (node_id, listen_port, domain, path_prefix),
   KEY idx_domain_user (user_id, state),
   KEY idx_domain_entry (node_id, listen_port, state),
   KEY idx_domain_mapping (published_service_id, state)

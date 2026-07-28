@@ -23,8 +23,8 @@ class SniDomainUtilTests {
     @Test
     void buildsTlsPassthroughIngressWithExactHostFilters() {
         JSONObject service = SniDomainUtil.buildIngressService("domain_ingress_8_443", "", 443, List.of(
-                new SniRouteTargetDto(1L, "a.example.com", "127.0.0.1:20001"),
-                new SniRouteTargetDto(2L, "b.example.com", "127.0.0.1:20002")));
+                new SniRouteTargetDto(1L, "a.example.com", null, "127.0.0.1:20001"),
+                new SniRouteTargetDto(2L, "b.example.com", null, "127.0.0.1:20002")));
 
         assertEquals(":443", service.getString("addr"));
         assertEquals("forward", service.getJSONObject("handler").getString("type"));
@@ -39,7 +39,7 @@ class SniDomainUtilTests {
     void buildsManagedHttpsIngressWithSniCertificatesAndHttpFilters() {
         JSONObject service = SniDomainUtil.buildManagedHttpsService(
                 "managed_https_8_443", "", 443,
-                List.of(new SniRouteTargetDto(1L, "app.example.com", "127.0.0.1:20001")),
+                List.of(new SniRouteTargetDto(1L, "app.example.com", "/api", "127.0.0.1:20001")),
                 List.of(Map.of("names", List.of("app.example.com"),
                         "certFile", "/etc/gost/managed-certs/1.crt",
                         "keyFile", "/etc/gost/managed-certs/1.key")));
@@ -50,5 +50,14 @@ class SniDomainUtilTests {
         assertEquals(1, listener.getJSONObject("tls").getJSONArray("certificates").size());
         assertEquals("http", service.getJSONObject("forwarder").getJSONArray("nodes")
                 .getJSONObject(0).getJSONObject("filter").getString("protocol"));
+        assertEquals("/api", service.getJSONObject("forwarder").getJSONArray("nodes")
+                .getJSONObject(0).getJSONObject("filter").getString("path"));
+    }
+
+    @Test
+    void normalizesHttpPathPrefixes() {
+        assertEquals("/", SniDomainUtil.normalizePathPrefix(null));
+        assertEquals("/api", SniDomainUtil.normalizePathPrefix("api/"));
+        assertThrows(IllegalArgumentException.class, () -> SniDomainUtil.normalizePathPrefix("/api?q=1"));
     }
 }
