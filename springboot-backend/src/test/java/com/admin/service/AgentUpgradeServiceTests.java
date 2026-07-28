@@ -49,4 +49,24 @@ class AgentUpgradeServiceTests {
         Process process = new ProcessBuilder("/bin/sh", "-n", "-c", command).start();
         assertEquals(0, process.waitFor());
     }
+
+    @Test
+    void manualCommandUsesUpdateModeWithoutNodeSecret() {
+        String command = service.manualCommand();
+
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.23.0/install.sh"));
+        assertTrue(command.contains("ghfast.top"));
+        assertTrue(command.contains("--retry 3"));
+        assertTrue(command.contains(" -U"));
+        assertTrue(command.contains("id -u"));
+        assertTrue(command.contains("sudo"));
+        assertFalse(command.contains(" -s "));
+        assertFalse(command.contains(" -a "));
+    }
+
+    @Test
+    void manualCommandIsValidShell() throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("/bin/sh", "-n", "-c", service.manualCommand()).start();
+        assertEquals(0, process.waitFor());
+    }
 }

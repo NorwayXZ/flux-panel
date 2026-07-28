@@ -97,6 +97,12 @@ public class NodeController extends BaseController {
     }
 
     @RequireRole
+    @PostMapping("/upgrade/manual-command")
+    public R manualUpgradeCommand(@RequestBody Map<String, Object> params) {
+        return agentUpgradeService.manualCommand(Long.valueOf(params.get("nodeId").toString()));
+    }
+
+    @RequireRole
     @PostMapping("/upgrade/history")
     public R upgradeHistory(@RequestBody(required = false) Map<String, Object> params) {
         Long nodeId = params != null && params.get("nodeId") != null

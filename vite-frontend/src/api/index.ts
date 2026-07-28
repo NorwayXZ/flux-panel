@@ -66,6 +66,8 @@ export const startAgentUpgrade = (nodeId: number) =>
   Network.post<AgentUpgradeStatusItem>("/node/upgrade/start", { nodeId });
 export const startBatchAgentUpgrade = () =>
   Network.post<{ submitted: number; results: Array<{ nodeId: number; nodeName: string; accepted: boolean; message: string }> }>("/node/upgrade/batch");
+export const getManualAgentUpgradeCommand = (nodeId: number) =>
+  Network.post<string>("/node/upgrade/manual-command", { nodeId });
 export const getAgentUpgradeHistory = (nodeId?: number) =>
   Network.post<AgentUpgradeTask[]>("/node/upgrade/history", nodeId ? { nodeId } : {});
 

@@ -11,7 +11,7 @@ import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { RefreshCw, ServerCog, SquareTerminal } from 'lucide-react';
+import { ClipboardCopy, RefreshCw, ServerCog, SquareTerminal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
@@ -26,6 +26,7 @@ import {
   getNodeInstallCommand,
   checkNodeStatus,
   getAgentUpgradeStatus,
+  getManualAgentUpgradeCommand,
   startAgentUpgrade,
   startBatchAgentUpgrade,
   type AgentUpgradeStatusItem,
@@ -675,12 +676,30 @@ export default function NodePage() {
     }
   };
 
+  const handleOpenManualUpgrade = async (node: Node) => {
+    setNodeList(prev => prev.map(item => item.id === node.id ? { ...item, copyLoading: true } : item));
+    try {
+      const res = await getManualAgentUpgradeCommand(node.id);
+      if (res.code !== 0 || !res.data) {
+        toast.error(res.msg || '获取手动升级命令失败');
+        return;
+      }
+      setInstallCommand(res.data);
+      setCurrentNodeName(node.name);
+      setInstallCommandAction('upgrade');
+      setInstallCommandModal(true);
+    } catch {
+      toast.error('获取手动升级命令失败');
+    } finally {
+      setNodeList(prev => prev.map(item => item.id === node.id ? { ...item, copyLoading: false } : item));
+    }
+  };
+
   // 手动复制安装命令
   const handleManualCopy = async () => {
     try {
       await navigator.clipboard.writeText(installCommand);
       toast.success(`${installCommandAction === 'upgrade' ? '升级' : '安装'}命令已复制到剪贴板`);
-      setInstallCommandModal(false);
     } catch (error) {
       toast.error('复制失败，请手动选择文本复制');
     }
@@ -898,13 +917,28 @@ export default function NodePage() {
 
               {adminMode && showUpgradeTask && upgradeTask && (
                 <div className="mb-4 flex min-h-9 items-center justify-between gap-2 border-y border-divider py-2 text-xs">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">Agent {upgradeTask.fromVersion || node.version || '未知'} → {upgradeTask.targetVersion}</div>
                     <div className="mt-0.5 truncate text-default-500" title={upgradeTask.message}>{upgradeTask.message || '升级状态已更新'}</div>
                   </div>
-                  <Chip size="sm" variant="flat" color={upgradeStateColor(upgradeTask.state)} className="shrink-0 text-[10px]">
-                    {upgradeStateLabels[upgradeTask.state] || upgradeTask.state}
-                  </Chip>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <Chip size="sm" variant="flat" color={upgradeStateColor(upgradeTask.state)} className="text-[10px]">
+                      {upgradeStateLabels[upgradeTask.state] || upgradeTask.state}
+                    </Chip>
+                    {upgradeRetry && (
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        color="primary"
+                        className="h-7 min-w-0 px-2 text-[11px]"
+                        startContent={<ClipboardCopy size={13} />}
+                        isLoading={node.copyLoading}
+                        onPress={() => handleOpenManualUpgrade(node)}
+                      >
+                        手动升级
+                      </Button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1437,6 +1471,11 @@ export default function NodePage() {
                 <p className="text-sm text-default-600">
                   请复制以下{installCommandAction === 'upgrade' ? '升级' : '安装'}命令到该节点服务器执行：
                 </p>
+                {installCommandAction === 'upgrade' && (
+                  <Alert color="warning" variant="flat" title="执行说明">
+                    使用 root 用户执行。命令只更新 Agent 程序并保留节点地址、密钥和现有业务配置；升级过程中 Agent 会短暂重启，现有连接可能重新建立。
+                  </Alert>
+                )}
                 <div className="relative">
                   <Textarea
                     value={installCommand}
@@ -1460,7 +1499,7 @@ export default function NodePage() {
                   </Button>
                 </div>
                 <div className="text-xs text-default-500">
-                  💡 提示：如果复制按钮失效，请手动选择上方文本进行复制
+                  复制失败时可直接选择上方文本；命令会优先使用 GitHub，并在下载失败时自动尝试备用地址。
                 </div>
               </div>
             </ModalBody>

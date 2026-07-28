@@ -131,6 +131,24 @@ public class AgentUpgradeService {
         return R.ok(response);
     }
 
+    public R manualCommand(Long nodeId) {
+        requireNode(nodeId);
+        return R.ok(manualCommand());
+    }
+
+    String manualCommand() {
+        String script = "/tmp/cloudnest-agent-update-" + TARGET_VERSION + ".sh";
+        String mirror = "https://ghfast.top/" + RELEASE_SCRIPT;
+        return "(curl -fL --retry 3 --connect-timeout 15 " + shellQuote(RELEASE_SCRIPT)
+                + " -o " + shellQuote(script)
+                + " || curl -fL --retry 3 --connect-timeout 15 " + shellQuote(mirror)
+                + " -o " + shellQuote(script) + ")"
+                + " && chmod +x " + shellQuote(script)
+                + " && if [ \"$(id -u)\" -eq 0 ]; then sh " + shellQuote(script) + " -U; "
+                + "elif command -v sudo >/dev/null 2>&1; then sudo sh " + shellQuote(script) + " -U; "
+                + "else echo '请切换到 root 用户后重新执行'; exit 1; fi";
+    }
+
     public List<Map<String, Object>> history(Long nodeId) {
         String sql = "SELECT task_id AS taskId,node_id AS nodeId,node_name AS nodeName,"
                 + "from_version AS fromVersion,target_version AS targetVersion,state,message,requested_by AS requestedBy,"
