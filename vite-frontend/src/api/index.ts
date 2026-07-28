@@ -775,7 +775,7 @@ export interface DomainRoute {
   certificateIssuer?: string;
 }
 
-export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress';
+export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy';
 
 export interface PortLedgerEntry {
   key: string;
@@ -840,6 +840,39 @@ export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");
 export const deleteDomainRoute = (id: number) =>
   Network.post("/service-publishing/domain/delete", { id });
+
+export interface HomeProxyRoute {
+  id: number;
+  userId: number;
+  name: string;
+  connectorId: number;
+  ingressPoolId: number;
+  egressPoolId: number;
+  leaseId?: number;
+  publicPort?: number;
+  egressLeaseId?: number;
+  egressGatewayPort?: number;
+  proxyType: 'socks5';
+  authEnabled: number;
+  authUsername?: string;
+  authPassword?: string;
+  state: 'provisioning' | 'active' | 'error' | 'delete_pending' | 'deleted';
+  lastError?: string;
+  ownerUserName?: string;
+  connectorName?: string;
+  connectorOnline?: boolean;
+  ingressPoolName?: string;
+  egressPoolName?: string;
+  publicHost?: string;
+}
+
+export const createHomeProxyRoute = (data: {
+  name: string; connectorId: number; ingressPoolId: number; ingressGrantId?: number;
+  egressPoolId: number; egressGrantId?: number;
+  authEnabled?: boolean; authUsername?: string; authPassword?: string;
+}) => Network.post<HomeProxyRoute>("/service-publishing/home-proxy/create", data);
+export const getHomeProxyRoutes = () => Network.post<HomeProxyRoute[]>("/service-publishing/home-proxy/list");
+export const deleteHomeProxyRoute = (id: number) => Network.post("/service-publishing/home-proxy/delete", { id });
 
 
 // 验证码相关接口

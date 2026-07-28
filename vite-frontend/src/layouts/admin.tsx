@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { BellRing, Boxes, CloudCog, Home, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -100,6 +100,11 @@ export default function AdminLayout({
       path: '/private-proxy',
       label: '私人代理',
       icon: <LockKeyhole className="h-5 w-5" />
+    },
+    {
+      path: '/home-access',
+      label: '家庭接入',
+      icon: <Home className="h-5 w-5" />
     },
     {
       path: '/network-tools',

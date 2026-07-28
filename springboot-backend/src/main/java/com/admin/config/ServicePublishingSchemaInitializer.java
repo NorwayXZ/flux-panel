@@ -73,6 +73,20 @@ public class ServicePublishingSchemaInitializer {
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS service_publish_lock (id int NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.update("INSERT IGNORE INTO service_publish_lock (id) VALUES (1)");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_route ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
+                    + "connector_id bigint NOT NULL, ingress_pool_id bigint NOT NULL, egress_pool_id bigint NOT NULL, "
+                    + "lease_id bigint DEFAULT NULL, public_port int DEFAULT NULL, egress_lease_id bigint DEFAULT NULL, "
+                    + "egress_gateway_port int DEFAULT NULL, proxy_type varchar(16) NOT NULL DEFAULT 'socks5', "
+                    + "auth_enabled tinyint NOT NULL DEFAULT 0, auth_username varchar(64) DEFAULT NULL, auth_password varchar(128) DEFAULT NULL, "
+                    + "state varchar(24) NOT NULL DEFAULT 'provisioning', last_error varchar(500) DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
+                    + "KEY idx_home_proxy_user (user_id, state), KEY idx_home_proxy_connector (connector_id, state), "
+                    + "KEY idx_home_proxy_lease (lease_id), KEY idx_home_proxy_egress_lease (egress_lease_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureColumn("home_proxy_route", "egress_lease_id", "bigint DEFAULT NULL AFTER public_port");
+            ensureColumn("home_proxy_route", "egress_gateway_port", "int DEFAULT NULL AFTER egress_lease_id");
+            ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
             ensureIndex("port_lease", "idx_lease_grant", "grant_id, state");

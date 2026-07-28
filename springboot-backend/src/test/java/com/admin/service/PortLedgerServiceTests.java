@@ -8,6 +8,7 @@ import com.admin.entity.Node;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
+import com.admin.mapper.HomeProxyRouteMapper;
 import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseMapper;
@@ -44,6 +45,7 @@ class PortLedgerServiceTests {
     @Mock private UserMapper userMapper;
     @Mock private DomainRouteMapper domainRouteMapper;
     @Mock private PrivateProxyMapper privateProxyMapper;
+    @Mock private HomeProxyRouteMapper homeProxyRouteMapper;
 
     @InjectMocks private PortLedgerService service;
 
@@ -81,6 +83,7 @@ class PortLedgerServiceTests {
         when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
         when(domainRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(homeProxyRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         PortLedgerQueryDto query = new PortLedgerQueryDto();
         query.setNodeId(2L);
@@ -112,6 +115,7 @@ class PortLedgerServiceTests {
         when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
         when(domainRouteMapper.selectList(any())).thenReturn(List.of(first, second));
         when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(homeProxyRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         Map<String, Object> result = service.list(new PortLedgerQueryDto());
         @SuppressWarnings("unchecked")

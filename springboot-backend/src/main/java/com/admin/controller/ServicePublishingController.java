@@ -8,6 +8,7 @@ import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.lang.R;
+import com.admin.service.HomeProxyService;
 import com.admin.service.ServicePublishingService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -25,6 +26,24 @@ import java.util.Map;
 public class ServicePublishingController {
     @Resource
     private ServicePublishingService service;
+
+    @Resource
+    private HomeProxyService homeProxyService;
+
+    @LogAnnotation @PostMapping("/home-proxy/create")
+    public R createHomeProxy(@Validated @RequestBody com.admin.common.dto.HomeProxyRouteCreateDto dto) {
+        return homeProxyService.create(dto);
+    }
+
+    @LogAnnotation @PostMapping("/home-proxy/list")
+    public R listHomeProxy() {
+        return homeProxyService.list();
+    }
+
+    @LogAnnotation @PostMapping("/home-proxy/delete")
+    public R deleteHomeProxy(@RequestBody Map<String, Object> params) {
+        return homeProxyService.delete(Long.valueOf(params.get("id").toString()));
+    }
 
     @LogAnnotation @PostMapping("/connector/create")
     public R createConnector(@Validated @RequestBody InternalConnectorCreateDto dto) {

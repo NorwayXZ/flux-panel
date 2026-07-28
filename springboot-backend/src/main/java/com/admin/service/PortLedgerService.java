@@ -14,6 +14,7 @@ import com.admin.entity.PortPoolGrant;
 import com.admin.entity.PublishedService;
 import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
+import com.admin.entity.HomeProxyRoute;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.DomainRouteMapper;
@@ -23,6 +24,7 @@ import com.admin.mapper.PortPoolGrantMapper;
 import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.PublishedServiceMapper;
 import com.admin.mapper.PrivateProxyMapper;
+import com.admin.mapper.HomeProxyRouteMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.alibaba.fastjson.JSON;
@@ -53,6 +55,7 @@ public class PortLedgerService {
     @Resource private UserMapper userMapper;
     @Resource private DomainRouteMapper domainRouteMapper;
     @Resource private PrivateProxyMapper privateProxyMapper;
+    @Resource private HomeProxyRouteMapper homeProxyRouteMapper;
 
     public Map<String, Object> list(PortLedgerQueryDto query) {
         List<Node> nodes = nodeMapper.selectList(null);
@@ -73,6 +76,7 @@ public class PortLedgerService {
         addLeases(entries, nodeMap, poolMap, publishedMap, userMap);
         addDomainIngresses(entries, nodeMap, userMap);
         addPrivateProxies(entries, nodeMap, userMap);
+        addHomeProxyRoutes(entries, nodeMap, userMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -159,8 +163,14 @@ public class PortLedgerService {
 
     private void addLeases(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Long, PortPool> pools,
                            Map<Long, PublishedService> services, Map<Integer, User> users) {
+        java.util.Set<Long> homeProxyLeases = new java.util.HashSet<>();
+        for (HomeProxyRoute route : homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>().ne("state", "deleted"))) {
+            if (route.getLeaseId() != null) homeProxyLeases.add(route.getLeaseId());
+            if (route.getEgressLeaseId() != null) homeProxyLeases.add(route.getEgressLeaseId());
+        }
         for (PortLease lease : leaseMapper.selectList(null)) {
             if ("released".equals(lease.getState())) continue;
+            if (homeProxyLeases.contains(lease.getId())) continue;
             PortPool pool = pools.get(lease.getPoolId());
             if (pool == null) continue;
             PublishedService service = lease.getServiceId() == null ? null : services.get(lease.getServiceId());
@@ -206,6 +216,28 @@ public class PortLedgerService {
                     proxy.getListenPort(), proxy.getListenPort(), "shadowsocks".equals(proxy.getProxyType()) ? "tcp_udp" : "tcp", proxy.getUserId(),
                     owner == null ? "未知用户" : owner.getUser(), proxy.getId(), proxy.getName(), detail,
                     proxy.getCreatedTime(), proxy.getExpiresAt()));
+        }
+    }
+
+    private void addHomeProxyRoutes(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
+        Map<Long, PortPool> pools = poolMapper.selectList(new QueryWrapper<PortPool>().eq("status", 1)).stream()
+                .collect(Collectors.toMap(PortPool::getId, Function.identity(), (a, b) -> a));
+        for (HomeProxyRoute route : homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>().ne("state", "deleted"))) {
+            PortPool pool = pools.get(route.getIngressPoolId());
+            Node node = pool == null ? null : nodes.get(pool.getNodeId());
+            User owner = users.get(route.getUserId());
+            if (node == null || route.getPublicPort() == null) continue;
+            String status = "delete_pending".equals(route.getState()) ? "cooldown" : "occupied";
+            add(entries, nodeEntry("home_proxy", status, node, route.getPublicPort(), route.getPublicPort(), "tcp",
+                    route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
+                    "家庭代理公网入口 · " + StringUtils.defaultString(route.getProxyType(), "SOCKS5"), route.getCreatedTime(), null));
+            PortPool egressPool = pools.get(route.getEgressPoolId());
+            Node egressNode = egressPool == null ? null : nodes.get(egressPool.getNodeId());
+            if (egressNode != null && route.getEgressGatewayPort() != null) {
+                add(entries, nodeEntry("home_proxy", status, egressNode, route.getEgressGatewayPort(), route.getEgressGatewayPort(), "tcp",
+                        route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
+                        "家庭代理 VPS 出口网关", route.getCreatedTime(), null));
+            }
         }
     }
 

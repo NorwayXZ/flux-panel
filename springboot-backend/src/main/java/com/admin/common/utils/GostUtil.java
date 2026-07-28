@@ -211,6 +211,26 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, data, "DeleteService");
     }
 
+    public static GostDto AddHomeEgressGateway(Long nodeId, String name, String bindIp, Integer port,
+                                               String username, String password) {
+        JSONObject service = new JSONObject();
+        service.put("name", name);
+        service.put("addr", listenAddress(bindIp, port));
+        JSONObject auth = new JSONObject();
+        auth.put("username", username);
+        auth.put("password", password);
+        JSONObject handler = new JSONObject();
+        handler.put("type", "socks5");
+        handler.put("auth", auth);
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, "AddService");
+    }
+
     public static GostDto AddPublishingChain(Long connectorId, String chainName, String publicAddress,
                                              String username, String password) {
         JSONObject auth = new JSONObject();
@@ -269,6 +289,67 @@ public class GostUtil {
         GostDto chainResult = WebSocketServer.sendConnectorMsg(connectorId, chainData, "DeleteChains");
         if (serviceResult != null && "OK".equals(serviceResult.getMsg())) {
             return chainResult;
+        }
+        return serviceResult;
+    }
+
+    /**
+     * Creates a SOCKS5 endpoint that is exposed through a reverse TCP chain.
+     * The endpoint runs on the home connector, while the public listener is
+     * allocated on the ingress pool gateway.
+     */
+    public static GostDto AddHomeProxyService(Long connectorId, String serviceName, String ingressChainName,
+                                               String egressChainName, String bindIp, Integer publicPort,
+                                               boolean authEnabled, String username, String password) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", listenAddress(bindIp, publicPort));
+
+        JSONObject handler = new JSONObject();
+        handler.put("type", "socks5");
+        handler.put("chain", egressChainName);
+        if (authEnabled) {
+            JSONObject auth = new JSONObject();
+            auth.put("username", username);
+            auth.put("password", password);
+            handler.put("auth", auth);
+        }
+        service.put("handler", handler);
+
+        JSONObject listener = new JSONObject();
+        listener.put("type", "rtcp");
+        listener.put("chain", ingressChainName);
+        service.put("listener", listener);
+
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.sendConnectorMsg(connectorId, services, "AddService");
+    }
+
+    private static String listenAddress(String bindIp, Integer port) {
+        String host = StringUtils.trimToEmpty(bindIp);
+        if (host.contains(":") && !host.startsWith("[")) host = "[" + host + "]";
+        return host + ":" + port;
+    }
+
+    public static GostDto DeleteHomeProxyService(Long connectorId, String serviceName,
+                                                 String ingressChainName, String egressChainName) {
+        JSONObject serviceData = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        serviceData.put("services", services);
+        GostDto serviceResult = WebSocketServer.sendConnectorMsg(connectorId, serviceData, "DeleteService");
+
+        JSONObject ingressData = new JSONObject();
+        ingressData.put("chain", ingressChainName);
+        GostDto ingressResult = WebSocketServer.sendConnectorMsg(connectorId, ingressData, "DeleteChains");
+
+        JSONObject egressData = new JSONObject();
+        egressData.put("chain", egressChainName);
+        GostDto egressResult = WebSocketServer.sendConnectorMsg(connectorId, egressData, "DeleteChains");
+
+        if (serviceResult != null && "OK".equals(serviceResult.getMsg())) {
+            return ingressResult != null && "OK".equals(ingressResult.getMsg()) ? egressResult : ingressResult;
         }
         return serviceResult;
     }

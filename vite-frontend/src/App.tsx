@@ -24,6 +24,7 @@ import PrivateProxyPage from "@/pages/private-proxy";
 import NetworkToolsPage from "@/pages/network-tools";
 import ServerAssetsPage from "@/pages/server-assets";
 import DynamicDnsPage from "@/pages/dynamic-dns";
+import HomeAccessPage from "@/pages/home-access";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -274,6 +275,7 @@ function App() {
         element={<ProtectedRoute><ServicePublishingPage /></ProtectedRoute>}
       />
       <Route path="/private-proxy" element={<ProtectedRoute><PrivateProxyPage /></ProtectedRoute>} />
+      <Route path="/home-access" element={<ProtectedRoute><HomeAccessPage /></ProtectedRoute>} />
       <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
       <Route
         path="/port-resources"
