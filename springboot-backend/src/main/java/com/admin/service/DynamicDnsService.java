@@ -519,7 +519,14 @@ public class DynamicDnsService {
             }
         }
         params.put("RecordId", recordId);
-        aliyun(access, "UpdateDomainRecord", params);
+        try {
+            aliyun(access, "UpdateDomainRecord", params);
+        } catch (IllegalStateException e) {
+            if (!StringUtils.contains(e.getMessage(), "DomainRecordDuplicate")) throw e;
+            JSONObject existing = findAliyunLineRecord(access, zone, rr, type, line);
+            if (!aliyunLineRecordMatches(existing, value, Math.max(600, ttl))) throw e;
+            recordId = existing.getString("RecordId");
+        }
         return new LineRoutingRecord(recordId, false, originalValue, originalTtl);
     }
 
@@ -546,6 +553,12 @@ public class DynamicDnsService {
     static boolean aliyunLineMatches(JSONObject record, String expectedLine) {
         String actualLine = StringUtils.defaultIfBlank(record.getString("LineCode"), record.getString("Line"));
         return expectedLine.equalsIgnoreCase(StringUtils.defaultIfBlank(actualLine, "default"));
+    }
+
+    static boolean aliyunLineRecordMatches(JSONObject record, String expectedValue, int expectedTtl) {
+        return record != null
+                && expectedValue.equals(record.getString("Value"))
+                && expectedTtl == record.getIntValue("TTL");
     }
 
     private String normalizeCarrierLine(String provider, String carrier) {

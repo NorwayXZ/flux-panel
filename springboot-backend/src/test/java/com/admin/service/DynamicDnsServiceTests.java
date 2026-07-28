@@ -38,4 +38,11 @@ class DynamicDnsServiceTests {
         JSONObject record = JSONObject.parseObject("{\"Line\":\"中国电信\",\"LineCode\":\"telecom\"}");
         assertEquals(true, DynamicDnsService.aliyunLineMatches(record, "telecom"));
     }
+
+    @Test
+    void acceptsAliyunDuplicateOnlyWhenTheExistingRecordAlreadyMatches() {
+        JSONObject record = JSONObject.parseObject("{\"Value\":\"34.150.15.102\",\"TTL\":600}");
+        assertEquals(true, DynamicDnsService.aliyunLineRecordMatches(record, "34.150.15.102", 600));
+        assertEquals(false, DynamicDnsService.aliyunLineRecordMatches(record, "8.218.90.244", 600));
+    }
 }

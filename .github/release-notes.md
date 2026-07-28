@@ -1,3 +1,9 @@
+## 2.22.7 Aliyun carrier DNS no-op update handling
+
+- Confirms the existing carrier record's line, address, and TTL when Aliyun returns `DomainRecordDuplicate` for an unchanged update.
+- Treats the response as success only when the provider record already matches the requested state; real conflicts still remain visible.
+- Changes no schema, Agent, tunnel, forward, port, or health-check policy. Roll back to `2.22.6` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.6 idempotent Aliyun carrier DNS sync
 
 - Identifies existing Aliyun carrier records by `LineCode`, including records whose display line is localized.
