@@ -38,6 +38,7 @@ public class SmartEntrySchemaInitializer {
                     + "fail_count int NOT NULL DEFAULT 0,success_count int NOT NULL DEFAULT 0,latency_ms int DEFAULT NULL,last_error varchar(500) DEFAULT NULL,"
                     + "telemetry_ready tinyint NOT NULL DEFAULT 0,total_connections bigint NOT NULL DEFAULT 0,current_connections bigint NOT NULL DEFAULT 0,"
                     + "reported_total_connections bigint NOT NULL DEFAULT 0,pending_connections bigint NOT NULL DEFAULT 0,"
+                    + "pending_probe_connections bigint NOT NULL DEFAULT 0,"
                     + "activity_in_flow bigint NOT NULL DEFAULT 0,activity_out_flow bigint NOT NULL DEFAULT 0,"
                     + "last_activity_at bigint DEFAULT NULL,last_telemetry_at bigint DEFAULT NULL,"
                     + "last_checked_at bigint DEFAULT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY(id),"
@@ -57,16 +58,25 @@ public class SmartEntrySchemaInitializer {
             addColumn("smart_entry_route", "activity_out_flow", "bigint NOT NULL DEFAULT 0");
             addColumn("smart_entry_route", "last_activity_at", "bigint DEFAULT NULL");
             addColumn("smart_entry_route", "last_telemetry_at", "bigint DEFAULT NULL");
+            boolean probeTrackingAdded = addColumn("smart_entry_route", "pending_probe_connections", "bigint NOT NULL DEFAULT 0");
+            if (probeTrackingAdded) {
+                jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=0,total_connections=0,current_connections=0,"
+                        + "reported_total_connections=0,pending_connections=0,pending_probe_connections=0,activity_in_flow=0,"
+                        + "activity_out_flow=0,last_activity_at=NULL,last_telemetry_at=NULL");
+                jdbcTemplate.update("DELETE FROM smart_entry_event WHERE event_type IN ('first_active','resumed','new_connections')");
+            }
         } catch (DataAccessException e) {
             log.error("Smart entry storage initialization failed", e);
         }
     }
 
-    private void addColumn(String table, String column, String definition) {
+    private boolean addColumn(String table, String column, String definition) {
         Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.COLUMNS "
                 + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", Integer.class, table, column);
         if (count != null && count == 0) {
             jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
+            return true;
         }
+        return false;
     }
 }

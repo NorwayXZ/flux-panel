@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS smart_entry_route (
   current_connections bigint NOT NULL DEFAULT 0,
   reported_total_connections bigint NOT NULL DEFAULT 0,
   pending_connections bigint NOT NULL DEFAULT 0,
+  pending_probe_connections bigint NOT NULL DEFAULT 0,
   activity_in_flow bigint NOT NULL DEFAULT 0,
   activity_out_flow bigint NOT NULL DEFAULT 0,
   last_activity_at bigint DEFAULT NULL,

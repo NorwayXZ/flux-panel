@@ -19,4 +19,10 @@ class SmartEntryServiceTests {
     void agentRestartCountsConnectionsFromTheNewCounter() {
         assertEquals(3L, SmartEntryService.connectionDelta(47L, 3L, true));
     }
+
+    @Test
+    void healthProbeConnectionsAreRemovedFromBusinessActivity() {
+        assertEquals(4L, SmartEntryService.businessConnectionDelta(7L, 3L));
+        assertEquals(0L, SmartEntryService.businessConnectionDelta(2L, 3L));
+    }
 }

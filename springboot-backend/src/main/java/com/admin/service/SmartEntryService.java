@@ -155,11 +155,12 @@ public class SmartEntryService {
                         retained == null ? null : retained.get("originalTtl"), route.forwardId, route.entryAddress, now, now);
                 if (retained != null) {
                     jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=?,current_connections=?,"
-                                    + "reported_total_connections=?,pending_connections=?,activity_in_flow=?,activity_out_flow=?,"
+                                    + "reported_total_connections=?,pending_connections=?,pending_probe_connections=?,activity_in_flow=?,activity_out_flow=?,"
                                     + "last_activity_at=?,last_telemetry_at=? WHERE group_id=? AND carrier=?",
                             retained.get("telemetryReady"), retained.get("totalConnections"), retained.get("currentConnections"),
-                            retained.get("reportedTotalConnections"), retained.get("pendingConnections"), retained.get("activityInFlow"),
-                            retained.get("activityOutFlow"), retained.get("lastActivityAt"), retained.get("lastTelemetryAt"), id, route.carrier);
+                            retained.get("reportedTotalConnections"), retained.get("pendingConnections"), retained.get("pendingProbeConnections"),
+                            retained.get("activityInFlow"), retained.get("activityOutFlow"), retained.get("lastActivityAt"),
+                            retained.get("lastTelemetryAt"), id, route.carrier);
                 }
             }
             activityGroups.clear();
@@ -208,19 +209,25 @@ public class SmartEntryService {
                 long outputBytes = Math.max(0L, outbound == null ? 0L : outbound);
                 boolean telemetryReady = truth(state.get("telemetry_ready"));
                 long previousReported = number(state.get("reported_total_connections"));
-                long connectionDelta = reportedTotalConnections == null ? 0L
+                long rawConnectionDelta = reportedTotalConnections == null ? 0L
                         : connectionDelta(previousReported, Math.max(0L, reportedTotalConnections), telemetryReady);
+                long pendingProbeConnections = number(state.get("pending_probe_connections"));
+                long consumedProbeConnections = reportedTotalConnections == null ? 0L
+                        : (telemetryReady ? Math.min(rawConnectionDelta, pendingProbeConnections) : pendingProbeConnections);
+                long connectionDelta = businessConnectionDelta(rawConnectionDelta, consumedProbeConnections);
                 long currentConnections = reportedCurrentConnections == null
                         ? number(state.get("current_connections")) : Math.max(0L, reportedCurrentConnections);
                 boolean active = inputBytes > 0 || outputBytes > 0 || connectionDelta > 0;
                 Long previousActivity = nullableLong(state.get("last_activity_at"));
                 jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=total_connections+?,current_connections=?,"
                                 + "reported_total_connections=?,pending_connections=pending_connections+?,"
+                                + "pending_probe_connections=GREATEST(pending_probe_connections-?,0),"
                                 + "activity_in_flow=activity_in_flow+?,activity_out_flow=activity_out_flow+?,"
                                 + "last_activity_at=?,last_telemetry_at=?,updated_time=? WHERE group_id=? AND forward_id=? AND entry_node_id=?",
                         reportedTotalConnections == null ? (telemetryReady ? 1 : 0) : 1, connectionDelta, currentConnections,
                         reportedTotalConnections == null ? previousReported : Math.max(0L, reportedTotalConnections), connectionDelta,
-                        inputBytes, outputBytes, active ? now : previousActivity, now, now, groupId, forwardId, reportingNodeId);
+                        consumedProbeConnections, inputBytes, outputBytes, active ? now : previousActivity, now, now,
+                        groupId, forwardId, reportingNodeId);
                 if (active && previousActivity == null) {
                     event(groupId, null, "first_active", "active", activityLabel(groupId, forwardId, reportingNodeId)
                             + "首次检测到连接或流量");
@@ -301,12 +308,14 @@ public class SmartEntryService {
             int failureThreshold = intValue(group.get("failure_threshold"));
             int recoveryThreshold = intValue(group.get("recovery_threshold"));
             long now = System.currentTimeMillis();
-            List<CompletableFuture<Probe>> futures = routes.stream()
-                    .map(route -> CompletableFuture.supplyAsync(() -> probe(route, timeout)))
-                    .toList();
+            Map<String, CompletableFuture<Probe>> futures = new LinkedHashMap<>();
+            for (Map<String, Object> route : routes) {
+                futures.computeIfAbsent(physicalRouteKey(route), ignored ->
+                        CompletableFuture.supplyAsync(() -> probe(id, route, timeout)));
+            }
             for (int index = 0; index < routes.size(); index++) {
                 Map<String, Object> route = routes.get(index);
-                Probe probe = futures.get(index).join();
+                Probe probe = futures.get(physicalRouteKey(route)).join();
                 String oldStatus = Objects.toString(route.get("status"), "unknown");
                 int failures = intValue(route.get("failCount"));
                 int successes = intValue(route.get("successCount"));
@@ -333,12 +342,15 @@ public class SmartEntryService {
         }
     }
 
-    private Probe probe(Map<String, Object> route, int timeout) {
+    private Probe probe(Long groupId, Map<String, Object> route, int timeout) {
         long nodeId = number(route.get("entryNodeId"));
         if (!WebSocketServer.isNodeOnline(nodeId)) return new Probe(false, null, "入口 Agent 离线");
         long started = System.nanoTime();
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(Objects.toString(route.get("entryAddress")), intValue(route.get("entryPort"))), timeout);
+            jdbcTemplate.update("UPDATE smart_entry_route SET pending_probe_connections=pending_probe_connections+1 "
+                            + "WHERE group_id=? AND forward_id=? AND entry_node_id=?",
+                    groupId, number(route.get("forwardId")), nodeId);
             return new Probe(true, Math.max(1, (int) ((System.nanoTime() - started) / 1_000_000)), null);
         } catch (Exception e) {
             return new Probe(false, null, "端口连接失败");
@@ -443,6 +455,7 @@ public class SmartEntryService {
                         + "success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,last_checked_at AS lastCheckedAt,"
                         + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
                         + "reported_total_connections AS reportedTotalConnections,pending_connections AS pendingConnections,"
+                        + "pending_probe_connections AS pendingProbeConnections,"
                         + "activity_in_flow AS activityInFlow,activity_out_flow AS activityOutFlow,last_activity_at AS lastActivityAt,"
                         + "last_telemetry_at AS lastTelemetryAt "
                         + "FROM smart_entry_route WHERE group_id=? ORDER BY FIELD(carrier,'default','telecom','unicom','mobile')", groupId);
@@ -473,6 +486,14 @@ public class SmartEntryService {
     static long connectionDelta(long previous, long reported, boolean baselineReady) {
         if (!baselineReady) return 0L;
         return reported >= previous ? reported - previous : reported;
+    }
+
+    static long businessConnectionDelta(long rawConnections, long probeConnections) {
+        return Math.max(0L, rawConnections - Math.max(0L, probeConnections));
+    }
+
+    private String physicalRouteKey(Map<String, Object> route) {
+        return number(route.get("forwardId")) + ":" + number(route.get("entryNodeId"));
     }
 
     private Map<String, Object> one(String sql, Object... args) {
