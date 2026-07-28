@@ -199,7 +199,7 @@ export default function AdminLayout({
   const menuGroups = [
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover', '/topology'] },
     { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
-    { label: '实用工具', paths: ['/private-proxy', '/network-tools'] },
+    { label: '实用工具', paths: ['/private-proxy', '/home-access', '/network-tools'] },
     { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/dynamic-dns', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
