@@ -101,6 +101,18 @@ public class CrossEntryFailoverService {
         for (Map<String, Object> group : groups) {
             long id = number(group.get("id")).longValue();
             group.put("members", loadMembers(id));
+            List<Map<String, Object>> latestSwitch = jdbcTemplate.queryForList(
+                    "SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
+                            + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,"
+                            + "COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
+                            + "fm.forward_name AS fromForwardName,fm.entry_address AS fromEntryAddress,fm.entry_port AS fromEntryPort,"
+                            + "tm.forward_name AS toForwardName,tm.entry_address AS toEntryAddress,tm.entry_port AS toEntryPort "
+                            + "FROM cross_entry_failover_event e "
+                            + "LEFT JOIN cross_entry_failover_member fm ON fm.id=e.from_member_id "
+                            + "LEFT JOIN cross_entry_failover_member tm ON tm.id=e.to_member_id "
+                            + "WHERE e.group_id=? AND e.reason<>? ORDER BY e.created_time DESC,e.id DESC LIMIT 1",
+                    id, "初始化主入口");
+            group.put("lastSwitchEvent", latestSwitch.isEmpty() ? null : latestSwitch.get(0));
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("groups", groups);
@@ -252,7 +264,9 @@ public class CrossEntryFailoverService {
 
     public R listEvents(Long id) {
         return R.ok(jdbcTemplate.queryForList("SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
-                + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,COALESCE(e.to_node_name,tm.node_name) AS toNodeName FROM cross_entry_failover_event e "
+                + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
+                + "fm.forward_name AS fromForwardName,fm.entry_address AS fromEntryAddress,fm.entry_port AS fromEntryPort,"
+                + "tm.forward_name AS toForwardName,tm.entry_address AS toEntryAddress,tm.entry_port AS toEntryPort FROM cross_entry_failover_event e "
                 + "LEFT JOIN cross_entry_failover_member fm ON fm.id=e.from_member_id "
                 + "LEFT JOIN cross_entry_failover_member tm ON tm.id=e.to_member_id "
                 + "WHERE e.group_id=? ORDER BY e.created_time DESC LIMIT 100", id));

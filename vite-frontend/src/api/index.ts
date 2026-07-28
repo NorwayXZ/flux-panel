@@ -308,6 +308,7 @@ export interface CrossEntryGroup {
   lastSwitchAt?: number;
   apiTokenConfigured: boolean | number;
   members: CrossEntryMember[];
+  lastSwitchEvent?: CrossEntryEvent;
 }
 
 export interface CrossEntrySummary {
@@ -325,6 +326,12 @@ export interface CrossEntryEvent {
   detail?: string;
   fromNodeName?: string;
   toNodeName?: string;
+  fromForwardName?: string;
+  toForwardName?: string;
+  fromEntryAddress?: string;
+  fromEntryPort?: number;
+  toEntryAddress?: string;
+  toEntryPort?: number;
   createdTime: number;
 }
 

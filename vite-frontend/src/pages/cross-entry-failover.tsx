@@ -45,6 +45,18 @@ const emptyForm = {
 
 const truthy = (value: boolean | number) => value === true || value === 1;
 const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
+const eventRouteText = (event?: CrossEntryEvent) => {
+  if (!event) return '暂无自动切换';
+  const from = event.fromForwardName || event.fromNodeName || '初始状态';
+  const to = event.toForwardName || event.toNodeName || '未知入口';
+  return `${from} → ${to}`;
+};
+const eventEndpointText = (event?: CrossEntryEvent) => {
+  if (!event) return '';
+  const from = event.fromEntryAddress && event.fromEntryPort ? `${event.fromEntryAddress}:${event.fromEntryPort}` : '';
+  const to = event.toEntryAddress && event.toEntryPort ? `${event.toEntryAddress}:${event.toEntryPort}` : '';
+  return from && to ? `${from} → ${to}` : to || from;
+};
 const stateMeta = (state: CrossEntryGroup['state']) => ({
   healthy: { label: '运行正常', color: 'success' as const },
   degraded: { label: '部分异常', color: 'warning' as const },
@@ -97,6 +109,9 @@ export default function CrossEntryFailoverPage() {
     if (new Set(selected.map(item => item.inPort)).size !== 1) return '所有候选转发必须使用相同公网端口';
     return '';
   }, [selectedOptions]);
+  const recentSwitches = useMemo(() => groups
+    .filter(group => group.lastSwitchEvent)
+    .map(group => ({ group, event: group.lastSwitchEvent as CrossEntryEvent })), [groups]);
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -187,6 +202,23 @@ export default function CrossEntryFailoverPage() {
         ))}
       </section>
 
+      {recentSwitches.length > 0 && (
+        <section className="border-y border-divider py-4" aria-label="最近入口切换">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div><h2 className="text-sm font-semibold">最近切换</h2><p className="mt-1 text-xs text-default-500">累计切换 {summary.switches} 次，下面显示每个容灾组最近一次的具体线路和触发原因。</p></div>
+            <span className="text-xs text-default-500">完整记录可打开每张卡片右上角的历史按钮</span>
+          </div>
+          <div className="mt-3 grid gap-2 xl:grid-cols-2">
+            {recentSwitches.map(({ group, event }) => (
+              <div key={group.id} className="grid gap-2 border-l-2 border-secondary px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{group.name}</span><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div><p className="mt-1 flex items-center gap-1 text-sm"><span className="truncate">{eventRouteText(event)}</span><ArrowRight size={13} className="flex-none text-default-400" /><span className="truncate text-default-500">{event.reason}</span></p><p className="mt-1 truncate text-xs text-default-500">{eventEndpointText(event) || event.detail || '无线路地址记录'}</p></div>
+                <Button size="sm" variant="flat" startContent={<History size={15} />} onPress={() => showHistory(group)}>查看历史</Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {groups.length === 0 ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
           <ShieldCheck className="h-9 w-9" /><p>暂无跨入口容灾组</p>
@@ -213,7 +245,7 @@ export default function CrossEntryFailoverPage() {
                     <div><p className="text-xs text-default-500">当前入口</p><p className="mt-1 truncate font-medium">{active?.nodeName || '未确定'}</p></div>
                     <div><p className="text-xs text-default-500">检测周期</p><p className="mt-1 font-medium">{group.probeIntervalMs / 1000} 秒</p></div>
                     <div><p className="text-xs text-default-500">失败阈值</p><p className="mt-1 font-medium">连续 {group.failureThreshold} 次</p></div>
-                    <div><p className="text-xs text-default-500">上次切换</p><p className="mt-1 truncate font-medium">{group.lastSwitchAt ? timeText(group.lastSwitchAt) : '未切换'}</p></div>
+                    <div><p className="text-xs text-default-500">上次切换</p><p className="mt-1 truncate font-medium">{group.lastSwitchEvent ? timeText(group.lastSwitchEvent.createdTime) : (group.lastSwitchAt ? timeText(group.lastSwitchAt) : '未切换')}</p><p className="mt-1 truncate text-xs text-default-500">{eventRouteText(group.lastSwitchEvent)}</p></div>
                   </div>
 
                   <div className="space-y-2">
@@ -296,7 +328,7 @@ export default function CrossEntryFailoverPage() {
       </Modal>
 
       <Modal isOpen={historyOpen} onOpenChange={setHistoryOpen} size="2xl" scrollBehavior="inside">
-        <ModalContent><ModalHeader>{historyName} · 切换历史</ModalHeader><ModalBody>{events.length === 0 ? <div className="py-12 text-center text-sm text-default-500">暂无切换记录</div> : <div className="divide-y divide-divider">{events.map(event => <div key={event.id} className="flex gap-3 py-3"><div className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === 'success' ? 'bg-success' : 'bg-danger'}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{event.reason}</p><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div>{(event.fromNodeName || event.toNodeName) && <p className="mt-1 flex items-center gap-1 text-xs text-default-500"><span>{event.fromNodeName || '初始'}</span><ArrowRight size={12} /><span>{event.toNodeName || '-'}</span></p>}<p className="mt-1 text-xs text-default-500">{event.detail}</p></div></div>)}</div>}</ModalBody><ModalFooter><Button variant="flat" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent>
+        <ModalContent><ModalHeader>{historyName} · 切换历史</ModalHeader><ModalBody>{events.length === 0 ? <div className="py-12 text-center text-sm text-default-500">暂无切换记录</div> : <div className="divide-y divide-divider">{events.map(event => <div key={event.id} className="flex gap-3 py-3"><div className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === 'success' ? 'bg-success' : 'bg-danger'}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium">{event.reason}</p><span className="text-xs text-default-500">{timeText(event.createdTime)}</span></div><p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-default-500"><span>{event.fromForwardName || event.fromNodeName || '初始'}</span><ArrowRight size={12} /><span>{event.toForwardName || event.toNodeName || '-'}</span></p>{eventEndpointText(event) && <p className="mt-1 text-xs text-default-500">{eventEndpointText(event)}</p>}<p className="mt-1 text-xs text-default-500">{event.detail}</p></div></div>)}</div>}</ModalBody><ModalFooter><Button variant="flat" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent>
       </Modal>
     </div>
   );
