@@ -226,11 +226,12 @@ public class PortLedgerService {
             PortPool pool = pools.get(route.getIngressPoolId());
             Node node = pool == null ? null : nodes.get(pool.getNodeId());
             User owner = users.get(route.getUserId());
-            if (node == null || route.getPublicPort() == null) continue;
             String status = "delete_pending".equals(route.getState()) ? "cooldown" : "occupied";
-            add(entries, nodeEntry("home_proxy", status, node, route.getPublicPort(), route.getPublicPort(), "tcp",
-                    route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
-                    "家庭代理公网入口 · " + StringUtils.defaultString(route.getProxyType(), "SOCKS5"), route.getCreatedTime(), null));
+            if (node != null && route.getPublicPort() != null) {
+                add(entries, nodeEntry("home_proxy", status, node, route.getPublicPort(), route.getPublicPort(), "tcp",
+                        route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
+                        "家庭代理公网入口 · " + StringUtils.defaultString(route.getProxyType(), "SOCKS5"), route.getCreatedTime(), null));
+            }
             PortPool egressPool = pools.get(route.getEgressPoolId());
             Node egressNode = egressPool == null ? null : nodes.get(egressPool.getNodeId());
             if (egressNode != null && route.getEgressGatewayPort() != null) {

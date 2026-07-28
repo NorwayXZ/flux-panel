@@ -19,5 +19,6 @@ public class ServicePublishingLeaseTask {
     public void processLeases() {
         service.processLeaseLifecycle();
         homeProxyService.processPendingDeletes();
+        homeProxyService.refreshDirectIpv6Addresses();
     }
 }

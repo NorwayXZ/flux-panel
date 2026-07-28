@@ -6,7 +6,8 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
-import { Copy, Download, Home, Plus, Route, Trash2 } from 'lucide-react';
+import { Tab, Tabs } from '@heroui/tabs';
+import { Copy, Download, Home, Plus, RefreshCw, Route, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -17,6 +18,7 @@ import {
   getHomeProxyRoutes,
   getInternalConnectors,
   getPublishingPortPools,
+  refreshHomeProxyIpv6,
   type HomeProxyRoute,
   type InternalConnector,
   type PublishingPortPool,
@@ -32,17 +34,28 @@ const stateMeta: Record<HomeProxyRoute['state'], { label: string; color: 'succes
 };
 
 type FormState = {
-  name: string; connectorId: string; ingressPoolKey: string; egressPoolKey: string;
+  name: string; connectorId: string; accessMode: 'relay' | 'ipv6_direct';
+  ingressPoolKey: string; egressPoolKey: string; directPort: string;
   authEnabled: boolean; authUsername: string; authPassword: string;
 };
 
 const emptyForm = (): FormState => ({
-  name: '', connectorId: '', ingressPoolKey: '', egressPoolKey: '',
+  name: '', connectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressPoolKey: '', directPort: '23888',
   authEnabled: false, authUsername: '', authPassword: '',
 });
 
 const poolKey = (pool: PublishingPortPool) => `${pool.id}:${pool.grantId || 0}`;
 const selectedPool = (pools: PublishingPortPool[], key: string) => pools.find(pool => poolKey(pool) === key);
+const endpointText = (route: HomeProxyRoute) => {
+  if (!route.publicHost || !route.publicPort) return '等待生成访问地址';
+  const host = route.publicHost.includes(':') && !route.publicHost.startsWith('[') ? `[${route.publicHost}]` : route.publicHost;
+  return `${host}:${route.publicPort}`;
+};
+
+const formatTime = (timestamp?: number | null) => {
+  if (!timestamp) return '尚未检测';
+  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+};
 
 const copy = async (value: string, label: string) => {
   await navigator.clipboard.writeText(value);
@@ -56,6 +69,7 @@ export default function HomeAccessPage() {
   const [connectorModalOpen, setConnectorModalOpen] = useState(false);
   const [commandModalOpen, setCommandModalOpen] = useState(false);
   const [commandLoading, setCommandLoading] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [command, setCommand] = useState('');
   const [commandConnectorId, setCommandConnectorId] = useState<number | null>(null);
   const [commandPlatform, setCommandPlatform] = useState<ConnectorPlatform>('linux');
@@ -81,11 +95,17 @@ export default function HomeAccessPage() {
 
   const ingressPools = useMemo(() => pools.filter(pool => pool.availablePorts > 0), [pools]);
   const activeCount = routes.filter(item => item.state === 'active').length;
+  const directCount = routes.filter(item => item.accessMode === 'ipv6_direct').length;
 
   const submit = async () => {
-    if (!form.name.trim() || !form.connectorId || !form.ingressPoolKey || !form.egressPoolKey) {
-      toast.error('请填写名称、家庭接入端、入口和出口端口池');
+    if (!form.name.trim() || !form.connectorId || !form.egressPoolKey
+        || (form.accessMode === 'relay' && !form.ingressPoolKey)) {
+      toast.error(form.accessMode === 'relay' ? '请填写名称、家庭接入端、入口和出口端口池' : '请填写名称、家庭接入端和出口端口池');
       return;
+    }
+    const directPort = Number(form.directPort);
+    if (form.accessMode === 'ipv6_direct' && (!Number.isInteger(directPort) || directPort < 1024 || directPort > 65535)) {
+      return toast.error('家庭 IPv6 直连端口必须在 1024-65535 之间');
     }
     if (form.authEnabled && (!form.authUsername.trim() || form.authPassword.length < 8)) {
       toast.error('启用代理认证时，用户名不能为空且密码至少 8 位');
@@ -93,12 +113,14 @@ export default function HomeAccessPage() {
     }
     const ingressPool = selectedPool(pools, form.ingressPoolKey);
     const egressPool = selectedPool(pools, form.egressPoolKey);
-    if (!ingressPool || !egressPool) return toast.error('所选端口资源已变化，请重新选择');
+    if ((form.accessMode === 'relay' && !ingressPool) || !egressPool) return toast.error('所选端口资源已变化，请重新选择');
     setSubmitting(true);
     const response = await createHomeProxyRoute({
       name: form.name.trim(), connectorId: Number(form.connectorId),
-      ingressPoolId: ingressPool.id, ingressGrantId: ingressPool.grantId,
+      accessMode: form.accessMode,
+      ingressPoolId: ingressPool?.id, ingressGrantId: ingressPool?.grantId,
       egressPoolId: egressPool.id, egressGrantId: egressPool.grantId,
+      directPort: form.accessMode === 'ipv6_direct' ? directPort : undefined,
       authEnabled: form.authEnabled, authUsername: form.authUsername.trim(), authPassword: form.authPassword,
     });
     setSubmitting(false);
@@ -109,8 +131,17 @@ export default function HomeAccessPage() {
     void load();
   };
 
+  const refreshIpv6 = async (id: number) => {
+    setRefreshingId(id);
+    const response = await refreshHomeProxyIpv6(id);
+    setRefreshingId(null);
+    if (response.code !== 0) return toast.error(response.msg || 'IPv6 检测失败');
+    toast.success(`家庭 IPv6 已更新：${response.data.address}`);
+    void load();
+  };
+
   const remove = async (id: number) => {
-    if (!window.confirm('确认删除家庭代理并释放公网端口吗？')) return;
+    if (!window.confirm('确认删除家庭代理并释放其占用的端口资源吗？')) return;
     const response = await deleteHomeProxyRoute(id);
     if (response.code !== 0) return toast.error(response.msg || '删除失败');
     toast.success('家庭代理已删除');
@@ -154,7 +185,7 @@ export default function HomeAccessPage() {
           <p className="text-sm text-default-500">反向接入 · 代理链</p>
           <h1 className="mt-1 text-2xl font-semibold">家庭接入</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
-            公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定 VPS 出口访问目标地址。家庭网络不需要公网 IP，Agent 会主动连接面板。
+            公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定 VPS 出口访问目标地址。优先使用家庭公网 IPv6 直连；没有可用 IPv6 时可切换到公网中继模式。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -166,12 +197,12 @@ export default function HomeAccessPage() {
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
           ['运行中', activeCount], ['家庭接入端', connectors.filter(item => item.online).length],
-          ['代理链', routes.length], ['可用入口端口', ingressPools.reduce((sum, item) => sum + item.availablePorts, 0)],
+          ['代理链', routes.length], ['IPv6 直连', directCount],
         ].map(([label, value]) => <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}
       </section>
 
       <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
-        默认不启用代理用户名密码认证，方便先测试链路。公网地址暴露后可能成为开放代理；正式使用时，建议在创建时打开“启用代理认证”。当前版本暂不自动限速，也不会擅自限制连接数。
+        IPv6 直连要求家庭网络拥有可入站访问的公网 IPv6，并在家庭路由器和系统防火墙放行所选 TCP 端口。默认不启用代理认证，公网暴露后可能成为开放代理；正式使用时建议开启认证。
       </div>
 
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : routes.length === 0 ? (
@@ -180,22 +211,27 @@ export default function HomeAccessPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           {routes.map(route => {
             const meta = stateMeta[route.state] || stateMeta.error;
-            const endpoint = route.publicHost && route.publicPort ? `${route.publicHost}:${route.publicPort}` : '等待分配公网端口';
+            const endpoint = endpointText(route);
+            const direct = route.accessMode === 'ipv6_direct';
             return <article key={route.id} className="rounded-lg border border-divider bg-content1 p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0"><h2 className="truncate text-lg font-semibold">{route.name}</h2><p className="mt-1 text-sm text-default-500">{route.connectorName || '家庭接入端'} · {route.proxyType.toUpperCase()}</p></div>
-                <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Chip size="sm" variant="flat" color={direct ? 'primary' : 'default'}>{direct ? 'IPv6 直连' : '公网中继'}</Chip>
+                  <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
+                </div>
               </div>
               <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div>
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-                <div><div className="text-default-500">访问入口端口池</div><div className="mt-1 font-medium">{route.ingressPoolName || '未知'}</div></div>
+                <div><div className="text-default-500">{direct ? '家庭公网 IPv6' : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (route.directIpv6 || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
                 <div><div className="text-default-500">家庭出口 VPS 端口池</div><div className="mt-1 font-medium">{route.egressPoolName || '未知'}</div></div>
                 <div><div className="text-default-500">接入端状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
-                <div><div className="text-default-500">客户端认证</div><div className="mt-1 font-medium">{route.authEnabled ? '已启用' : '未启用'}</div></div>
+                <div><div className="text-default-500">{direct ? 'IPv6 最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
               </div>
               {route.authEnabled && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
               {route.lastError && <div className="mt-4 rounded-md bg-danger-50 px-3 py-3 text-sm text-danger-700 dark:bg-danger-500/10 dark:text-danger-300">{route.lastError}</div>}
               <div className="mt-5 flex flex-wrap justify-end gap-2">
+                {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshIpv6(route.id)}>检测 IPv6</Button>}
                 {route.state === 'active' && route.publicHost && route.publicPort && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, '代理地址')}>复制地址</Button>}
                 <Button size="sm" color="danger" variant="flat" startContent={<Trash2 size={15} />} onPress={() => remove(route.id)}>删除</Button>
               </div>
@@ -206,19 +242,32 @@ export default function HomeAccessPage() {
 
       <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
         <div className="flex items-center gap-2 font-medium text-foreground"><Route size={16} /> 使用方式</div>
-        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。入口端口池负责把连接送到家庭接入端，出口端口池决定家庭 Agent 访问公网时使用哪台 VPS。</p>
+        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。IPv6 直连会直接访问家庭公网 IPv6；公网中继会先经过入口 VPS。两种模式都会让家庭 Agent 再经指定出口 VPS 访问网站。</p>
       </div>
 
-      <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="2xl">
+      <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl">
         <ModalContent><ModalHeader>新建家庭代理</ModalHeader><ModalBody className="space-y-4">
           <Input label="代理名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
           <Select label="家庭接入端" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || '') })}>
             {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}</SelectItem>)}
           </Select>
+          <Tabs aria-label="接入方式" selectedKey={form.accessMode} onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'] })}>
+            <Tab key="ipv6_direct" title="IPv6 直连（推荐）" />
+            <Tab key="relay" title="公网中继（兼容）" />
+          </Tabs>
+          <div className="rounded-md border border-divider px-4 py-3 text-sm leading-6 text-default-500">
+            {form.accessMode === 'ipv6_direct'
+              ? '公司网络直接连接家庭公网 IPv6，不经过入口 VPS。需要公司和家庭均可使用 IPv6，并在家庭路由器及系统防火墙放行下方 TCP 端口。'
+              : '适合家庭没有公网 IPv6，或 IPv6 入站被运营商拦截的情况。连接会先到入口 VPS，再反向送回家庭设备。'}
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <Select label="公网入口端口池" description="公司电脑连接的公网地址" selectedKeys={form.ingressPoolKey ? [form.ingressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, ingressPoolKey: String(Array.from(keys)[0] || '') })}>
-              {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
-            </Select>
+            {form.accessMode === 'ipv6_direct' ? (
+              <Input label="家庭 IPv6 监听端口" description="需要在家庭路由器和系统防火墙放行 TCP" type="number" min={1024} max={65535} value={form.directPort} onValueChange={value => setForm({ ...form, directPort: value })} />
+            ) : (
+              <Select label="公网入口端口池" description="公司电脑首先连接的入口 VPS" selectedKeys={form.ingressPoolKey ? [form.ingressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, ingressPoolKey: String(Array.from(keys)[0] || '') })}>
+                {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
+              </Select>
+            )}
             <Select label="家庭出口 VPS 端口池" description="家庭 Agent 访问目标地址时使用" selectedKeys={form.egressPoolKey ? [form.egressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, egressPoolKey: String(Array.from(keys)[0] || '') })}>
               {pools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
             </Select>

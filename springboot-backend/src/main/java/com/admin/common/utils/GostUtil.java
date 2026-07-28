@@ -326,6 +326,34 @@ public class GostUtil {
         return WebSocketServer.sendConnectorMsg(connectorId, services, "AddService");
     }
 
+    /** Creates a SOCKS5 listener directly on the connector's public IPv6 address. */
+    public static GostDto AddDirectHomeProxyService(Long connectorId, String serviceName, String egressChainName,
+                                                     Integer directPort, boolean authEnabled,
+                                                     String username, String password) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", listenAddress("::", directPort));
+
+        JSONObject handler = new JSONObject();
+        handler.put("type", "socks5");
+        handler.put("chain", egressChainName);
+        if (authEnabled) {
+            JSONObject auth = new JSONObject();
+            auth.put("username", username);
+            auth.put("password", password);
+            handler.put("auth", auth);
+        }
+        service.put("handler", handler);
+
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.sendConnectorMsg(connectorId, services, "AddService");
+    }
+
     private static String listenAddress(String bindIp, Integer port) {
         String host = StringUtils.trimToEmpty(bindIp);
         if (host.contains(":") && !host.startsWith("[")) host = "[" + host + "]";
@@ -352,6 +380,20 @@ public class GostUtil {
             return ingressResult != null && "OK".equals(ingressResult.getMsg()) ? egressResult : ingressResult;
         }
         return serviceResult;
+    }
+
+    public static GostDto DeleteDirectHomeProxyService(Long connectorId, String serviceName,
+                                                        String egressChainName) {
+        JSONObject serviceData = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        serviceData.put("services", services);
+        GostDto serviceResult = WebSocketServer.sendConnectorMsg(connectorId, serviceData, "DeleteService");
+
+        JSONObject chainData = new JSONObject();
+        chainData.put("chain", egressChainName);
+        GostDto chainResult = WebSocketServer.sendConnectorMsg(connectorId, chainData, "DeleteChains");
+        return serviceResult != null && "OK".equals(serviceResult.getMsg()) ? chainResult : serviceResult;
     }
 
 

@@ -853,12 +853,16 @@ export interface HomeProxyRoute {
   userId: number;
   name: string;
   connectorId: number;
-  ingressPoolId: number;
+  accessMode: 'relay' | 'ipv6_direct';
+  ingressPoolId?: number;
   egressPoolId: number;
   leaseId?: number;
   publicPort?: number;
   egressLeaseId?: number;
   egressGatewayPort?: number;
+  directIpv6?: string;
+  directPort?: number;
+  ipv6CheckedAt?: number;
   proxyType: 'socks5';
   authEnabled: number;
   authUsername?: string;
@@ -874,11 +878,15 @@ export interface HomeProxyRoute {
 }
 
 export const createHomeProxyRoute = (data: {
-  name: string; connectorId: number; ingressPoolId: number; ingressGrantId?: number;
+  name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct';
+  ingressPoolId?: number; ingressGrantId?: number;
   egressPoolId: number; egressGrantId?: number;
+  directPort?: number;
   authEnabled?: boolean; authUsername?: string; authPassword?: string;
 }) => Network.post<HomeProxyRoute>("/service-publishing/home-proxy/create", data);
 export const getHomeProxyRoutes = () => Network.post<HomeProxyRoute[]>("/service-publishing/home-proxy/list");
+export const refreshHomeProxyIpv6 = (id: number) =>
+  Network.post<{ address: string; checkedAt: number }>("/service-publishing/home-proxy/refresh-ipv6", { id });
 export const deleteHomeProxyRoute = (id: number) => Network.post("/service-publishing/home-proxy/delete", { id });
 
 

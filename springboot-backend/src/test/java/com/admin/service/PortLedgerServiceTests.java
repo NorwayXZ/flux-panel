@@ -4,7 +4,9 @@ import com.admin.common.dto.PortLedgerEntryDto;
 import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.entity.Forward;
 import com.admin.entity.DomainRoute;
+import com.admin.entity.HomeProxyRoute;
 import com.admin.entity.Node;
+import com.admin.entity.PortPool;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
@@ -126,6 +128,56 @@ class PortLedgerServiceTests {
         assertEquals(443, entries.get(0).getPortStart());
         assertTrue(entries.get(0).getDetail().contains("a.example.com"));
         assertTrue(entries.get(0).getDetail().contains("b.example.com"));
+    }
+
+    @Test
+    void keepsIpv6DirectHomeProxyEgressInLedgerWithoutIngressPool() {
+        Node egressNode = node(8L, "出口 VPS", "203.0.113.8");
+        PortPool egressPool = new PortPool();
+        egressPool.setId(30L);
+        egressPool.setName("出口端口池");
+        egressPool.setNodeId(egressNode.getId());
+        egressPool.setStartPort(20000);
+        egressPool.setEndPort(20999);
+        egressPool.setControlPort(21000);
+        egressPool.setCreatedTime(1000L);
+
+        HomeProxyRoute route = new HomeProxyRoute();
+        route.setId(40L);
+        route.setUserId(7);
+        route.setName("家庭 IPv6 直连");
+        route.setAccessMode("ipv6_direct");
+        route.setIngressPoolId(null);
+        route.setEgressPoolId(egressPool.getId());
+        route.setDirectPort(23888);
+        route.setPublicPort(23888);
+        route.setEgressGatewayPort(20001);
+        route.setProxyType("socks5");
+        route.setState("active");
+        route.setCreatedTime(2000L);
+
+        when(nodeMapper.selectList(null)).thenReturn(List.of(egressNode));
+        when(tunnelMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(userMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(poolMapper.selectList(any())).thenReturn(List.of(egressPool));
+        when(serviceMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(forwardMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(domainRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(homeProxyRouteMapper.selectList(any())).thenReturn(List.of(route));
+
+        Map<String, Object> result = service.list(new PortLedgerQueryDto());
+        @SuppressWarnings("unchecked")
+        List<PortLedgerEntryDto> entries = (List<PortLedgerEntryDto>) result.get("entries");
+        List<PortLedgerEntryDto> homeProxyEntries = entries.stream()
+                .filter(item -> "home_proxy".equals(item.getType())).toList();
+
+        assertEquals(1, homeProxyEntries.size());
+        assertEquals(20001, homeProxyEntries.get(0).getPortStart());
+        assertTrue(homeProxyEntries.get(0).getDetail().contains("出口网关"));
+        assertTrue(entries.stream().noneMatch(item -> item.getPortStart() == 23888));
     }
 
     private DomainRoute domainRoute(Long id, Integer userId, String domain) {

@@ -40,6 +40,11 @@ public class ServicePublishingController {
         return homeProxyService.list();
     }
 
+    @LogAnnotation @PostMapping("/home-proxy/refresh-ipv6")
+    public R refreshHomeProxyIpv6(@RequestBody Map<String, Object> params) {
+        return homeProxyService.refreshIpv6(Long.valueOf(params.get("id").toString()));
+    }
+
     @LogAnnotation @PostMapping("/home-proxy/delete")
     public R deleteHomeProxy(@RequestBody Map<String, Object> params) {
         return homeProxyService.delete(Long.valueOf(params.get("id").toString()));

@@ -75,9 +75,10 @@ public class ServicePublishingSchemaInitializer {
             jdbcTemplate.update("INSERT IGNORE INTO service_publish_lock (id) VALUES (1)");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_route ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
-                    + "connector_id bigint NOT NULL, ingress_pool_id bigint NOT NULL, egress_pool_id bigint NOT NULL, "
+                    + "connector_id bigint NOT NULL, access_mode varchar(24) NOT NULL DEFAULT 'relay', ingress_pool_id bigint DEFAULT NULL, egress_pool_id bigint NOT NULL, "
                     + "lease_id bigint DEFAULT NULL, public_port int DEFAULT NULL, egress_lease_id bigint DEFAULT NULL, "
-                    + "egress_gateway_port int DEFAULT NULL, proxy_type varchar(16) NOT NULL DEFAULT 'socks5', "
+                    + "egress_gateway_port int DEFAULT NULL, direct_ipv6 varchar(64) DEFAULT NULL, direct_port int DEFAULT NULL, "
+                    + "ipv6_checked_at bigint DEFAULT NULL, proxy_type varchar(16) NOT NULL DEFAULT 'socks5', "
                     + "auth_enabled tinyint NOT NULL DEFAULT 0, auth_username varchar(64) DEFAULT NULL, auth_password varchar(128) DEFAULT NULL, "
                     + "state varchar(24) NOT NULL DEFAULT 'provisioning', last_error varchar(500) DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
@@ -86,6 +87,11 @@ public class ServicePublishingSchemaInitializer {
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("home_proxy_route", "egress_lease_id", "bigint DEFAULT NULL AFTER public_port");
             ensureColumn("home_proxy_route", "egress_gateway_port", "int DEFAULT NULL AFTER egress_lease_id");
+            ensureColumn("home_proxy_route", "access_mode", "varchar(24) NOT NULL DEFAULT 'relay' AFTER connector_id");
+            ensureColumn("home_proxy_route", "direct_ipv6", "varchar(64) DEFAULT NULL AFTER egress_gateway_port");
+            ensureColumn("home_proxy_route", "direct_port", "int DEFAULT NULL AFTER direct_ipv6");
+            ensureColumn("home_proxy_route", "ipv6_checked_at", "bigint DEFAULT NULL AFTER direct_port");
+            ensureNullableColumn("home_proxy_route", "ingress_pool_id", "bigint DEFAULT NULL");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
@@ -106,6 +112,15 @@ public class ServicePublishingSchemaInitializer {
                 Integer.class, table, column);
         if (count == null || count == 0) {
             jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
+        }
+    }
+
+    private void ensureNullableColumn(String table, String column, String definition) {
+        String nullable = jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                String.class, table, column);
+        if (!"YES".equalsIgnoreCase(nullable)) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` MODIFY COLUMN `" + column + "` " + definition);
         }
     }
 

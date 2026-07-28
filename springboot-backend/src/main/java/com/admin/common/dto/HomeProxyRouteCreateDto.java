@@ -13,12 +13,13 @@ public class HomeProxyRouteCreateDto {
     private String name;
     @NotNull(message = "请选择家庭接入端")
     private Long connectorId;
-    @NotNull(message = "请选择公网入口端口池")
+    private String accessMode;
     private Long ingressPoolId;
     private Long ingressGrantId;
     @NotNull(message = "请选择家庭出口 VPS 端口池")
     private Long egressPoolId;
     private Long egressGrantId;
+    private Integer directPort;
     private Boolean authEnabled;
     @Size(max = 64, message = "代理用户名不能超过64个字符")
     private String authUsername;

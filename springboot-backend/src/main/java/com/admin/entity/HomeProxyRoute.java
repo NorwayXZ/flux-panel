@@ -14,12 +14,16 @@ public class HomeProxyRoute implements Serializable {
     private Integer userId;
     private String name;
     private Long connectorId;
+    private String accessMode;
     private Long ingressPoolId;
     private Long egressPoolId;
     private Long leaseId;
     private Integer publicPort;
     private Long egressLeaseId;
     private Integer egressGatewayPort;
+    private String directIpv6;
+    private Integer directPort;
+    private Long ipv6CheckedAt;
     private String proxyType;
     private Integer authEnabled;
     private String authUsername;
