@@ -1,3 +1,9 @@
+## 2.22.2 DNS credential autofill protection
+
+- Prevents browser password managers from treating DNS configuration fields as panel login username/password fields.
+- Gives Cloudflare, DNSPod, and Aliyun credential inputs distinct field names and marks secrets as new credentials in both DNS settings surfaces.
+- Adds no schema, Agent, port, container, or DNS behavior changes. Roll back to `2.22.1` with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.22.1 unified DNS provider settings
 
 - Adds DNSPod and Aliyun DNS credential management directly to **DNS 与域名**, alongside the existing Cloudflare account and Zone management.

@@ -241,8 +241,8 @@ export default function DnsSettingsPage() {
         <ModalContent>
           <ModalHeader>{form.id ? '编辑 Cloudflare 配置' : '添加 Cloudflare 配置'}</ModalHeader>
           <ModalBody className="gap-4">
-            <Input label="配置名称" placeholder="例如：主域名账号" value={form.name} onValueChange={name => setForm({ ...form, name })} />
-            <Input type="password" autoComplete="new-password" label={form.id ? 'Cloudflare API Token（留空保持不变）' : 'Cloudflare API Token'} value={form.apiToken} onValueChange={apiToken => setForm({ ...form, apiToken })} />
+            <Input name="cloudflare-config-name" autoComplete="off" label="配置名称" placeholder="例如：主域名账号" value={form.name} onValueChange={name => setForm({ ...form, name })} />
+            <Input name="cloudflare-api-token" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" label={form.id ? 'Cloudflare API Token（留空保持不变）' : 'Cloudflare API Token'} value={form.apiToken} onValueChange={apiToken => setForm({ ...form, apiToken })} />
             <div className="border-y border-divider py-3 text-xs leading-5 text-default-500">Token 需要 Zone Read 与 DNS Edit 权限。保存时会验证 Token，并自动读取其授权范围内的 Zone。</div>
             <Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用该配置</Switch>
           </ModalBody>
@@ -254,9 +254,9 @@ export default function DnsSettingsPage() {
         <ModalContent>
           <ModalHeader>{carrierForm.id ? '编辑线路 DNS 配置' : '添加线路 DNS 配置'}</ModalHeader>
           <ModalBody className="gap-4">
-            <div className="grid gap-4 sm:grid-cols-2"><Input label="配置名称" placeholder="例如：主域名线路解析" value={carrierForm.name} onValueChange={name => setCarrierForm({ ...carrierForm, name })} /><Select label="DNS 服务商" selectedKeys={[carrierForm.provider]} onSelectionChange={keys => setCarrierForm({ ...carrierForm, provider: String(Array.from(keys)[0] || 'dnspod') as 'dnspod' | 'aliyun' })}><SelectItem key="dnspod">DNSPod</SelectItem><SelectItem key="aliyun">阿里云 DNS</SelectItem></Select></div>
-            <Input type="password" autoComplete="off" label={carrierForm.provider === 'dnspod' ? '腾讯云 SecretId' : '阿里云 AccessKey ID'} placeholder={carrierForm.id ? '已保存，留空保持不变' : ''} value={carrierForm.credentialA} onValueChange={credentialA => setCarrierForm({ ...carrierForm, credentialA })} />
-            <Input type="password" autoComplete="off" label={carrierForm.provider === 'dnspod' ? '腾讯云 SecretKey' : '阿里云 AccessKey Secret'} placeholder={carrierForm.id ? '已保存，留空保持不变' : ''} value={carrierForm.credentialB} onValueChange={credentialB => setCarrierForm({ ...carrierForm, credentialB })} />
+            <div className="grid gap-4 sm:grid-cols-2"><Input name="carrier-dns-config-name" autoComplete="off" label="配置名称" placeholder="例如：主域名线路解析" value={carrierForm.name} onValueChange={name => setCarrierForm({ ...carrierForm, name })} /><Select label="DNS 服务商" selectedKeys={[carrierForm.provider]} onSelectionChange={keys => setCarrierForm({ ...carrierForm, provider: String(Array.from(keys)[0] || 'dnspod') as 'dnspod' | 'aliyun' })}><SelectItem key="dnspod">DNSPod</SelectItem><SelectItem key="aliyun">阿里云 DNS</SelectItem></Select></div>
+            <Input name="carrier-dns-credential-id" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" label={carrierForm.provider === 'dnspod' ? '腾讯云 SecretId' : '阿里云 AccessKey ID'} placeholder={carrierForm.id ? '已保存，留空保持不变' : ''} value={carrierForm.credentialA} onValueChange={credentialA => setCarrierForm({ ...carrierForm, credentialA })} />
+            <Input name="carrier-dns-credential-secret" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" label={carrierForm.provider === 'dnspod' ? '腾讯云 SecretKey' : '阿里云 AccessKey Secret'} placeholder={carrierForm.id ? '已保存，留空保持不变' : ''} value={carrierForm.credentialB} onValueChange={credentialB => setCarrierForm({ ...carrierForm, credentialB })} />
             <div className="border-y border-divider py-3 text-xs leading-5 text-default-500">密钥需要对应域名的 DNS 记录读取和修改权限，保存后仅以加密形式存储。</div>
             <Switch isSelected={carrierForm.enabled} onValueChange={enabled => setCarrierForm({ ...carrierForm, enabled })}>启用该配置</Switch>
           </ModalBody>
