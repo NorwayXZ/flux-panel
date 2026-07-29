@@ -94,7 +94,8 @@ export interface DynamicDnsProviderOption {
   enabled: boolean; zoneRefId?: number; zoneName?: string; lastError?: string; credentialConfigured?: boolean;
 }
 export interface DynamicDnsRule {
-  id: number; name: string; nodeId: number; nodeName: string; nodeVersion?: string; nodeOnline: boolean;
+  id: number; name: string; sourceType: 'node' | 'connector'; nodeId?: number; nodeName?: string; nodeVersion?: string; nodeOnline?: boolean;
+  connectorId?: number; connectorName?: string; connectorVersion?: string; connectorOnline?: boolean;
   providerSource: 'dns' | 'dynamic'; providerRefId: number; provider: DynamicDnsProviderType; providerAccountName?: string;
   zoneRefId?: number; zoneName: string; recordName: string; recordType: 'A' | 'AAAA'; ttl: number;
   checkIntervalSeconds: number; enabled: boolean; lastDetectedIp?: string; lastAppliedIp?: string;
@@ -877,7 +878,7 @@ export interface HomeProxyRoute {
   userId: number;
   name: string;
   connectorId: number;
-  accessMode: 'relay' | 'ipv6_direct';
+  accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number;
   egressPoolId: number;
   leaseId?: number;
@@ -885,8 +886,12 @@ export interface HomeProxyRoute {
   egressLeaseId?: number;
   egressGatewayPort?: number;
   directIpv6?: string;
+  directIpv4?: string;
   directPort?: number;
   ipv6CheckedAt?: number;
+  ipCheckedAt?: number;
+  dynamicDnsRuleId?: number;
+  publicDomain?: string;
   proxyType: 'socks5';
   authEnabled: number;
   authUsername?: string;
@@ -902,15 +907,15 @@ export interface HomeProxyRoute {
 }
 
 export const createHomeProxyRoute = (data: {
-  name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct';
+  name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number; ingressGrantId?: number;
   egressPoolId: number; egressGrantId?: number;
-  directPort?: number;
+  directPort?: number; dynamicDnsRuleId?: number;
   authEnabled?: boolean; authUsername?: string; authPassword?: string;
 }) => Network.post<HomeProxyRoute>("/service-publishing/home-proxy/create", data);
 export const getHomeProxyRoutes = () => Network.post<HomeProxyRoute[]>("/service-publishing/home-proxy/list");
 export const refreshHomeProxyIpv6 = (id: number) =>
-  Network.post<{ address: string; checkedAt: number }>("/service-publishing/home-proxy/refresh-ipv6", { id });
+  Network.post<{ address: string; checkedAt: number; family?: 'ipv4' | 'ipv6' }>("/service-publishing/home-proxy/refresh-ipv6", { id });
 export const deleteHomeProxyRoute = (id: number) => Network.post("/service-publishing/home-proxy/delete", { id });
 
 

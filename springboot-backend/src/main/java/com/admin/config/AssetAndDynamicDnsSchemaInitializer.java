@@ -38,7 +38,8 @@ public class AssetAndDynamicDnsSchemaInitializer {
                     + "PRIMARY KEY(id),UNIQUE KEY uk_dynamic_dns_provider(provider,name)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS dynamic_dns_rule ("
-                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,name varchar(100) NOT NULL,node_id bigint NOT NULL,"
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,name varchar(100) NOT NULL,source_type varchar(16) NOT NULL DEFAULT 'node',"
+                    + "node_id bigint DEFAULT NULL,connector_id bigint DEFAULT NULL,"
                     + "provider_source varchar(16) NOT NULL DEFAULT 'dynamic',provider_ref_id bigint NOT NULL,provider varchar(24) NOT NULL,"
                     + "zone_ref_id bigint DEFAULT NULL,zone_name varchar(253) NOT NULL,record_name varchar(253) NOT NULL,"
                     + "record_type varchar(8) NOT NULL,ttl int NOT NULL DEFAULT 600,check_interval_seconds int NOT NULL DEFAULT 60,"
@@ -48,6 +49,10 @@ public class AssetAndDynamicDnsSchemaInitializer {
                     + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY(id),"
                     + "UNIQUE KEY uk_dynamic_dns_record(provider,zone_name,record_name,record_type),KEY idx_dynamic_dns_due(enabled,last_checked_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureColumn("dynamic_dns_rule", "source_type", "varchar(16) NOT NULL DEFAULT 'node' AFTER name");
+            ensureColumn("dynamic_dns_rule", "connector_id", "bigint DEFAULT NULL AFTER node_id");
+            ensureNullableColumn("dynamic_dns_rule", "node_id", "bigint DEFAULT NULL");
+            ensureIndex("dynamic_dns_rule", "idx_dynamic_dns_source", "source_type,node_id,connector_id");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS dynamic_dns_history ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,rule_id bigint NOT NULL,old_ip varchar(128) DEFAULT NULL,"
                     + "new_ip varchar(128) DEFAULT NULL,status varchar(24) NOT NULL,error varchar(500) DEFAULT NULL,created_time bigint NOT NULL,"
@@ -55,6 +60,33 @@ public class AssetAndDynamicDnsSchemaInitializer {
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         } catch (DataAccessException e) {
             log.error("Asset and dynamic DNS storage initialization failed", e);
+        }
+    }
+
+    private void ensureColumn(String table, String column, String definition) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                Integer.class, table, column);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
+        }
+    }
+
+    private void ensureNullableColumn(String table, String column, String definition) {
+        String nullable = jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+                String.class, table, column);
+        if (!"YES".equalsIgnoreCase(nullable)) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` MODIFY COLUMN `" + column + "` " + definition);
+        }
+    }
+
+    private void ensureIndex(String table, String index, String columns) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+                Integer.class, table, index);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD KEY `" + index + "` (" + columns + ")");
         }
     }
 }

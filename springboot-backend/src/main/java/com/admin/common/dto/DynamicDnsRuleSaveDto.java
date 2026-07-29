@@ -6,7 +6,9 @@ import lombok.Data;
 public class DynamicDnsRuleSaveDto {
     private Long id;
     private String name;
+    private String sourceType;
     private Long nodeId;
+    private Long connectorId;
     private String providerSource;
     private Long providerRefId;
     private String provider;

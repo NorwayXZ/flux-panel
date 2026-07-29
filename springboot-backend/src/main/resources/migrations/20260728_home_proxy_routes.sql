@@ -11,8 +11,12 @@ CREATE TABLE IF NOT EXISTS home_proxy_route (
   egress_lease_id bigint DEFAULT NULL,
   egress_gateway_port int DEFAULT NULL,
   direct_ipv6 varchar(64) DEFAULT NULL,
+  direct_ipv4 varchar(64) DEFAULT NULL,
   direct_port int DEFAULT NULL,
   ipv6_checked_at bigint DEFAULT NULL,
+  ip_checked_at bigint DEFAULT NULL,
+  dynamic_dns_rule_id bigint DEFAULT NULL,
+  public_domain varchar(253) DEFAULT NULL,
   proxy_type varchar(16) NOT NULL DEFAULT 'socks5',
   auth_enabled tinyint NOT NULL DEFAULT 0,
   auth_username varchar(64) DEFAULT NULL,
@@ -25,5 +29,6 @@ CREATE TABLE IF NOT EXISTS home_proxy_route (
   KEY idx_home_proxy_user (user_id, state),
   KEY idx_home_proxy_connector (connector_id, state),
   KEY idx_home_proxy_lease (lease_id),
-  KEY idx_home_proxy_egress_lease (egress_lease_id)
+  KEY idx_home_proxy_egress_lease (egress_lease_id),
+  KEY idx_home_proxy_ddns (dynamic_dns_rule_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

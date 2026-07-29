@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS dynamic_dns_provider (
 CREATE TABLE IF NOT EXISTS dynamic_dns_rule (
   id bigint unsigned NOT NULL AUTO_INCREMENT,
   name varchar(100) NOT NULL,
-  node_id bigint NOT NULL,
+  source_type varchar(16) NOT NULL DEFAULT 'node',
+  node_id bigint DEFAULT NULL,
+  connector_id bigint DEFAULT NULL,
   provider_source varchar(16) NOT NULL DEFAULT 'dynamic',
   provider_ref_id bigint NOT NULL,
   provider varchar(24) NOT NULL,
@@ -68,6 +70,7 @@ CREATE TABLE IF NOT EXISTS dynamic_dns_rule (
   updated_time bigint NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_dynamic_dns_record (provider,zone_name,record_name,record_type),
+  KEY idx_dynamic_dns_source (source_type,node_id,connector_id),
   KEY idx_dynamic_dns_due (enabled,last_checked_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

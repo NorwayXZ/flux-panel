@@ -20,6 +20,7 @@ public class HomeProxyRouteCreateDto {
     private Long egressPoolId;
     private Long egressGrantId;
     private Integer directPort;
+    private Long dynamicDnsRuleId;
     private Boolean authEnabled;
     @Size(max = 64, message = "代理用户名不能超过64个字符")
     private String authUsername;

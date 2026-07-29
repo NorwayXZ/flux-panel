@@ -22,8 +22,12 @@ public class HomeProxyRoute implements Serializable {
     private Long egressLeaseId;
     private Integer egressGatewayPort;
     private String directIpv6;
+    private String directIpv4;
     private Integer directPort;
     private Long ipv6CheckedAt;
+    private Long ipCheckedAt;
+    private Long dynamicDnsRuleId;
+    private String publicDomain;
     private String proxyType;
     private Integer authEnabled;
     private String authUsername;

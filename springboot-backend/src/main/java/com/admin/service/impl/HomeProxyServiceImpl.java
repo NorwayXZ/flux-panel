@@ -22,6 +22,7 @@ import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseMapper;
 import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.UserMapper;
+import com.admin.service.DynamicDnsService;
 import com.admin.service.HomeProxyService;
 import com.admin.service.PortPoolGrantService;
 import com.alibaba.fastjson.JSONObject;
@@ -34,6 +35,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.security.SecureRandom;
@@ -59,6 +61,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     @Resource private NodeMapper nodeMapper;
     @Resource private UserMapper userMapper;
     @Resource private PortPoolGrantService grantService;
+    @Resource private DynamicDnsService dynamicDnsService;
     @Resource private JdbcTemplate jdbcTemplate;
     @Value("${jwt-secret}") private String encryptionSecret;
 
@@ -82,8 +85,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         } catch (IllegalArgumentException error) {
             return R.err(error.getMessage());
         }
-        if ("ipv6_direct".equals(accessMode)) {
-            return createDirectIpv6(dto, connector, userId);
+        if ("ipv6_direct".equals(accessMode) || "ipv4_direct".equals(accessMode)) {
+            return createDirect(dto, connector, userId, accessMode);
         }
         if (dto.getIngressPoolId() == null) return R.err("请选择公网入口端口池");
 
@@ -230,27 +233,38 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return R.ok(enrich(route, true));
     }
 
-    private R createDirectIpv6(HomeProxyRouteCreateDto dto, InternalConnector connector, Integer userId) {
+    private R createDirect(HomeProxyRouteCreateDto dto, InternalConnector connector, Integer userId, String accessMode) {
+        boolean ipv6 = "ipv6_direct".equals(accessMode);
+        String family = ipv6 ? "ipv6" : "ipv4";
+        String familyLabel = ipv6 ? "IPv6" : "IPv4";
         if (!AgentVersionUtil.isAtLeast(connector.getVersion(), MIN_DIRECT_AGENT_VERSION)) {
-            return R.err("IPv6 直连要求家庭 Agent " + MIN_DIRECT_AGENT_VERSION + " 或更高版本");
+            return R.err(familyLabel + " 直连要求家庭 Agent " + MIN_DIRECT_AGENT_VERSION + " 或更高版本");
         }
         Integer directPort = dto.getDirectPort();
         if (directPort == null || directPort < 1024 || directPort > 65535) {
-            return R.err("家庭 IPv6 直连端口必须在 1024-65535 之间");
+            return R.err("家庭 " + familyLabel + " 直连端口必须在 1024-65535 之间");
         }
         Integer duplicate = routeMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
-                .eq("connector_id", connector.getId()).eq("access_mode", "ipv6_direct")
+                .eq("connector_id", connector.getId()).eq("access_mode", accessMode)
                 .eq("direct_port", directPort).notIn("state", "deleted"));
         if (duplicate != null && duplicate > 0) return R.err("该家庭设备的直连端口已被其他代理使用");
 
-        String directIpv6;
+        String directAddress;
         try {
-            directIpv6 = queryConnectorIpv6(connector.getId());
+            directAddress = queryConnectorPublicIp(connector.getId(), family);
         } catch (RuntimeException error) {
             return R.err(error.getMessage());
         }
-        String portError = checkConnectorPort(connector.getId(), directPort);
+        String portError = checkConnectorPort(connector.getId(), ipv6 ? "::" : "0.0.0.0", directPort, familyLabel);
         if (portError != null) return R.err(portError);
+        Map<String, Object> dynamicDnsRule = null;
+        if (dto.getDynamicDnsRuleId() != null) {
+            try {
+                dynamicDnsRule = validateDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
+            } catch (RuntimeException error) {
+                return R.err(error.getMessage());
+            }
+        }
 
         PortPool egress = accessiblePool(dto.getEgressPoolId(), userId);
         if (egress == null) return R.err("家庭出口 VPS 端口池不存在、已停用或无权使用");
@@ -285,13 +299,17 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setUserId(userId);
         route.setName(dto.getName().trim());
         route.setConnectorId(connector.getId());
-        route.setAccessMode("ipv6_direct");
+        route.setAccessMode(accessMode);
         route.setIngressPoolId(null);
         route.setEgressPoolId(egress.getId());
         route.setPublicPort(directPort);
-        route.setDirectIpv6(directIpv6);
+        route.setDirectIpv6(ipv6 ? directAddress : null);
+        route.setDirectIpv4(ipv6 ? null : directAddress);
         route.setDirectPort(directPort);
-        route.setIpv6CheckedAt(now);
+        route.setIpv6CheckedAt(ipv6 ? now : null);
+        route.setIpCheckedAt(now);
+        route.setDynamicDnsRuleId(dynamicDnsRule == null ? null : number(dynamicDnsRule.get("id")));
+        route.setPublicDomain(dynamicDnsRule == null ? null : Objects.toString(dynamicDnsRule.get("record_name"), null));
         route.setProxyType("socks5");
         route.setAuthEnabled(authEnabled ? 1 : 0);
         route.setAuthUsername(authUsername);
@@ -332,26 +350,29 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             return failDirectProvision(route, egressLease, "创建家庭出口链失败：" + message(egressResult));
         }
         GostDto serviceResult = GostUtil.AddDirectHomeProxyService(connector.getId(), base + "_service",
-                egressChain, directPort, authEnabled, authUsername, authPassword);
+                egressChain, ipv6 ? "::" : "0.0.0.0", directPort, authEnabled, authUsername, authPassword);
         if (!ok(serviceResult)) {
             safeDeleteChains(connector.getId(), egressChain);
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
-            return failDirectProvision(route, egressLease, "创建家庭 IPv6 SOCKS5 服务失败：" + message(serviceResult));
+            return failDirectProvision(route, egressLease, "创建家庭 " + familyLabel + " SOCKS5 服务失败：" + message(serviceResult));
         }
-        EndpointProbeResult probe = waitForIpv6Endpoint(egressNode, directIpv6, directPort);
+        EndpointProbeResult probe = ipv6
+                ? waitForIpv6Endpoint(egressNode, directAddress, directPort)
+                : waitForEndpoint(egressNode, directAddress, directPort);
         if (probe.status == EndpointProbeStatus.UNREACHABLE) {
             GostUtil.DeleteDirectHomeProxyService(connector.getId(), base + "_service", egressChain);
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failDirectProvision(route, egressLease,
-                    directIpv6FailureMessage(directPort, probe.detail));
+                    directFailureMessage(familyLabel, directPort, probe.detail));
         }
 
         route.setState("active");
-        route.setLastError(probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
+        route.setLastError(ipv6 && probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
                 ? ipv6UnverifiedMessage(egressNode, directPort) : null);
         route.setUpdatedTime(System.currentTimeMillis());
         routeMapper.updateById(route);
         markLeaseActive(egressLease);
+        syncDynamicDnsIfBound(route);
         return R.ok(enrich(route, true));
     }
 
@@ -370,10 +391,11 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     public R refreshIpv6(Long id) {
         HomeProxyRoute route = ownedRoute(id);
         if (route == null) return R.err("家庭代理不存在或无权访问");
-        if (!"ipv6_direct".equals(route.getAccessMode())) return R.err("该代理不是 IPv6 直连模式");
+        if (!isDirectMode(route.getAccessMode())) return R.err("该代理不是公网直连模式");
         try {
-            String address = refreshDirectIpv6(route);
-            return R.ok(Map.of("address", address, "checkedAt", route.getIpv6CheckedAt()));
+            String address = refreshDirectAddress(route);
+            return R.ok(Map.of("address", address, "checkedAt", route.getIpCheckedAt() == null ? route.getIpv6CheckedAt() : route.getIpCheckedAt(),
+                    "family", "ipv6_direct".equals(route.getAccessMode()) ? "ipv6" : "ipv4"));
         } catch (RuntimeException error) {
             return R.err(error.getMessage());
         }
@@ -451,18 +473,18 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     public void refreshDirectIpv6Addresses() {
         long cutoff = System.currentTimeMillis() - IPV6_REFRESH_INTERVAL_MS;
         List<HomeProxyRoute> routes = routeMapper.selectList(new QueryWrapper<HomeProxyRoute>()
-                .eq("access_mode", "ipv6_direct").eq("state", "active")
-                .and(query -> query.isNull("ipv6_checked_at").or().lt("ipv6_checked_at", cutoff))
-                .orderByAsc("ipv6_checked_at").last("LIMIT 20"));
+                .in("access_mode", List.of("ipv6_direct", "ipv4_direct")).eq("state", "active")
+                .and(query -> query.isNull("ip_checked_at").or().lt("ip_checked_at", cutoff))
+                .orderByAsc("ip_checked_at").last("LIMIT 20"));
         HomeProxyRoute route = routes.stream()
                 .filter(item -> WebSocketServer.isConnectorOnline(item.getConnectorId()))
                 .findFirst().orElse(null);
         if (route == null) return;
         try {
-            refreshDirectIpv6(route);
+            refreshDirectAddress(route);
         } catch (RuntimeException error) {
-            route.setIpv6CheckedAt(System.currentTimeMillis());
-            route.setLastError(StringUtils.abbreviate("IPv6 自动检测失败：" + error.getMessage(), 500));
+            route.setIpCheckedAt(System.currentTimeMillis());
+            route.setLastError(StringUtils.abbreviate("公网地址自动检测失败：" + error.getMessage(), 500));
             route.setUpdatedTime(System.currentTimeMillis());
             routeMapper.updateById(route);
         }
@@ -559,11 +581,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         route.setConnectorName(connector == null ? "接入端已删除" : connector.getName());
         route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
-        route.setIngressPoolName("ipv6_direct".equals(route.getAccessMode())
-                ? "家庭 IPv6 直连" : ingress == null ? "入口端口池已删除" : ingress.getName());
+        route.setIngressPoolName(isDirectMode(route.getAccessMode())
+                ? ("ipv4_direct".equals(route.getAccessMode()) ? "家庭 IPv4 直连" : "家庭 IPv6 直连")
+                : ingress == null ? "入口端口池已删除" : ingress.getName());
         route.setEgressPoolName(egress == null ? "出口端口池已删除" : egress.getName());
-        route.setPublicHost("ipv6_direct".equals(route.getAccessMode())
-                ? route.getDirectIpv6() : ingress == null ? null : ingress.getPublicHost());
+        route.setPublicHost(isDirectMode(route.getAccessMode())
+                ? StringUtils.defaultIfBlank(route.getPublicDomain(),
+                "ipv4_direct".equals(route.getAccessMode()) ? route.getDirectIpv4() : route.getDirectIpv6())
+                : ingress == null ? null : ingress.getPublicHost());
         if (!includeSecret || !Objects.equals(route.getAuthEnabled(), 1)) {
             route.setAuthPassword(null);
         } else {
@@ -574,10 +599,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
     private String normalizeAccessMode(String value) {
         String mode = StringUtils.defaultIfBlank(value, "relay").trim().toLowerCase();
-        if (!List.of("relay", "ipv6_direct").contains(mode)) {
+        if (!List.of("relay", "ipv6_direct", "ipv4_direct").contains(mode)) {
             throw new IllegalArgumentException("家庭接入方式不受支持");
         }
         return mode;
+    }
+
+    private boolean isDirectMode(String accessMode) {
+        return "ipv6_direct".equals(accessMode) || "ipv4_direct".equals(accessMode);
     }
 
     private HomeProxyRoute ownedRoute(Long id) {
@@ -586,11 +615,11 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return route;
     }
 
-    private String queryConnectorIpv6(Long connectorId) {
+    private String queryConnectorPublicIp(Long connectorId, String family) {
         GostDto response = WebSocketServer.sendConnectorMsg(connectorId,
-                Map.of("family", "ipv6"), "PublicIpQuery");
+                Map.of("family", family), "PublicIpQuery");
         if (!ok(response) || response.getData() == null) {
-            throw new IllegalStateException("家庭 Agent 未检测到可用公网 IPv6：" + message(response));
+            throw new IllegalStateException("家庭 Agent 未检测到可用公网 " + familyLabel(family) + "：" + message(response));
         }
         JSONObject data = response.getData() instanceof JSONObject
                 ? (JSONObject) response.getData()
@@ -598,6 +627,12 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         String address = StringUtils.trimToEmpty(data.getString("address"));
         try {
             InetAddress parsed = InetAddress.getByName(address);
+            if ("ipv4".equals(family)) {
+                if (!(parsed instanceof Inet4Address) || !isPublicIpv4((Inet4Address) parsed)) {
+                    throw new IllegalArgumentException();
+                }
+                return parsed.getHostAddress();
+            }
             String lower = address.toLowerCase();
             if (!(parsed instanceof Inet6Address) || parsed.isAnyLocalAddress() || parsed.isLoopbackAddress()
                     || parsed.isLinkLocalAddress() || parsed.isSiteLocalAddress() || parsed.isMulticastAddress()
@@ -606,14 +641,25 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             }
             return parsed.getHostAddress();
         } catch (Exception error) {
-            throw new IllegalStateException("家庭 Agent 返回的不是公网 IPv6 地址");
+            throw new IllegalStateException("家庭 Agent 返回的不是公网 " + familyLabel(family) + " 地址");
         }
     }
 
-    private String checkConnectorPort(Long connectorId, int port) {
+    private boolean isPublicIpv4(Inet4Address address) {
+        byte[] bytes = address.getAddress();
+        int first = bytes[0] & 0xff;
+        int second = bytes[1] & 0xff;
+        if (first == 0 || first == 10 || first == 127 || first >= 224) return false;
+        if (first == 100 && second >= 64 && second <= 127) return false;
+        if (first == 169 && second == 254) return false;
+        if (first == 172 && second >= 16 && second <= 31) return false;
+        return first != 192 || second != 168;
+    }
+
+    private String checkConnectorPort(Long connectorId, String host, int port, String familyLabel) {
         JSONObject check = new JSONObject();
         check.put("network", "tcp");
-        check.put("host", "::");
+        check.put("host", host);
         check.put("port", port);
         com.alibaba.fastjson.JSONArray checks = new com.alibaba.fastjson.JSONArray();
         checks.add(check);
@@ -635,38 +681,48 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 || StringUtils.containsIgnoreCase(detail, "only one usage")) {
             return "家庭设备 TCP " + port + " 已被其他程序占用";
         }
-        return "家庭设备无法监听 IPv6 TCP " + port + "：" + StringUtils.defaultIfBlank(detail, "Agent 未返回原因");
+        return "家庭设备无法监听 " + familyLabel + " TCP " + port + "：" + StringUtils.defaultIfBlank(detail, "Agent 未返回原因");
     }
 
-    private String refreshDirectIpv6(HomeProxyRoute route) {
+    private String refreshDirectAddress(HomeProxyRoute route) {
         if (!WebSocketServer.isConnectorOnline(route.getConnectorId())) throw new IllegalStateException("家庭接入端离线");
-        String address = queryConnectorIpv6(route.getConnectorId());
+        boolean ipv6 = "ipv6_direct".equals(route.getAccessMode());
+        String family = ipv6 ? "ipv6" : "ipv4";
+        String address = queryConnectorPublicIp(route.getConnectorId(), family);
         PortPool egressPool = poolMapper.selectById(route.getEgressPoolId());
         Node egressNode = egressPool == null ? null : nodeMapper.selectById(egressPool.getNodeId());
         if (egressNode == null || !WebSocketServer.isNodeOnline(egressNode.getId())) {
-            throw new IllegalStateException("家庭出口 VPS 离线，无法验证新的 IPv6 地址");
+            throw new IllegalStateException("家庭出口 VPS 离线，无法验证新的公网地址");
         }
         if (route.getDirectPort() == null) {
-            throw new IllegalStateException("家庭 IPv6 直连端口缺失");
+            throw new IllegalStateException("家庭直连端口缺失");
         }
-        EndpointProbeResult probe = waitForIpv6Endpoint(egressNode, address, route.getDirectPort());
+        EndpointProbeResult probe = ipv6
+                ? waitForIpv6Endpoint(egressNode, address, route.getDirectPort())
+                : waitForEndpoint(egressNode, address, route.getDirectPort());
         if (probe.status == EndpointProbeStatus.UNREACHABLE) {
-            throw new IllegalStateException(directIpv6FailureMessage(route.getDirectPort(), probe.detail));
+            throw new IllegalStateException(directFailureMessage(ipv6 ? "IPv6" : "IPv4", route.getDirectPort(), probe.detail));
         }
         long now = System.currentTimeMillis();
-        route.setDirectIpv6(address);
+        if (ipv6) {
+            route.setDirectIpv6(address);
+            route.setIpv6CheckedAt(now);
+        } else {
+            route.setDirectIpv4(address);
+        }
         route.setPublicPort(route.getDirectPort());
-        route.setIpv6CheckedAt(now);
-        route.setLastError(probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
+        route.setIpCheckedAt(now);
+        route.setLastError(ipv6 && probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
                 ? ipv6UnverifiedMessage(egressNode, route.getDirectPort()) : null);
         route.setUpdatedTime(now);
         routeMapper.updateById(route);
+        syncDynamicDnsIfBound(route);
         return address;
     }
 
     private GostDto deleteConnectorRuntime(HomeProxyRoute route, Long connectorId) {
         String base = "home_proxy_" + route.getId();
-        if ("ipv6_direct".equals(route.getAccessMode())) {
+        if (isDirectMode(route.getAccessMode())) {
             return GostUtil.DeleteDirectHomeProxyService(connectorId, base + "_service", base + "_egress");
         }
         return GostUtil.DeleteHomeProxyService(connectorId, base + "_service", base + "_ingress", base + "_egress");
@@ -790,9 +846,56 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 + " 没有 IPv6 路由，家庭监听已保留；请从实际 IPv6 网络测试 TCP " + port;
     }
 
-    private String directIpv6FailureMessage(int port, String detail) {
-        String message = "家庭 IPv6 端口无法从公网访问，请在家庭路由器和系统防火墙放行 TCP " + port;
+    private String directFailureMessage(String familyLabel, int port, String detail) {
+        String routerHint = "IPv4".equals(familyLabel)
+                ? "请在家庭路由器配置 IPv4 端口转发：WAN TCP " + port + " -> 家庭设备局域网 IP:" + port
+                : "请在家庭路由器和系统防火墙放行 TCP " + port;
+        String message = "家庭 " + familyLabel + " 端口无法从公网访问，" + routerHint;
         return StringUtils.isBlank(detail) ? message : message + "（探测结果：" + StringUtils.abbreviate(detail, 160) + "）";
+    }
+
+    private Map<String, Object> validateDynamicDnsBinding(Long ruleId, Long connectorId, String family) {
+        if (!isAdmin()) throw new IllegalStateException("只有管理员可以绑定动态 DNS 规则");
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,name,source_type,connector_id,record_name,record_type,enabled FROM dynamic_dns_rule WHERE id=?",
+                ruleId);
+        if (rows.isEmpty()) throw new IllegalStateException("动态 DNS 规则不存在");
+        Map<String, Object> rule = rows.get(0);
+        if (!"connector".equals(StringUtils.defaultIfBlank(Objects.toString(rule.get("source_type"), null), "node"))) {
+            throw new IllegalStateException("请选择来源为家庭接入端的动态 DNS 规则");
+        }
+        if (!Objects.equals(number(rule.get("connector_id")), connectorId)) {
+            throw new IllegalStateException("动态 DNS 规则的家庭接入端与当前代理不一致");
+        }
+        String expectedType = "ipv6".equals(family) ? "AAAA" : "A";
+        if (!expectedType.equalsIgnoreCase(Objects.toString(rule.get("record_type")))) {
+            throw new IllegalStateException("IPv4 直连必须绑定 A 记录，IPv6 直连必须绑定 AAAA 记录");
+        }
+        if (!truthy(rule.get("enabled"))) throw new IllegalStateException("动态 DNS 规则未启用");
+        return rule;
+    }
+
+    private void syncDynamicDnsIfBound(HomeProxyRoute route) {
+        if (route.getDynamicDnsRuleId() == null) return;
+        R result = dynamicDnsService.runNow(route.getDynamicDnsRuleId());
+        if (result.getCode() == 0) return;
+        String current = StringUtils.trimToNull(route.getLastError());
+        String dnsError = "动态 DNS 同步失败：" + result.getMsg();
+        route.setLastError(StringUtils.abbreviate(current == null ? dnsError : current + "；" + dnsError, 500));
+        route.setUpdatedTime(System.currentTimeMillis());
+        routeMapper.updateById(route);
+    }
+
+    private String familyLabel(String family) {
+        return "ipv4".equals(family) ? "IPv4" : "IPv6";
+    }
+
+    private long number(Object value) {
+        return value == null ? 0L : ((Number) value).longValue();
+    }
+
+    private boolean truthy(Object value) {
+        return value != null && ("1".equals(value.toString()) || Boolean.parseBoolean(value.toString()));
     }
 
     private enum EndpointProbeStatus {

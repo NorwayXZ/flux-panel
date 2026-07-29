@@ -70,13 +70,16 @@ public class DynamicDnsService {
 
     public R overview() {
         List<Map<String, Object>> rules = jdbcTemplate.queryForList(
-                "SELECT r.id,r.name,r.node_id AS nodeId,r.provider_source AS providerSource,r.provider_ref_id AS providerRefId,"
+                "SELECT r.id,r.name,COALESCE(r.source_type,'node') AS sourceType,r.node_id AS nodeId,r.connector_id AS connectorId,"
+                        + "r.provider_source AS providerSource,r.provider_ref_id AS providerRefId,"
                         + "r.provider,r.zone_ref_id AS zoneRefId,r.zone_name AS zoneName,r.record_name AS recordName,r.record_type AS recordType,"
                         + "r.ttl,r.check_interval_seconds AS checkIntervalSeconds,r.enabled,r.last_detected_ip AS lastDetectedIp,"
                         + "r.last_applied_ip AS lastAppliedIp,r.last_status AS lastStatus,r.last_error AS lastError,"
                         + "r.last_checked_at AS lastCheckedAt,r.last_updated_at AS lastUpdatedAt,n.name AS nodeName,n.version AS nodeVersion,"
-                        + "n.status AS nodeStatus,p.name AS providerAccountName "
+                        + "n.status AS nodeStatus,c.name AS connectorName,c.version AS connectorVersion,c.status AS connectorStatus,"
+                        + "p.name AS providerAccountName "
                         + "FROM dynamic_dns_rule r LEFT JOIN node n ON n.id=r.node_id "
+                        + "LEFT JOIN internal_connector c ON c.id=r.connector_id "
                         + "LEFT JOIN dynamic_dns_provider p ON r.provider_source='dynamic' AND p.id=r.provider_ref_id "
                         + "ORDER BY r.updated_time DESC");
         rules.forEach(row -> {
@@ -85,7 +88,9 @@ public class DynamicDnsService {
                         (rs, index) -> rs.getString(1), row.get("providerRefId"));
                 row.put("providerAccountName", names.isEmpty() ? "Cloudflare" : names.get(0));
             }
-            row.put("nodeOnline", WebSocketServer.isNodeOnline(number(row.get("nodeId"))));
+            String sourceType = Objects.toString(row.get("sourceType"), "node");
+            row.put("nodeOnline", "node".equals(sourceType) && WebSocketServer.isNodeOnline(number(row.get("nodeId"))));
+            row.put("connectorOnline", "connector".equals(sourceType) && WebSocketServer.isConnectorOnline(number(row.get("connectorId"))));
         });
         List<Map<String, Object>> providers = providerOptions();
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -174,7 +179,9 @@ public class DynamicDnsService {
     }
 
     public R saveRule(DynamicDnsRuleSaveDto dto) {
-        if (dto.getNodeId() == null) return R.err("请选择检测节点");
+        String sourceType = normalizeSourceType(dto.getSourceType());
+        if ("node".equals(sourceType) && dto.getNodeId() == null) return R.err("请选择检测节点");
+        if ("connector".equals(sourceType) && dto.getConnectorId() == null) return R.err("请选择家庭接入端");
         String source = "dns".equals(dto.getProviderSource()) ? "dns" : "dynamic";
         ProviderAccess access;
         try { access = loadProvider(source, dto.getProviderRefId(), dto.getZoneRefId(), dto.getProvider()); }
@@ -187,21 +194,34 @@ public class DynamicDnsService {
         catch (IllegalArgumentException e) { return R.err(e.getMessage()); }
         String type = StringUtils.defaultIfBlank(dto.getRecordType(), "A").toUpperCase(Locale.ROOT);
         if (!List.of("A", "AAAA").contains(type)) return R.err("动态 DNS 仅支持 A 和 AAAA 记录");
+        if ("connector".equals(sourceType)) {
+            List<Map<String, Object>> connectors = jdbcTemplate.queryForList("SELECT id,version,status FROM internal_connector WHERE id=?", dto.getConnectorId());
+            if (connectors.isEmpty() || !truth(connectors.get(0).get("status"))) return R.err("家庭接入端不存在或已停用");
+            if (!WebSocketServer.isConnectorOnline(dto.getConnectorId())) return R.err("家庭接入端离线，无法作为动态 DNS 检测来源");
+            String version = Objects.toString(connectors.get(0).get("version"), null);
+            if (!AgentVersionUtil.isAtLeast(version, MIN_AGENT_VERSION)) {
+                return R.err("家庭接入端 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
+            }
+        }
         int ttl = Math.max(60, Math.min(86400, dto.getTtl() == null ? 600 : dto.getTtl()));
         int interval = Math.max(30, Math.min(86400, dto.getCheckIntervalSeconds() == null ? 60 : dto.getCheckIntervalSeconds()));
         String name = StringUtils.defaultIfBlank(dto.getName(), record).trim();
         long now = System.currentTimeMillis();
         try {
             if (dto.getId() == null) {
-                jdbcTemplate.update("INSERT INTO dynamic_dns_rule (name,node_id,provider_source,provider_ref_id,provider,zone_ref_id,zone_name,record_name,"
-                                + "record_type,ttl,check_interval_seconds,enabled,last_status,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)",
-                        name, dto.getNodeId(), source, dto.getProviderRefId(), access.provider, dto.getZoneRefId(), zone, record,
+                jdbcTemplate.update("INSERT INTO dynamic_dns_rule (name,source_type,node_id,connector_id,provider_source,provider_ref_id,provider,zone_ref_id,zone_name,record_name,"
+                                + "record_type,ttl,check_interval_seconds,enabled,last_status,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)",
+                        name, sourceType, "node".equals(sourceType) ? dto.getNodeId() : null,
+                        "connector".equals(sourceType) ? dto.getConnectorId() : null,
+                        source, dto.getProviderRefId(), access.provider, dto.getZoneRefId(), zone, record,
                         type, ttl, interval, !Boolean.FALSE.equals(dto.getEnabled()), now, now);
             } else {
-                int updated = jdbcTemplate.update("UPDATE dynamic_dns_rule SET name=?,node_id=?,provider_source=?,provider_ref_id=?,provider=?,zone_ref_id=?,"
+                int updated = jdbcTemplate.update("UPDATE dynamic_dns_rule SET name=?,source_type=?,node_id=?,connector_id=?,provider_source=?,provider_ref_id=?,provider=?,zone_ref_id=?,"
                                 + "zone_name=?,record_name=?,record_type=?,ttl=?,check_interval_seconds=?,enabled=?,last_detected_ip=NULL,last_applied_ip=NULL,"
                                 + "provider_record_id=NULL,last_status='pending',last_error=NULL,last_checked_at=NULL,last_updated_at=NULL,updated_time=? WHERE id=?",
-                        name, dto.getNodeId(), source, dto.getProviderRefId(), access.provider, dto.getZoneRefId(), zone, record,
+                        name, sourceType, "node".equals(sourceType) ? dto.getNodeId() : null,
+                        "connector".equals(sourceType) ? dto.getConnectorId() : null,
+                        source, dto.getProviderRefId(), access.provider, dto.getZoneRefId(), zone, record,
                         type, ttl, interval, !Boolean.FALSE.equals(dto.getEnabled()), now, dto.getId());
                 if (updated == 0) return R.err("动态 DNS 规则不存在");
             }
@@ -214,6 +234,10 @@ public class DynamicDnsService {
 
     @Transactional
     public R deleteRule(Long id) {
+        Integer usedByHomeProxy = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM home_proxy_route WHERE dynamic_dns_rule_id=? AND state<>'deleted'",
+                Integer.class, id);
+        if (usedByHomeProxy != null && usedByHomeProxy > 0) return R.err("该动态 DNS 规则仍被家庭接入使用，请先删除对应家庭代理");
         jdbcTemplate.update("DELETE FROM dynamic_dns_history WHERE rule_id=?", id);
         return jdbcTemplate.update("DELETE FROM dynamic_dns_rule WHERE id=?", id) > 0 ? R.ok() : R.err("动态 DNS 规则不存在");
     }
@@ -242,23 +266,12 @@ public class DynamicDnsService {
 
     private void process(Map<String, Object> rule, boolean manual) {
         long id = number(rule.get("id"));
-        long nodeId = number(rule.get("node_id"));
         String previousStatus = Objects.toString(rule.get("last_status"), "pending");
         String oldIp = Objects.toString(rule.get("last_applied_ip"), null);
         long now = System.currentTimeMillis();
         try {
-            if (!WebSocketServer.isNodeOnline(nodeId)) throw new IllegalStateException("检测节点离线");
-            String version = jdbcTemplate.queryForObject("SELECT version FROM node WHERE id=?", String.class, nodeId);
-            if (!AgentVersionUtil.isAtLeast(version, MIN_AGENT_VERSION)) {
-                throw new IllegalStateException("节点 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
-            }
             String type = Objects.toString(rule.get("record_type"));
-            GostDto result = WebSocketServer.send_msg(nodeId, Map.of("family", "AAAA".equals(type) ? "ipv6" : "ipv4"), "PublicIpQuery", 15);
-            if (result == null || !"OK".equals(result.getMsg()) || result.getData() == null) {
-                throw new IllegalStateException(result == null ? "Agent 无响应" : result.getMsg());
-            }
-            JSONObject data = JSON.parseObject(JSON.toJSONString(result.getData()));
-            String ip = StringUtils.trimToEmpty(data.getString("address"));
+            String ip = queryPublicIp(rule, type);
             validateIp(type, ip);
             jdbcTemplate.update("UPDATE dynamic_dns_rule SET last_detected_ip=?,last_checked_at=?,updated_time=? WHERE id=?", ip, now, now, id);
             if (ip.equals(oldIp)) {
@@ -286,6 +299,34 @@ public class DynamicDnsService {
             }
             throw new IllegalStateException(message);
         }
+    }
+
+    private String queryPublicIp(Map<String, Object> rule, String recordType) {
+        String sourceType = normalizeSourceType(Objects.toString(rule.get("source_type"), "node"));
+        String family = "AAAA".equals(recordType) ? "ipv6" : "ipv4";
+        GostDto result;
+        if ("connector".equals(sourceType)) {
+            long connectorId = number(rule.get("connector_id"));
+            if (!WebSocketServer.isConnectorOnline(connectorId)) throw new IllegalStateException("家庭接入端离线");
+            String version = jdbcTemplate.queryForObject("SELECT version FROM internal_connector WHERE id=?", String.class, connectorId);
+            if (!AgentVersionUtil.isAtLeast(version, MIN_AGENT_VERSION)) {
+                throw new IllegalStateException("家庭接入端 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
+            }
+            result = WebSocketServer.sendConnectorMsg(connectorId, Map.of("family", family), "PublicIpQuery");
+        } else {
+            long nodeId = number(rule.get("node_id"));
+            if (!WebSocketServer.isNodeOnline(nodeId)) throw new IllegalStateException("检测节点离线");
+            String version = jdbcTemplate.queryForObject("SELECT version FROM node WHERE id=?", String.class, nodeId);
+            if (!AgentVersionUtil.isAtLeast(version, MIN_AGENT_VERSION)) {
+                throw new IllegalStateException("节点 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
+            }
+            result = WebSocketServer.send_msg(nodeId, Map.of("family", family), "PublicIpQuery", 15);
+        }
+        if (result == null || !"OK".equals(result.getMsg()) || result.getData() == null) {
+            throw new IllegalStateException(result == null ? "Agent 无响应" : result.getMsg());
+        }
+        JSONObject data = JSON.parseObject(JSON.toJSONString(result.getData()));
+        return StringUtils.trimToEmpty(data.getString("address"));
     }
 
     private List<Map<String, Object>> providerOptions() {
@@ -633,6 +674,12 @@ public class DynamicDnsService {
         String provider = StringUtils.defaultIfBlank(value, "cloudflare").toLowerCase(Locale.ROOT);
         if (!List.of("cloudflare", "dnspod", "aliyun").contains(provider)) throw new IllegalArgumentException("仅支持 Cloudflare、DNSPod 和阿里云 DNS");
         return provider;
+    }
+
+    private String normalizeSourceType(String value) {
+        String sourceType = StringUtils.defaultIfBlank(value, "node").trim().toLowerCase(Locale.ROOT);
+        if (!List.of("node", "connector").contains(sourceType)) throw new IllegalArgumentException("动态 DNS 检测来源不受支持");
+        return sourceType;
     }
 
     private String providerCredentialHint(String provider) {

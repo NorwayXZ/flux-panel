@@ -330,9 +330,17 @@ public class GostUtil {
     public static GostDto AddDirectHomeProxyService(Long connectorId, String serviceName, String egressChainName,
                                                      Integer directPort, boolean authEnabled,
                                                      String username, String password) {
+        return AddDirectHomeProxyService(connectorId, serviceName, egressChainName, "::", directPort,
+                authEnabled, username, password);
+    }
+
+    /** Creates a SOCKS5 listener directly on the connector's public address. */
+    public static GostDto AddDirectHomeProxyService(Long connectorId, String serviceName, String egressChainName,
+                                                     String bindIp, Integer directPort, boolean authEnabled,
+                                                     String username, String password) {
         JSONObject service = new JSONObject();
         service.put("name", serviceName);
-        service.put("addr", listenAddress("::", directPort));
+        service.put("addr", listenAddress(bindIp, directPort));
 
         JSONObject handler = new JSONObject();
         handler.put("type", "socks5");

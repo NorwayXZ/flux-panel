@@ -77,8 +77,9 @@ public class ServicePublishingSchemaInitializer {
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
                     + "connector_id bigint NOT NULL, access_mode varchar(24) NOT NULL DEFAULT 'relay', ingress_pool_id bigint DEFAULT NULL, egress_pool_id bigint NOT NULL, "
                     + "lease_id bigint DEFAULT NULL, public_port int DEFAULT NULL, egress_lease_id bigint DEFAULT NULL, "
-                    + "egress_gateway_port int DEFAULT NULL, direct_ipv6 varchar(64) DEFAULT NULL, direct_port int DEFAULT NULL, "
-                    + "ipv6_checked_at bigint DEFAULT NULL, proxy_type varchar(16) NOT NULL DEFAULT 'socks5', "
+                    + "egress_gateway_port int DEFAULT NULL, direct_ipv6 varchar(64) DEFAULT NULL, direct_ipv4 varchar(64) DEFAULT NULL, direct_port int DEFAULT NULL, "
+                    + "ipv6_checked_at bigint DEFAULT NULL, ip_checked_at bigint DEFAULT NULL, dynamic_dns_rule_id bigint DEFAULT NULL, public_domain varchar(253) DEFAULT NULL, "
+                    + "proxy_type varchar(16) NOT NULL DEFAULT 'socks5', "
                     + "auth_enabled tinyint NOT NULL DEFAULT 0, auth_username varchar(64) DEFAULT NULL, auth_password varchar(128) DEFAULT NULL, "
                     + "state varchar(24) NOT NULL DEFAULT 'provisioning', last_error varchar(500) DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
@@ -89,10 +90,15 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("home_proxy_route", "egress_gateway_port", "int DEFAULT NULL AFTER egress_lease_id");
             ensureColumn("home_proxy_route", "access_mode", "varchar(24) NOT NULL DEFAULT 'relay' AFTER connector_id");
             ensureColumn("home_proxy_route", "direct_ipv6", "varchar(64) DEFAULT NULL AFTER egress_gateway_port");
-            ensureColumn("home_proxy_route", "direct_port", "int DEFAULT NULL AFTER direct_ipv6");
+            ensureColumn("home_proxy_route", "direct_ipv4", "varchar(64) DEFAULT NULL AFTER direct_ipv6");
+            ensureColumn("home_proxy_route", "direct_port", "int DEFAULT NULL AFTER direct_ipv4");
             ensureColumn("home_proxy_route", "ipv6_checked_at", "bigint DEFAULT NULL AFTER direct_port");
+            ensureColumn("home_proxy_route", "ip_checked_at", "bigint DEFAULT NULL AFTER ipv6_checked_at");
+            ensureColumn("home_proxy_route", "dynamic_dns_rule_id", "bigint DEFAULT NULL AFTER ip_checked_at");
+            ensureColumn("home_proxy_route", "public_domain", "varchar(253) DEFAULT NULL AFTER dynamic_dns_rule_id");
             ensureNullableColumn("home_proxy_route", "ingress_pool_id", "bigint DEFAULT NULL");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
+            ensureIndex("home_proxy_route", "idx_home_proxy_ddns", "dynamic_dns_rule_id");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
             ensureIndex("port_lease", "idx_lease_grant", "grant_id, state");

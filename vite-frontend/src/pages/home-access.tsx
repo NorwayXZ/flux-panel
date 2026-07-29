@@ -14,6 +14,7 @@ import {
   createHomeProxyRoute,
   createInternalConnector,
   deleteHomeProxyRoute,
+  getDynamicDnsOverview,
   getInternalConnectorInstall,
   getHomeProxyRoutes,
   getInternalConnectors,
@@ -23,7 +24,9 @@ import {
   type InternalConnector,
   type PublishingPortPool,
   type ConnectorPlatform,
+  type DynamicDnsRule,
 } from '@/api';
+import { isAdmin } from '@/utils/auth';
 
 const stateMeta: Record<HomeProxyRoute['state'], { label: string; color: 'success' | 'warning' | 'danger' | 'default' }> = {
   provisioning: { label: '配置中', color: 'warning' },
@@ -34,14 +37,14 @@ const stateMeta: Record<HomeProxyRoute['state'], { label: string; color: 'succes
 };
 
 type FormState = {
-  name: string; connectorId: string; accessMode: 'relay' | 'ipv6_direct';
-  ingressPoolKey: string; egressPoolKey: string; directPort: string;
+  name: string; connectorId: string; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
+  ingressPoolKey: string; egressPoolKey: string; directPort: string; dynamicDnsRuleId: string;
   authEnabled: boolean; authUsername: string; authPassword: string;
 };
 
 const emptyForm = (): FormState => ({
   name: '', connectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressPoolKey: '', directPort: '23888',
-  authEnabled: false, authUsername: '', authPassword: '',
+  dynamicDnsRuleId: '', authEnabled: false, authUsername: '', authPassword: '',
 });
 
 const poolKey = (pool: PublishingPortPool) => `${pool.id}:${pool.grantId || 0}`;
@@ -51,6 +54,10 @@ const endpointText = (route: HomeProxyRoute) => {
   const host = route.publicHost.includes(':') && !route.publicHost.startsWith('[') ? `[${route.publicHost}]` : route.publicHost;
   return `${host}:${route.publicPort}`;
 };
+const isDirect = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) => mode === 'ipv6_direct' || mode === 'ipv4_direct';
+const isIpv6Direct = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) => mode === 'ipv6_direct';
+const accessLabel = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) =>
+  mode === 'ipv4_direct' ? 'IPv4 直连' : mode === 'ipv6_direct' ? 'IPv6 直连' : '公网中继';
 
 const formatTime = (timestamp?: number | null) => {
   if (!timestamp) return '尚未检测';
@@ -81,17 +88,21 @@ export default function HomeAccessPage() {
   const [routes, setRoutes] = useState<HomeProxyRoute[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
+  const [dynamicDnsRules, setDynamicDnsRules] = useState<DynamicDnsRule[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [connectorForm, setConnectorForm] = useState<{ name: string; platform: ConnectorPlatform; allowedCidrs: string }>({ name: '', platform: 'linux', allowedCidrs: '' });
 
   const load = async () => {
     setLoading(true);
-    const [routeRes, connectorRes, poolRes] = await Promise.all([
+    const adminMode = isAdmin();
+    const [routeRes, connectorRes, poolRes, dnsRes] = await Promise.all([
       getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(),
+      adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
     ]);
     if (routeRes.code === 0) setRoutes(routeRes.data || []); else toast.error(routeRes.msg || '加载家庭接入失败');
     if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
     if (poolRes.code === 0) setPools(poolRes.data || []);
+    if (dnsRes.code === 0) setDynamicDnsRules(dnsRes.data?.rules || []);
     setLoading(false);
   };
 
@@ -99,7 +110,11 @@ export default function HomeAccessPage() {
 
   const ingressPools = useMemo(() => pools.filter(pool => pool.availablePorts > 0), [pools]);
   const activeCount = routes.filter(item => item.state === 'active').length;
-  const directCount = routes.filter(item => item.accessMode === 'ipv6_direct').length;
+  const directCount = routes.filter(item => isDirect(item.accessMode)).length;
+  const matchingDnsRules = useMemo(() => dynamicDnsRules.filter(rule => rule.sourceType === 'connector'
+    && String(rule.connectorId || '') === form.connectorId
+    && rule.recordType === (form.accessMode === 'ipv4_direct' ? 'A' : 'AAAA')
+    && rule.enabled), [dynamicDnsRules, form.accessMode, form.connectorId]);
 
   const submit = async () => {
     if (!form.name.trim() || !form.connectorId || !form.egressPoolKey
@@ -108,8 +123,8 @@ export default function HomeAccessPage() {
       return;
     }
     const directPort = Number(form.directPort);
-    if (form.accessMode === 'ipv6_direct' && (!Number.isInteger(directPort) || directPort < 1024 || directPort > 65535)) {
-      return toast.error('家庭 IPv6 直连端口必须在 1024-65535 之间');
+    if (isDirect(form.accessMode) && (!Number.isInteger(directPort) || directPort < 1024 || directPort > 65535)) {
+      return toast.error('家庭直连端口必须在 1024-65535 之间');
     }
     if (form.authEnabled && (!form.authUsername.trim() || form.authPassword.length < 8)) {
       toast.error('启用代理认证时，用户名不能为空且密码至少 8 位');
@@ -124,7 +139,8 @@ export default function HomeAccessPage() {
       accessMode: form.accessMode,
       ingressPoolId: ingressPool?.id, ingressGrantId: ingressPool?.grantId,
       egressPoolId: egressPool.id, egressGrantId: egressPool.grantId,
-      directPort: form.accessMode === 'ipv6_direct' ? directPort : undefined,
+      directPort: isDirect(form.accessMode) ? directPort : undefined,
+      dynamicDnsRuleId: form.dynamicDnsRuleId ? Number(form.dynamicDnsRuleId) : undefined,
       authEnabled: form.authEnabled, authUsername: form.authUsername.trim(), authPassword: form.authPassword,
     });
     setSubmitting(false);
@@ -135,12 +151,12 @@ export default function HomeAccessPage() {
     void load();
   };
 
-  const refreshIpv6 = async (id: number) => {
+  const refreshPublicAddress = async (id: number) => {
     setRefreshingId(id);
     const response = await refreshHomeProxyIpv6(id);
     setRefreshingId(null);
-    if (response.code !== 0) return toast.error(response.msg || 'IPv6 检测失败');
-    toast.success(`家庭 IPv6 已更新：${response.data.address}`);
+    if (response.code !== 0) return toast.error(response.msg || '公网地址检测失败');
+    toast.success(`家庭 ${response.data.family === 'ipv4' ? 'IPv4' : 'IPv6'} 已更新：${response.data.address}`);
     void load();
   };
 
@@ -189,7 +205,7 @@ export default function HomeAccessPage() {
           <p className="text-sm text-default-500">反向接入 · 代理链</p>
           <h1 className="mt-1 text-2xl font-semibold">家庭接入</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
-            公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定 VPS 出口访问目标地址。优先使用家庭公网 IPv6 直连；没有可用 IPv6 时可切换到公网中继模式。
+            公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定 VPS 出口访问目标地址。优先使用家庭公网 IPv6 或公网 IPv4 直连；没有公网入站条件时可切换到公网中继模式。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -201,12 +217,12 @@ export default function HomeAccessPage() {
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
           ['运行中', activeCount], ['家庭接入端', connectors.filter(item => item.online).length],
-          ['代理链', routes.length], ['IPv6 直连', directCount],
+          ['代理链', routes.length], ['公网直连', directCount],
         ].map(([label, value]) => <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}
       </section>
 
       <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
-        IPv6 直连要求家庭网络拥有可入站访问的公网 IPv6，并在家庭路由器和系统防火墙放行所选 TCP 端口。默认不启用代理认证，公网暴露后可能成为开放代理；正式使用时建议开启认证。
+        公网直连要求家庭网络具备可入站访问的公网 IPv6 或公网 IPv4。IPv6 需要放行通信规则，IPv4 需要端口转发到家庭设备；正式暴露到公网时建议启用代理认证。
       </div>
 
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : routes.length === 0 ? (
@@ -216,21 +232,24 @@ export default function HomeAccessPage() {
           {routes.map(route => {
             const meta = stateMeta[route.state] || stateMeta.error;
             const endpoint = endpointText(route);
-            const direct = route.accessMode === 'ipv6_direct';
+            const direct = isDirect(route.accessMode);
+            const ipv6Direct = isIpv6Direct(route.accessMode);
+            const directAddress = ipv6Direct ? route.directIpv6 : route.directIpv4;
             return <article key={route.id} className="rounded-lg border border-divider bg-content1 p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0"><h2 className="truncate text-lg font-semibold">{route.name}</h2><p className="mt-1 text-sm text-default-500">{route.connectorName || '家庭接入端'} · {route.proxyType.toUpperCase()}</p></div>
                 <div className="flex flex-wrap justify-end gap-2">
-                  <Chip size="sm" variant="flat" color={direct ? 'primary' : 'default'}>{direct ? 'IPv6 直连' : '公网中继'}</Chip>
+                  <Chip size="sm" variant="flat" color={direct ? 'primary' : 'default'}>{accessLabel(route.accessMode)}</Chip>
                   <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
                 </div>
               </div>
               <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div>
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-                <div><div className="text-default-500">{direct ? '家庭公网 IPv6' : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (route.directIpv6 || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
+                <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
                 <div><div className="text-default-500">家庭出口 VPS 端口池</div><div className="mt-1 font-medium">{route.egressPoolName || '未知'}</div></div>
                 <div><div className="text-default-500">接入端状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
-                <div><div className="text-default-500">{direct ? 'IPv6 最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
+                <div><div className="text-default-500">{direct ? '公网地址最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
+                {direct && <div className="md:col-span-2"><div className="text-default-500">动态 DNS</div><div className="mt-1 break-all font-medium">{route.publicDomain ? `${route.publicDomain} · 已绑定` : '未绑定，使用裸 IP 地址'}</div></div>}
               </div>
               {route.authEnabled === 1 && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
               {route.lastError && (
@@ -241,7 +260,7 @@ export default function HomeAccessPage() {
                 </div>
               )}
               <div className="mt-5 flex flex-wrap justify-end gap-2">
-                {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshIpv6(route.id)}>检测 IPv6</Button>}
+                {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshPublicAddress(route.id)}>检测地址</Button>}
                 {direct && <Button size="sm" variant="flat" startContent={<BookOpen size={15} />} onPress={() => setGuideRoute(route)}>公网接入</Button>}
                 {route.state === 'active' && route.publicHost && route.publicPort && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, '代理地址')}>复制地址</Button>}
                 <Button size="sm" color="danger" variant="flat" startContent={<Trash2 size={15} />} onPress={() => remove(route.id)}>删除</Button>
@@ -253,27 +272,30 @@ export default function HomeAccessPage() {
 
       <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
         <div className="flex items-center gap-2 font-medium text-foreground"><Route size={16} /> 使用方式</div>
-        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。IPv6 直连会直接访问家庭公网 IPv6；公网中继会先经过入口 VPS。两种模式都会让家庭 Agent 再经指定出口 VPS 访问网站。</p>
+        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。IPv6 直连和 IPv4 直连会直接访问家庭公网地址；公网中继会先经过入口 VPS。三种模式都会让家庭 Agent 再经指定出口 VPS 访问网站。</p>
       </div>
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl">
         <ModalContent><ModalHeader>新建家庭代理</ModalHeader><ModalBody className="space-y-4">
           <Input label="代理名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
-          <Select label="家庭接入端" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || '') })}>
+          <Select label="家庭接入端" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || ''), dynamicDnsRuleId: '' })}>
             {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}</SelectItem>)}
           </Select>
-          <Tabs aria-label="接入方式" selectedKey={form.accessMode} onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'] })}>
+          <Tabs aria-label="接入方式" selectedKey={form.accessMode} onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'], dynamicDnsRuleId: '' })}>
             <Tab key="ipv6_direct" title="IPv6 直连（推荐）" />
+            <Tab key="ipv4_direct" title="IPv4 直连" />
             <Tab key="relay" title="公网中继（兼容）" />
           </Tabs>
           <div className="rounded-md border border-divider px-4 py-3 text-sm leading-6 text-default-500">
             {form.accessMode === 'ipv6_direct'
               ? '公司网络直接连接家庭公网 IPv6，不经过入口 VPS。需要公司和家庭均可使用 IPv6，并在家庭路由器及系统防火墙放行下方 TCP 端口。'
+              : form.accessMode === 'ipv4_direct'
+                ? '公司网络直接连接家庭公网 IPv4。需要运营商提供真正公网 IPv4，并在家庭路由器配置端口转发到家庭设备。'
               : '适合家庭没有公网 IPv6，或 IPv6 入站被运营商拦截的情况。连接会先到入口 VPS，再反向送回家庭设备。'}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            {form.accessMode === 'ipv6_direct' ? (
-              <Input label="家庭 IPv6 监听端口" description="需要在家庭路由器和系统防火墙放行 TCP" type="number" min={1024} max={65535} value={form.directPort} onValueChange={value => setForm({ ...form, directPort: value })} />
+            {isDirect(form.accessMode) ? (
+              <Input label={`家庭 ${form.accessMode === 'ipv4_direct' ? 'IPv4' : 'IPv6'} 监听端口`} description={form.accessMode === 'ipv4_direct' ? '路由器需转发 WAN TCP 到家庭设备' : '路由器和系统防火墙需放行 TCP'} type="number" min={1024} max={65535} value={form.directPort} onValueChange={value => setForm({ ...form, directPort: value })} />
             ) : (
               <Select label="公网入口端口池" description="公司电脑首先连接的入口 VPS" selectedKeys={form.ingressPoolKey ? [form.ingressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, ingressPoolKey: String(Array.from(keys)[0] || '') })}>
                 {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
@@ -283,6 +305,9 @@ export default function HomeAccessPage() {
               {pools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
             </Select>
           </div>
+          {isDirect(form.accessMode) && <Select label="动态 DNS 域名（可选）" description={form.accessMode === 'ipv4_direct' ? '只显示来源为该家庭接入端的 A 记录' : '只显示来源为该家庭接入端的 AAAA 记录'} selectedKeys={form.dynamicDnsRuleId ? [form.dynamicDnsRuleId] : []} onSelectionChange={keys => setForm({ ...form, dynamicDnsRuleId: String(Array.from(keys)[0] || '') })}>
+            {matchingDnsRules.map(rule => <SelectItem key={String(rule.id)} textValue={rule.recordName}>{rule.recordName} · {rule.recordType} · {rule.lastStatus === 'success' ? '正常' : rule.lastStatus === 'error' ? '失败' : '待检测'}</SelectItem>)}
+          </Select>}
           <Switch isSelected={form.authEnabled} onValueChange={value => setForm({ ...form, authEnabled: value })}>启用代理用户名密码认证</Switch>
           {form.authEnabled && <div className="grid gap-4 md:grid-cols-2"><Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} /><Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} /></div>}
         </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建代理</Button></ModalFooter></ModalContent>
@@ -313,11 +338,18 @@ export default function HomeAccessPage() {
       <Modal isOpen={Boolean(guideRoute)} onOpenChange={open => !open && setGuideRoute(null)} size="3xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">
-            <span>公网 IPv6 接入</span>
+            <span>公网直连接入</span>
             <span className="text-sm font-normal text-default-500">{guideRoute?.name || '家庭代理'} · 路由器与系统防火墙配置</span>
           </ModalHeader>
           <ModalBody className="space-y-5 pb-6">
             {guideRoute && <>
+              {(() => {
+                const ipv6Direct = guideRoute.accessMode === 'ipv6_direct';
+                const address = ipv6Direct ? guideRoute.directIpv6 : guideRoute.directIpv4;
+                const testCommand = ipv6Direct
+                  ? `nc -6 -vz ${guideRoute.directIpv6 || '<家庭 IPv6>'} ${guideRoute.publicPort || guideRoute.directPort || '<端口>'}`
+                  : `nc -vz ${guideRoute.directIpv4 || guideRoute.publicDomain || '<家庭公网 IPv4 或域名>'} ${guideRoute.publicPort || guideRoute.directPort || '<端口>'}`;
+                return <>
               <section className="grid gap-px overflow-hidden rounded-lg border border-divider bg-divider sm:grid-cols-3">
                 <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">公网地址</div><div className="mt-1 break-all font-mono text-sm">{endpointText(guideRoute)}</div></div>
                 <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">代理认证</div><div className={`mt-1 font-medium ${guideRoute.authEnabled === 1 ? 'text-success' : 'text-danger'}`}>{guideRoute.authEnabled === 1 ? '已启用' : '未启用'}</div></div>
@@ -330,16 +362,23 @@ export default function HomeAccessPage() {
               </div>}
 
               <section className="space-y-3 border-y border-divider py-4">
-                <div><h3 className="font-semibold">OpenWrt / iStoreOS 放行规则</h3><p className="mt-1 text-sm text-default-500">IPv6 不做端口映射，只需允许公网流量转发到家庭设备。</p></div>
+                <div><h3 className="font-semibold">OpenWrt / iStoreOS {ipv6Direct ? '放行规则' : '端口转发'}</h3><p className="mt-1 text-sm text-default-500">{ipv6Direct ? 'IPv6 不做端口映射。启用 SOCKS5 认证后，可以只按 WAN -> LAN、TCP 和端口放行，不绑定临时 IPv6。' : 'IPv4 需要把公网 WAN 端口转发到家庭设备的局域网 IPv4。'}</p></div>
                 <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-                  {[
-                    ['入口', '网络 → 防火墙 → 通信规则 → 添加'],
-                    ['协议与方向', 'TCP · wan → lan · 操作：接受'],
-                    ['目标地址', guideRoute.directIpv6 || '先点击“检测 IPv6”'],
+                  {(ipv6Direct ? [
+                    ['入口', '网络 -> 防火墙 -> 通信规则 -> 添加'],
+                    ['协议与方向', 'TCP · wan -> lan · 操作：接受'],
+                    ['目标地址', guideRoute.authEnabled === 1 ? '可留空，避免临时 IPv6 变化失效' : (guideRoute.directIpv6 || '未开启认证时建议绑定当前 IPv6')],
                     ['目标端口', String(guideRoute.publicPort || guideRoute.directPort || '-')],
                     ['地址族限制', '仅 IPv6'],
                     ['最后一步', '保存，然后点击“保存并应用”'],
-                  ].map(([label, value]) => <div key={label} className="min-w-0"><div className="text-default-500">{label}</div><div className="mt-1 break-all font-medium">{value}</div></div>)}
+                  ] : [
+                    ['入口', '网络 -> 防火墙 -> 端口转发 -> 添加'],
+                    ['协议与方向', 'TCP · wan -> lan'],
+                    ['外部端口', String(guideRoute.publicPort || guideRoute.directPort || '-')],
+                    ['内部地址', '家庭设备局域网 IPv4，例如 192.168.100.x'],
+                    ['内部端口', String(guideRoute.publicPort || guideRoute.directPort || '-')],
+                    ['最后一步', '保存，然后点击“保存并应用”'],
+                  ]).map(([label, value]) => <div key={label} className="min-w-0"><div className="text-default-500">{label}</div><div className="mt-1 break-all font-medium">{value}</div></div>)}
                 </div>
               </section>
 
@@ -353,18 +392,20 @@ export default function HomeAccessPage() {
               </section>
 
               <section className="space-y-3 border-t border-divider pt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">从家庭网络以外测试</h3><p className="mt-1 text-sm text-default-500">可在支持 IPv6 的 VPS、公司电脑或手机终端执行。</p></div><Button size="sm" variant="flat" startContent={<Copy size={15} />} isDisabled={!guideRoute.directIpv6 || !guideRoute.publicPort} onPress={() => copy(`nc -6 -vz ${guideRoute.directIpv6} ${guideRoute.publicPort}`, '测试命令')}>复制测试命令</Button></div>
-                <pre className="overflow-x-auto rounded-lg bg-default-100 p-4 font-mono text-sm">nc -6 -vz {guideRoute.directIpv6 || '&lt;家庭 IPv6&gt;'} {guideRoute.publicPort || guideRoute.directPort || '&lt;端口&gt;'}</pre>
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">从家庭网络以外测试</h3><p className="mt-1 text-sm text-default-500">{ipv6Direct ? '可在支持 IPv6 的 VPS、公司电脑或手机终端执行。' : '可在任意公网 VPS、公司电脑或手机热点环境执行。'}</p></div><Button size="sm" variant="flat" startContent={<Copy size={15} />} isDisabled={!address && !guideRoute.publicDomain} onPress={() => copy(testCommand, '测试命令')}>复制测试命令</Button></div>
+                <pre className="overflow-x-auto rounded-lg bg-default-100 p-4 font-mono text-sm">{testCommand}</pre>
                 <div className="grid gap-3 text-sm sm:grid-cols-3">
                   <div><div className="font-medium text-success">succeeded</div><div className="mt-1 text-default-500">公网路由、路由器规则和监听均正常。</div></div>
-                  <div><div className="font-medium text-danger">Connection refused</div><div className="mt-1 text-default-500">IPv6 已到达家庭网络，但端口未监听或被防火墙拒绝。</div></div>
+                  <div><div className="font-medium text-danger">Connection refused</div><div className="mt-1 text-default-500">公网地址已到达家庭网络，但端口未监听或被防火墙拒绝。</div></div>
                   <div><div className="font-medium text-warning">timed out</div><div className="mt-1 text-default-500">路由器、运营商或系统防火墙静默丢弃了连接。</div></div>
                 </div>
               </section>
 
               <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
-                macOS、Windows 和手机可能使用会变化的临时 IPv6。地址变化后，请先点击卡片的“检测 IPv6”，再同步更新 OpenWrt 目标地址和代理客户端地址。
+                {ipv6Direct ? 'macOS、Windows 和手机可能使用会变化的临时 IPv6。建议开启代理认证，并让 OpenWrt 规则不绑定具体临时 IPv6；绑定动态 DNS 后，客户端优先填写域名。' : '公网 IPv4 必须是真正公网地址。如果运营商给的是 100.64.x.x、10.x.x.x、172.16-31.x.x 或 192.168.x.x，直连不可用，需要改用公网中继。'}
               </div>
+                </>;
+              })()}
             </>}
           </ModalBody>
           <ModalFooter><Button color="primary" onPress={() => setGuideRoute(null)}>完成</Button></ModalFooter>
