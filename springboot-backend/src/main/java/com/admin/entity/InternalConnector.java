@@ -19,6 +19,11 @@ public class InternalConnector implements Serializable {
     private String version;
     private String remoteIp;
     private Long lastSeen;
+    private Integer discoveryEnabled;
+    private String discoveryStatus;
+    private Long discoveryLastScanAt;
+    private String discoveryLastCidr;
+    private String discoveryLastError;
     private Integer status;
     private Long createdTime;
     private Long updatedTime;
@@ -27,4 +32,6 @@ public class InternalConnector implements Serializable {
     private Boolean online;
     @TableField(exist = false)
     private String ownerUserName;
+    @TableField(exist = false)
+    private Integer discoveredServiceCount;
 }

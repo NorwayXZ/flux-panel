@@ -693,6 +693,12 @@ export interface InternalConnector {
   remoteIp?: string;
   lastSeen?: number;
   online: boolean;
+  discoveryEnabled?: number;
+  discoveryStatus?: 'disabled' | 'idle' | 'scanning' | 'complete' | 'failed';
+  discoveryLastScanAt?: number;
+  discoveryLastCidr?: string;
+  discoveryLastError?: string;
+  discoveredServiceCount?: number;
 }
 
 export type ConnectorPlatform = 'linux' | 'windows' | 'macos';
@@ -846,6 +852,40 @@ export const getInternalConnectorInstall = (id: number, platform: ConnectorPlatf
   Network.post<string>("/service-publishing/connector/install", { id, platform, action });
 export const deleteInternalConnector = (id: number) =>
   Network.post("/service-publishing/connector/delete", { id });
+export interface LanDiscoveredService {
+  id: number;
+  connectorId: number;
+  host: string;
+  port: number;
+  serviceType: string;
+  serviceName: string;
+  product?: string;
+  title?: string;
+  confidence: 'high' | 'medium';
+  sensitive: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+export interface LanDiscoveryResult {
+  connectorId: number;
+  enabled: boolean;
+  status: 'disabled' | 'idle' | 'scanning' | 'complete' | 'failed';
+  lastScanAt?: number;
+  lastCidr?: string;
+  lastError?: string;
+  scannedHosts?: number;
+  scannedPorts?: number;
+  durationMs?: number;
+  services: LanDiscoveredService[];
+}
+export const setLanDiscoveryEnabled = (id: number, enabled: boolean) =>
+  Network.post<LanDiscoveryResult>("/service-publishing/connector/discovery/settings", { id, enabled });
+export const scanLanServices = (connectorId: number, cidr?: string) =>
+  Network.post<LanDiscoveryResult>("/service-publishing/connector/discovery/scan", { connectorId, cidr: cidr || 'auto' });
+export const getLanDiscoveryResults = (id: number) =>
+  Network.post<LanDiscoveryResult>("/service-publishing/connector/discovery/results", { id });
+export const clearLanDiscoveryResults = (id: number) =>
+  Network.post("/service-publishing/connector/discovery/clear", { id });
 export const createPublishingPortPool = (data: any) =>
   Network.post<PublishingPortPool>("/service-publishing/pool/create", data);
 export const getPublishingPortPools = () =>

@@ -125,6 +125,11 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             connector.setOnline(WebSocketServer.isConnectorOnline(connector.getId()));
             User owner = userMapper.selectById(connector.getUserId());
             connector.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
+            if (connector.getDiscoveryEnabled() == null) connector.setDiscoveryEnabled(0);
+            if (StringUtils.isBlank(connector.getDiscoveryStatus())) connector.setDiscoveryStatus("disabled");
+            Integer discoveredCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM lan_discovered_service WHERE connector_id=?", Integer.class, connector.getId());
+            connector.setDiscoveredServiceCount(discoveredCount == null ? 0 : discoveredCount);
             connector.setSecret(null);
         }
         return R.ok(connectors);
@@ -153,6 +158,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         connector.setStatus(0);
         connector.setUpdatedTime(System.currentTimeMillis());
         connectorMapper.updateById(connector);
+        jdbcTemplate.update("DELETE FROM lan_discovered_service WHERE connector_id=?", id);
         return R.ok();
     }
 

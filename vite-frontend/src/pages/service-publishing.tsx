@@ -113,6 +113,17 @@ const createEmptyServiceForm = () => ({
   requestedPort: '',
 });
 
+const discoveredTemplate = (serviceType: string): ServiceTemplateId => {
+  if (serviceType === 'ssh') return 'ssh';
+  if (serviceType === 'rdp') return 'rdp';
+  if (serviceType === 'mysql') return 'mysql';
+  if (serviceType === 'postgresql') return 'postgresql';
+  if (['synology', 'qnap', 'nas'].includes(serviceType)) return 'synology-dsm';
+  if (serviceType === 'https') return 'https';
+  if (['http', 'router', 'home-assistant', 'plex', 'camera'].includes(serviceType)) return 'http';
+  return 'custom-tcp';
+};
+
 export default function ServicePublishingPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -164,6 +175,26 @@ export default function ServicePublishingPage() {
   };
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connectorId = params.get('connectorId');
+    const targetHost = params.get('targetHost');
+    const targetPort = params.get('targetPort');
+    if (!connectorId || !targetHost || !targetPort) return;
+    const serviceType = params.get('serviceType') || 'custom-tcp';
+    setSelectedTemplateId(discoveredTemplate(serviceType));
+    setServiceForm(current => ({
+      ...current,
+      connectorId,
+      targetHost,
+      targetPort,
+      name: params.get('serviceName') || `内网服务 ${targetHost}:${targetPort}`,
+    }));
+    setActiveView('services');
+    setServiceModal(true);
+    window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   const activeCount = useMemo(() => services.filter(item => item.state === 'active').length, [services]);
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);

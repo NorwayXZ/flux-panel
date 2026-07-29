@@ -7,9 +7,11 @@ import com.admin.common.dto.DomainRouteCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
+import com.admin.common.dto.LanDiscoveryScanDto;
 import com.admin.common.lang.R;
 import com.admin.service.HomeProxyService;
 import com.admin.service.NatTraversalService;
+import com.admin.service.LanDiscoveryService;
 import com.admin.service.ServicePublishingService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -33,6 +35,9 @@ public class ServicePublishingController {
 
     @Resource
     private NatTraversalService natTraversalService;
+
+    @Resource
+    private LanDiscoveryService lanDiscoveryService;
 
     @LogAnnotation @PostMapping("/home-proxy/create")
     public R createHomeProxy(@Validated @RequestBody com.admin.common.dto.HomeProxyRouteCreateDto dto) {
@@ -87,6 +92,28 @@ public class ServicePublishingController {
     @LogAnnotation @PostMapping("/connector/delete")
     public R deleteConnector(@RequestBody Map<String, Object> params) {
         return service.deleteConnector(Long.valueOf(params.get("id").toString()));
+    }
+
+    @LogAnnotation @PostMapping("/connector/discovery/settings")
+    public R connectorDiscoverySettings(@RequestBody Map<String, Object> params) {
+        return lanDiscoveryService.settings(
+                Long.valueOf(params.get("id").toString()),
+                Boolean.parseBoolean(String.valueOf(params.getOrDefault("enabled", false))));
+    }
+
+    @LogAnnotation @PostMapping("/connector/discovery/scan")
+    public R scanConnectorNetwork(@Validated @RequestBody LanDiscoveryScanDto dto) {
+        return lanDiscoveryService.scan(dto.getConnectorId(), dto.getCidr());
+    }
+
+    @PostMapping("/connector/discovery/results")
+    public R connectorDiscoveryResults(@RequestBody Map<String, Object> params) {
+        return lanDiscoveryService.results(Long.valueOf(params.get("id").toString()));
+    }
+
+    @LogAnnotation @PostMapping("/connector/discovery/clear")
+    public R clearConnectorDiscovery(@RequestBody Map<String, Object> params) {
+        return lanDiscoveryService.clear(Long.valueOf(params.get("id").toString()));
     }
 
     @LogAnnotation @RequireRole @PostMapping("/pool/create")
