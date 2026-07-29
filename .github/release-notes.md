@@ -1,3 +1,13 @@
+## 2.28.1 Mobile Resource Center tab polish
+
+- Hides the native horizontal scrollbar under Resource Center tabs on narrow screens while preserving touch and trackpad scrolling.
+- Keeps the tab row width independent from page content so long labels do not create page-level horizontal overflow.
+- Changes no database schema, Agent runtime, port reservation, DNS record, tunnel, forward, proxy, published service, or active Home Network Relay. Agent `2.26.4` remains the current target.
+
+### Upgrade and rollback impact
+
+- This is a frontend-only layout fix. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.28.0 Resource Center and navigation cleanup
 
 - Reorganizes the sidebar into Core Business, Access and Publishing, Utilities, System Management, and Version Maintenance. Full-chain topology now belongs to System Management.

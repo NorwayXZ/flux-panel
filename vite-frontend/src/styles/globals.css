@@ -54,6 +54,14 @@ html, body {
   padding-bottom: var(--safe-area-bottom);
 }
 
+.resource-tabs-scroll {
+  scrollbar-width: none;
+}
+
+.resource-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 
 /* 验证码弹层动画 */
 .captcha-modal-enter {

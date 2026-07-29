@@ -17,10 +17,10 @@ export default function AccessResourceTabs() {
   const visibleResources = resources.filter(item => !item.adminOnly || isAdmin());
 
   return (
-    <div className="overflow-x-auto border-b border-divider">
+    <div className="resource-tabs-scroll max-w-full overflow-x-auto border-b border-divider">
       <Tabs
         aria-label="资源中心"
-        classNames={{ tabList: 'gap-1 px-0', tab: 'h-11 px-3 sm:px-4' }}
+        classNames={{ base: 'w-max min-w-max', tabList: 'gap-1 px-0', tab: 'h-11 px-3 sm:px-4' }}
         selectedKey={location.pathname}
         variant="underlined"
         onSelectionChange={key => navigate(String(key))}
