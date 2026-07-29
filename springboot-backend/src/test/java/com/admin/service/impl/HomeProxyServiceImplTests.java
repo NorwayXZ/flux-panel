@@ -13,6 +13,7 @@ class HomeProxyServiceImplTests {
                 "dial tcp [2408::1]:23888: connect: network is unreachable"));
         assertTrue(HomeProxyServiceImpl.isIpv6UnsupportedProbeError("connect: no route to host"));
         assertTrue(HomeProxyServiceImpl.isIpv6UnsupportedProbeError("address family not supported by protocol"));
+        assertTrue(HomeProxyServiceImpl.isIpv6UnsupportedProbeError("cannot assign requested address"));
     }
 
     @Test

@@ -338,7 +338,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failDirectProvision(route, egressLease, "创建家庭 IPv6 SOCKS5 服务失败：" + message(serviceResult));
         }
-        EndpointProbeResult probe = waitForEndpoint(egressNode, directIpv6, directPort);
+        EndpointProbeResult probe = waitForIpv6Endpoint(egressNode, directIpv6, directPort);
         if (probe.status == EndpointProbeStatus.UNREACHABLE) {
             GostUtil.DeleteDirectHomeProxyService(connector.getId(), base + "_service", egressChain);
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
@@ -649,7 +649,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         if (route.getDirectPort() == null) {
             throw new IllegalStateException("家庭 IPv6 直连端口缺失");
         }
-        EndpointProbeResult probe = waitForEndpoint(egressNode, address, route.getDirectPort());
+        EndpointProbeResult probe = waitForIpv6Endpoint(egressNode, address, route.getDirectPort());
         if (probe.status == EndpointProbeStatus.UNREACHABLE) {
             throw new IllegalStateException(directIpv6FailureMessage(route.getDirectPort(), probe.detail));
         }
@@ -739,6 +739,42 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return new EndpointProbeResult(EndpointProbeStatus.UNREACHABLE, lastDetail);
     }
 
+    private EndpointProbeResult waitForIpv6Endpoint(Node probeNode, String host, int port) {
+        Ipv6ProbeCapability capability = queryProbeNodeIpv6Capability(probeNode);
+        if (capability == Ipv6ProbeCapability.UNAVAILABLE) {
+            return new EndpointProbeResult(EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED,
+                    "验证节点没有可用公网 IPv6");
+        }
+        return waitForEndpoint(probeNode, host, port);
+    }
+
+    private Ipv6ProbeCapability queryProbeNodeIpv6Capability(Node probeNode) {
+        if (!AgentVersionUtil.isAtLeast(probeNode.getVersion(), MIN_DIRECT_AGENT_VERSION)) {
+            return Ipv6ProbeCapability.UNKNOWN;
+        }
+        GostDto response = WebSocketServer.send_msg(probeNode.getId(),
+                Map.of("family", "ipv6"), "PublicIpQuery", 15);
+        if (ok(response) && response.getData() != null) {
+            JSONObject data = response.getData() instanceof JSONObject
+                    ? (JSONObject) response.getData()
+                    : JSONObject.parseObject(JSONObject.toJSONString(response.getData()));
+            String address = StringUtils.trimToEmpty(data.getString("address"));
+            try {
+                return InetAddress.getByName(address) instanceof Inet6Address
+                        ? Ipv6ProbeCapability.AVAILABLE : Ipv6ProbeCapability.UNKNOWN;
+            } catch (Exception ignored) {
+                return Ipv6ProbeCapability.UNKNOWN;
+            }
+        }
+        String detail = message(response).toLowerCase();
+        if (detail.contains("no globally routable ipv6")
+                || detail.contains("no such host")
+                || isIpv6UnsupportedProbeError(detail)) {
+            return Ipv6ProbeCapability.UNAVAILABLE;
+        }
+        return Ipv6ProbeCapability.UNKNOWN;
+    }
+
     static boolean isIpv6UnsupportedProbeError(String detail) {
         if (StringUtils.isBlank(detail)) return false;
         String normalized = detail.toLowerCase();
@@ -763,6 +799,12 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         REACHABLE,
         UNREACHABLE,
         PROBE_IPV6_UNSUPPORTED
+    }
+
+    private enum Ipv6ProbeCapability {
+        AVAILABLE,
+        UNAVAILABLE,
+        UNKNOWN
     }
 
     private static final class EndpointProbeResult {
