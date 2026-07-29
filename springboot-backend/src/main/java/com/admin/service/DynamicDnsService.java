@@ -331,15 +331,27 @@ public class DynamicDnsService {
 
     private List<Map<String, Object>> providerOptions() {
         List<Map<String, Object>> options = new ArrayList<>();
-        options.addAll(jdbcTemplate.queryForList(
-                "SELECT CONCAT('dns:',a.id) AS optionKey,'dns' AS source,a.id,a.name,a.provider,a.enabled,"
+        List<Map<String, Object>> cloudflareOptions = jdbcTemplate.queryForList(
+                "SELECT 'dns' AS source,a.id,a.name,a.provider,a.enabled,"
                         + "z.id AS zoneRefId,z.zone_name AS zoneName FROM dns_provider_account a JOIN dns_zone z ON z.account_id=a.id "
-                        + "WHERE a.provider='cloudflare' AND a.enabled=1 AND z.status='active' ORDER BY a.name,z.zone_name"));
-        options.addAll(jdbcTemplate.queryForList(
-                "SELECT CONCAT('dynamic:',id) AS optionKey,'dynamic' AS source,id,name,provider,enabled,last_error AS lastError,"
+                        + "WHERE a.provider='cloudflare' AND a.enabled=1 AND z.status='active' ORDER BY a.name,z.zone_name");
+        cloudflareOptions.forEach(option -> option.put("optionKey", providerOptionKey(
+                "dns", number(option.get("id")), number(option.get("zoneRefId")))));
+        options.addAll(cloudflareOptions);
+
+        List<Map<String, Object>> dynamicOptions = jdbcTemplate.queryForList(
+                "SELECT 'dynamic' AS source,id,name,provider,enabled,last_error AS lastError,"
                         + "CASE WHEN credential_a IS NULL OR credential_a='' THEN 0 ELSE 1 END AS credentialConfigured "
-                        + "FROM dynamic_dns_provider ORDER BY created_time DESC"));
+                        + "FROM dynamic_dns_provider ORDER BY created_time DESC");
+        dynamicOptions.forEach(option -> option.put("optionKey", providerOptionKey(
+                "dynamic", number(option.get("id")), null)));
+        options.addAll(dynamicOptions);
         return options;
+    }
+
+    static String providerOptionKey(String source, Long providerId, Long zoneId) {
+        if ("dns".equals(source)) return "dns:" + providerId + ":" + zoneId;
+        return "dynamic:" + providerId;
     }
 
     private ProviderAccess loadProvider(String source, Long refId, Long zoneRefId, String requestedProvider) {

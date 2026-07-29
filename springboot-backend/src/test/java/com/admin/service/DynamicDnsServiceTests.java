@@ -45,4 +45,11 @@ class DynamicDnsServiceTests {
         assertEquals(true, DynamicDnsService.aliyunLineRecordMatches(record, "34.150.15.102", 600));
         assertEquals(false, DynamicDnsService.aliyunLineRecordMatches(record, "8.218.90.244", 600));
     }
+
+    @Test
+    void givesEveryCloudflareZoneAUniqueSelectorKey() {
+        assertEquals("dns:7:101", DynamicDnsService.providerOptionKey("dns", 7L, 101L));
+        assertEquals("dns:7:102", DynamicDnsService.providerOptionKey("dns", 7L, 102L));
+        assertEquals("dynamic:9", DynamicDnsService.providerOptionKey("dynamic", 9L, null));
+    }
 }

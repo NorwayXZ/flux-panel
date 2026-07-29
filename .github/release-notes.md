@@ -1,3 +1,14 @@
+## 2.27.1 Dynamic DNS Zone selector fix
+
+- Gives every Cloudflare Zone a unique selector key so multiple domains registered under the same Cloudflare account can be selected independently in a Dynamic DNS rule.
+- Preserves all existing Dynamic DNS rules, provider credentials, DNS records, nodes, tunnels, forwards, Home Access routes, and port reservations.
+- Changes no database schema and keeps Agent `2.26.4` as the current target. No Agent update or restart is required.
+
+### Upgrade and rollback impact
+
+- This is a panel-only compatibility fix. Updating does not call any DNS provider API until an operator saves or manually runs a Dynamic DNS rule.
+- Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed. Existing DNS rules and records remain intact.
+
 ## 2.27.0 Home Access tunnel egress
 
 - Adds a tunnel egress option to Home Access. A route can now follow `company -> home broadband -> transit VPS -> landing VPS -> Internet`, with the final tunnel node acting as the public egress IP.
