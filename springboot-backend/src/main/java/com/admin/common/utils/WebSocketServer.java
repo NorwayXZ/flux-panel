@@ -10,6 +10,7 @@ import com.admin.mapper.InternalConnectorMapper;
 import com.admin.service.NodeService;
 import com.admin.service.TerminalSessionManager;
 import com.admin.service.AgentUpgradeService;
+import com.admin.service.NatTraversalService;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.SneakyThrows;
@@ -43,6 +44,9 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     @Resource
     AgentUpgradeService agentUpgradeService;
+
+    @Resource
+    NatTraversalService natTraversalService;
 
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
@@ -90,6 +94,18 @@ public class WebSocketServer extends TextWebSocketHandler {
 
                 // 尝试解密消息
                 String decryptedPayload = decryptMessageIfNeeded(message.getPayload(), nodeSecret);
+
+                try {
+                    JSONObject agentMessage = JSONObject.parseObject(decryptedPayload);
+                    String agentMessageType = agentMessage.getString("type");
+                    if (Objects.equals(type, "2") && agentMessageType != null
+                            && agentMessageType.startsWith("Nat")
+                            && StringUtils.isBlank(agentMessage.getString("requestId"))) {
+                        natTraversalService.handleAgentEvent(Long.valueOf(id), agentMessage);
+                        return;
+                    }
+                } catch (Exception ignored) {
+                }
 
                 if (Objects.equals(type, "1")) {
                     try {
@@ -274,6 +290,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                     connector.setUpdatedTime(now);
                     internalConnectorMapper.updateById(connector);
                 }
+                natTraversalService.connectorOnline(connectorId);
                 log.info("内网接入端 {} 连接建立", connectorId);
             } else if (!Objects.equals(type, "1")) {
                 // 网页管理员连接

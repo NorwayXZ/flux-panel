@@ -32,6 +32,7 @@ import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.service.DynamicDnsService;
 import com.admin.service.HomeProxyService;
+import com.admin.service.NatTraversalService;
 import com.admin.service.PortPoolGrantService;
 import com.admin.service.PortLedgerService;
 import com.admin.service.UserQuotaService;
@@ -63,6 +64,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     private static final String MIN_DIRECT_AGENT_VERSION = "2.21.0";
     private static final String MIN_REALITY_CLIENT_AGENT_VERSION = "2.30.0";
     private static final String MIN_REALITY_SERVER_AGENT_VERSION = "2.20.0";
+    private static final String MIN_NAT_AGENT_VERSION = "2.31.0";
     private static final long IPV6_REFRESH_INTERVAL_MS = 5 * 60 * 1000L;
     private static final String IPV6_UNVERIFIED_PREFIX = "公网验证未完成：";
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -79,6 +81,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     @Resource private PortLedgerService portLedgerService;
     @Resource private UserQuotaService userQuotaService;
     @Resource private DynamicDnsService dynamicDnsService;
+    @Resource private NatTraversalService natTraversalService;
     @Resource private JdbcTemplate jdbcTemplate;
     @Value("${jwt-secret}") private String encryptionSecret;
 
@@ -114,6 +117,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         } catch (IllegalArgumentException error) {
             return R.err(error.getMessage());
         }
+        String natValidation = validateSmartNat(dto, connector, userId, accessMode);
+        if (natValidation != null) return R.err(natValidation);
         if ("vless_reality".equals(transportMode)) {
             return createReality(dto, connector, userId, accessMode, egressMode);
         }
@@ -168,7 +173,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setUserId(userId);
         route.setName(dto.getName().trim());
         route.setConnectorId(connector.getId());
-        route.setAccessMode("relay");
+        route.setAccessMode(accessMode);
+        applyNatFields(route, dto, accessMode);
         route.setIngressPoolId(ingress.getId());
         route.setEgressPoolId(egress == null ? null : egress.getId());
         route.setEgressNodeId(dto.getEgressNodeId());
@@ -184,6 +190,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setCreatedTime(now);
         route.setUpdatedTime(now);
         routeMapper.insert(route);
+        if ("smart_nat".equals(accessMode)) {
+            route.setNatBackendPort(findNatBackendPort(connector));
+            if (route.getNatBackendPort() == null) {
+                routeMapper.deleteById(route.getId());
+                return R.err("家庭设备没有可用的本地 NAT 后端端口");
+            }
+            routeMapper.updateById(route);
+        }
 
         PortLease lease = new PortLease();
         lease.setPoolId(ingress.getId());
@@ -245,6 +259,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             safeDeleteChains(connector.getId(), ingressChain, egressChain);
             return failProvision(route, lease, gateways, "创建家庭 SOCKS5 服务失败：" + message(serviceResult));
         }
+        if ("smart_nat".equals(accessMode)) {
+            GostDto backendResult = GostUtil.AddDirectHomeProxyService(connector.getId(), base + "_nat_backend",
+                    egressChain, "127.0.0.1", route.getNatBackendPort(), authEnabled, authUsername, authPassword);
+            if (!ok(backendResult)) {
+                GostUtil.DeleteHomeProxyService(connector.getId(), base + "_service", ingressChain, egressChain);
+                return failProvision(route, lease, gateways, "创建 NAT 本地后端失败：" + message(backendResult));
+            }
+        }
         if (waitForEndpoint(ingressNode, ingress.getPublicHost(), port).status != EndpointProbeStatus.REACHABLE) {
             GostUtil.DeleteHomeProxyService(connector.getId(), base + "_service", ingressChain, egressChain);
             return failProvision(route, lease, gateways, "公网入口端口未能在 12 秒内就绪，请检查节点防火墙和端口范围");
@@ -256,6 +278,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         routeMapper.updateById(route);
         markLeaseActive(lease);
         gateways.forEach(item -> markLeaseActive(item.lease()));
+        if ("smart_nat".equals(accessMode)) natTraversalService.schedule(route);
         return R.ok(enrich(route, true));
     }
 
@@ -357,6 +380,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setName(dto.getName().trim());
         route.setConnectorId(connector.getId());
         route.setAccessMode(accessMode);
+        applyNatFields(route, dto, accessMode);
         route.setIngressPoolId(ingress == null ? null : ingress.getId());
         route.setEgressPoolId(null);
         route.setEgressNodeId("single".equals(egressMode) ? realityNode.getId() : null);
@@ -380,6 +404,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setCreatedTime(now);
         route.setUpdatedTime(now);
         routeMapper.insert(route);
+        if ("smart_nat".equals(accessMode)) {
+            route.setNatBackendPort(findNatBackendPort(connector));
+            if (route.getNatBackendPort() == null) {
+                routeMapper.deleteById(route.getId());
+                return R.err("家庭设备没有可用的本地 NAT 后端端口");
+            }
+            routeMapper.updateById(route);
+        }
 
         PortLease ingressLease = null;
         if (!direct) {
@@ -448,6 +480,12 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         }
         if (!ok(serviceResult)) return failRealityProvision(route, ingressLease, gateways, connector,
                 "创建家庭 SOCKS5 服务失败：" + message(serviceResult));
+        if ("smart_nat".equals(accessMode)) {
+            GostDto backendResult = GostUtil.AddDirectHomeProxyService(connector.getId(), base + "_nat_backend",
+                    egressChain, "127.0.0.1", route.getNatBackendPort(), authEnabled, authUsername, authPassword);
+            if (!ok(backendResult)) return failRealityProvision(route, ingressLease, gateways, connector,
+                    "创建 NAT 本地后端失败：" + message(backendResult));
+        }
 
         EndpointProbeResult probe = direct
                 ? (ipv6 ? waitForIpv6Endpoint(finalNode, directAddress, directPort) : waitForEndpoint(finalNode, directAddress, directPort))
@@ -464,6 +502,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         routeMapper.updateById(route);
         markLeaseActive(ingressLease);
         syncDynamicDnsIfBound(route);
+        if ("smart_nat".equals(accessMode)) natTraversalService.schedule(route);
         return R.ok(enrich(route, true));
     }
 
@@ -635,6 +674,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             return R.err("家庭代理不存在或无权访问");
         }
         if ("deleted".equals(route.getState())) return R.ok();
+        boolean natCleaned = natTraversalService.stop(route);
         InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
         boolean connectorCleaned = connector == null;
         if (connector != null && WebSocketServer.isConnectorOnline(connector.getId())) {
@@ -644,12 +684,12 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         boolean gatewayCleaned = cleanupStoredGateways(route);
         PortLease lease = route.getLeaseId() == null ? null : leaseMapper.selectById(route.getLeaseId());
         List<PortLease> gatewayLeases = storedGatewayLeases(route);
-        if (connectorCleaned && gatewayCleaned) {
+        if (connectorCleaned && gatewayCleaned && natCleaned) {
             markDeleted(route, lease, gatewayLeases);
             return R.ok();
         }
         route.setState("delete_pending");
-        route.setLastError(pendingDeleteReason(connectorCleaned, gatewayCleaned));
+        route.setLastError(pendingDeleteReason(connectorCleaned, gatewayCleaned, natCleaned));
         route.setUpdatedTime(System.currentTimeMillis());
         routeMapper.updateById(route);
         return R.ok();
@@ -661,18 +701,19 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         for (HomeProxyRoute route : routeMapper.selectList(new QueryWrapper<HomeProxyRoute>().eq("state", "delete_pending"))) {
             try {
                 InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
+                boolean natCleaned = natTraversalService.stop(route);
                 boolean connectorCleaned = connector == null;
                 if (connector != null && WebSocketServer.isConnectorOnline(connector.getId())) {
                     GostDto result = deleteConnectorRuntime(route, connector.getId());
                     connectorCleaned = ok(result) || containsNotFound(result);
                 }
                 boolean gatewayCleaned = cleanupStoredGateways(route);
-                if (connectorCleaned && gatewayCleaned) {
+                if (connectorCleaned && gatewayCleaned && natCleaned) {
                     markDeleted(route,
                             route.getLeaseId() == null ? null : leaseMapper.selectById(route.getLeaseId()),
                             storedGatewayLeases(route));
                 } else {
-                    route.setLastError(pendingDeleteReason(connectorCleaned, gatewayCleaned));
+                    route.setLastError(pendingDeleteReason(connectorCleaned, gatewayCleaned, natCleaned));
                     route.setUpdatedTime(System.currentTimeMillis());
                     routeMapper.updateById(route);
                 }
@@ -890,6 +931,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     }
 
     private R failProvision(HomeProxyRoute route, PortLease lease, List<GatewayRuntime> gateways, String error) {
+        natTraversalService.stop(route);
+        if ("smart_nat".equals(route.getAccessMode()) && WebSocketServer.isConnectorOnline(route.getConnectorId())) {
+            GostUtil.DeleteConnectorService(route.getConnectorId(), "home_proxy_" + route.getId() + "_nat_backend");
+        }
         cleanupProvisionedGateways(gateways);
         discardGatewayAllocations(route.getId(), gateways);
         if (lease != null && lease.getId() != null) leaseMapper.deleteById(lease.getId());
@@ -1083,6 +1128,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     private HomeProxyRoute enrich(HomeProxyRoute route, boolean includeSecret) {
         User owner = userMapper.selectById(route.getUserId());
         InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
+        InternalConnector sourceConnector = route.getSourceConnectorId() == null ? null : connectorMapper.selectById(route.getSourceConnectorId());
         PortPool ingress = route.getIngressPoolId() == null ? null : poolMapper.selectById(route.getIngressPoolId());
         PortPool egress = route.getEgressPoolId() == null ? null : poolMapper.selectById(route.getEgressPoolId());
         Node egressNode = route.getEgressNodeId() == null ? null : nodeMapper.selectById(route.getEgressNodeId());
@@ -1092,6 +1138,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         route.setConnectorName(connector == null ? "接入端已删除" : connector.getName());
         route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
+        route.setSourceConnectorName(sourceConnector == null ? null : sourceConnector.getName());
+        route.setSourceConnectorOnline(sourceConnector != null && WebSocketServer.isConnectorOnline(sourceConnector.getId()));
+        route.setClientEndpoint("smart_nat".equals(route.getAccessMode()) && route.getSourceListenPort() != null
+                ? "127.0.0.1:" + route.getSourceListenPort() : null);
         route.setIngressPoolName(isDirectMode(route.getAccessMode())
                 ? ("ipv4_direct".equals(route.getAccessMode()) ? "家庭 IPv4 直连" : "家庭 IPv6 直连")
                 : ingress == null ? "入口端口池已删除" : ingress.getName());
@@ -1131,7 +1181,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
     private String normalizeAccessMode(String value) {
         String mode = StringUtils.defaultIfBlank(value, "relay").trim().toLowerCase();
-        if (!List.of("relay", "ipv6_direct", "ipv4_direct").contains(mode)) {
+        if (!List.of("relay", "ipv6_direct", "ipv4_direct", "smart_nat").contains(mode)) {
             throw new IllegalArgumentException("家庭接入方式不受支持");
         }
         return mode;
@@ -1279,23 +1329,79 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
     private GostDto deleteConnectorRuntime(HomeProxyRoute route, Long connectorId) {
         String base = "home_proxy_" + route.getId();
+        GostDto natBackendResult = null;
+        if ("smart_nat".equals(route.getAccessMode())) {
+            natBackendResult = GostUtil.DeleteConnectorService(connectorId, base + "_nat_backend");
+        }
         GostDto serviceResult;
         if (isDirectMode(route.getAccessMode())) {
             serviceResult = GostUtil.DeleteDirectHomeProxyService(connectorId, base + "_service", base + "_egress");
         } else {
             serviceResult = GostUtil.DeleteHomeProxyService(connectorId, base + "_service", base + "_ingress", base + "_egress");
         }
+        if (natBackendResult != null && !ok(natBackendResult) && !containsNotFound(natBackendResult)) return natBackendResult;
         if (!"vless_reality".equals(route.getTransportMode())) return serviceResult;
         GostDto runtimeResult = GostUtil.DeleteConnectorRealityRuntime(connectorId, realityClientRuntimeName(route));
         if (!ok(serviceResult) && !containsNotFound(serviceResult)) return serviceResult;
         return runtimeResult;
     }
 
+    private String validateSmartNat(HomeProxyRouteCreateDto dto, InternalConnector home, Integer userId, String accessMode) {
+        if (!"smart_nat".equals(accessMode)) return null;
+        if (!AgentVersionUtil.isAtLeast(home.getVersion(), MIN_NAT_AGENT_VERSION)) {
+            return "家庭设备 Agent 需要升级到 " + MIN_NAT_AGENT_VERSION + " 或更高版本";
+        }
+        InternalConnector source = dto.getSourceConnectorId() == null ? null : connectorMapper.selectById(dto.getSourceConnectorId());
+        if (source == null || source.getStatus() == null || source.getStatus() == 0
+                || (!isAdmin() && !Objects.equals(source.getUserId(), userId))) return "请选择有权使用的公司接入设备";
+        if (Objects.equals(source.getId(), home.getId())) return "公司接入设备不能与家庭设备相同";
+        if (!WebSocketServer.isConnectorOnline(source.getId())) return "公司接入设备离线，请先启动 Agent";
+        if (!AgentVersionUtil.isAtLeast(source.getVersion(), MIN_NAT_AGENT_VERSION)) {
+            return "公司接入设备 Agent 需要升级到 " + MIN_NAT_AGENT_VERSION + " 或更高版本";
+        }
+        Integer port = dto.getSourceListenPort();
+        if (port == null || port < 1024 || port > 65535) return "公司本地 SOCKS5 端口必须在 1024-65535 之间";
+        Integer duplicate = routeMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
+                .eq("source_connector_id", source.getId()).eq("source_listen_port", port).notIn("state", "deleted"));
+        if (duplicate != null && duplicate > 0) return "公司接入设备的该本地端口已被其他智能中转使用";
+        if (dto.getIngressPoolId() == null) return "智能直连必须选择公网入口端口池作为失败回退";
+        return null;
+    }
+
+    private void applyNatFields(HomeProxyRoute route, HomeProxyRouteCreateDto dto, String accessMode) {
+        if (!"smart_nat".equals(accessMode)) return;
+        route.setSourceConnectorId(dto.getSourceConnectorId());
+        route.setSourceListenPort(dto.getSourceListenPort());
+        route.setNatState("provisioning");
+        route.setActiveAccessPath("relay");
+        route.setDirectSuccessCount(0L);
+        route.setDirectFailureCount(0L);
+        route.setDirectRxBytes(0L);
+        route.setDirectTxBytes(0L);
+        route.setRelayRxBytes(0L);
+        route.setRelayTxBytes(0L);
+    }
+
+    private Integer findNatBackendPort(InternalConnector connector) {
+        int start = 20000 + RANDOM.nextInt(20000);
+        for (int offset = 0; offset < 200; offset++) {
+            int port = 20000 + ((start - 20000 + offset) % 40000);
+            Integer duplicate = routeMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
+                    .eq("connector_id", connector.getId()).eq("nat_backend_port", port).notIn("state", "deleted"));
+            if (duplicate != null && duplicate > 0) continue;
+            AgentPortCheckUtil.Result check = AgentPortCheckUtil.checkConnector(connector.getId(),
+                    List.of(new AgentPortCheckUtil.Check("tcp", "127.0.0.1", port)));
+            if (check.isAvailable()) return port;
+        }
+        return null;
+    }
+
     private String realityClientRuntimeName(HomeProxyRoute route) {
         return "home_proxy_" + route.getId() + "_reality_client";
     }
 
-    private String pendingDeleteReason(boolean connectorCleaned, boolean gatewayCleaned) {
+    private String pendingDeleteReason(boolean connectorCleaned, boolean gatewayCleaned, boolean natCleaned) {
+        if (!natCleaned) return "公司或家庭接入设备离线，恢复连接后自动清理本地 NAT 监听";
         if (!connectorCleaned && !gatewayCleaned) return "家庭接入端和出口 VPS 离线，恢复连接后自动清理";
         if (!connectorCleaned) return "家庭接入端离线，恢复连接后自动清理";
         return "出口 VPS 离线，恢复连接后自动清理";

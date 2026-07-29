@@ -39,6 +39,32 @@ public final class AgentPortCheckUtil {
         payload.put("checks", payloadChecks);
 
         GostDto response = WebSocketServer.send_msg(node.getId(), payload, "PortCheck");
+        return parseResponse(response);
+    }
+
+    public static Result checkConnector(Long connectorId, List<Check> checks) {
+        if (connectorId == null || checks == null || checks.isEmpty()) {
+            return Result.available(false, "无需检查");
+        }
+        GostDto response = WebSocketServer.sendConnectorMsg(connectorId, payload(checks), "PortCheck");
+        return parseResponse(response);
+    }
+
+    private static JSONObject payload(List<Check> checks) {
+        JSONArray payloadChecks = new JSONArray();
+        for (Check check : checks) {
+            JSONObject item = new JSONObject();
+            item.put("network", check.getNetwork());
+            item.put("host", StringUtils.defaultString(check.getHost()));
+            item.put("port", check.getPort());
+            payloadChecks.add(item);
+        }
+        JSONObject payload = new JSONObject();
+        payload.put("checks", payloadChecks);
+        return payload;
+    }
+
+    private static Result parseResponse(GostDto response) {
         if (response == null || !"OK".equals(response.getMsg()) || response.getData() == null) {
             String message = response == null ? "Agent 无响应" : StringUtils.defaultIfBlank(response.getMsg(), "Agent 无响应");
             return Result.unavailable(true, "系统端口检查失败：" + message, Collections.emptyList());

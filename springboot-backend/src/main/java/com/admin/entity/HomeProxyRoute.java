@@ -14,6 +14,7 @@ public class HomeProxyRoute implements Serializable {
     private Integer userId;
     private String name;
     private Long connectorId;
+    private Long sourceConnectorId;
     private String accessMode;
     private Long ingressPoolId;
     private Long egressPoolId;
@@ -29,6 +30,20 @@ public class HomeProxyRoute implements Serializable {
     private String directIpv6;
     private String directIpv4;
     private Integer directPort;
+    private Integer sourceListenPort;
+    private Integer natBackendPort;
+    private String natState;
+    private String activeAccessPath;
+    private String natType;
+    private Long directSuccessCount;
+    private Long directFailureCount;
+    private Long directRxBytes;
+    private Long directTxBytes;
+    private Long relayRxBytes;
+    private Long relayTxBytes;
+    private Long lastNatProbeAt;
+    private Long lastPathSwitchAt;
+    private String lastNatError;
     private Long ipv6CheckedAt;
     private Long ipCheckedAt;
     private Long dynamicDnsRuleId;
@@ -48,6 +63,12 @@ public class HomeProxyRoute implements Serializable {
     private String connectorName;
     @TableField(exist = false)
     private Boolean connectorOnline;
+    @TableField(exist = false)
+    private String sourceConnectorName;
+    @TableField(exist = false)
+    private Boolean sourceConnectorOnline;
+    @TableField(exist = false)
+    private String clientEndpoint;
     @TableField(exist = false)
     private String ingressPoolName;
     @TableField(exist = false)

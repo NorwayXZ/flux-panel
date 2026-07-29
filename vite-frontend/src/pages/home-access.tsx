@@ -7,7 +7,7 @@ import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Tab, Tabs } from '@heroui/tabs';
-import { BookOpen, Copy, Home, Laptop, Plus, RefreshCw, Route, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
+import { Activity, BookOpen, Copy, Home, Laptop, Plus, RefreshCw, Route, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -16,11 +16,14 @@ import {
   deleteHomeProxyRoute,
   getDynamicDnsOverview,
   getHomeProxyRoutes,
+  getHomeProxyNatEvents,
   getInternalConnectors,
   getNodeList,
   getPublishingPortPools,
   getTunnelList,
   refreshHomeProxyIpv6,
+  retryHomeProxyNat,
+  type HomeProxyNatEvent,
   type HomeProxyRoute,
   type InternalConnector,
   type PublishingPortPool,
@@ -37,10 +40,10 @@ const stateMeta: Record<HomeProxyRoute['state'], { label: string; color: 'succes
 };
 
 type FormState = {
-  name: string; connectorId: string; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
+  name: string; connectorId: string; sourceConnectorId: string; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct' | 'smart_nat';
   ingressPoolKey: string; egressNodeId: string; egressMode: 'single' | 'tunnel'; egressTunnelId: string;
   transportMode: 'socks5' | 'vless_reality'; realityServerName: string;
-  directPort: string; dynamicDnsRuleId: string;
+  directPort: string; sourceListenPort: string; dynamicDnsRuleId: string;
   authEnabled: boolean; authUsername: string; authPassword: string;
 };
 
@@ -57,15 +60,16 @@ type TunnelOption = {
 };
 
 const emptyForm = (): FormState => ({
-  name: '', connectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressNodeId: '',
+  name: '', connectorId: '', sourceConnectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressNodeId: '',
   egressMode: 'single', egressTunnelId: '', directPort: '23888',
   transportMode: 'vless_reality', realityServerName: 'www.cloudflare.com',
-  dynamicDnsRuleId: '', authEnabled: false, authUsername: '', authPassword: '',
+  sourceListenPort: '23888', dynamicDnsRuleId: '', authEnabled: false, authUsername: '', authPassword: '',
 });
 
 const poolKey = (pool: PublishingPortPool) => `${pool.id}:${pool.grantId || 0}`;
 const selectedPool = (pools: PublishingPortPool[], key: string) => pools.find(pool => poolKey(pool) === key);
 const endpointText = (route: HomeProxyRoute) => {
+  if (route.accessMode === 'smart_nat') return route.clientEndpoint || '等待公司设备 Agent 启动本地入口';
   if (!route.publicHost || !route.publicPort) return '等待生成访问地址';
   const host = route.publicHost.includes(':') && !route.publicHost.startsWith('[') ? `[${route.publicHost}]` : route.publicHost;
   return `${host}:${route.publicPort}`;
@@ -73,7 +77,19 @@ const endpointText = (route: HomeProxyRoute) => {
 const isDirect = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) => mode === 'ipv6_direct' || mode === 'ipv4_direct';
 const isIpv6Direct = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) => mode === 'ipv6_direct';
 const accessLabel = (mode: HomeProxyRoute['accessMode'] | FormState['accessMode']) =>
-  mode === 'ipv4_direct' ? 'IPv4 直连' : mode === 'ipv6_direct' ? 'IPv6 直连' : '公网中继';
+  mode === 'smart_nat' ? '智能直连' : mode === 'ipv4_direct' ? 'IPv4 直连' : mode === 'ipv6_direct' ? 'IPv6 直连' : '公网中继';
+
+const formatBytes = (value = 0) => {
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let amount = value / 1024;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) { amount /= 1024; index += 1; }
+  return `${amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2)} ${units[index]}`;
+};
+
+const natPathLabel = (route: HomeProxyRoute) => route.natState === 'probing'
+  ? '探测中' : route.activeAccessPath === 'udp_direct' ? 'UDP 直连' : '公网中继';
 
 const formatTime = (timestamp?: number | null) => {
   if (!timestamp) return '尚未检测';
@@ -94,6 +110,9 @@ export default function HomeAccessPage() {
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [guideRoute, setGuideRoute] = useState<HomeProxyRoute | null>(null);
+  const [eventRoute, setEventRoute] = useState<HomeProxyRoute | null>(null);
+  const [natEvents, setNatEvents] = useState<HomeProxyNatEvent[]>([]);
+  const [eventLoading, setEventLoading] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [routes, setRoutes] = useState<HomeProxyRoute[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
@@ -103,8 +122,8 @@ export default function HomeAccessPage() {
   const [dynamicDnsRules, setDynamicDnsRules] = useState<DynamicDnsRule[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     const adminMode = isAdmin();
     const [routeRes, connectorRes, poolRes, tunnelRes, nodeRes, dnsRes] = await Promise.all([
       getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(), getTunnelList(), getNodeList(),
@@ -116,10 +135,19 @@ export default function HomeAccessPage() {
     if (tunnelRes.code === 0) setTunnels((tunnelRes.data || []) as TunnelOption[]);
     if (nodeRes.code === 0) setNodes((nodeRes.data || []) as NodeOption[]);
     if (dnsRes.code === 0) setDynamicDnsRules(dnsRes.data?.rules || []);
-    setLoading(false);
+    if (showLoading) setLoading(false);
   };
 
-  useEffect(() => { void load(); }, []);
+  const refreshRoutes = async () => {
+    const response = await getHomeProxyRoutes();
+    if (response.code === 0) setRoutes(response.data || []);
+  };
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void refreshRoutes(), 10000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const ingressPools = useMemo(() => pools.filter(pool => pool.availablePorts > 0), [pools]);
   const tunnelOptions = useMemo(() => tunnels.filter(tunnel => tunnel.type === 2 && tunnel.status === 1
@@ -129,6 +157,7 @@ export default function HomeAccessPage() {
   const selectedEgressNode = useMemo(() => egressNodes.find(node => String(node.id) === form.egressNodeId), [egressNodes, form.egressNodeId]);
   const activeCount = routes.filter(item => item.state === 'active').length;
   const directCount = routes.filter(item => isDirect(item.accessMode)).length;
+  const smartCount = routes.filter(item => item.accessMode === 'smart_nat').length;
   const matchingDnsRules = useMemo(() => dynamicDnsRules.filter(rule => rule.sourceType === 'connector'
     && String(rule.connectorId || '') === form.connectorId
     && rule.recordType === (form.accessMode === 'ipv4_direct' ? 'A' : 'AAAA')
@@ -138,25 +167,32 @@ export default function HomeAccessPage() {
     if (!form.name.trim() || !form.connectorId
         || (form.egressMode === 'single' && !form.egressNodeId)
         || (form.egressMode === 'tunnel' && !form.egressTunnelId)
-        || (form.accessMode === 'relay' && !form.ingressPoolKey)) {
+        || ((form.accessMode === 'relay' || form.accessMode === 'smart_nat') && !form.ingressPoolKey)
+        || (form.accessMode === 'smart_nat' && !form.sourceConnectorId)) {
       toast.error('请完整选择家庭设备、接入方式和出口路径');
       return;
     }
     const directPort = Number(form.directPort);
+    const sourceListenPort = Number(form.sourceListenPort);
     if (isDirect(form.accessMode) && (!Number.isInteger(directPort) || directPort < 1024 || directPort > 65535)) {
       return toast.error('家庭直连端口必须在 1024-65535 之间');
+    }
+    if (form.accessMode === 'smart_nat' && (!Number.isInteger(sourceListenPort) || sourceListenPort < 1024 || sourceListenPort > 65535)) {
+      return toast.error('公司本地 SOCKS5 端口必须在 1024-65535 之间');
     }
     if (form.authEnabled && (!form.authUsername.trim() || form.authPassword.length < 8)) {
       toast.error('启用代理认证时，用户名不能为空且密码至少 8 位');
       return;
     }
     const ingressPool = selectedPool(pools, form.ingressPoolKey);
-    if ((form.accessMode === 'relay' && !ingressPool) || (form.egressMode === 'single' && !selectedEgressNode)) {
+    if (((form.accessMode === 'relay' || form.accessMode === 'smart_nat') && !ingressPool) || (form.egressMode === 'single' && !selectedEgressNode)) {
       return toast.error('所选端口资源已变化，请重新选择');
     }
     setSubmitting(true);
     const response = await createHomeProxyRoute({
       name: form.name.trim(), connectorId: Number(form.connectorId),
+      sourceConnectorId: form.accessMode === 'smart_nat' ? Number(form.sourceConnectorId) : undefined,
+      sourceListenPort: form.accessMode === 'smart_nat' ? sourceListenPort : undefined,
       accessMode: form.accessMode,
       ingressPoolId: ingressPool?.id, ingressGrantId: ingressPool?.grantId,
       egressNodeId: form.egressMode === 'single' ? Number(form.egressNodeId) : undefined,
@@ -174,6 +210,24 @@ export default function HomeAccessPage() {
     setModalOpen(false);
     setForm(emptyForm());
     void load();
+  };
+
+  const retryNat = async (id: number) => {
+    setRefreshingId(id);
+    const response = await retryHomeProxyNat(id);
+    setRefreshingId(null);
+    if (response.code !== 0) return toast.error(response.msg || '重新探测失败');
+    toast.success('已重新发起 STUN 和 UDP 直连探测');
+    window.setTimeout(() => void load(), 1500);
+  };
+
+  const showNatEvents = async (route: HomeProxyRoute) => {
+    setEventRoute(route);
+    setEventLoading(true);
+    const response = await getHomeProxyNatEvents(route.id);
+    setEventLoading(false);
+    if (response.code === 0) setNatEvents(response.data || []);
+    else toast.error(response.msg || '读取路径事件失败');
   };
 
   const refreshPublicAddress = async (id: number) => {
@@ -212,12 +266,12 @@ export default function HomeAccessPage() {
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
           ['运行中', activeCount], ['在线家庭设备', connectors.filter(item => item.online).length],
-          ['中转链路', routes.length], ['公网直连', directCount],
+          ['中转链路', routes.length], ['智能直连', smartCount],
         ].map(([label, value]) => <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}
       </section>
 
       <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
-        公网直连要求家庭网络具备可入站访问的公网 IPv6 或公网 IPv4。IPv6 需要放行通信规则，IPv4 需要端口转发到家庭设备；正式暴露到公网时建议启用代理认证。
+        当前有 {directCount} 条公网直连。智能直连需要公司和家庭设备均运行 2.31.0 或更高版本 Agent，并保留一个公网入口作为失败回退。
       </div>
 
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : routes.length === 0 ? (
@@ -230,6 +284,9 @@ export default function HomeAccessPage() {
             const direct = isDirect(route.accessMode);
             const ipv6Direct = isIpv6Direct(route.accessMode);
             const directAddress = ipv6Direct ? route.directIpv6 : route.directIpv4;
+            const smart = route.accessMode === 'smart_nat';
+            const attempts = (route.directSuccessCount || 0) + (route.directFailureCount || 0);
+            const successRate = attempts > 0 ? Math.round(((route.directSuccessCount || 0) / attempts) * 100) : 0;
             return <article key={route.id} className="rounded-lg border border-divider bg-content1 p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0"><h2 className="truncate text-lg font-semibold">{route.name}</h2><p className="mt-1 text-sm text-default-500">{route.connectorName || '家庭设备'} · {route.proxyType.toUpperCase()}</p></div>
@@ -237,20 +294,31 @@ export default function HomeAccessPage() {
                   <Chip size="sm" variant="flat" color={route.transportMode === 'vless_reality' ? 'secondary' : 'default'}>
                     {route.transportMode === 'vless_reality' ? 'VLESS + REALITY' : route.transportMode === 'socks5' ? 'SOCKS5' : '标准 TCP · 旧版'}
                   </Chip>
-                  <Chip size="sm" variant="flat" color={direct ? 'primary' : 'default'}>{accessLabel(route.accessMode)}</Chip>
+                  <Chip size="sm" variant="flat" color={direct || smart ? 'primary' : 'default'}>{accessLabel(route.accessMode)}</Chip>
                   <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
                 </div>
               </div>
-              <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div>
+              <div className="mt-4"><div className="mb-1 text-xs text-default-500">{smart ? '公司设备本地 SOCKS5 地址' : '代理访问地址'}</div><div className="rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div></div>
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-                <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
+                <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : smart ? '失败回退入口' : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
                 <div><div className="text-default-500">{route.egressMode === 'tunnel' ? '隧道出口' : '指定服务器出口'}</div><div className="mt-1 font-medium">{route.egressMode === 'tunnel' ? (route.egressTunnelName || '隧道已删除') : (route.egressNodeName || route.egressPoolName || '出口已删除')}</div></div>
                 <div><div className="text-default-500">家庭设备状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
+                {smart && <div><div className="text-default-500">公司接入设备</div><div className={`mt-1 font-medium ${route.sourceConnectorOnline ? 'text-success' : 'text-danger'}`}>{route.sourceConnectorName || '设备已删除'} · {route.sourceConnectorOnline ? '在线' : '离线'}</div></div>}
                 <div><div className="text-default-500">{direct ? '公网地址最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
                 {direct && <div className="md:col-span-2"><div className="text-default-500">动态 DNS</div><div className="mt-1 break-all font-medium">{route.publicDomain ? `${route.publicDomain} · 已绑定` : '未绑定，使用裸 IP 地址'}</div></div>}
                 {route.transportMode === 'vless_reality' && <div className="md:col-span-2"><div className="text-default-500">家庭到首个出口</div><div className="mt-1 font-medium">VLESS + REALITY · 伪装域名 {route.realityServerName || 'www.cloudflare.com'}</div></div>}
                 {route.egressMode === 'tunnel' && <div className="md:col-span-2"><div className="text-default-500">出口隧道</div><div className="mt-1 font-medium">{route.egressTunnelName || '隧道已删除'}</div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(route.egressPathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents">{index > 0 && <span className="text-default-400">→</span>}<Chip size="sm" variant="flat" color={node.status === 1 ? (index === (route.egressPathNodeDetails?.length || 0) - 1 ? 'success' : 'default') : 'danger'}>{node.name}{index === (route.egressPathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}</div></div>}
               </div>
+              {smart && <section className="mt-4 border-y border-divider py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs text-default-500">当前访问路径</div><div className={`mt-1 font-semibold ${route.activeAccessPath === 'udp_direct' ? 'text-success' : 'text-warning'}`}>{natPathLabel(route)}</div></div><Chip size="sm" variant="flat" color={route.activeAccessPath === 'udp_direct' ? 'success' : 'warning'}>{route.natType || 'NAT 类型待检测'}</Chip></div>
+                <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-sm sm:grid-cols-4">
+                  <div><div className="text-default-500">直连成功率</div><div className="mt-1 font-medium">{attempts ? `${successRate}% · ${attempts} 次` : '暂无结果'}</div></div>
+                  <div><div className="text-default-500">直连流量</div><div className="mt-1 font-medium">{formatBytes((route.directRxBytes || 0) + (route.directTxBytes || 0))}</div></div>
+                  <div><div className="text-default-500">中继流量</div><div className="mt-1 font-medium">{formatBytes((route.relayRxBytes || 0) + (route.relayTxBytes || 0))}</div></div>
+                  <div><div className="text-default-500">最近切换</div><div className="mt-1 font-medium">{formatTime(route.lastPathSwitchAt)}</div></div>
+                </div>
+                {route.lastNatError && <div className="mt-3 text-xs leading-5 text-warning-700 dark:text-warning-300">{route.lastNatError}</div>}
+              </section>}
               {route.authEnabled === 1 && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
               {route.lastError && (
                 <div className={`mt-4 rounded-md px-3 py-3 text-sm ${isIpv6VerificationWarning(route)
@@ -262,7 +330,9 @@ export default function HomeAccessPage() {
               <div className="mt-5 flex flex-wrap justify-end gap-2">
                 {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshPublicAddress(route.id)}>检测地址</Button>}
                 {direct && <Button size="sm" variant="flat" startContent={<BookOpen size={15} />} onPress={() => setGuideRoute(route)}>公网接入</Button>}
-                {route.state === 'active' && route.publicHost && route.publicPort && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, '代理地址')}>复制地址</Button>}
+                {smart && <Button size="sm" variant="flat" startContent={<Activity size={15} />} onPress={() => showNatEvents(route)}>路径记录</Button>}
+                {smart && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => retryNat(route.id)}>重新探测</Button>}
+                {route.state === 'active' && (smart || (route.publicHost && route.publicPort)) && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, smart ? '本地代理地址' : '代理地址')}>复制地址</Button>}
                 <Button size="sm" color="danger" variant="flat" startContent={<Trash2 size={15} />} onPress={() => remove(route.id)}>删除</Button>
               </div>
             </article>;
@@ -275,15 +345,24 @@ export default function HomeAccessPage() {
         <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。公司到家庭仍使用 SOCKS5；家庭到首个出口可选择 SOCKS5 或 VLESS + REALITY。指定服务器模式由所选节点直接落地，隧道模式依次经过路径节点并由最后一个节点出口。</p>
       </div>
 
-      <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl">
-        <ModalContent><ModalHeader>新建家庭网络中转</ModalHeader><ModalBody className="space-y-4">
+      <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl" scrollBehavior="inside">
+        <ModalContent><ModalHeader>新建家庭网络中转</ModalHeader><ModalBody className="min-w-0 space-y-4">
           <Input label="中转名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
           <Select label="家庭设备" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || ''), dynamicDnsRuleId: '' })}>
             {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}</SelectItem>)}
           </Select>
-          <Tabs aria-label="接入方式" selectedKey={form.accessMode} onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'], dynamicDnsRuleId: '' })}>
+          <Tabs
+            aria-label="接入方式"
+            classNames={{
+              tabList: 'grid w-full grid-cols-2 sm:grid-cols-4',
+              tab: 'h-auto min-h-10 whitespace-normal px-2 leading-5',
+            }}
+            selectedKey={form.accessMode}
+            onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'], dynamicDnsRuleId: '' })}
+          >
             <Tab key="ipv6_direct" title="IPv6 直连（推荐）" />
             <Tab key="ipv4_direct" title="IPv4 直连" />
+            <Tab key="smart_nat" title="智能直连 + 中继" />
             <Tab key="relay" title="公网中继（兼容）" />
           </Tabs>
           <div className="rounded-md border border-divider px-4 py-3 text-sm leading-6 text-default-500">
@@ -291,8 +370,16 @@ export default function HomeAccessPage() {
               ? '公司网络直接连接家庭公网 IPv6，不经过入口 VPS。需要公司和家庭均可使用 IPv6，并在家庭路由器及系统防火墙放行下方 TCP 端口。'
               : form.accessMode === 'ipv4_direct'
                 ? '公司网络直接连接家庭公网 IPv4。需要运营商提供真正公网 IPv4，并在家庭路由器配置端口转发到家庭设备。'
-              : '适合家庭没有公网 IPv6，或 IPv6 入站被运营商拦截的情况。连接会先到入口 VPS，再反向送回家庭设备。'}
+                : form.accessMode === 'smart_nat'
+                  ? '公司和家庭设备都安装 CloudNest Agent。系统优先尝试 IPv4/IPv6 UDP 打洞直连，5 秒未建立便让新连接自动走公网入口中继。普通浏览器或手机不能单独参与打洞。'
+                  : '适合家庭没有公网 IPv6，或 IPv6 入站被运营商拦截的情况。连接会先到入口 VPS，再反向送回家庭设备。'}
           </div>
+          {form.accessMode === 'smart_nat' && <div className="grid gap-4 md:grid-cols-2">
+            <Select label="公司接入设备" description="公司网络中已安装 Agent 的电脑；浏览器连接该设备的本地 SOCKS 地址" selectedKeys={form.sourceConnectorId ? [form.sourceConnectorId] : []} onSelectionChange={keys => setForm({ ...form, sourceConnectorId: String(Array.from(keys)[0] || '') })}>
+              {connectors.filter(item => String(item.id) !== form.connectorId).map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'} · Agent {item.version || '未知'}</SelectItem>)}
+            </Select>
+            <Input label="公司本地 SOCKS5 端口" description="只监听 127.0.0.1，不暴露到公司局域网或公网" type="number" min={1024} max={65535} value={form.sourceListenPort} onValueChange={value => setForm({ ...form, sourceListenPort: value })} />
+          </div>}
           <div className="grid gap-4 md:grid-cols-2">
             {isDirect(form.accessMode) ? (
               <Input label={`家庭 ${form.accessMode === 'ipv4_direct' ? 'IPv4' : 'IPv6'} 监听端口`} description={form.accessMode === 'ipv4_direct' ? '路由器需转发 WAN TCP 到家庭设备' : '路由器和系统防火墙需放行 TCP'} type="number" min={1024} max={65535} value={form.directPort} onValueChange={value => setForm({ ...form, directPort: value })} />
@@ -345,6 +432,14 @@ export default function HomeAccessPage() {
           <Switch isSelected={form.authEnabled} onValueChange={value => setForm({ ...form, authEnabled: value })}>启用代理用户名密码认证</Switch>
           {form.authEnabled && <div className="grid gap-4 md:grid-cols-2"><Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} /><Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} /></div>}
         </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建中转</Button></ModalFooter></ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(eventRoute)} onOpenChange={open => !open && setEventRoute(null)} size="2xl" scrollBehavior="inside">
+        <ModalContent><ModalHeader className="flex flex-col gap-1"><span>NAT 路径记录</span><span className="text-sm font-normal text-default-500">{eventRoute?.name} · 只记录探测、直连建立和中继回退</span></ModalHeader><ModalBody className="pb-6">
+          {eventLoading ? <div className="flex min-h-40 items-center justify-center"><Spinner /></div> : natEvents.length === 0 ? <div className="py-12 text-center text-default-500">暂无路径事件</div> : <div className="divide-y divide-divider border-y border-divider">
+            {natEvents.map(event => <div key={event.id} className="grid gap-1 py-3 sm:grid-cols-[160px_120px_minmax(0,1fr)] sm:gap-3"><div className="text-xs text-default-500">{formatTime(event.createdTime)}</div><div className="text-sm font-medium">{event.eventType === 'direct_connected' ? '直连建立' : event.eventType === 'fallback' ? '切换中继' : event.eventType === 'probe' ? '开始探测' : event.eventType}</div><div className="break-words text-sm text-default-600">{event.detail || '-'}</div></div>)}
+          </div>}
+        </ModalBody><ModalFooter><Button onPress={() => setEventRoute(null)}>关闭</Button></ModalFooter></ModalContent>
       </Modal>
 
       <Modal isOpen={Boolean(guideRoute)} onOpenChange={open => !open && setGuideRoute(null)} size="3xl" scrollBehavior="inside">

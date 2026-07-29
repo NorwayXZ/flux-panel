@@ -12,6 +12,7 @@ public class HomeProxyRouteCreateDto {
     private String name;
     @javax.validation.constraints.NotNull(message = "请选择家庭接入端")
     private Long connectorId;
+    private Long sourceConnectorId;
     private String accessMode;
     private Long ingressPoolId;
     private Long ingressGrantId;
@@ -24,6 +25,7 @@ public class HomeProxyRouteCreateDto {
     @Size(max = 253, message = "REALITY 伪装域名不能超过253个字符")
     private String realityServerName;
     private Integer directPort;
+    private Integer sourceListenPort;
     private Long dynamicDnsRuleId;
     private Boolean authEnabled;
     @Size(max = 64, message = "代理用户名不能超过64个字符")

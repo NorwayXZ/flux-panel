@@ -144,6 +144,12 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         Integer count = publishedServiceMapper.selectCount(new QueryWrapper<PublishedService>()
                 .eq("connector_id", id).notIn("state", "released", "deleted"));
         if (count != null && count > 0) return R.err("该接入端仍有内网映射，请先删除相关映射");
+        Integer homeProxyCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM home_proxy_route WHERE (connector_id=? OR source_connector_id=?) AND state<>'deleted'",
+                Integer.class, id, id);
+        if (homeProxyCount != null && homeProxyCount > 0) {
+            return R.err("该接入设备仍被家庭网络中转使用，请先删除相关中转");
+        }
         connector.setStatus(0);
         connector.setUpdatedTime(System.currentTimeMillis());
         connectorMapper.updateById(connector);

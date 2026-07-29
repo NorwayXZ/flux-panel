@@ -136,6 +136,7 @@ type WebSocketReporter struct {
 	aesCrypto       *crypto.AESCrypto // 新增：AES加密器
 	terminalManager *TerminalManager
 	realityManager  *realityRuntimeManager
+	natManager      *natRuntimeManager
 }
 
 // NewWebSocketReporter 创建一个新的WebSocket报告器
@@ -164,6 +165,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	}
 	reporter.terminalManager = NewTerminalManager(reporter.sendTerminalEvent)
 	reporter.realityManager = newRealityRuntimeManager()
+	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	return reporter
 }
 
@@ -171,6 +173,9 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 func (w *WebSocketReporter) Start() {
 	if w.realityManager != nil {
 		go w.realityManager.restore()
+	}
+	if w.natManager != nil {
+		go w.natManager.restore()
 	}
 	go w.run()
 }
@@ -183,6 +188,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.realityManager != nil {
 		w.realityManager.stopAll()
+	}
+	if w.natManager != nil {
+		w.natManager.stopAll()
 	}
 	if w.conn != nil {
 		w.conn.Close()
@@ -688,6 +696,42 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleDeleteRealityRuntime(cmd.Data)
 		response.Type = "DeleteRealityRuntimeResponse"
 
+	case "NatPrepare":
+		var request natPrepareRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result natPrepareResponse
+		if err == nil && w.natManager != nil {
+			result, err = w.natManager.prepare(request)
+		}
+		response.Type = "NatPrepareResponse"
+		response.Data = result
+
+	case "NatConnect":
+		var request natConnectRequest
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.natManager != nil {
+			err = w.natManager.connect(request)
+		}
+		response.Type = "NatConnectResponse"
+
+	case "NatFallback":
+		var request natFallbackRequest
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.natManager != nil {
+			err = w.natManager.fallback(request)
+		}
+		response.Type = "NatFallbackResponse"
+
+	case "NatStop":
+		var request struct {
+			RouteID int64 `json:"routeId"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.natManager != nil {
+			w.natManager.stop(request.RouteID, true)
+		}
+		response.Type = "NatStopResponse"
+
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)
 		response.Type = "UnknownCommandResponse"
@@ -705,6 +749,18 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+func decodeCommandData(data interface{}, target interface{}) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(payload, target)
+}
+
+func (w *WebSocketReporter) sendNATEvent(eventType string, data map[string]interface{}) {
+	w.sendResponse(CommandResponse{Type: eventType, Success: true, Data: data})
 }
 
 func (w *WebSocketReporter) handleAddRealityClientRuntime(data interface{}) (realityRuntimeResponse, error) {

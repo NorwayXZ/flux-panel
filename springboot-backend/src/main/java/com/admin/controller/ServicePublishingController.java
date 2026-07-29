@@ -9,6 +9,7 @@ import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.common.lang.R;
 import com.admin.service.HomeProxyService;
+import com.admin.service.NatTraversalService;
 import com.admin.service.ServicePublishingService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -30,6 +31,9 @@ public class ServicePublishingController {
     @Resource
     private HomeProxyService homeProxyService;
 
+    @Resource
+    private NatTraversalService natTraversalService;
+
     @LogAnnotation @PostMapping("/home-proxy/create")
     public R createHomeProxy(@Validated @RequestBody com.admin.common.dto.HomeProxyRouteCreateDto dto) {
         return homeProxyService.create(dto);
@@ -48,6 +52,16 @@ public class ServicePublishingController {
     @LogAnnotation @PostMapping("/home-proxy/delete")
     public R deleteHomeProxy(@RequestBody Map<String, Object> params) {
         return homeProxyService.delete(Long.valueOf(params.get("id").toString()));
+    }
+
+    @LogAnnotation @PostMapping("/home-proxy/nat/retry")
+    public R retryHomeProxyNat(@RequestBody Map<String, Object> params) {
+        return natTraversalService.retry(Long.valueOf(params.get("id").toString()));
+    }
+
+    @PostMapping("/home-proxy/nat/events")
+    public R listHomeProxyNatEvents(@RequestBody Map<String, Object> params) {
+        return natTraversalService.events(Long.valueOf(params.get("id").toString()));
     }
 
     @LogAnnotation @PostMapping("/connector/create")

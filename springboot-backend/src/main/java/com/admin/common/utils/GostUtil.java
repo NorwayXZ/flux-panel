@@ -444,6 +444,14 @@ public class GostUtil {
         return serviceResult != null && "OK".equals(serviceResult.getMsg()) ? chainResult : serviceResult;
     }
 
+    public static GostDto DeleteConnectorService(Long connectorId, String serviceName) {
+        JSONObject data = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        data.put("services", services);
+        return WebSocketServer.sendConnectorMsg(connectorId, data, "DeleteService");
+    }
+
 
     public static GostDto AddLimiters(Long node_id, Long name, String speed) {
         JSONObject data = createLimiterData(name, speed);

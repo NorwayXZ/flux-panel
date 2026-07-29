@@ -882,7 +882,22 @@ export interface HomeProxyRoute {
   userId: number;
   name: string;
   connectorId: number;
-  accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
+  accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct' | 'smart_nat';
+  sourceConnectorId?: number;
+  sourceListenPort?: number;
+  natBackendPort?: number;
+  natState?: 'provisioning' | 'probing' | 'direct' | 'relay' | 'failed';
+  activeAccessPath?: 'udp_direct' | 'relay';
+  natType?: string;
+  directSuccessCount?: number;
+  directFailureCount?: number;
+  directRxBytes?: number;
+  directTxBytes?: number;
+  relayRxBytes?: number;
+  relayTxBytes?: number;
+  lastNatProbeAt?: number;
+  lastPathSwitchAt?: number;
+  lastNatError?: string;
   ingressPoolId?: number;
   egressPoolId?: number;
   egressNodeId?: number;
@@ -910,6 +925,9 @@ export interface HomeProxyRoute {
   ownerUserName?: string;
   connectorName?: string;
   connectorOnline?: boolean;
+  sourceConnectorName?: string;
+  sourceConnectorOnline?: boolean;
+  clientEndpoint?: string;
   ingressPoolName?: string;
   egressPoolName?: string;
   egressTunnelName?: string;
@@ -920,7 +938,8 @@ export interface HomeProxyRoute {
 }
 
 export const createHomeProxyRoute = (data: {
-  name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
+  name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct' | 'smart_nat';
+  sourceConnectorId?: number; sourceListenPort?: number;
   ingressPoolId?: number; ingressGrantId?: number;
   egressPoolId?: number; egressGrantId?: number;
   egressNodeId?: number;
@@ -933,6 +952,13 @@ export const getHomeProxyRoutes = () => Network.post<HomeProxyRoute[]>("/service
 export const refreshHomeProxyIpv6 = (id: number) =>
   Network.post<{ address: string; checkedAt: number; family?: 'ipv4' | 'ipv6' }>("/service-publishing/home-proxy/refresh-ipv6", { id });
 export const deleteHomeProxyRoute = (id: number) => Network.post("/service-publishing/home-proxy/delete", { id });
+export interface HomeProxyNatEvent {
+  id: number; routeId: number; eventType: string; accessPath?: string; detail?: string; createdTime: number;
+}
+export const retryHomeProxyNat = (id: number) =>
+  Network.post<HomeProxyRoute>("/service-publishing/home-proxy/nat/retry", { id });
+export const getHomeProxyNatEvents = (id: number) =>
+  Network.post<HomeProxyNatEvent[]>("/service-publishing/home-proxy/nat/events", { id });
 
 
 // 验证码相关接口

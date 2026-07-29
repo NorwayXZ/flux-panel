@@ -101,12 +101,33 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("home_proxy_route", "egress_node_id", "bigint DEFAULT NULL AFTER egress_pool_id");
             ensureColumn("home_proxy_route", "transport_mode", "varchar(24) NOT NULL DEFAULT 'standard_tcp' AFTER egress_tunnel_id");
             ensureColumn("home_proxy_route", "reality_server_name", "varchar(253) DEFAULT NULL AFTER transport_mode");
+            ensureColumn("home_proxy_route", "source_connector_id", "bigint DEFAULT NULL AFTER connector_id");
+            ensureColumn("home_proxy_route", "source_listen_port", "int DEFAULT NULL AFTER direct_port");
+            ensureColumn("home_proxy_route", "nat_backend_port", "int DEFAULT NULL AFTER source_listen_port");
+            ensureColumn("home_proxy_route", "nat_state", "varchar(24) DEFAULT NULL AFTER nat_backend_port");
+            ensureColumn("home_proxy_route", "active_access_path", "varchar(24) DEFAULT NULL AFTER nat_state");
+            ensureColumn("home_proxy_route", "nat_type", "varchar(48) DEFAULT NULL AFTER active_access_path");
+            ensureColumn("home_proxy_route", "direct_success_count", "bigint NOT NULL DEFAULT 0 AFTER nat_type");
+            ensureColumn("home_proxy_route", "direct_failure_count", "bigint NOT NULL DEFAULT 0 AFTER direct_success_count");
+            ensureColumn("home_proxy_route", "direct_rx_bytes", "bigint NOT NULL DEFAULT 0 AFTER direct_failure_count");
+            ensureColumn("home_proxy_route", "direct_tx_bytes", "bigint NOT NULL DEFAULT 0 AFTER direct_rx_bytes");
+            ensureColumn("home_proxy_route", "relay_rx_bytes", "bigint NOT NULL DEFAULT 0 AFTER direct_tx_bytes");
+            ensureColumn("home_proxy_route", "relay_tx_bytes", "bigint NOT NULL DEFAULT 0 AFTER relay_rx_bytes");
+            ensureColumn("home_proxy_route", "last_nat_probe_at", "bigint DEFAULT NULL AFTER relay_tx_bytes");
+            ensureColumn("home_proxy_route", "last_path_switch_at", "bigint DEFAULT NULL AFTER last_nat_probe_at");
+            ensureColumn("home_proxy_route", "last_nat_error", "varchar(500) DEFAULT NULL AFTER last_path_switch_at");
             ensureNullableColumn("home_proxy_route", "ingress_pool_id", "bigint DEFAULT NULL");
             ensureNullableColumn("home_proxy_route", "egress_pool_id", "bigint DEFAULT NULL");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
             ensureIndex("home_proxy_route", "idx_home_proxy_ddns", "dynamic_dns_rule_id");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_tunnel", "egress_tunnel_id, state");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_node", "egress_node_id, state");
+            ensureIndex("home_proxy_route", "idx_home_proxy_source_connector", "source_connector_id, state");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_nat_event ("
+                    + "id bigint NOT NULL AUTO_INCREMENT, route_id bigint NOT NULL, user_id int NOT NULL, "
+                    + "event_type varchar(32) NOT NULL, access_path varchar(24) DEFAULT NULL, detail varchar(500) DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, PRIMARY KEY (id), KEY idx_nat_event_route (route_id, created_time), "
+                    + "KEY idx_nat_event_user (user_id, created_time)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_gateway ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, route_id bigint NOT NULL, sequence_no int NOT NULL, "
                     + "tunnel_id bigint DEFAULT NULL, node_id bigint NOT NULL, pool_id bigint DEFAULT NULL, grant_id bigint DEFAULT NULL, "
