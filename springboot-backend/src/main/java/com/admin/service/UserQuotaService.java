@@ -10,6 +10,7 @@ import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserNode;
 import com.admin.entity.UserTunnel;
+import com.admin.entity.HomeProxyRoute;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PrivateProxyMapper;
@@ -17,6 +18,7 @@ import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserNodeMapper;
 import com.admin.mapper.UserTunnelMapper;
+import com.admin.mapper.HomeProxyRouteMapper;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
@@ -42,11 +44,12 @@ public class UserQuotaService {
     private final NodeMapper nodeMapper;
     private final ForwardMapper forwardMapper;
     private final PrivateProxyMapper privateProxyMapper;
+    private final HomeProxyRouteMapper homeProxyRouteMapper;
 
     public UserQuotaService(UserMapper userMapper, UserTunnelMapper userTunnelMapper,
                             UserNodeMapper userNodeMapper, TunnelMapper tunnelMapper,
                             NodeMapper nodeMapper, ForwardMapper forwardMapper,
-                            PrivateProxyMapper privateProxyMapper) {
+                            PrivateProxyMapper privateProxyMapper, HomeProxyRouteMapper homeProxyRouteMapper) {
         this.userMapper = userMapper;
         this.userTunnelMapper = userTunnelMapper;
         this.userNodeMapper = userNodeMapper;
@@ -54,6 +57,7 @@ public class UserQuotaService {
         this.nodeMapper = nodeMapper;
         this.forwardMapper = forwardMapper;
         this.privateProxyMapper = privateProxyMapper;
+        this.homeProxyRouteMapper = homeProxyRouteMapper;
     }
 
     public R checkNodeQuota(Integer userId, Node node, Long excludeProxyId) {
@@ -146,6 +150,9 @@ public class UserQuotaService {
         for (Forward forward : userForwards(userId, excludeForwardId)) {
             if (routeTunnelIds(forward).contains(tunnelId)) count++;
         }
+        count += homeProxyRouteMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
+                .eq("user_id", userId).eq("egress_tunnel_id", tunnelId)
+                .notIn("state", "deleted", "error"));
         return count;
     }
 
@@ -233,6 +240,13 @@ public class UserQuotaService {
                 .notIn("state", "deleted", "expired", "error"))) {
             counts.merge(proxy.getNodeId().intValue(), 1, Integer::sum);
         }
+        for (HomeProxyRoute route : activeHomeTunnelRoutes(userId)) {
+            Tunnel tunnel = tunnelMapper.selectById(route.getEgressTunnelId());
+            if (tunnel == null) continue;
+            Set<Integer> usedByRoute = TunnelRouteUtil.parseNodePath(tunnel).stream()
+                    .map(Long::intValue).filter(requestedNodeIds::contains).collect(java.util.stream.Collectors.toSet());
+            usedByRoute.forEach(nodeId -> counts.merge(nodeId, 1, Integer::sum));
+        }
         return counts;
     }
 
@@ -248,7 +262,20 @@ public class UserQuotaService {
                 }
             }
         }
+        for (HomeProxyRoute route : activeHomeTunnelRoutes(userId)) {
+            Tunnel tunnel = tunnelMapper.selectById(route.getEgressTunnelId());
+            if (tunnel != null && Objects.equals(tunnel.getOwnerUserId(), userId)
+                    && sharedNodesOnPath(userId, tunnel).isEmpty()) {
+                count++;
+            }
+        }
         return count;
+    }
+
+    private List<HomeProxyRoute> activeHomeTunnelRoutes(Integer userId) {
+        return homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>()
+                .eq("user_id", userId).isNotNull("egress_tunnel_id")
+                .notIn("state", "deleted", "error"));
     }
 
     private List<Forward> userForwards(Integer userId, Long excludeForwardId) {

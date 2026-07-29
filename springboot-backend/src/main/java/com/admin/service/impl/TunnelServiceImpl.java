@@ -15,6 +15,8 @@ import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserTunnel;
 import com.admin.entity.UserNode;
+import com.admin.entity.HomeProxyRoute;
+import com.admin.mapper.HomeProxyRouteMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserTunnelMapper;
 import com.admin.mapper.UserNodeMapper;
@@ -105,6 +107,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
     @Resource
     UserMapper userMapper;
+
+    @Resource
+    HomeProxyRouteMapper homeProxyRouteMapper;
 
     @Resource
     NodeService nodeService;
@@ -697,6 +702,11 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
     private Map<String, Object> cleanupTunnelDependencies(Long tunnelId) {
         Integer tunnelIdInt = tunnelId.intValue();
+        Integer homeProxyCount = homeProxyRouteMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
+                .eq("egress_tunnel_id", tunnelId).notIn("state", "deleted", "error"));
+        if (homeProxyCount != null && homeProxyCount > 0) {
+            throw new IllegalStateException("该隧道正被 " + homeProxyCount + " 条家庭代理用作出口路径，请先删除对应家庭代理");
+        }
         Map<String, Object> summary = new HashMap<>();
         summary.put("forwardCount", 0L);
         summary.put("userTunnelCount", 0L);

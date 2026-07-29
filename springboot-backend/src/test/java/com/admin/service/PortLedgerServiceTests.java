@@ -5,12 +5,14 @@ import com.admin.common.dto.PortLedgerQueryDto;
 import com.admin.entity.Forward;
 import com.admin.entity.DomainRoute;
 import com.admin.entity.HomeProxyRoute;
+import com.admin.entity.HomeProxyGateway;
 import com.admin.entity.Node;
 import com.admin.entity.PortPool;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.HomeProxyRouteMapper;
+import com.admin.mapper.HomeProxyGatewayMapper;
 import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PortLeaseMapper;
@@ -48,6 +50,7 @@ class PortLedgerServiceTests {
     @Mock private DomainRouteMapper domainRouteMapper;
     @Mock private PrivateProxyMapper privateProxyMapper;
     @Mock private HomeProxyRouteMapper homeProxyRouteMapper;
+    @Mock private HomeProxyGatewayMapper homeProxyGatewayMapper;
 
     @InjectMocks private PortLedgerService service;
 
@@ -178,6 +181,52 @@ class PortLedgerServiceTests {
         assertEquals(20001, homeProxyEntries.get(0).getPortStart());
         assertTrue(homeProxyEntries.get(0).getDetail().contains("出口网关"));
         assertTrue(entries.stream().noneMatch(item -> item.getPortStart() == 23888));
+    }
+
+    @Test
+    void listsEveryHomeTunnelGatewayInPathOrder() {
+        Node transit = node(8L, "香港中转", "198.51.100.8");
+        Node landing = node(9L, "香港落地", "203.0.113.9");
+        HomeProxyRoute route = new HomeProxyRoute();
+        route.setId(40L);
+        route.setUserId(7);
+        route.setName("家庭隧道出口");
+        route.setState("active");
+        route.setProxyType("socks5");
+        route.setCreatedTime(2000L);
+
+        HomeProxyGateway first = gateway(40L, 1, 8L, 20001);
+        HomeProxyGateway last = gateway(40L, 2, 9L, 20002);
+        when(nodeMapper.selectList(null)).thenReturn(List.of(transit, landing));
+        when(tunnelMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(userMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(poolMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(serviceMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(forwardMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(grantMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(leaseMapper.selectList(null)).thenReturn(Collections.emptyList());
+        when(domainRouteMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(privateProxyMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(homeProxyRouteMapper.selectList(any())).thenReturn(List.of(route));
+        when(homeProxyGatewayMapper.selectList(null)).thenReturn(List.of(last, first));
+
+        Map<String, Object> result = service.list(new PortLedgerQueryDto());
+        @SuppressWarnings("unchecked")
+        List<PortLedgerEntryDto> entries = (List<PortLedgerEntryDto>) result.get("entries");
+        List<PortLedgerEntryDto> homeEntries = entries.stream().filter(item -> "home_proxy".equals(item.getType())).toList();
+
+        assertEquals(2, homeEntries.size());
+        assertTrue(homeEntries.stream().anyMatch(item -> item.getPortStart() == 20001 && item.getDetail().contains("第 1 跳")));
+        assertTrue(homeEntries.stream().anyMatch(item -> item.getPortStart() == 20002 && item.getDetail().contains("落地出口")));
+    }
+
+    private HomeProxyGateway gateway(Long routeId, int sequence, Long nodeId, int port) {
+        HomeProxyGateway gateway = new HomeProxyGateway();
+        gateway.setRouteId(routeId);
+        gateway.setSequenceNo(sequence);
+        gateway.setNodeId(nodeId);
+        gateway.setGatewayPort(port);
+        return gateway;
     }
 
     private DomainRoute domainRoute(Long id, Integer userId, String domain) {

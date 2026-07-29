@@ -8,6 +8,7 @@ import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
 import com.admin.entity.User;
 import com.admin.entity.UserNode;
+import com.admin.entity.HomeProxyRoute;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.mapper.PrivateProxyMapper;
@@ -15,6 +16,7 @@ import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserNodeMapper;
 import com.admin.mapper.UserTunnelMapper;
+import com.admin.mapper.HomeProxyRouteMapper;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import org.junit.jupiter.api.Test;
@@ -40,6 +42,7 @@ class UserQuotaServiceTests {
     @Mock private NodeMapper nodeMapper;
     @Mock private ForwardMapper forwardMapper;
     @Mock private PrivateProxyMapper privateProxyMapper;
+    @Mock private HomeProxyRouteMapper homeProxyRouteMapper;
 
     @InjectMocks private UserQuotaService userQuotaService;
 
@@ -106,6 +109,33 @@ class UserQuotaServiceTests {
 
         assertTrue(result.getCode() != 0);
         assertTrue(result.getMsg().contains("共享节点转发名额已用尽"));
+    }
+
+    @Test
+    void countsHomeTunnelEgressAsOneTunnelSlot() {
+        when(forwardMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+        when(homeProxyRouteMapper.selectCount(any(Wrapper.class))).thenReturn(1);
+
+        assertEquals(1, userQuotaService.countForwardsUsingTunnel(7, 44, null));
+    }
+
+    @Test
+    void countsHomeTunnelEgressAgainstEverySharedPathNode() {
+        Tunnel tunnel = tunnel(44, 7, "12,18,23");
+        HomeProxyRoute route = new HomeProxyRoute();
+        route.setId(70L);
+        route.setUserId(7);
+        route.setEgressTunnelId(44L);
+        route.setState("active");
+
+        when(forwardMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+        when(privateProxyMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+        when(homeProxyRouteMapper.selectList(any(Wrapper.class))).thenReturn(List.of(route));
+        when(tunnelMapper.selectById(44L)).thenReturn(tunnel);
+
+        assertEquals(1, userQuotaService.countForwardsUsingNode(7, 12, null));
+        assertEquals(1, userQuotaService.countForwardsUsingNode(7, 18, null));
+        assertEquals(1, userQuotaService.countForwardsUsingNode(7, 23, null));
     }
 
     private User activeUser(int id) {

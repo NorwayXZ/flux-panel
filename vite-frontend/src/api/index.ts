@@ -880,7 +880,9 @@ export interface HomeProxyRoute {
   connectorId: number;
   accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number;
-  egressPoolId: number;
+  egressPoolId?: number;
+  egressMode?: 'single' | 'tunnel';
+  egressTunnelId?: number;
   leaseId?: number;
   publicPort?: number;
   egressLeaseId?: number;
@@ -903,13 +905,16 @@ export interface HomeProxyRoute {
   connectorOnline?: boolean;
   ingressPoolName?: string;
   egressPoolName?: string;
+  egressTunnelName?: string;
+  egressPathNodeDetails?: Array<{ nodeId: number; name: string; status: number }>;
   publicHost?: string;
 }
 
 export const createHomeProxyRoute = (data: {
   name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number; ingressGrantId?: number;
-  egressPoolId: number; egressGrantId?: number;
+  egressPoolId?: number; egressGrantId?: number;
+  egressMode?: 'single' | 'tunnel'; egressTunnelId?: number;
   directPort?: number; dynamicDnsRuleId?: number;
   authEnabled?: boolean; authUsername?: string; authPassword?: string;
 }) => Network.post<HomeProxyRoute>("/service-publishing/home-proxy/create", data);

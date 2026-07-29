@@ -75,7 +75,7 @@ public class ServicePublishingSchemaInitializer {
             jdbcTemplate.update("INSERT IGNORE INTO service_publish_lock (id) VALUES (1)");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_route ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
-                    + "connector_id bigint NOT NULL, access_mode varchar(24) NOT NULL DEFAULT 'relay', ingress_pool_id bigint DEFAULT NULL, egress_pool_id bigint NOT NULL, "
+                    + "connector_id bigint NOT NULL, access_mode varchar(24) NOT NULL DEFAULT 'relay', ingress_pool_id bigint DEFAULT NULL, egress_pool_id bigint DEFAULT NULL, "
                     + "lease_id bigint DEFAULT NULL, public_port int DEFAULT NULL, egress_lease_id bigint DEFAULT NULL, "
                     + "egress_gateway_port int DEFAULT NULL, direct_ipv6 varchar(64) DEFAULT NULL, direct_ipv4 varchar(64) DEFAULT NULL, direct_port int DEFAULT NULL, "
                     + "ipv6_checked_at bigint DEFAULT NULL, ip_checked_at bigint DEFAULT NULL, dynamic_dns_rule_id bigint DEFAULT NULL, public_domain varchar(253) DEFAULT NULL, "
@@ -96,9 +96,23 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("home_proxy_route", "ip_checked_at", "bigint DEFAULT NULL AFTER ipv6_checked_at");
             ensureColumn("home_proxy_route", "dynamic_dns_rule_id", "bigint DEFAULT NULL AFTER ip_checked_at");
             ensureColumn("home_proxy_route", "public_domain", "varchar(253) DEFAULT NULL AFTER dynamic_dns_rule_id");
+            ensureColumn("home_proxy_route", "egress_mode", "varchar(24) NOT NULL DEFAULT 'single' AFTER egress_pool_id");
+            ensureColumn("home_proxy_route", "egress_tunnel_id", "bigint DEFAULT NULL AFTER egress_mode");
             ensureNullableColumn("home_proxy_route", "ingress_pool_id", "bigint DEFAULT NULL");
+            ensureNullableColumn("home_proxy_route", "egress_pool_id", "bigint DEFAULT NULL");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
             ensureIndex("home_proxy_route", "idx_home_proxy_ddns", "dynamic_dns_rule_id");
+            ensureIndex("home_proxy_route", "idx_home_proxy_egress_tunnel", "egress_tunnel_id, state");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_gateway ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT, route_id bigint NOT NULL, sequence_no int NOT NULL, "
+                    + "tunnel_id bigint DEFAULT NULL, node_id bigint NOT NULL, pool_id bigint DEFAULT NULL, grant_id bigint DEFAULT NULL, "
+                    + "lease_id bigint DEFAULT NULL, gateway_port int NOT NULL, gateway_name varchar(140) NOT NULL, "
+                    + "auth_username varchar(80) NOT NULL, auth_password varchar(180) NOT NULL, created_time bigint NOT NULL, "
+                    + "PRIMARY KEY (id), UNIQUE KEY uk_home_proxy_gateway_sequence (route_id, sequence_no), "
+                    + "KEY idx_home_proxy_gateway_route (route_id), KEY idx_home_proxy_gateway_lease (lease_id), "
+                    + "KEY idx_home_proxy_gateway_node (node_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureNullableColumn("home_proxy_gateway", "pool_id", "bigint DEFAULT NULL");
+            ensureNullableColumn("home_proxy_gateway", "lease_id", "bigint DEFAULT NULL");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
             ensureIndex("port_lease", "idx_lease_grant", "grant_id, state");

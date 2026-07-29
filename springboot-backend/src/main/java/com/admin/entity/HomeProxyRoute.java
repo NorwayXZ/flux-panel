@@ -17,6 +17,8 @@ public class HomeProxyRoute implements Serializable {
     private String accessMode;
     private Long ingressPoolId;
     private Long egressPoolId;
+    private String egressMode;
+    private Long egressTunnelId;
     private Long leaseId;
     private Integer publicPort;
     private Long egressLeaseId;
@@ -47,6 +49,10 @@ public class HomeProxyRoute implements Serializable {
     private String ingressPoolName;
     @TableField(exist = false)
     private String egressPoolName;
+    @TableField(exist = false)
+    private String egressTunnelName;
+    @TableField(exist = false)
+    private java.util.List<com.admin.common.dto.TunnelPathNodeDto> egressPathNodeDetails;
     @TableField(exist = false)
     private String publicHost;
 }

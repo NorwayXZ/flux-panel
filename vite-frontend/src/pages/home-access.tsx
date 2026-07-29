@@ -19,6 +19,7 @@ import {
   getHomeProxyRoutes,
   getInternalConnectors,
   getPublishingPortPools,
+  getTunnelList,
   refreshHomeProxyIpv6,
   type HomeProxyRoute,
   type InternalConnector,
@@ -38,12 +39,20 @@ const stateMeta: Record<HomeProxyRoute['state'], { label: string; color: 'succes
 
 type FormState = {
   name: string; connectorId: string; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
-  ingressPoolKey: string; egressPoolKey: string; directPort: string; dynamicDnsRuleId: string;
+  ingressPoolKey: string; egressPoolKey: string; egressMode: 'single' | 'tunnel'; egressTunnelId: string;
+  directPort: string; dynamicDnsRuleId: string;
   authEnabled: boolean; authUsername: string; authPassword: string;
 };
 
+type TunnelOption = {
+  id: number; name: string; type: number; status: number; nodePath?: string;
+  quotaAvailable?: boolean; unavailableReason?: string;
+  pathNodeDetails?: Array<{ nodeId: number; name: string; status: number }>;
+};
+
 const emptyForm = (): FormState => ({
-  name: '', connectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressPoolKey: '', directPort: '23888',
+  name: '', connectorId: '', accessMode: 'ipv6_direct', ingressPoolKey: '', egressPoolKey: '',
+  egressMode: 'single', egressTunnelId: '', directPort: '23888',
   dynamicDnsRuleId: '', authEnabled: false, authUsername: '', authPassword: '',
 });
 
@@ -88,6 +97,7 @@ export default function HomeAccessPage() {
   const [routes, setRoutes] = useState<HomeProxyRoute[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
+  const [tunnels, setTunnels] = useState<TunnelOption[]>([]);
   const [dynamicDnsRules, setDynamicDnsRules] = useState<DynamicDnsRule[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [connectorForm, setConnectorForm] = useState<{ name: string; platform: ConnectorPlatform; allowedCidrs: string }>({ name: '', platform: 'linux', allowedCidrs: '' });
@@ -95,13 +105,14 @@ export default function HomeAccessPage() {
   const load = async () => {
     setLoading(true);
     const adminMode = isAdmin();
-    const [routeRes, connectorRes, poolRes, dnsRes] = await Promise.all([
-      getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(),
+    const [routeRes, connectorRes, poolRes, tunnelRes, dnsRes] = await Promise.all([
+      getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(), getTunnelList(),
       adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
     ]);
     if (routeRes.code === 0) setRoutes(routeRes.data || []); else toast.error(routeRes.msg || '加载家庭接入失败');
     if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
     if (poolRes.code === 0) setPools(poolRes.data || []);
+    if (tunnelRes.code === 0) setTunnels((tunnelRes.data || []) as TunnelOption[]);
     if (dnsRes.code === 0) setDynamicDnsRules(dnsRes.data?.rules || []);
     setLoading(false);
   };
@@ -109,6 +120,9 @@ export default function HomeAccessPage() {
   useEffect(() => { void load(); }, []);
 
   const ingressPools = useMemo(() => pools.filter(pool => pool.availablePorts > 0), [pools]);
+  const tunnelOptions = useMemo(() => tunnels.filter(tunnel => tunnel.type === 2 && tunnel.status === 1
+    && tunnel.quotaAvailable !== false && (tunnel.pathNodeDetails?.length || 0) >= 2), [tunnels]);
+  const selectedEgressTunnel = useMemo(() => tunnelOptions.find(item => String(item.id) === form.egressTunnelId), [tunnelOptions, form.egressTunnelId]);
   const activeCount = routes.filter(item => item.state === 'active').length;
   const directCount = routes.filter(item => isDirect(item.accessMode)).length;
   const matchingDnsRules = useMemo(() => dynamicDnsRules.filter(rule => rule.sourceType === 'connector'
@@ -117,9 +131,11 @@ export default function HomeAccessPage() {
     && rule.enabled), [dynamicDnsRules, form.accessMode, form.connectorId]);
 
   const submit = async () => {
-    if (!form.name.trim() || !form.connectorId || !form.egressPoolKey
+    if (!form.name.trim() || !form.connectorId
+        || (form.egressMode === 'single' && !form.egressPoolKey)
+        || (form.egressMode === 'tunnel' && !form.egressTunnelId)
         || (form.accessMode === 'relay' && !form.ingressPoolKey)) {
-      toast.error(form.accessMode === 'relay' ? '请填写名称、家庭接入端、入口和出口端口池' : '请填写名称、家庭接入端和出口端口池');
+      toast.error('请完整选择家庭接入端、接入方式和出口路径');
       return;
     }
     const directPort = Number(form.directPort);
@@ -132,13 +148,18 @@ export default function HomeAccessPage() {
     }
     const ingressPool = selectedPool(pools, form.ingressPoolKey);
     const egressPool = selectedPool(pools, form.egressPoolKey);
-    if ((form.accessMode === 'relay' && !ingressPool) || !egressPool) return toast.error('所选端口资源已变化，请重新选择');
+    if ((form.accessMode === 'relay' && !ingressPool) || (form.egressMode === 'single' && !egressPool)) {
+      return toast.error('所选端口资源已变化，请重新选择');
+    }
     setSubmitting(true);
     const response = await createHomeProxyRoute({
       name: form.name.trim(), connectorId: Number(form.connectorId),
       accessMode: form.accessMode,
       ingressPoolId: ingressPool?.id, ingressGrantId: ingressPool?.grantId,
-      egressPoolId: egressPool.id, egressGrantId: egressPool.grantId,
+      egressPoolId: form.egressMode === 'single' ? egressPool?.id : undefined,
+      egressGrantId: form.egressMode === 'single' ? egressPool?.grantId : undefined,
+      egressMode: form.egressMode,
+      egressTunnelId: form.egressMode === 'tunnel' ? Number(form.egressTunnelId) : undefined,
       directPort: isDirect(form.accessMode) ? directPort : undefined,
       dynamicDnsRuleId: form.dynamicDnsRuleId ? Number(form.dynamicDnsRuleId) : undefined,
       authEnabled: form.authEnabled, authUsername: form.authUsername.trim(), authPassword: form.authPassword,
@@ -246,10 +267,11 @@ export default function HomeAccessPage() {
               <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div>
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                 <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
-                <div><div className="text-default-500">家庭出口 VPS 端口池</div><div className="mt-1 font-medium">{route.egressPoolName || '未知'}</div></div>
+                <div><div className="text-default-500">{route.egressMode === 'tunnel' ? '出口网关端口' : '家庭出口 VPS 端口池'}</div><div className="mt-1 font-medium">{route.egressPoolName || '未知'}</div></div>
                 <div><div className="text-default-500">接入端状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
                 <div><div className="text-default-500">{direct ? '公网地址最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
                 {direct && <div className="md:col-span-2"><div className="text-default-500">动态 DNS</div><div className="mt-1 break-all font-medium">{route.publicDomain ? `${route.publicDomain} · 已绑定` : '未绑定，使用裸 IP 地址'}</div></div>}
+                {route.egressMode === 'tunnel' && <div className="md:col-span-2"><div className="text-default-500">出口隧道</div><div className="mt-1 font-medium">{route.egressTunnelName || '隧道已删除'}</div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(route.egressPathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents">{index > 0 && <span className="text-default-400">→</span>}<Chip size="sm" variant="flat" color={node.status === 1 ? (index === (route.egressPathNodeDetails?.length || 0) - 1 ? 'success' : 'default') : 'danger'}>{node.name}{index === (route.egressPathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}</div></div>}
               </div>
               {route.authEnabled === 1 && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
               {route.lastError && (
@@ -272,7 +294,7 @@ export default function HomeAccessPage() {
 
       <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
         <div className="flex items-center gap-2 font-medium text-foreground"><Route size={16} /> 使用方式</div>
-        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。IPv6 直连和 IPv4 直连会直接访问家庭公网地址；公网中继会先经过入口 VPS。三种模式都会让家庭 Agent 再经指定出口 VPS 访问网站。</p>
+        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。IPv6 直连和 IPv4 直连会直接访问家庭公网地址；公网中继会先经过入口 VPS。进入家庭后，流量可从单台 VPS 出口，也可以依次经过已有隧道，并由最后一个节点作为公网落地出口。</p>
       </div>
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl">
@@ -301,10 +323,34 @@ export default function HomeAccessPage() {
                 {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
               </Select>
             )}
-            <Select label="家庭出口 VPS 端口池" description="家庭 Agent 访问目标地址时使用" selectedKeys={form.egressPoolKey ? [form.egressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, egressPoolKey: String(Array.from(keys)[0] || '') })}>
-              {pools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
-            </Select>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">家庭之后的出口路径</div>
+              <Tabs size="sm" aria-label="出口路径" selectedKey={form.egressMode} onSelectionChange={key => setForm({ ...form, egressMode: String(key) as FormState['egressMode'], egressTunnelId: '', egressPoolKey: '' })}>
+                <Tab key="single" title="单 VPS 出口" />
+                <Tab key="tunnel" title="隧道出口" />
+              </Tabs>
+            </div>
           </div>
+          {form.egressMode === 'tunnel' && <Select label="出口隧道" description="家庭流量会依次经过隧道中的节点，最后一个节点作为公网落地出口" selectedKeys={form.egressTunnelId ? [form.egressTunnelId] : []} onSelectionChange={keys => setForm({ ...form, egressTunnelId: String(Array.from(keys)[0] || ''), egressPoolKey: '' })}>
+            {tunnelOptions.map(item => {
+              const path = item.pathNodeDetails || [];
+              return <SelectItem key={String(item.id)} textValue={item.name}>{path.length}级 · {item.name} · {path.map(node => node.name).join(' → ')}</SelectItem>;
+            })}
+          </Select>}
+          {form.egressMode === 'single' && <Select label="家庭出口 VPS 端口池" description="家庭 Agent 访问目标地址时使用" selectedKeys={form.egressPoolKey ? [form.egressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, egressPoolKey: String(Array.from(keys)[0] || '') })}>
+            {pools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.nodeName} · {item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
+          </Select>}
+          {form.egressMode === 'tunnel' && selectedEgressTunnel && <div className="rounded-md border border-divider px-4 py-3">
+            <div className="text-xs font-medium text-default-500">链路预览</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <Chip size="sm" variant="flat">公司网络</Chip><span className="text-default-400">→</span>
+              <Chip size="sm" variant="flat" color="primary">家庭宽带</Chip>
+              {(selectedEgressTunnel.pathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents"><span className="text-default-400">→</span><Chip size="sm" variant="flat" color={index === (selectedEgressTunnel.pathNodeDetails?.length || 0) - 1 ? 'success' : 'default'}>{node.name}{index === (selectedEgressTunnel.pathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}
+            </div>
+            <div className="mt-2 text-xs leading-5 text-default-500">
+              系统会从每个路径节点的端口范围自动分配一个网关端口，并纳入全局端口占用管理；最后一个节点作为公网出口。
+            </div>
+          </div>}
           {isDirect(form.accessMode) && <Select label="动态 DNS 域名（可选）" description={form.accessMode === 'ipv4_direct' ? '只显示来源为该家庭接入端的 A 记录' : '只显示来源为该家庭接入端的 AAAA 记录'} selectedKeys={form.dynamicDnsRuleId ? [form.dynamicDnsRuleId] : []} onSelectionChange={keys => setForm({ ...form, dynamicDnsRuleId: String(Array.from(keys)[0] || '') })}>
             {matchingDnsRules.map(rule => <SelectItem key={String(rule.id)} textValue={rule.recordName}>{rule.recordName} · {rule.recordType} · {rule.lastStatus === 'success' ? '正常' : rule.lastStatus === 'error' ? '失败' : '待检测'}</SelectItem>)}
           </Select>}

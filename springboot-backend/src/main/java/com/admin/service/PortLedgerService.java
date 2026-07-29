@@ -15,6 +15,7 @@ import com.admin.entity.PublishedService;
 import com.admin.entity.PrivateProxy;
 import com.admin.entity.Tunnel;
 import com.admin.entity.HomeProxyRoute;
+import com.admin.entity.HomeProxyGateway;
 import com.admin.entity.User;
 import com.admin.mapper.ForwardMapper;
 import com.admin.mapper.DomainRouteMapper;
@@ -25,6 +26,7 @@ import com.admin.mapper.PortPoolMapper;
 import com.admin.mapper.PublishedServiceMapper;
 import com.admin.mapper.PrivateProxyMapper;
 import com.admin.mapper.HomeProxyRouteMapper;
+import com.admin.mapper.HomeProxyGatewayMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.alibaba.fastjson.JSON;
@@ -56,6 +58,7 @@ public class PortLedgerService {
     @Resource private DomainRouteMapper domainRouteMapper;
     @Resource private PrivateProxyMapper privateProxyMapper;
     @Resource private HomeProxyRouteMapper homeProxyRouteMapper;
+    @Resource private HomeProxyGatewayMapper homeProxyGatewayMapper;
 
     public Map<String, Object> list(PortLedgerQueryDto query) {
         List<Node> nodes = nodeMapper.selectList(null);
@@ -222,6 +225,9 @@ public class PortLedgerService {
     private void addHomeProxyRoutes(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
         Map<Long, PortPool> pools = poolMapper.selectList(new QueryWrapper<PortPool>().eq("status", 1)).stream()
                 .collect(Collectors.toMap(PortPool::getId, Function.identity(), (a, b) -> a));
+        Map<Long, List<HomeProxyGateway>> gatewaysByRoute = homeProxyGatewayMapper.selectList(null).stream()
+                .sorted(Comparator.comparing(HomeProxyGateway::getSequenceNo))
+                .collect(Collectors.groupingBy(HomeProxyGateway::getRouteId, LinkedHashMap::new, Collectors.toList()));
         for (HomeProxyRoute route : homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>().ne("state", "deleted"))) {
             PortPool pool = pools.get(route.getIngressPoolId());
             Node node = pool == null ? null : nodes.get(pool.getNodeId());
@@ -232,12 +238,26 @@ public class PortLedgerService {
                         route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
                         "家庭代理公网入口 · " + StringUtils.defaultString(route.getProxyType(), "SOCKS5"), route.getCreatedTime(), null));
             }
-            PortPool egressPool = pools.get(route.getEgressPoolId());
-            Node egressNode = egressPool == null ? null : nodes.get(egressPool.getNodeId());
-            if (egressNode != null && route.getEgressGatewayPort() != null) {
-                add(entries, nodeEntry("home_proxy", status, egressNode, route.getEgressGatewayPort(), route.getEgressGatewayPort(), "tcp",
-                        route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
-                        "家庭代理 VPS 出口网关", route.getCreatedTime(), null));
+            List<HomeProxyGateway> gateways = gatewaysByRoute.getOrDefault(route.getId(), List.of());
+            if (!gateways.isEmpty()) {
+                for (int index = 0; index < gateways.size(); index++) {
+                    HomeProxyGateway gateway = gateways.get(index);
+                    Node gatewayNode = nodes.get(gateway.getNodeId());
+                    if (gatewayNode == null) continue;
+                    boolean last = index == gateways.size() - 1;
+                    String detail = last ? "家庭代理落地出口网关" : "家庭代理出口路径第 " + (index + 1) + " 跳网关";
+                    add(entries, nodeEntry("home_proxy", status, gatewayNode, gateway.getGatewayPort(), gateway.getGatewayPort(), "tcp",
+                            route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
+                            detail, route.getCreatedTime(), null));
+                }
+            } else {
+                PortPool egressPool = pools.get(route.getEgressPoolId());
+                Node egressNode = egressPool == null ? null : nodes.get(egressPool.getNodeId());
+                if (egressNode != null && route.getEgressGatewayPort() != null) {
+                    add(entries, nodeEntry("home_proxy", status, egressNode, route.getEgressGatewayPort(), route.getEgressGatewayPort(), "tcp",
+                            route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
+                            "家庭代理 VPS 出口网关", route.getCreatedTime(), null));
+                }
             }
         }
     }

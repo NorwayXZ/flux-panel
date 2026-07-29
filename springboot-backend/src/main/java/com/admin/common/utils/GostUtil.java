@@ -233,30 +233,48 @@ public class GostUtil {
 
     public static GostDto AddPublishingChain(Long connectorId, String chainName, String publicAddress,
                                              String username, String password) {
-        JSONObject auth = new JSONObject();
-        auth.put("username", username);
-        auth.put("password", password);
-        JSONObject connector = new JSONObject();
-        connector.put("type", "socks5");
-        connector.put("auth", auth);
-        JSONObject dialer = new JSONObject();
-        dialer.put("type", "tcp");
-        JSONObject node = new JSONObject();
-        node.put("name", chainName + "_node");
-        node.put("addr", publicAddress);
-        node.put("connector", connector);
-        node.put("dialer", dialer);
-        JSONArray nodes = new JSONArray();
-        nodes.add(node);
-        JSONObject hop = new JSONObject();
-        hop.put("name", chainName + "_hop");
-        hop.put("nodes", nodes);
+        return AddPublishingChain(connectorId, chainName,
+                List.of(new PublishingProxyHop(publicAddress, username, password)));
+    }
+
+    public static GostDto AddPublishingChain(Long connectorId, String chainName,
+                                             List<PublishingProxyHop> proxyHops) {
+        return WebSocketServer.sendConnectorMsg(connectorId,
+                createPublishingChainData(chainName, proxyHops), "AddChains");
+    }
+
+    static JSONObject createPublishingChainData(String chainName, List<PublishingProxyHop> proxyHops) {
         JSONArray hops = new JSONArray();
-        hops.add(hop);
+        int index = 1;
+        for (PublishingProxyHop proxyHop : proxyHops) {
+            JSONObject auth = new JSONObject();
+            auth.put("username", proxyHop.username());
+            auth.put("password", proxyHop.password());
+            JSONObject connector = new JSONObject();
+            connector.put("type", "socks5");
+            connector.put("auth", auth);
+            JSONObject dialer = new JSONObject();
+            dialer.put("type", "tcp");
+            JSONObject node = new JSONObject();
+            node.put("name", chainName + "_node_" + index);
+            node.put("addr", proxyHop.address());
+            node.put("connector", connector);
+            node.put("dialer", dialer);
+            JSONArray nodes = new JSONArray();
+            nodes.add(node);
+            JSONObject hop = new JSONObject();
+            hop.put("name", chainName + "_hop_" + index);
+            hop.put("nodes", nodes);
+            hops.add(hop);
+            index++;
+        }
         JSONObject chain = new JSONObject();
         chain.put("name", chainName);
         chain.put("hops", hops);
-        return WebSocketServer.sendConnectorMsg(connectorId, chain, "AddChains");
+        return chain;
+    }
+
+    public record PublishingProxyHop(String address, String username, String password) {
     }
 
     public static GostDto AddPublishedTcpService(Long connectorId, String serviceName, String chainName,
