@@ -21,6 +21,8 @@ public class DomainRouteCreateDto {
     @NotNull(message = "内网映射不能为空")
     private Long publishedServiceId;
 
+    private Long entryNodeId;
+
     @NotNull(message = "监听端口不能为空")
     @Min(value = 1, message = "监听端口不能小于1")
     @Max(value = 65535, message = "监听端口不能大于65535")

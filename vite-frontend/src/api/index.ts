@@ -782,6 +782,7 @@ export interface DomainRoute {
   nodeOnline: boolean;
   connectorOnline: boolean;
   publicHost?: string;
+  mappingPublicHost?: string;
   listenPort: number;
   state: string;
   lastError?: string;
@@ -906,7 +907,7 @@ export const renewPublishedService = (id: number, hours?: number, permanent = fa
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
-export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
+export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId: number; entryNodeId?: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");

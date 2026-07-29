@@ -15,6 +15,7 @@ import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.ConnectorInstallCommandUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
+import com.admin.common.utils.PublishedServiceTargetUtil;
 import com.admin.common.utils.SniDomainUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.InternalConnector;
@@ -479,8 +480,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         }
         PortPool pool = poolMapper.selectById(mapping.getPoolId());
         if (pool == null || pool.getStatus() == 0) return R.err("映射对应的端口资源已停用");
-        Node requestedNode = nodeMapper.selectById(pool.getNodeId());
-        if (requestedNode == null) return R.err("映射对应的公网节点不存在");
+        Node mappingNode = nodeMapper.selectById(pool.getNodeId());
+        if (mappingNode == null) return R.err("映射对应的公网节点不存在");
 
         String ingressMode = StringUtils.defaultIfBlank(dto.getIngressMode(), "passthrough").toLowerCase(Locale.ROOT);
         if (!List.of("passthrough", "managed_https").contains(ingressMode)) {
@@ -489,6 +490,11 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if ("managed_https".equals(ingressMode) && !isAdmin()) {
             return R.err("面板托管 HTTPS 仅允许管理员配置");
         }
+        if (dto.getEntryNodeId() != null && !isAdmin()) {
+            return R.err("只有管理员可以选择独立的域名入口节点");
+        }
+        Node requestedNode = dto.getEntryNodeId() == null ? mappingNode : nodeMapper.selectById(dto.getEntryNodeId());
+        if (requestedNode == null) return R.err("所选域名入口节点不存在");
         final String domain;
         final String pathPrefix;
         try {
@@ -765,7 +771,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setOwnerRoleId(owner == null ? null : owner.getRoleId());
         route.setNodeName(node == null ? "节点已删除" : node.getName());
         route.setNodeOnline(node != null && WebSocketServer.isNodeOnline(node.getId()));
-        route.setPublicHost(pool == null ? null : pool.getPublicHost());
+        route.setPublicHost(node == null ? null : StringUtils.firstNonBlank(node.getServerIp(), node.getIp()));
+        route.setMappingPublicHost(pool == null ? null : pool.getPublicHost());
         route.setMappingName(mapping == null ? "映射已删除" : mapping.getName());
         route.setMappingState(mapping == null ? "deleted" : mapping.getState());
         route.setMappingPublicPort(mapping == null ? null : mapping.getPublicPort());
@@ -793,8 +800,11 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
             PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
             if (mapping == null || pool == null || mapping.getPublicPort() == null) continue;
+            Node entryNode = nodeMapper.selectById(route.getNodeId());
+            Node mappingNode = nodeMapper.selectById(pool.getNodeId());
+            if (entryNode == null || mappingNode == null) continue;
             targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), null,
-                    localPublishedTarget(pool, mapping.getPublicPort())));
+                    PublishedServiceTargetUtil.resolve(entryNode, mappingNode, pool, mapping.getPublicPort())));
         }
         if (targets.isEmpty()) return GostUtil.DeleteDomainIngress(nodeId, serviceName);
         return GostUtil.ConfigureDomainIngress(nodeId, serviceName, "", listenPort, targets, update);
@@ -864,13 +874,6 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         } else {
             dnsProviderService.transferDomainRouteRecord(route.getId(), replacement.getId());
         }
-    }
-
-    private String localPublishedTarget(PortPool pool, int port) {
-        String bindIp = StringUtils.trimToEmpty(pool.getBindIp());
-        String host = StringUtils.isBlank(bindIp) || "0.0.0.0".equals(bindIp) || "::".equals(bindIp)
-                || "[::]".equals(bindIp) ? "127.0.0.1" : stripBrackets(bindIp);
-        return hostPort(host, port);
     }
 
     private DomainRoute ownedDomainRoute(Long id) {

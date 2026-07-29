@@ -39,6 +39,8 @@ public class DomainRoute implements Serializable {
     @TableField(exist = false)
     private String publicHost;
     @TableField(exist = false)
+    private String mappingPublicHost;
+    @TableField(exist = false)
     private String mappingName;
     @TableField(exist = false)
     private String mappingState;

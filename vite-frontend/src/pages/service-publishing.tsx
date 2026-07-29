@@ -10,6 +10,7 @@ import {
   Clock3,
   Copy,
   Database,
+  ExternalLink,
   FileKey2,
   Gamepad2,
   Globe2,
@@ -39,6 +40,7 @@ import {
   getDomainRoutes,
   getManagedCertificates,
   getInternalConnectors,
+  getNodeList,
   getPublishedServices,
   getPublishingPortPools,
   getDnsZoneOptions,
@@ -52,6 +54,15 @@ import {
   type PublishingPortPool,
   type DnsZoneOption,
 } from '@/api';
+
+interface EntryNodeOption {
+  id: number;
+  name: string;
+  serverIp?: string;
+  ip?: string;
+  status: number;
+  version?: string;
+}
 
 const stateMeta: Record<string, { label: string; color: 'success' | 'warning' | 'danger' | 'default' | 'primary' }> = {
   provisioning: { label: '配置中', color: 'primary' },
@@ -133,6 +144,7 @@ export default function ServicePublishingPage() {
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [dnsZones, setDnsZones] = useState<DnsZoneOption[]>([]);
+  const [entryNodes, setEntryNodes] = useState<EntryNodeOption[]>([]);
   const [serviceModal, setServiceModal] = useState(false);
   const [connectorModal, setConnectorModal] = useState(false);
   const [commandModal, setCommandModal] = useState(false);
@@ -149,7 +161,7 @@ export default function ServicePublishingPage() {
     name: '', allowedCidrs: '', platform: 'linux',
   });
   const isAdmin = localStorage.getItem('admin') === 'true' || localStorage.getItem('role_id') === '0';
-  const emptyDomainForm = () => ({ name: '', domain: '', pathPrefix: '/', publishedServiceId: '', listenPort: '443', ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '' });
+  const emptyDomainForm = () => ({ name: '', domain: '', pathPrefix: '/', publishedServiceId: '', entryNodeId: 'mapping', listenPort: '443', ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '' });
   const [domainForm, setDomainForm] = useState(emptyDomainForm);
 
   const loadData = async () => {
@@ -163,9 +175,10 @@ export default function ServicePublishingPage() {
       if (poolRes.code === 0) setPools(poolRes.data || []);
       if (domainRes.code === 0) setDomainRoutes(domainRes.data || []);
       if (isAdmin) {
-        const [zoneRes, certificateRes] = await Promise.all([getDnsZoneOptions(), getManagedCertificates()]);
+        const [zoneRes, certificateRes, nodeRes] = await Promise.all([getDnsZoneOptions(), getManagedCertificates(), getNodeList()]);
         if (zoneRes.code === 0) setDnsZones(zoneRes.data || []);
         if (certificateRes.code === 0) setCertificates(certificateRes.data || []);
+        if (nodeRes.code === 0) setEntryNodes((nodeRes.data || []) as EntryNodeOption[]);
       }
       const failed = [serviceRes, connectorRes, poolRes, domainRes].find(item => item.code !== 0);
       if (failed) toast.error(failed.msg || '加载内网映射数据失败');
@@ -200,6 +213,10 @@ export default function ServicePublishingPage() {
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
   const selectedPool = useMemo(() => pools.find(item => `${item.id}:${item.grantId || 'admin'}` === serviceForm.poolAccessKey), [pools, serviceForm.poolAccessKey]);
   const selectedDomainMapping = useMemo(() => services.find(item => String(item.id) === domainForm.publishedServiceId), [services, domainForm.publishedServiceId]);
+  const selectedDomainPool = useMemo(() => pools.find(item => item.id === selectedDomainMapping?.poolId), [pools, selectedDomainMapping]);
+  const selectedEntryNode = useMemo(() => domainForm.entryNodeId === 'mapping'
+    ? entryNodes.find(item => item.id === selectedDomainPool?.nodeId)
+    : entryNodes.find(item => String(item.id) === domainForm.entryNodeId), [domainForm.entryNodeId, entryNodes, selectedDomainPool]);
   const selectedTemplate = useMemo(() => serviceTemplates.find(item => item.id === selectedTemplateId) || serviceTemplates[serviceTemplates.length - 1], [selectedTemplateId]);
 
   const applyServiceTemplate = (template: ServiceTemplate) => {
@@ -322,7 +339,7 @@ export default function ServicePublishingPage() {
   };
 
   const submitDomainRoute = async () => {
-    if (!domainForm.name.trim() || !domainForm.domain.trim() || !domainForm.publishedServiceId) return toast.error('请填写完整的域名入口配置');
+    if (!domainForm.name.trim() || !domainForm.domain.trim() || !domainForm.publishedServiceId) return toast.error('请填写完整的域名直达配置');
     if (domainForm.ingressMode === 'managed_https' && !domainForm.dnsZoneId) return toast.error('请选择证书和 DNS 使用的 Cloudflare Zone');
     const listenPort = Number(domainForm.listenPort);
     if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) return toast.error('监听端口必须在 1-65535 之间');
@@ -331,25 +348,36 @@ export default function ServicePublishingPage() {
       name: domainForm.name.trim(),
       domain: domainForm.domain.trim(),
       publishedServiceId: Number(domainForm.publishedServiceId),
+      entryNodeId: domainForm.entryNodeId === 'mapping' ? undefined : Number(domainForm.entryNodeId),
       listenPort,
       ingressMode: domainForm.ingressMode,
       dnsZoneId: domainForm.dnsZoneId ? Number(domainForm.dnsZoneId) : undefined,
       pathPrefix: domainForm.ingressMode === 'managed_https' ? domainForm.pathPrefix.trim() || '/' : '/',
     });
     setSubmitting(false);
-    if (res.code !== 0) return toast.error(res.msg || '创建域名入口失败');
-    toast.success(domainForm.ingressMode === 'managed_https' ? '域名入口已创建，正在自动申请 HTTPS 证书' : '域名入口已创建');
+    if (res.code !== 0) return toast.error(res.msg || '创建域名直达失败');
+    toast.success(domainForm.ingressMode === 'managed_https' ? '域名直达已创建，正在自动申请 HTTPS 证书' : '域名直达已创建');
     setDomainModal(false);
     setDomainForm(emptyDomainForm());
     loadData();
   };
 
+  const bindDomain = (service: PublishedService) => {
+    setDomainForm({
+      ...emptyDomainForm(),
+      name: `${service.name} 域名直达`,
+      publishedServiceId: String(service.id),
+    });
+    setActiveView('domains');
+    setDomainModal(true);
+  };
+
   const removeDomainRoute = async (id: number) => {
-    if (!window.confirm('确认删除该域名入口吗？原有内网映射不会被删除。')) return;
+    if (!window.confirm('确认删除该域名直达规则吗？原有内网映射不会被删除。')) return;
     const res = await deleteDomainRoute(id);
-    if (res.code !== 0) return toast.error(res.msg || '删除域名入口失败');
-    if (res.data?.state === 'delete_pending') toast('公网节点离线，恢复连接后将自动删除域名入口');
-    else toast.success('域名入口已删除');
+    if (res.code !== 0) return toast.error(res.msg || '删除域名直达失败');
+    if (res.data?.state === 'delete_pending') toast('公网节点离线，恢复连接后将自动删除域名直达规则');
+    else toast.success('域名直达已删除');
     loadData();
   };
 
@@ -381,13 +409,13 @@ export default function ServicePublishingPage() {
           else if (activeView === 'certificates') loadData();
           else setServiceModal(true);
         }}>
-          {activeView === 'domains' ? '新增域名入口' : activeView === 'connectors' ? '添加接入端' : activeView === 'certificates' ? '刷新证书' : '新建映射'}
+          {activeView === 'domains' ? '新增域名直达' : activeView === 'connectors' ? '添加接入端' : activeView === 'certificates' ? '刷新证书' : '新建映射'}
         </Button>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行映射', activeCount], ['域名入口', domainRoutes.length], ['HTTPS 证书', certificates.length], ['在线接入端', onlineConnectors],
+          ['运行映射', activeCount], ['域名直达', domainRoutes.length], ['HTTPS 证书', certificates.length], ['在线接入端', onlineConnectors],
         ].map(([label, value]) => (
           <div key={String(label)} className="bg-content1 px-4 py-4">
             <div className="text-xs text-default-500">{label}</div>
@@ -429,7 +457,8 @@ export default function ServicePublishingPage() {
                       <div className="col-span-2"><dt className="text-default-500">有效期</dt><dd className="mt-1">{service.permanent ? '永久有效' : formatTime(service.expiresAt)}</dd></div>
                     </dl>
                     {service.lastError && <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">{service.lastError}</div>}
-                    <div className="mt-4 flex justify-end gap-2 border-t border-divider pt-3">
+                    <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-divider pt-3">
+                      {service.state === 'active' && <Button size="sm" variant="flat" color="primary" startContent={<Globe2 size={15} />} onPress={() => bindDomain(service)}>绑定域名</Button>}
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续期 24 小时</Button>}
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="light" color="primary" onPress={() => makePermanent(service.id)}>改为永久</Button>}
                       {!['released', 'expired', 'delete_pending'].includes(service.state) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除映射" onPress={() => removeService(service.id)}><Trash2 size={16} /></Button>}
@@ -440,13 +469,13 @@ export default function ServicePublishingPage() {
             </div>
           )}
         </Tab>
-        <Tab key="domains" title={`域名入口 ${domainRoutes.length}`}>
+        <Tab key="domains" title={`域名直达 ${domainRoutes.length}`}>
           {loading ? (
             <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
           ) : domainRoutes.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
               <Globe2 size={30} />
-              <span>暂无域名入口</span>
+              <span>暂无域名直达规则</span>
             </div>
           ) : (
             <div className="overflow-hidden rounded-lg border border-divider">
@@ -474,7 +503,9 @@ export default function ServicePublishingPage() {
                   <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{route.name}</span><Chip size="sm" variant="flat" color={managedHttps ? 'success' : 'primary'}>{managedHttps ? '托管 HTTPS' : 'TLS 透传'}</Chip></div>
-                      <div className="mt-1 truncate font-mono text-sm text-default-600">{route.domain}{managedHttps ? route.pathPrefix || '/' : ''}</div>
+                      <a className="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline" href={`https://${route.domain}${route.listenPort === 443 ? '' : `:${route.listenPort}`}${managedHttps ? route.pathPrefix || '/' : ''}`} target="_blank" rel="noreferrer">
+                        <span className="truncate">{route.domain}{route.listenPort === 443 ? '' : `:${route.listenPort}`}{managedHttps ? route.pathPrefix || '/' : ''}</span><ExternalLink className="shrink-0" size={13} />
+                      </a>
                       <div className="mt-1 text-xs text-default-500">{route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
                     </div>
                     <div className="min-w-0 text-sm">
@@ -483,7 +514,7 @@ export default function ServicePublishingPage() {
                     </div>
                     <div className="min-w-0 text-sm">
                       <div className="truncate">{route.mappingName}</div>
-                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.publicHost}:{route.mappingPublicPort}</div>
+                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.mappingPublicHost || '映射地址不可用'}:{route.mappingPublicPort}</div>
                     </div>
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
                     <div className="flex justify-end">
@@ -560,7 +591,7 @@ export default function ServicePublishingPage() {
 
       <Modal isOpen={domainModal} onOpenChange={setDomainModal} size="2xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>新增域名入口</ModalHeader>
+          <ModalHeader>新增域名直达</ModalHeader>
           <ModalBody className="grid gap-4 sm:grid-cols-2">
             <Tabs className="sm:col-span-2" aria-label="HTTPS 模式" selectedKey={domainForm.ingressMode} onSelectionChange={key => setDomainForm({ ...domainForm, ingressMode: String(key) as 'managed_https' | 'passthrough' })}>
               {isAdmin ? <Tab key="managed_https" title="面板托管 HTTPS" /> : null}
@@ -583,17 +614,26 @@ export default function ServicePublishingPage() {
                 </SelectItem>
               ))}
             </Select>
-            <Input label="TLS 监听端口" type="number" min={1} max={65535} value={domainForm.listenPort} onValueChange={value => setDomainForm({ ...domainForm, listenPort: value })} />
+            {isAdmin && domainForm.ingressMode === 'managed_https' && (
+              <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" selectedKeys={[domainForm.entryNodeId]} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
+                {[{ id: 'mapping', name: '跟随后端映射节点', address: '', online: true }, ...entryNodes.map(node => ({ id: String(node.id), name: node.name, address: node.serverIp || node.ip || '地址未知', online: node.status === 1 }))].map(node => (
+                  <SelectItem key={node.id} textValue={`${node.name} ${node.address}`}>
+                    {node.name}{node.address ? ` · ${node.address}` : ''} · {node.online ? '在线' : '离线'}
+                  </SelectItem>
+                ))}
+              </Select>
+            )}
+            <Input label={domainForm.ingressMode === 'managed_https' ? 'HTTPS 监听端口' : 'TLS 监听端口'} description={domainForm.listenPort === '443' ? '使用 443 后，访问地址无需填写端口。' : '非 443 端口仍需在域名后填写端口。'} type="number" min={1} max={65535} value={domainForm.listenPort} onValueChange={value => setDomainForm({ ...domainForm, listenPort: value })} />
             <div className="rounded-md border border-divider bg-default-100 px-4 py-3 text-sm">
               <div className="text-xs text-default-500">DNS 解析目标</div>
-              <div className="mt-1 truncate font-mono">{selectedDomainMapping?.publicHost || '选择后端映射后显示'}</div>
+              <div className="mt-1 truncate font-mono">{selectedEntryNode?.serverIp || selectedEntryNode?.ip || selectedDomainMapping?.publicHost || '选择后端映射后显示'}</div>
             </div>
             <div className="sm:col-span-2 grid gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-2">
               <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">入口方式</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? 'Agent 终止 HTTPS · 按域名和路径分流' : 'TLS 原样透传 · 仅按域名分流'}</div></div>
               <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">证书管理</div><div className="mt-1 text-sm">{domainForm.ingressMode === 'managed_https' ? 'Let’s Encrypt 自动签发与续期' : '由内网服务负责'}</div></div>
             </div>
           </ModalBody>
-          <ModalFooter><Button variant="flat" onPress={() => setDomainModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainRoute}>创建入口</Button></ModalFooter>
+          <ModalFooter><Button variant="flat" onPress={() => setDomainModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainRoute}>创建域名直达</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

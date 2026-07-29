@@ -1,3 +1,17 @@
+## 2.33.0 Domain Direct and independent HTTPS ingress
+
+- Renames the Internal Publishing domain workflow to **Domain Direct** and adds a **Bind domain** action directly to every active mapping card.
+- Lets administrators select a different online node as the standard HTTPS ingress when port `443` is already occupied on the mapping server.
+- Keeps same-server routes on loopback and sends only cross-node routes to the mapping's published address, so existing routes preserve their current path.
+- Shows the DNS ingress address separately from the backend mapping address and adds a direct HTTPS link to each active rule.
+- Continues to use the existing Agent-managed TLS listener, Cloudflare DNS-01 certificate issuance, automatic renewal, and path routing. No Caddy, Nginx, new database table, or additional resident process is introduced.
+
+### Upgrade and rollback impact
+
+- This is a panel-only release. Existing mappings, domain routes, certificates, nodes, tunnels, forwards, and Agents are not rewritten or restarted.
+- Cross-node ingress adds one network hop from the selected HTTPS entry node to the existing public mapping. The original mapping remains reachable and can be used as a fallback.
+- Before rolling back, delete cross-node Domain Direct rules created with this release. Then run `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.32.2 Home Device record deletion
 
 - Adds a clearly labeled trash action and confirmation dialog to each Home Device card so stale offline records can be removed without confusing it with the Agent uninstall command.
