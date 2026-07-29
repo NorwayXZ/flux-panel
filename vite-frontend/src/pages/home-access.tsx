@@ -231,7 +231,7 @@ export default function HomeAccessPage() {
                 <div><div className="text-default-500">接入端状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
                 <div><div className="text-default-500">{direct ? 'IPv6 最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
               </div>
-              {route.authEnabled && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
+              {route.authEnabled === 1 && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
               {route.lastError && (
                 <div className={`mt-4 rounded-md px-3 py-3 text-sm ${isIpv6VerificationWarning(route)
                   ? 'bg-warning-50 text-warning-800 dark:bg-warning-500/10 dark:text-warning-300'
