@@ -93,6 +93,12 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-darwin-amd64 .
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-darwin-arm64 .
           cd ..
+          expected_agent_version="$(tr -d '[:space:]' < AGENT_VERSION)"
+          actual_agent_version="$(./gost-amd64 --agent-version)"
+          if [[ "$actual_agent_version" != "$expected_agent_version" ]]; then
+            echo "Agent binary reports $actual_agent_version, expected $expected_agent_version" >&2
+            exit 1
+          fi
           sha256sum gost-amd64 gost-arm64 gost-windows-amd64.exe gost-windows-arm64.exe gost-darwin-amd64 gost-darwin-arm64 > SHA256SUMS
 
       - name: Set up QEMU

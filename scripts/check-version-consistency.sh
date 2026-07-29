@@ -5,6 +5,12 @@ PROJECT_DIR="$(cd -- "$(dirname "$0")/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "$PROJECT_DIR/VERSION")"
 AGENT_VERSION="$(tr -d '[:space:]' < "$PROJECT_DIR/AGENT_VERSION")"
 
+if [ "$VERSION" != "$AGENT_VERSION" ]; then
+  printf 'Agent version %s must match release tag %s because Agent assets are downloaded from that tag\n' \
+    "$AGENT_VERSION" "$VERSION" >&2
+  exit 1
+fi
+
 check_contains() {
   file="$1"
   expected="$2"

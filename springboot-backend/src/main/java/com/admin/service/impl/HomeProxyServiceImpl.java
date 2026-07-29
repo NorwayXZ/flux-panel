@@ -358,7 +358,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     @Override
     public R list() {
         QueryWrapper<HomeProxyRoute> query = new QueryWrapper<HomeProxyRoute>()
-                .ne("state", "deleted").orderByDesc("created_time");
+                .notIn("state", List.of("deleted", "delete_pending")).orderByDesc("created_time");
         if (!isAdmin()) query.eq("user_id", currentUserId());
         List<HomeProxyRoute> routes = routeMapper.selectList(query);
         List<HomeProxyRoute> result = new ArrayList<>();
@@ -410,7 +410,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setLastError(pendingDeleteReason(connectorCleaned, gatewayCleaned));
         route.setUpdatedTime(System.currentTimeMillis());
         routeMapper.updateById(route);
-        return R.ok(route);
+        return R.ok();
     }
 
     @Override
