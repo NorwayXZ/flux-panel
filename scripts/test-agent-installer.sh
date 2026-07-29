@@ -214,6 +214,74 @@ EOF
   grep -Fq 'systemctl daemon-reload ' "$event_log"
 }
 
+run_macos_bootstrap_retry_test() {
+  case_root="$TEST_ROOT/macos-retry"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  service_state="$case_root/service.state"
+  bootstrap_count="$case_root/bootstrap.count"
+  install_dir="$case_root/Library/Application Support/FluxConnector"
+  plist_path="$case_root/Library/LaunchDaemons/com.fluxpanel.connector.plist"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$install_dir" "$(dirname "$plist_path")" "$case_root/Library/Logs"
+  printf '#!/bin/sh\nexit 0\n' > "$install_dir/gost"
+  printf '{"addr":"old"}\n' > "$install_dir/config.json"
+  printf '{}\n' > "$install_dir/gost.json"
+  printf '<plist></plist>\n' > "$plist_path"
+  chmod 755 "$install_dir/gost"
+  : > "$service_state"
+  printf '0\n' > "$bootstrap_count"
+
+  cat > "$mock_dir/launchctl" <<EOF
+#!/bin/sh
+printf 'launchctl %s\n' "\$*" >> "$event_log"
+case "\${1:-}" in
+  print)
+    [ -f "$service_state" ] || exit 1
+    printf 'state = running\npid = 4242\n'
+    ;;
+  bootout)
+    rm -f "$service_state"
+    ;;
+  bootstrap)
+    count="\$(cat "$bootstrap_count")"
+    count=\$((count + 1))
+    printf '%s\n' "\$count" > "$bootstrap_count"
+    if [ "\$count" -eq 1 ]; then
+      printf 'Bootstrap failed: 5: Input/output error\n' >&2
+      exit 5
+    fi
+    : > "$service_state"
+    ;;
+  enable|kickstart) exit 0 ;;
+esac
+EOF
+  cat > "$mock_dir/plutil" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  cat > "$mock_dir/chown" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod 755 "$mock_dir/launchctl" "$mock_dir/plutil" "$mock_dir/chown"
+
+  PATH="$mock_dir:$PATH" \
+    FLUX_CONNECTOR_INSTALL_DIR="$install_dir" \
+    FLUX_CONNECTOR_PLIST_PATH="$plist_path" \
+    FLUX_CONNECTOR_LOG_PATH="$case_root/Library/Logs/FluxConnector.log" \
+    sh "$PROJECT_DIR/install-connector-macos.sh" -a 127.0.0.1:6366 -s test-secret >/dev/null 2>&1
+
+  test "$(cat "$bootstrap_count")" -eq 2
+  grep -Fq 'launchctl bootout system/com.fluxpanel.connector' "$event_log"
+  grep -Fq 'launchctl bootstrap system' "$event_log"
+  grep -Fq '"addr": "127.0.0.1:6366"' "$install_dir/config.json"
+  test ! -e "$install_dir/gost.previous"
+  test ! -e "$install_dir/config.previous.json"
+  test ! -e "$install_dir/com.fluxpanel.connector.previous.plist"
+}
+
 sh -n "$PROJECT_DIR/install.sh"
 sh -n "$PROJECT_DIR/install-connector-macos.sh"
 grep -Fq 'com.fluxpanel.connector' "$PROJECT_DIR/install-connector-macos.sh"
@@ -226,4 +294,5 @@ run_openrc_test
 run_systemd_test
 run_systemd_update_test
 run_connector_uninstall_test
+run_macos_bootstrap_retry_test
 printf 'Agent installer tests passed\n'

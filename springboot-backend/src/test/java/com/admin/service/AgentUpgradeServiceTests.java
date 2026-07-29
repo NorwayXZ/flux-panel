@@ -32,7 +32,7 @@ class AgentUpgradeServiceTests {
         String taskId = "12345678-1234-1234-1234-123456789012";
         String command = service.bootstrapCommand(taskId);
 
-        assertTrue(command.contains("NorwayXZ/flux-panel/2.32.0/install.sh"));
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.32.1/install.sh"));
         assertTrue(command.contains("systemd-run"));
         assertTrue(command.contains("setsid"));
         assertTrue(command.contains(" -U"));
@@ -54,7 +54,7 @@ class AgentUpgradeServiceTests {
     void manualCommandUsesUpdateModeWithoutNodeSecret() {
         String command = service.manualCommand();
 
-        assertTrue(command.contains("NorwayXZ/flux-panel/2.32.0/install.sh"));
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.32.1/install.sh"));
         assertTrue(command.contains("ghfast.top"));
         assertTrue(command.contains("--retry 3"));
         assertTrue(command.contains(" -U"));

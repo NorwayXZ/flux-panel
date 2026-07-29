@@ -47,6 +47,7 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -127,12 +128,21 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             connector.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
             if (connector.getDiscoveryEnabled() == null) connector.setDiscoveryEnabled(0);
             if (StringUtils.isBlank(connector.getDiscoveryStatus())) connector.setDiscoveryStatus("disabled");
-            Integer discoveredCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM lan_discovered_service WHERE connector_id=?", Integer.class, connector.getId());
-            connector.setDiscoveredServiceCount(discoveredCount == null ? 0 : discoveredCount);
+            connector.setDiscoveredServiceCount(discoveredServiceCount(connector.getId()));
             connector.setSecret(null);
         }
         return R.ok(connectors);
+    }
+
+    int discoveredServiceCount(Long connectorId) {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM lan_discovered_service WHERE connector_id=?", Integer.class, connectorId);
+            return count == null ? 0 : count;
+        } catch (DataAccessException e) {
+            log.warn("LAN discovery candidate storage is unavailable for connector {}: {}", connectorId, e.getMessage());
+            return 0;
+        }
     }
 
     @Override
