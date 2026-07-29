@@ -57,6 +57,9 @@ const formatTime = (timestamp?: number | null) => {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 };
 
+const isIpv6VerificationWarning = (route: HomeProxyRoute) =>
+  route.state === 'active' && route.lastError?.startsWith('公网验证未完成：');
+
 const copy = async (value: string, label: string) => {
   await navigator.clipboard.writeText(value);
   toast.success(`${label}已复制`);
@@ -229,7 +232,13 @@ export default function HomeAccessPage() {
                 <div><div className="text-default-500">{direct ? 'IPv6 最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
               </div>
               {route.authEnabled && <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm"><div>用户名：<span className="font-mono">{route.authUsername}</span></div><div className="mt-1">密码：<span className="font-mono">{route.authPassword || '仅创建时显示'}</span></div></div>}
-              {route.lastError && <div className="mt-4 rounded-md bg-danger-50 px-3 py-3 text-sm text-danger-700 dark:bg-danger-500/10 dark:text-danger-300">{route.lastError}</div>}
+              {route.lastError && (
+                <div className={`mt-4 rounded-md px-3 py-3 text-sm ${isIpv6VerificationWarning(route)
+                  ? 'bg-warning-50 text-warning-800 dark:bg-warning-500/10 dark:text-warning-300'
+                  : 'bg-danger-50 text-danger-700 dark:bg-danger-500/10 dark:text-danger-300'}`}>
+                  {route.lastError}
+                </div>
+              )}
               <div className="mt-5 flex flex-wrap justify-end gap-2">
                 {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshIpv6(route.id)}>检测 IPv6</Button>}
                 {route.state === 'active' && route.publicHost && route.publicPort && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, '代理地址')}>复制地址</Button>}

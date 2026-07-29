@@ -49,6 +49,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     private static final String MIN_AGENT_VERSION = "2.7.0";
     private static final String MIN_DIRECT_AGENT_VERSION = "2.21.0";
     private static final long IPV6_REFRESH_INTERVAL_MS = 5 * 60 * 1000L;
+    private static final String IPV6_UNVERIFIED_PREFIX = "公网验证未完成：";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Resource private HomeProxyRouteMapper routeMapper;
@@ -214,7 +215,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failProvision(route, lease, egressLease, "创建家庭 SOCKS5 服务失败：" + message(serviceResult));
         }
-        if (!waitForEndpoint(ingressNode, ingress.getPublicHost(), port)) {
+        if (waitForEndpoint(ingressNode, ingress.getPublicHost(), port).status != EndpointProbeStatus.REACHABLE) {
             GostUtil.DeleteHomeProxyService(connector.getId(), base + "_service", ingressChain, egressChain);
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failProvision(route, lease, egressLease, "公网入口端口未能在 12 秒内就绪，请检查节点防火墙和端口范围");
@@ -337,15 +338,17 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failDirectProvision(route, egressLease, "创建家庭 IPv6 SOCKS5 服务失败：" + message(serviceResult));
         }
-        if (!waitForEndpoint(egressNode, directIpv6, directPort)) {
+        EndpointProbeResult probe = waitForEndpoint(egressNode, directIpv6, directPort);
+        if (probe.status == EndpointProbeStatus.UNREACHABLE) {
             GostUtil.DeleteDirectHomeProxyService(connector.getId(), base + "_service", egressChain);
             GostUtil.DeletePublishingGateway(egressNode.getId(), gatewayName);
             return failDirectProvision(route, egressLease,
-                    "家庭 IPv6 端口无法从公网访问，请在家庭路由器和系统防火墙放行 TCP " + directPort);
+                    directIpv6FailureMessage(directPort, probe.detail));
         }
 
         route.setState("active");
-        route.setLastError(null);
+        route.setLastError(probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
+                ? ipv6UnverifiedMessage(egressNode, directPort) : null);
         route.setUpdatedTime(System.currentTimeMillis());
         routeMapper.updateById(route);
         markLeaseActive(egressLease);
@@ -643,14 +646,19 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         if (egressNode == null || !WebSocketServer.isNodeOnline(egressNode.getId())) {
             throw new IllegalStateException("家庭出口 VPS 离线，无法验证新的 IPv6 地址");
         }
-        if (route.getDirectPort() == null || !waitForEndpoint(egressNode, address, route.getDirectPort())) {
-            throw new IllegalStateException("新的家庭 IPv6 端口无法从公网访问，请检查家庭路由器和系统防火墙");
+        if (route.getDirectPort() == null) {
+            throw new IllegalStateException("家庭 IPv6 直连端口缺失");
+        }
+        EndpointProbeResult probe = waitForEndpoint(egressNode, address, route.getDirectPort());
+        if (probe.status == EndpointProbeStatus.UNREACHABLE) {
+            throw new IllegalStateException(directIpv6FailureMessage(route.getDirectPort(), probe.detail));
         }
         long now = System.currentTimeMillis();
         route.setDirectIpv6(address);
         route.setPublicPort(route.getDirectPort());
         route.setIpv6CheckedAt(now);
-        route.setLastError(null);
+        route.setLastError(probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
+                ? ipv6UnverifiedMessage(egressNode, route.getDirectPort()) : null);
         route.setUpdatedTime(now);
         routeMapper.updateById(route);
         return address;
@@ -698,7 +706,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return host.contains(":") && !host.startsWith("[") ? "[" + host + "]:" + port : host + ":" + port;
     }
 
-    private boolean waitForEndpoint(Node probeNode, String host, int port) {
+    private EndpointProbeResult waitForEndpoint(Node probeNode, String host, int port) {
+        String lastDetail = null;
         for (int attempt = 0; attempt < 8; attempt++) {
             JSONObject payload = new JSONObject();
             payload.put("ip", host);
@@ -710,16 +719,60 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 JSONObject data = response.getData() instanceof JSONObject
                         ? (JSONObject) response.getData()
                         : JSONObject.parseObject(JSONObject.toJSONString(response.getData()));
-                if (Boolean.TRUE.equals(data.getBoolean("success"))) return true;
+                if (Boolean.TRUE.equals(data.getBoolean("success"))) {
+                    return new EndpointProbeResult(EndpointProbeStatus.REACHABLE, null);
+                }
+                lastDetail = StringUtils.defaultIfBlank(data.getString("errorMessage"), data.getString("error"));
+                if (isIpv6UnsupportedProbeError(lastDetail)) {
+                    return new EndpointProbeResult(EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED, lastDetail);
+                }
+            } else {
+                lastDetail = message(response);
             }
             try {
                 Thread.sleep(500L);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();
-                return false;
+                return new EndpointProbeResult(EndpointProbeStatus.UNREACHABLE, "探测被中断");
             }
         }
-        return false;
+        return new EndpointProbeResult(EndpointProbeStatus.UNREACHABLE, lastDetail);
+    }
+
+    static boolean isIpv6UnsupportedProbeError(String detail) {
+        if (StringUtils.isBlank(detail)) return false;
+        String normalized = detail.toLowerCase();
+        return normalized.contains("network is unreachable")
+                || normalized.contains("no route to host")
+                || normalized.contains("address family not supported")
+                || normalized.contains("protocol not supported")
+                || normalized.contains("cannot assign requested address");
+    }
+
+    private String ipv6UnverifiedMessage(Node probeNode, int port) {
+        return IPV6_UNVERIFIED_PREFIX + "出口 VPS " + probeNode.getName()
+                + " 没有 IPv6 路由，家庭监听已保留；请从实际 IPv6 网络测试 TCP " + port;
+    }
+
+    private String directIpv6FailureMessage(int port, String detail) {
+        String message = "家庭 IPv6 端口无法从公网访问，请在家庭路由器和系统防火墙放行 TCP " + port;
+        return StringUtils.isBlank(detail) ? message : message + "（探测结果：" + StringUtils.abbreviate(detail, 160) + "）";
+    }
+
+    private enum EndpointProbeStatus {
+        REACHABLE,
+        UNREACHABLE,
+        PROBE_IPV6_UNSUPPORTED
+    }
+
+    private static final class EndpointProbeResult {
+        private final EndpointProbeStatus status;
+        private final String detail;
+
+        private EndpointProbeResult(EndpointProbeStatus status, String detail) {
+            this.status = status;
+            this.detail = detail;
+        }
     }
 
     private void safeDeleteChains(Long connectorId, String... chains) {

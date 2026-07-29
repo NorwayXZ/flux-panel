@@ -171,3 +171,9 @@
 
 - Expands the existing `private_proxy.proxy_type` column from 12 to 32 characters so upgraded installations can store the `vless_reality` protocol identifier.
 - The migration is additive and preserves all existing private proxy records. Startup only alters older columns that are shorter than 32 characters.
+## 2.26.1 IPv6 直连验证修复
+
+- 修正家庭 IPv6 直连创建时的公网验证逻辑。
+- 当所选出口 VPS 没有 IPv6 路由时，不再误报家庭防火墙故障并撤销已启动的家庭监听。
+- 这类状态会保留运行配置并标记为“公网验证未完成”；实际 IPv6 客户端、家庭路由器和系统防火墙仍需允许对应 TCP 端口。
+- 建议公网 SOCKS5 代理启用用户名密码认证。
