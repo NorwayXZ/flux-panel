@@ -421,6 +421,10 @@ export const getSmartEntryOptions = () => Network.post<{
   providers: SmartEntryProviderOption[];
   forwards: SmartEntryForwardOption[];
 }>("/smart-entry/options");
+export const getSmartEntryDomains = (providerRefId: number) => Network.post<{
+  provider: 'dnspod' | 'aliyun';
+  domains: string[];
+}>("/smart-entry/domains", { providerRefId });
 export const saveSmartEntry = (data: any) => Network.post<{ id: number }>("/smart-entry/save", data);
 export const checkSmartEntry = (id: number) => Network.post("/smart-entry/check", { id });
 export const getSmartEntryEvents = (id: number) => Network.post<SmartEntryEvent[]>("/smart-entry/events", { id });

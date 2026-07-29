@@ -36,6 +36,18 @@ public class SmartEntryController {
         return service.options();
     }
 
+    @PostMapping("/domains")
+    @RequireRole
+    public R domains(@RequestBody Map<String, Object> body) {
+        Object providerRefId = body.get("providerRefId");
+        if (providerRefId == null) return R.err("请选择 DNS 服务商配置");
+        try {
+            return service.domains(Long.valueOf(providerRefId.toString()));
+        } catch (NumberFormatException e) {
+            return R.err("DNS 服务商配置无效");
+        }
+    }
+
     @LogAnnotation
     @PostMapping("/save")
     @RequireRole

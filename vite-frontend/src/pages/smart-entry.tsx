@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@heroui/button';
 import { Card, CardBody } from '@heroui/card';
@@ -15,6 +15,7 @@ import {
   checkSmartEntry,
   deleteSmartEntry,
   getSmartEntryEvents,
+  getSmartEntryDomains,
   getSmartEntryOptions,
   getSmartEntryOverview,
   saveSmartEntry,
@@ -77,6 +78,10 @@ export default function SmartEntryPage() {
   const [loading, setLoading] = useState(true);
   const [groups, setGroups] = useState<SmartEntryGroup[]>([]);
   const [providers, setProviders] = useState<SmartEntryProviderOption[]>([]);
+  const [domains, setDomains] = useState<string[]>([]);
+  const [domainsLoading, setDomainsLoading] = useState(false);
+  const [domainsError, setDomainsError] = useState('');
+  const domainRequest = useRef(0);
   const [forwards, setForwards] = useState<SmartEntryForwardOption[]>([]);
   const [summary, setSummary] = useState(emptySummary);
   const [formOpen, setFormOpen] = useState(false);
@@ -106,6 +111,34 @@ export default function SmartEntryPage() {
     return () => window.clearInterval(timer);
   }, [loadData]);
 
+  const loadDomains = useCallback(async (providerRefId: string, preferredZone = '') => {
+    const requestId = ++domainRequest.current;
+    if (!providerRefId) {
+      setDomains([]);
+      setDomainsError('');
+      setDomainsLoading(false);
+      return;
+    }
+    setDomainsLoading(true);
+    setDomainsError('');
+    const response = await getSmartEntryDomains(Number(providerRefId));
+    if (requestId !== domainRequest.current) return;
+    setDomainsLoading(false);
+    if (response.code !== 0) {
+      setDomains([]);
+      setDomainsError(response.msg || '读取主域名失败');
+      return;
+    }
+    const available = Array.from(new Set((response.data?.domains || []).map(item => item.toLowerCase()))).sort();
+    const normalizedPreferred = preferredZone.trim().toLowerCase();
+    if (normalizedPreferred && !available.includes(normalizedPreferred)) available.unshift(normalizedPreferred);
+    setDomains(available);
+    setForm(current => current.providerRefId !== providerRefId ? current : {
+      ...current,
+      zoneName: normalizedPreferred || (available.includes(current.zoneName) ? current.zoneName : available.length === 1 ? available[0] : ''),
+    });
+  }, []);
+
   const selected = useMemo(() => Object.fromEntries(carriers.map(item => [item.key, forwards.find(option => String(option.id) === form.routes[item.key])])) as Record<Carrier, SmartEntryForwardOption | undefined>, [form.routes, forwards]);
   const selectionProblem = useMemo(() => {
     if (!selected.default) return '必须选择默认入口';
@@ -124,6 +157,10 @@ export default function SmartEntryPage() {
   const recoveryWindow = `${Math.ceil(probeIntervalMs * recoveryThreshold / 1000)}–${Math.ceil((probeIntervalMs * recoveryThreshold + 2000) / 1000)} 秒`;
 
   const openCreate = () => {
+    domainRequest.current++;
+    setDomains([]);
+    setDomainsError('');
+    setDomainsLoading(false);
     setForm(emptyForm);
     setFormOpen(true);
   };
@@ -139,6 +176,14 @@ export default function SmartEntryPage() {
       enabled: truthy(group.enabled), routes,
     });
     setFormOpen(true);
+    void loadDomains(String(group.providerRefId), group.zoneName);
+  };
+
+  const selectProvider = (providerRefId: string) => {
+    setForm(current => ({ ...current, providerRefId, zoneName: '' }));
+    setDomains([]);
+    setDomainsError('');
+    void loadDomains(providerRefId);
   };
 
   const submit = async () => {
@@ -287,10 +332,15 @@ export default function SmartEntryPage() {
           <ModalBody className="gap-5">
             <section className="grid gap-3 sm:grid-cols-2">
               <Input label="策略名称" placeholder="例如：家庭宽带智能入口" value={form.name} onValueChange={name => setForm({ ...form, name })} />
-              <Select label="DNS 服务商配置" placeholder="选择 DNSPod 或阿里云 DNS" selectedKeys={form.providerRefId ? [form.providerRefId] : []} onSelectionChange={keys => setForm({ ...form, providerRefId: String(Array.from(keys)[0] || '') })}>
+              <Select label="DNS 服务商配置" placeholder="选择 DNSPod 或阿里云 DNS" selectedKeys={form.providerRefId ? [form.providerRefId] : []} onSelectionChange={keys => selectProvider(String(Array.from(keys)[0] || ''))}>
                 {providers.map(provider => <SelectItem key={String(provider.id)} textValue={`${providerLabel(provider.provider)} ${provider.name}`}>{providerLabel(provider.provider)} · {provider.name}</SelectItem>)}
               </Select>
-              <Input label="主域名" placeholder="例如 example.com" value={form.zoneName} onValueChange={zoneName => setForm({ ...form, zoneName })} />
+              <div className="flex min-w-0 items-end gap-2">
+                <Select className="min-w-0 flex-1" label="主域名" placeholder={domainsLoading ? '正在读取主域名' : form.providerRefId ? '选择主域名' : '先选择 DNS 服务商配置'} isDisabled={!form.providerRefId || domainsLoading || Boolean(domainsError)} isInvalid={Boolean(domainsError)} errorMessage={domainsError || undefined} selectedKeys={form.zoneName ? [form.zoneName] : []} onSelectionChange={keys => setForm({ ...form, zoneName: String(Array.from(keys)[0] || '') })}>
+                  {domains.map(domain => <SelectItem key={domain} textValue={domain}>{domain}</SelectItem>)}
+                </Select>
+                <Button isIconOnly variant="flat" aria-label="刷新主域名" title="刷新主域名" isLoading={domainsLoading} isDisabled={!form.providerRefId || domainsLoading} onPress={() => void loadDomains(form.providerRefId, form.zoneName)}><RefreshCw size={17} /></Button>
+              </div>
               <Input label="业务域名或主机记录" placeholder="例如 access 或 access.example.com" value={form.domain} onValueChange={domain => setForm({ ...form, domain })} />
               <Select label="记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />

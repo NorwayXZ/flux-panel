@@ -1,3 +1,15 @@
+## 2.30.1 DNS provider domain selection
+
+- Replaces the manual root-domain field in Smart Entry with a domain selector linked to the selected DNS provider account.
+- Reads all manageable root domains from DNSPod or Aliyun DNS, with pagination, normalization, duplicate removal, and alphabetical sorting.
+- Reloads domains when the provider changes, auto-selects a sole domain, preserves an existing policy's domain while editing, and provides an explicit retry action for provider API errors.
+- Domain discovery is read-only: it does not create, update, or delete any DNS record.
+
+### Upgrade and rollback impact
+
+- This panel-only update does not change the database or Agent runtime. Nodes and active routes continue running without an Agent update or restart.
+- Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.30.0 Selectable server egress and Reality home first hop
 
 - Renames single-VPS egress to **Selected Server Egress** and lets an operator choose any online node they own or have been granted. An egress Port Resource pool is no longer required.

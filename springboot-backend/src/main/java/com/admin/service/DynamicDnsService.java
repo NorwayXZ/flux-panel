@@ -40,6 +40,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,6 +54,7 @@ public class DynamicDnsService {
     private static final String CLOUDFLARE_API = "https://api.cloudflare.com/client/v4";
     private static final String DNSPOD_API = "https://dnspod.tencentcloudapi.com";
     private static final String ALIYUN_API = "https://alidns.aliyuncs.com";
+    private static final int MAX_PROVIDER_DOMAINS = 5000;
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -112,6 +114,24 @@ public class DynamicDnsService {
         return R.ok(jdbcTemplate.queryForList(
                 "SELECT id,name,provider,enabled,last_error AS lastError FROM dynamic_dns_provider "
                         + "WHERE enabled=1 AND provider IN ('dnspod','aliyun') ORDER BY provider,name"));
+    }
+
+    public R lineRoutingDomains(Long providerRefId) {
+        try {
+            ProviderAccess access = loadProvider("dynamic", providerRefId, null, null);
+            if (!List.of("dnspod", "aliyun").contains(access.provider)) {
+                return R.err("运营商线路解析仅支持 DNSPod 和阿里云 DNS");
+            }
+            List<String> domains = normalizeProviderDomains("dnspod".equals(access.provider)
+                    ? listDnsPodDomains(access) : listAliyunDomains(access));
+            if (domains.isEmpty()) {
+                return R.err(("dnspod".equals(access.provider) ? "DNSPod" : "阿里云 DNS")
+                        + " 账户中没有可管理的主域名");
+            }
+            return R.ok(Map.of("provider", access.provider, "domains", domains));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return R.err(e.getMessage());
+        }
     }
 
     public String normalizeLineRoutingDomain(String zone, String input) {
@@ -515,6 +535,22 @@ public class DynamicDnsService {
         catch (Exception e) { if (e instanceof IllegalStateException) throw (IllegalStateException) e; throw new IllegalStateException("DNSPod 请求签名失败"); }
     }
 
+    private List<String> listDnsPodDomains(ProviderAccess access) {
+        List<String> domains = new ArrayList<>();
+        int offset = 0;
+        int limit = 3000;
+        while (domains.size() < MAX_PROVIDER_DOMAINS) {
+            JSONObject result = dnsPod(access, "DescribeDomainList", Map.of("Offset", offset, "Limit", limit));
+            JSONObject response = result.getJSONObject("Response");
+            List<String> page = extractDnsPodDomainNames(response);
+            domains.addAll(page);
+            int total = response == null ? 0 : response.getIntValue("TotalCount");
+            offset += page.size();
+            if (page.isEmpty() || page.size() < limit || (total > 0 && offset >= total)) break;
+        }
+        return domains;
+    }
+
     private String updateAliyun(ProviderAccess access, String zone, String fqdn, String type,
                                 String value, int ttl, String knownRecordId) {
         String rr = relativeName(fqdn, zone);
@@ -649,6 +685,54 @@ public class DynamicDnsService {
             throw new IllegalStateException("阿里云 DNS API 连接失败");
         }
         catch (Exception e) { if (e instanceof IllegalStateException) throw (IllegalStateException) e; throw new IllegalStateException("阿里云 DNS 请求签名失败"); }
+    }
+
+    private List<String> listAliyunDomains(ProviderAccess access) {
+        List<String> domains = new ArrayList<>();
+        int pageNumber = 1;
+        int pageSize = 100;
+        while (domains.size() < MAX_PROVIDER_DOMAINS) {
+            JSONObject result = aliyun(access, "DescribeDomains", Map.of(
+                    "PageNumber", Integer.toString(pageNumber), "PageSize", Integer.toString(pageSize)));
+            List<String> page = extractAliyunDomainNames(result);
+            domains.addAll(page);
+            int total = result == null ? 0 : result.getIntValue("TotalCount");
+            if (page.isEmpty() || page.size() < pageSize || (total > 0 && domains.size() >= total)) break;
+            pageNumber++;
+        }
+        return domains;
+    }
+
+    static List<String> extractDnsPodDomainNames(JSONObject response) {
+        List<String> domains = new ArrayList<>();
+        JSONArray list = response == null ? null : response.getJSONArray("DomainList");
+        if (list == null) return domains;
+        for (int index = 0; index < list.size(); index++) {
+            String name = StringUtils.trimToNull(list.getJSONObject(index).getString("Name"));
+            if (name != null) domains.add(name);
+        }
+        return domains;
+    }
+
+    static List<String> extractAliyunDomainNames(JSONObject response) {
+        List<String> domains = new ArrayList<>();
+        JSONObject container = response == null ? null : response.getJSONObject("Domains");
+        JSONArray list = container == null ? null : container.getJSONArray("Domain");
+        if (list == null) return domains;
+        for (int index = 0; index < list.size(); index++) {
+            String name = StringUtils.trimToNull(list.getJSONObject(index).getString("DomainName"));
+            if (name != null) domains.add(name);
+        }
+        return domains;
+    }
+
+    private List<String> normalizeProviderDomains(List<String> domains) {
+        return new LinkedHashSet<>(domains.stream()
+                .map(value -> StringUtils.trimToEmpty(value).toLowerCase(Locale.ROOT))
+                .filter(this::validDomain)
+                .sorted()
+                .limit(MAX_PROVIDER_DOMAINS)
+                .toList()).stream().toList();
     }
 
     static String formatAliyunApiError(String responseBody) {

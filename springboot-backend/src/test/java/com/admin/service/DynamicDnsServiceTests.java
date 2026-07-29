@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -51,5 +52,23 @@ class DynamicDnsServiceTests {
         assertEquals("dns:7:101", DynamicDnsService.providerOptionKey("dns", 7L, 101L));
         assertEquals("dns:7:102", DynamicDnsService.providerOptionKey("dns", 7L, 102L));
         assertEquals("dynamic:9", DynamicDnsService.providerOptionKey("dynamic", 9L, null));
+    }
+
+    @Test
+    void extractsDnsPodAccountDomains() {
+        JSONObject response = JSONObject.parseObject("{\"DomainList\":[{\"Name\":\"766733.xyz\"},{\"Name\":\"example.com\"}]}");
+        assertEquals(List.of("766733.xyz", "example.com"), DynamicDnsService.extractDnsPodDomainNames(response));
+    }
+
+    @Test
+    void extractsAliyunAccountDomains() {
+        JSONObject response = JSONObject.parseObject("{\"Domains\":{\"Domain\":[{\"DomainName\":\"766733.xyz\"},{\"DomainName\":\"example.com\"}]}}");
+        assertEquals(List.of("766733.xyz", "example.com"), DynamicDnsService.extractAliyunDomainNames(response));
+    }
+
+    @Test
+    void acceptsEmptyProviderDomainResponses() {
+        assertEquals(List.of(), DynamicDnsService.extractDnsPodDomainNames(new JSONObject()));
+        assertEquals(List.of(), DynamicDnsService.extractAliyunDomainNames(new JSONObject()));
     }
 }

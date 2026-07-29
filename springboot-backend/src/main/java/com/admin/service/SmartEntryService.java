@@ -80,6 +80,10 @@ public class SmartEntryService {
         return R.ok(Map.of("providers", providers, "forwards", forwards));
     }
 
+    public R domains(Long providerRefId) {
+        return dynamicDnsService.lineRoutingDomains(providerRefId);
+    }
+
     public R save(SmartEntrySaveDto dto) {
         try {
             Normalized normalized = normalize(dto);
