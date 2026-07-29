@@ -26,6 +26,7 @@ import ServerAssetsPage from "@/pages/server-assets";
 import DynamicDnsPage from "@/pages/dynamic-dns";
 import HomeAccessPage from "@/pages/home-access";
 import HomeDevicesPage from "@/pages/home-devices";
+import GuidePage from "@/pages/guide";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -279,6 +280,7 @@ function App() {
       <Route path="/home-access" element={<ProtectedRoute><HomeAccessPage /></ProtectedRoute>} />
       <Route path="/home-devices" element={<ProtectedRoute useSimpleLayout={true}><HomeDevicesPage /></ProtectedRoute>} />
       <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
+      <Route path="/guide" element={<ProtectedRoute useSimpleLayout={true}><GuidePage /></ProtectedRoute>} />
       <Route
         path="/port-resources"
         element={<ProtectedRoute useSimpleLayout={true}><PortResourcesPage /></ProtectedRoute>}

@@ -9,7 +9,7 @@ import { isWebViewFunc } from '@/utils/panel';
 import { siteConfig } from '@/config/site';
 import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
-import { Boxes, RadioTower, ShieldCheck } from 'lucide-react';
+import { BookOpen, Boxes, RadioTower, ShieldCheck } from 'lucide-react';
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -218,6 +218,15 @@ export default function ProfilePage() {
                   <RadioTower className="h-5 w-5" />
                 </div>
                 <span className="text-xs text-foreground text-center">内网映射</span>
+              </button>
+              <button
+                onClick={() => navigate('/guide')}
+                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+              >
+                <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mb-2">
+                  <BookOpen className="h-5 w-5" />
+                </div>
+                <span className="text-xs text-foreground text-center">使用教程</span>
               </button>
               {/* 管理员功能 */}
               {isAdmin && adminMenuItems.map((item) => (
