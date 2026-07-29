@@ -676,8 +676,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         if ("deleted".equals(route.getState())) return R.ok();
         boolean natCleaned = natTraversalService.stop(route);
         InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
-        boolean connectorCleaned = connector == null;
-        if (connector != null && WebSocketServer.isConnectorOnline(connector.getId())) {
+        boolean connectorCleaned = connectorRuntimeUnavailable(connector);
+        if (!connectorCleaned && WebSocketServer.isConnectorOnline(connector.getId())) {
             GostDto result = deleteConnectorRuntime(route, connector.getId());
             connectorCleaned = ok(result) || containsNotFound(result);
         }
@@ -702,8 +702,8 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             try {
                 InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
                 boolean natCleaned = natTraversalService.stop(route);
-                boolean connectorCleaned = connector == null;
-                if (connector != null && WebSocketServer.isConnectorOnline(connector.getId())) {
+                boolean connectorCleaned = connectorRuntimeUnavailable(connector);
+                if (!connectorCleaned && WebSocketServer.isConnectorOnline(connector.getId())) {
                     GostDto result = deleteConnectorRuntime(route, connector.getId());
                     connectorCleaned = ok(result) || containsNotFound(result);
                 }
@@ -742,6 +742,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             route.setUpdatedTime(System.currentTimeMillis());
             routeMapper.updateById(route);
         }
+    }
+
+    static boolean connectorRuntimeUnavailable(InternalConnector connector) {
+        return connector == null || Integer.valueOf(0).equals(connector.getStatus());
     }
 
     private Tunnel resolveEgressTunnel(Long tunnelId, String egressMode, Node finalNode, Integer userId) {

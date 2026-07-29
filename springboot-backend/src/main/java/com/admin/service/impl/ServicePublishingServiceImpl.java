@@ -156,13 +156,14 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R deleteConnector(Long id) {
         InternalConnector connector = ownedConnector(id);
         if (connector == null) return R.err("内网接入端不存在或无权访问");
+        if (WebSocketServer.isConnectorOnline(id)) {
+            return R.err("该家庭设备仍然在线，请先执行卸载命令并等待设备离线后再删除记录");
+        }
         Integer count = publishedServiceMapper.selectCount(new QueryWrapper<PublishedService>()
                 .eq("connector_id", id).notIn("state", "released", "deleted"));
         if (count != null && count > 0) return R.err("该接入端仍有内网映射，请先删除相关映射");
-        Integer homeProxyCount = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM home_proxy_route WHERE (connector_id=? OR source_connector_id=?) AND state<>'deleted'",
-                Integer.class, id, id);
-        if (homeProxyCount != null && homeProxyCount > 0) {
+        int homeProxyCount = blockingHomeProxyRouteCount(id);
+        if (homeProxyCount > 0) {
             return R.err("该接入设备仍被家庭网络中转使用，请先删除相关中转");
         }
         connector.setStatus(0);
@@ -170,6 +171,14 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         connectorMapper.updateById(connector);
         jdbcTemplate.update("DELETE FROM lan_discovered_service WHERE connector_id=?", id);
         return R.ok();
+    }
+
+    int blockingHomeProxyRouteCount(Long connectorId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM home_proxy_route WHERE (connector_id=? OR source_connector_id=?) "
+                        + "AND state NOT IN ('deleted','delete_pending')",
+                Integer.class, connectorId, connectorId);
+        return count == null ? 0 : count;
     }
 
     @Override

@@ -6,6 +6,7 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
+import { Tooltip } from '@heroui/tooltip';
 import { ArrowRight, Copy, Download, Laptop, Network, Plus, Radar, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
@@ -14,6 +15,7 @@ import AccessResourceTabs from '@/components/access-resource-tabs';
 import {
   createInternalConnector,
   clearLanDiscoveryResults,
+  deleteInternalConnector,
   getLanDiscoveryResults,
   getInternalConnectorInstall,
   getInternalConnectors,
@@ -72,6 +74,8 @@ export default function HomeDevicesPage() {
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [deleteDevice, setDeleteDevice] = useState<InternalConnector | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [scanCidr, setScanCidr] = useState('');
   const [form, setForm] = useState<{ name: string; platform: ConnectorPlatform; allowedCidrs: string }>({
     name: '', platform: 'linux', allowedCidrs: '',
@@ -183,6 +187,17 @@ export default function HomeDevicesPage() {
     toast.success('候选服务已清空');
   };
 
+  const confirmDeleteDevice = async () => {
+    if (!deleteDevice) return;
+    setDeleting(true);
+    const response = await deleteInternalConnector(deleteDevice.id);
+    setDeleting(false);
+    if (response.code !== 0) return toast.error(response.msg || '删除家庭设备失败');
+    setDevices(current => current.filter(item => item.id !== deleteDevice.id));
+    setDeleteDevice(null);
+    toast.success('家庭设备记录已删除');
+  };
+
   const publishDiscoveredService = (service: LanDiscoveredService) => {
     if (!discoveryDevice) return;
     const query = new URLSearchParams({
@@ -238,6 +253,9 @@ export default function HomeDevicesPage() {
               <Button size="sm" variant="flat" startContent={<Radar size={15} />} onPress={() => openDiscovery(device)}>发现服务</Button>
               <Button size="sm" variant="flat" startContent={<Download size={15} />} onPress={() => showCommand(device.id, device.platform, 'install')}>{device.online ? '安装命令' : '重新安装'}</Button>
               <Button size="sm" variant="flat" onPress={() => showCommand(device.id, device.platform, 'uninstall')}>卸载命令</Button>
+              <Tooltip content="删除设备记录">
+                <Button isIconOnly size="sm" color="danger" variant="flat" aria-label={`删除 ${device.name} 设备记录`} onPress={() => setDeleteDevice(device)}><Trash2 size={15} /></Button>
+              </Tooltip>
               </div>
             </div>
           </article>)}
@@ -264,6 +282,17 @@ export default function HomeDevicesPage() {
           </div>
           <div className="rounded-md bg-default-100 p-4">{commandLoading ? <Spinner size="sm" /> : <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-sm">{command}</pre>}</div>
         </ModalBody><ModalFooter><Button variant="flat" onPress={() => setCommandOpen(false)}>关闭</Button><Button color="primary" startContent={<Copy size={16} />} isDisabled={!command || commandLoading} onPress={copyCommand}>复制命令</Button></ModalFooter></ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(deleteDevice)} onOpenChange={open => !open && !deleting && setDeleteDevice(null)} size="lg">
+        <ModalContent><ModalHeader>删除家庭设备记录</ModalHeader><ModalBody className="space-y-4">
+          <div className="rounded-md border border-divider bg-default-50 px-4 py-3 text-sm">
+            <div className="font-medium">{deleteDevice?.name}</div>
+            <div className="mt-1 text-default-500">Agent {deleteDevice?.version || '尚未上报'} · {deleteDevice?.online ? '在线' : '离线'}</div>
+          </div>
+          <p className="text-sm text-default-600">此操作只删除面板记录，不会远程卸载 Agent。设备必须离线，并且不能被内网映射或家庭网络中转使用。</p>
+          {deleteDevice?.online && <div className="rounded-md border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">设备仍然在线。请先执行卸载命令，等待设备离线后再删除记录。</div>}
+        </ModalBody><ModalFooter><Button variant="flat" isDisabled={deleting} onPress={() => setDeleteDevice(null)}>取消</Button><Button color="danger" isLoading={deleting} isDisabled={Boolean(deleteDevice?.online)} onPress={confirmDeleteDevice}>删除记录</Button></ModalFooter></ModalContent>
       </Modal>
 
       <Modal isOpen={discoveryOpen} onOpenChange={setDiscoveryOpen} size="4xl" scrollBehavior="inside">

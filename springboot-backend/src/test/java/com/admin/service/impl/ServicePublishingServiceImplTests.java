@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -24,5 +25,16 @@ class ServicePublishingServiceImplTests {
         ReflectionTestUtils.setField(service, "jdbcTemplate", jdbcTemplate);
 
         assertEquals(0, service.discoveredServiceCount(7L));
+    }
+
+    @Test
+    void pendingHomeProxyDeletionDoesNotBlockConnectorDeletion() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        when(jdbcTemplate.queryForObject(contains("state NOT IN ('deleted','delete_pending')"),
+                eq(Integer.class), eq(7L), eq(7L))).thenReturn(0);
+        ServicePublishingServiceImpl service = new ServicePublishingServiceImpl();
+        ReflectionTestUtils.setField(service, "jdbcTemplate", jdbcTemplate);
+
+        assertEquals(0, service.blockingHomeProxyRouteCount(7L));
     }
 }

@@ -1,3 +1,9 @@
+## 2.32.2 Home Device record deletion
+
+- Adds a clearly labeled trash action and confirmation dialog to each Home Device card so stale offline records can be removed without confusing it with the Agent uninstall command.
+- Blocks deletion while a Home Device is online and preserves the existing dependency checks for internal mappings and home-network relay routes.
+- Fixes a deletion deadlock where an offline Agent left a removed home-network relay in `delete_pending`: the relay disappeared from the page but still prevented the stale Home Device record from being deleted.
+
 ## 2.32.1 database and macOS installer hotfix
 
 - Restores existing Home Devices that appeared missing after `2.32.0` when the new discovery candidate table was not created. Connector records were never deleted; the list endpoint now remains available even if candidate storage is temporarily unavailable.

@@ -1,5 +1,6 @@
 package com.admin.service.impl;
 
+import com.admin.entity.InternalConnector;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,5 +22,13 @@ class HomeProxyServiceImplTests {
         assertFalse(HomeProxyServiceImpl.isIpv6UnsupportedProbeError("i/o timeout"));
         assertFalse(HomeProxyServiceImpl.isIpv6UnsupportedProbeError("connection refused"));
         assertFalse(HomeProxyServiceImpl.isIpv6UnsupportedProbeError(null));
+    }
+
+    @Test
+    void inactiveConnectorDoesNotKeepDeletedRoutePending() {
+        InternalConnector connector = new InternalConnector();
+        connector.setStatus(0);
+
+        assertTrue(HomeProxyServiceImpl.connectorRuntimeUnavailable(connector));
     }
 }
