@@ -1,3 +1,13 @@
+## 2.28.2 Mobile Resource Center active-tab visibility
+
+- Automatically scrolls the Resource Center tab row so the active section remains visible when a narrow-screen user opens Domain Management or Dynamic Resolution from a direct link.
+- Preserves manual touch scrolling and the hidden-scrollbar treatment introduced in `2.28.1`.
+- Changes no database schema, Agent runtime, port reservation, DNS record, tunnel, forward, proxy, published service, or active Home Network Relay. Agent `2.26.4` remains the current target.
+
+### Upgrade and rollback impact
+
+- This is a frontend-only navigation fix. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.28.1 Mobile Resource Center tab polish
 
 - Hides the native horizontal scrollbar under Resource Center tabs on narrow screens while preserving touch and trackpad scrolling.

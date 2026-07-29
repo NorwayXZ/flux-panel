@@ -1,5 +1,6 @@
 import { Tab, Tabs } from '@heroui/tabs';
 import { Boxes, Globe2, Laptop, RefreshCw } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { isAdmin } from '@/utils/auth';
@@ -14,10 +15,20 @@ const resources = [
 export default function AccessResourceTabs() {
   const location = useLocation();
   const navigate = useNavigate();
+  const scrollRef = useRef<HTMLDivElement>(null);
   const visibleResources = resources.filter(item => !item.adminOnly || isAdmin());
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      scrollRef.current
+        ?.querySelector<HTMLElement>('[role="tab"][data-selected="true"]')
+        ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname]);
+
   return (
-    <div className="resource-tabs-scroll max-w-full overflow-x-auto border-b border-divider">
+    <div ref={scrollRef} className="resource-tabs-scroll max-w-full overflow-x-auto border-b border-divider">
       <Tabs
         aria-label="资源中心"
         classNames={{ base: 'w-max min-w-max', tabList: 'gap-1 px-0', tab: 'h-11 px-3 sm:px-4' }}
