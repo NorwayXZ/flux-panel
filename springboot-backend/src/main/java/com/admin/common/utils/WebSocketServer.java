@@ -552,6 +552,10 @@ public class WebSocketServer extends TextWebSocketHandler {
         return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端", 10);
     }
 
+    public static GostDto sendConnectorMsg(Long connectorId, Object msg, String type, long timeoutSeconds) {
+        return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端", timeoutSeconds);
+    }
+
     public static boolean sendNodeEvent(Long nodeId, String type, Object msg) {
         WebSocketSession nodeSession = nodeSessions.get(nodeId);
         if (nodeSession == null || !nodeSession.isOpen()) return false;

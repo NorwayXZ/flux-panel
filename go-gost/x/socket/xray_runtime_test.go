@@ -57,6 +57,46 @@ func TestRealityRuntimeFilesArePrivate(t *testing.T) {
 	}
 }
 
+func TestRealityClientConfigUsesLocalSocksAndRealityOutbound(t *testing.T) {
+	directory := t.TempDir()
+	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	state := realityRuntimeState{
+		Mode: "client", Name: "home-client", Port: 19080,
+		RemoteHost: "203.0.113.10", RemotePort: 443,
+		ClientID: "00000000-0000-4000-8000-000000000001", PublicKey: "public-key",
+		ShortID: "0123456789abcdef", ServerName: "www.example.com", Version: xrayRuntimeVersion,
+	}
+	if err := manager.writeStateAndConfig(state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(manager.configPath(state.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{`"listen": "127.0.0.1"`, `"protocol": "socks"`, `"protocol": "vless"`, `"security": "reality"`, `"address": "203.0.113.10"`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("client config is missing %s: %s", expected, text)
+		}
+	}
+}
+
+func TestRealityLegacyStateDefaultsToServerMode(t *testing.T) {
+	directory := t.TempDir()
+	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	legacy := `{"name":"legacy","port":12345,"clientId":"id","serverName":"www.example.com","version":"v1"}`
+	if err := os.WriteFile(manager.statePath("legacy"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := manager.readState("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Mode != "server" {
+		t.Fatalf("legacy state mode = %q, want server", state.Mode)
+	}
+}
+
 func TestParseXrayChecksum(t *testing.T) {
 	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if actual := parseSHA256("SHA2-256= " + digest + "\n"); actual != digest {
@@ -108,6 +148,22 @@ func TestRealityRuntimeIntegration(t *testing.T) {
 	connection.Close()
 	if response.ClientID == "" || response.PublicKey == "" || response.ShortID == "" {
 		t.Fatalf("incomplete REALITY client response: %#v", response)
+	}
+	client, err := manager.addClient(realityClientRuntimeRequest{
+		Name: "integration-client", RemoteHost: "127.0.0.1", RemotePort: response.Port,
+		ClientID: response.ClientID, PublicKey: response.PublicKey, ShortID: response.ShortID,
+		ServerName: response.ServerName,
+	})
+	if err != nil {
+		t.Fatalf("REALITY client runtime failed: %v", err)
+	}
+	clientConnection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(client.Port)), time.Second)
+	if err != nil {
+		t.Fatalf("REALITY client SOCKS listener is unavailable: %v", err)
+	}
+	clientConnection.Close()
+	if err := manager.delete("integration-client"); err != nil {
+		t.Fatal(err)
 	}
 	if err := manager.delete("integration"); err != nil {
 		t.Fatal(err)

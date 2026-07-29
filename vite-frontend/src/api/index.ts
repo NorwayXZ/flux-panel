@@ -881,8 +881,11 @@ export interface HomeProxyRoute {
   accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number;
   egressPoolId?: number;
+  egressNodeId?: number;
   egressMode?: 'single' | 'tunnel';
   egressTunnelId?: number;
+  transportMode?: 'standard_tcp' | 'socks5' | 'vless_reality';
+  realityServerName?: string;
   leaseId?: number;
   publicPort?: number;
   egressLeaseId?: number;
@@ -906,6 +909,8 @@ export interface HomeProxyRoute {
   ingressPoolName?: string;
   egressPoolName?: string;
   egressTunnelName?: string;
+  egressNodeName?: string;
+  egressNodeOnline?: boolean;
   egressPathNodeDetails?: Array<{ nodeId: number; name: string; status: number }>;
   publicHost?: string;
 }
@@ -914,7 +919,9 @@ export const createHomeProxyRoute = (data: {
   name: string; connectorId: number; accessMode: 'relay' | 'ipv6_direct' | 'ipv4_direct';
   ingressPoolId?: number; ingressGrantId?: number;
   egressPoolId?: number; egressGrantId?: number;
+  egressNodeId?: number;
   egressMode?: 'single' | 'tunnel'; egressTunnelId?: number;
+  transportMode?: 'socks5' | 'vless_reality'; realityServerName?: string;
   directPort?: number; dynamicDnsRuleId?: number;
   authEnabled?: boolean; authUsername?: string; authPassword?: string;
 }) => Network.post<HomeProxyRoute>("/service-publishing/home-proxy/create", data);

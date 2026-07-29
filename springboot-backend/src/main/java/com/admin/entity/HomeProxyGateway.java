@@ -19,6 +19,8 @@ public class HomeProxyGateway implements Serializable {
     private Long leaseId;
     private Integer gatewayPort;
     private String gatewayName;
+    private String gatewayType;
+    private String runtimeName;
     private String authUsername;
     private String authPassword;
     private Long createdTime;

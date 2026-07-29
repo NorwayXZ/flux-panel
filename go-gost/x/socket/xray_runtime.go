@@ -33,6 +33,16 @@ type realityRuntimeRequest struct {
 	ServerName string `json:"serverName"`
 }
 
+type realityClientRuntimeRequest struct {
+	Name       string `json:"name"`
+	RemoteHost string `json:"remoteHost"`
+	RemotePort int    `json:"remotePort"`
+	ClientID   string `json:"clientId"`
+	PublicKey  string `json:"publicKey"`
+	ShortID    string `json:"shortId"`
+	ServerName string `json:"serverName"`
+}
+
 type realityRuntimeResponse struct {
 	Port       int    `json:"port"`
 	ClientID   string `json:"clientId"`
@@ -43,6 +53,7 @@ type realityRuntimeResponse struct {
 }
 
 type realityRuntimeState struct {
+	Mode       string `json:"mode,omitempty"`
 	Name       string `json:"name"`
 	Port       int    `json:"port"`
 	ClientID   string `json:"clientId"`
@@ -50,6 +61,8 @@ type realityRuntimeState struct {
 	PublicKey  string `json:"publicKey"`
 	ShortID    string `json:"shortId"`
 	ServerName string `json:"serverName"`
+	RemoteHost string `json:"remoteHost,omitempty"`
+	RemotePort int    `json:"remotePort,omitempty"`
 	Version    string `json:"version"`
 }
 
@@ -99,7 +112,7 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
 	}
 	if state, err := m.readState(request.Name); err == nil {
-		if state.ServerName != request.ServerName {
+		if state.Mode != "server" || state.ServerName != request.ServerName {
 			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
 		}
 		if err := m.ensureRunning(state); err != nil {
@@ -113,6 +126,62 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 	state, err := newRealityState(request)
 	if err != nil {
 		return realityRuntimeResponse{}, err
+	}
+	if err := m.writeStateAndConfig(state); err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	if err := m.ensureRunning(state); err != nil {
+		_ = os.Remove(m.statePath(state.Name))
+		_ = os.Remove(m.configPath(state.Name))
+		return realityRuntimeResponse{}, err
+	}
+	return state.response(), nil
+}
+
+func (m *realityRuntimeManager) addClient(request realityClientRuntimeRequest) (realityRuntimeResponse, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.RemoteHost = strings.TrimSpace(strings.Trim(request.RemoteHost, "[]"))
+	request.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(request.ServerName), "."))
+	request.ClientID = strings.TrimSpace(request.ClientID)
+	request.PublicKey = strings.TrimSpace(request.PublicKey)
+	request.ShortID = strings.ToLower(strings.TrimSpace(request.ShortID))
+	if !runtimeNamePattern.MatchString(request.Name) {
+		return realityRuntimeResponse{}, errors.New("invalid REALITY runtime name")
+	}
+	if request.RemoteHost == "" || request.RemotePort < 1 || request.RemotePort > 65535 {
+		return realityRuntimeResponse{}, errors.New("invalid REALITY remote endpoint")
+	}
+	if !serverNamePattern.MatchString(request.ServerName) {
+		return realityRuntimeResponse{}, errors.New("invalid REALITY server name")
+	}
+	if request.ClientID == "" || request.PublicKey == "" || !regexp.MustCompile(`^[0-9a-f]{2,32}$`).MatchString(request.ShortID) {
+		return realityRuntimeResponse{}, errors.New("invalid REALITY client credentials")
+	}
+	if err := os.MkdirAll(m.directory, 0700); err != nil {
+		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
+	}
+	if state, err := m.readState(request.Name); err == nil {
+		if state.Mode != "client" || state.RemoteHost != request.RemoteHost || state.RemotePort != request.RemotePort ||
+			state.ClientID != request.ClientID || state.PublicKey != request.PublicKey || state.ShortID != request.ShortID ||
+			state.ServerName != request.ServerName {
+			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
+		}
+		if err := m.ensureRunning(state); err != nil {
+			return realityRuntimeResponse{}, err
+		}
+		return state.response(), nil
+	}
+	if err := m.ensureBinary(); err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	port, err := availableLocalPort()
+	if err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	state := realityRuntimeState{
+		Mode: "client", Name: request.Name, Port: port, ClientID: request.ClientID,
+		PublicKey: request.PublicKey, ShortID: request.ShortID, ServerName: request.ServerName,
+		RemoteHost: request.RemoteHost, RemotePort: request.RemotePort, Version: xrayRuntimeVersion,
 	}
 	if err := m.writeStateAndConfig(state); err != nil {
 		return realityRuntimeResponse{}, err
@@ -305,7 +374,7 @@ func newRealityState(request realityRuntimeRequest) (realityRuntimeState, error)
 	uuidBytes[6] = (uuidBytes[6] & 0x0f) | 0x40
 	uuidBytes[8] = (uuidBytes[8] & 0x3f) | 0x80
 	return realityRuntimeState{
-		Name: request.Name, Port: port, ClientID: formatUUID(uuidBytes),
+		Mode: "server", Name: request.Name, Port: port, ClientID: formatUUID(uuidBytes),
 		PrivateKey: base64.RawURLEncoding.EncodeToString(privateKey.Bytes()),
 		PublicKey:  base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes()),
 		ShortID:    hex.EncodeToString(shortBytes), ServerName: request.ServerName, Version: xrayRuntimeVersion,
@@ -313,6 +382,9 @@ func newRealityState(request realityRuntimeRequest) (realityRuntimeState, error)
 }
 
 func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) error {
+	if state.Mode == "" {
+		state.Mode = "server"
+	}
 	stateBytes, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -320,7 +392,41 @@ func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) e
 	if err := writeRuntimeFile(m.statePath(state.Name), stateBytes, 0600); err != nil {
 		return err
 	}
-	config := xrayConfig{
+	config := m.runtimeConfig(state)
+	configBytes, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeRuntimeFile(m.configPath(state.Name), configBytes, 0600)
+}
+
+func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayConfig {
+	if state.Mode == "client" {
+		return xrayConfig{
+			Log: map[string]interface{}{"loglevel": "warning"},
+			Inbounds: []interface{}{map[string]interface{}{
+				"listen": "127.0.0.1", "port": state.Port, "protocol": "socks",
+				"settings": map[string]interface{}{"auth": "noauth", "udp": true},
+			}},
+			Outbounds: []interface{}{map[string]interface{}{
+				"protocol": "vless",
+				"settings": map[string]interface{}{"vnext": []interface{}{map[string]interface{}{
+					"address": state.RemoteHost, "port": state.RemotePort,
+					"users": []interface{}{map[string]interface{}{
+						"id": state.ClientID, "encryption": "none", "flow": "xtls-rprx-vision",
+					}},
+				}}},
+				"streamSettings": map[string]interface{}{
+					"network": "raw", "security": "reality",
+					"realitySettings": map[string]interface{}{
+						"fingerprint": "chrome", "serverName": state.ServerName,
+						"publicKey": state.PublicKey, "shortId": state.ShortID, "spiderX": "/",
+					},
+				},
+			}},
+		}
+	}
+	return xrayConfig{
 		Log: map[string]interface{}{"loglevel": "warning"},
 		Inbounds: []interface{}{map[string]interface{}{
 			"listen": "127.0.0.1", "port": state.Port, "protocol": "vless",
@@ -338,11 +444,6 @@ func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) e
 		}},
 		Outbounds: []interface{}{map[string]interface{}{"protocol": "freedom", "tag": "direct"}},
 	}
-	configBytes, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeRuntimeFile(m.configPath(state.Name), configBytes, 0600)
 }
 
 func (m *realityRuntimeManager) readState(name string) (realityRuntimeState, error) {
@@ -353,6 +454,9 @@ func (m *realityRuntimeManager) readState(name string) (realityRuntimeState, err
 	var state realityRuntimeState
 	if err := json.Unmarshal(data, &state); err != nil {
 		return state, err
+	}
+	if state.Mode == "" {
+		state.Mode = "server"
 	}
 	return state, nil
 }

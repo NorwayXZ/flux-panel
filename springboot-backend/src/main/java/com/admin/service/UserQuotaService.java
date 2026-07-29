@@ -247,6 +247,12 @@ public class UserQuotaService {
                     .map(Long::intValue).filter(requestedNodeIds::contains).collect(java.util.stream.Collectors.toSet());
             usedByRoute.forEach(nodeId -> counts.merge(nodeId, 1, Integer::sum));
         }
+        for (HomeProxyRoute route : homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>()
+                .eq("user_id", userId).in("egress_node_id", requestedNodeIds)
+                .notIn("state", "deleted", "error"))) {
+            if (route.getEgressNodeId() == null || !requestedNodeIds.contains(route.getEgressNodeId().intValue())) continue;
+            counts.merge(route.getEgressNodeId().intValue(), 1, Integer::sum);
+        }
         return counts;
     }
 
@@ -268,6 +274,13 @@ public class UserQuotaService {
                     && sharedNodesOnPath(userId, tunnel).isEmpty()) {
                 count++;
             }
+        }
+        for (HomeProxyRoute route : homeProxyRouteMapper.selectList(new QueryWrapper<HomeProxyRoute>()
+                .eq("user_id", userId).isNotNull("egress_node_id").isNull("egress_tunnel_id")
+                .notIn("state", "deleted", "error"))) {
+            if (route.getEgressNodeId() == null || route.getEgressTunnelId() != null) continue;
+            Node node = nodeMapper.selectById(route.getEgressNodeId());
+            if (node != null && Objects.equals(node.getOwnerUserId(), userId)) count++;
         }
         return count;
     }

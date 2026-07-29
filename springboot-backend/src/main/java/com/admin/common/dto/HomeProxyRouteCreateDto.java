@@ -17,8 +17,12 @@ public class HomeProxyRouteCreateDto {
     private Long ingressGrantId;
     private Long egressPoolId;
     private Long egressGrantId;
+    private Long egressNodeId;
     private String egressMode;
     private Long egressTunnelId;
+    private String transportMode;
+    @Size(max = 253, message = "REALITY 伪装域名不能超过253个字符")
+    private String realityServerName;
     private Integer directPort;
     private Long dynamicDnsRuleId;
     private Boolean authEnabled;

@@ -98,11 +98,15 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("home_proxy_route", "public_domain", "varchar(253) DEFAULT NULL AFTER dynamic_dns_rule_id");
             ensureColumn("home_proxy_route", "egress_mode", "varchar(24) NOT NULL DEFAULT 'single' AFTER egress_pool_id");
             ensureColumn("home_proxy_route", "egress_tunnel_id", "bigint DEFAULT NULL AFTER egress_mode");
+            ensureColumn("home_proxy_route", "egress_node_id", "bigint DEFAULT NULL AFTER egress_pool_id");
+            ensureColumn("home_proxy_route", "transport_mode", "varchar(24) NOT NULL DEFAULT 'standard_tcp' AFTER egress_tunnel_id");
+            ensureColumn("home_proxy_route", "reality_server_name", "varchar(253) DEFAULT NULL AFTER transport_mode");
             ensureNullableColumn("home_proxy_route", "ingress_pool_id", "bigint DEFAULT NULL");
             ensureNullableColumn("home_proxy_route", "egress_pool_id", "bigint DEFAULT NULL");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_lease", "egress_lease_id");
             ensureIndex("home_proxy_route", "idx_home_proxy_ddns", "dynamic_dns_rule_id");
             ensureIndex("home_proxy_route", "idx_home_proxy_egress_tunnel", "egress_tunnel_id, state");
+            ensureIndex("home_proxy_route", "idx_home_proxy_egress_node", "egress_node_id, state");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS home_proxy_gateway ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, route_id bigint NOT NULL, sequence_no int NOT NULL, "
                     + "tunnel_id bigint DEFAULT NULL, node_id bigint NOT NULL, pool_id bigint DEFAULT NULL, grant_id bigint DEFAULT NULL, "
@@ -113,6 +117,8 @@ public class ServicePublishingSchemaInitializer {
                     + "KEY idx_home_proxy_gateway_node (node_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureNullableColumn("home_proxy_gateway", "pool_id", "bigint DEFAULT NULL");
             ensureNullableColumn("home_proxy_gateway", "lease_id", "bigint DEFAULT NULL");
+            ensureColumn("home_proxy_gateway", "gateway_type", "varchar(24) NOT NULL DEFAULT 'socks5' AFTER gateway_name");
+            ensureColumn("home_proxy_gateway", "runtime_name", "varchar(140) DEFAULT NULL AFTER gateway_type");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
             ensureIndex("port_lease", "idx_lease_grant", "grant_id, state");

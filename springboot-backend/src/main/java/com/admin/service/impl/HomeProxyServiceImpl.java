@@ -61,6 +61,8 @@ import java.util.stream.Collectors;
 public class HomeProxyServiceImpl implements HomeProxyService {
     private static final String MIN_AGENT_VERSION = "2.7.0";
     private static final String MIN_DIRECT_AGENT_VERSION = "2.21.0";
+    private static final String MIN_REALITY_CLIENT_AGENT_VERSION = "2.30.0";
+    private static final String MIN_REALITY_SERVER_AGENT_VERSION = "2.20.0";
     private static final long IPV6_REFRESH_INTERVAL_MS = 5 * 60 * 1000L;
     private static final String IPV6_UNVERIFIED_PREFIX = "公网验证未完成：";
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -106,21 +108,36 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         } catch (IllegalArgumentException error) {
             return R.err(error.getMessage());
         }
+        String transportMode;
+        try {
+            transportMode = normalizeTransportMode(dto.getTransportMode());
+        } catch (IllegalArgumentException error) {
+            return R.err(error.getMessage());
+        }
+        if ("vless_reality".equals(transportMode)) {
+            return createReality(dto, connector, userId, accessMode, egressMode);
+        }
         if ("ipv6_direct".equals(accessMode) || "ipv4_direct".equals(accessMode)) {
-            return createDirect(dto, connector, userId, accessMode, egressMode);
+            return createDirect(dto, connector, userId, accessMode, egressMode, transportMode);
         }
         if (dto.getIngressPoolId() == null) return R.err("请选择公网入口端口池");
 
         PortPool ingress = accessiblePool(dto.getIngressPoolId(), userId);
-        PortPool egress = "single".equals(egressMode) ? accessiblePool(dto.getEgressPoolId(), userId) : null;
+        PortPool egress = "single".equals(egressMode) && dto.getEgressNodeId() == null
+                ? accessiblePool(dto.getEgressPoolId(), userId) : null;
         if (ingress == null) return R.err("公网入口端口池不存在、已停用或无权使用");
-        if ("single".equals(egressMode) && egress == null) return R.err("请选择可用的家庭出口 VPS 端口池");
+        if ("single".equals(egressMode) && egress == null && dto.getEgressNodeId() == null) return R.err("请选择指定服务器出口");
         Node ingressNode = nodeMapper.selectById(ingress.getNodeId());
-        Node egressNode = egress == null ? null : nodeMapper.selectById(egress.getNodeId());
+        Node egressNode = dto.getEgressNodeId() != null ? nodeMapper.selectById(dto.getEgressNodeId())
+                : egress == null ? null : nodeMapper.selectById(egress.getNodeId());
         if (ingressNode == null) return R.err("公网入口节点不存在");
         if (!WebSocketServer.isNodeOnline(ingressNode.getId())) return R.err("公网入口节点必须在线");
         if (!AgentVersionUtil.isAtLeast(ingressNode.getVersion(), MIN_AGENT_VERSION)) {
             return R.err("公网入口节点 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
+        }
+        if (dto.getEgressNodeId() != null && !isAdmin()) {
+            R quota = userQuotaService.checkNodeQuota(userId, egressNode, null);
+            if (quota.getCode() != 0) return quota;
         }
         Tunnel egressTunnel;
         try {
@@ -154,8 +171,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setAccessMode("relay");
         route.setIngressPoolId(ingress.getId());
         route.setEgressPoolId(egress == null ? null : egress.getId());
+        route.setEgressNodeId(dto.getEgressNodeId());
         route.setEgressMode(egressMode);
         route.setEgressTunnelId(egressTunnel == null ? null : egressTunnel.getId());
+        route.setTransportMode(transportMode);
         route.setPublicPort(port);
         route.setProxyType("socks5");
         route.setAuthEnabled(authEnabled ? 1 : 0);
@@ -179,7 +198,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
         List<GatewayRuntime> gateways;
         try {
-            gateways = allocateGatewayPath(route, buildGatewayPlans(egressMode, egressTunnel, egress, egressGrant, userId));
+            gateways = allocateGatewayPath(route, buildGatewayPlans(egressMode, egressTunnel, egressNode, egress, egressGrant));
         } catch (IllegalStateException error) {
             leaseMapper.deleteById(lease.getId());
             routeMapper.deleteById(route.getId());
@@ -240,8 +259,216 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return R.ok(enrich(route, true));
     }
 
+    private R createReality(HomeProxyRouteCreateDto dto, InternalConnector connector, Integer userId,
+                            String accessMode, String egressMode) {
+        if (!AgentVersionUtil.isAtLeast(connector.getVersion(), MIN_REALITY_CLIENT_AGENT_VERSION)) {
+            return R.err("家庭接入端 Agent 需要升级到 " + MIN_REALITY_CLIENT_AGENT_VERSION + " 或更高版本，才能使用 VLESS+REALITY");
+        }
+        boolean direct = isDirectMode(accessMode);
+        boolean ipv6 = "ipv6_direct".equals(accessMode);
+        String family = ipv6 ? "ipv6" : "ipv4";
+        String familyLabel = ipv6 ? "IPv6" : "IPv4";
+        PortPool ingress = direct ? null : accessiblePool(dto.getIngressPoolId(), userId);
+        if (!direct && ingress == null) return R.err("请选择可用的公网入口端口池");
+        Node ingressNode = ingress == null ? null : nodeMapper.selectById(ingress.getNodeId());
+        if (!direct && (ingressNode == null || !WebSocketServer.isNodeOnline(ingressNode.getId()))) {
+            return R.err("公网入口节点不存在或离线");
+        }
+
+        String directAddress = null;
+        Map<String, Object> dynamicDnsRule = null;
+        Integer directPort = dto.getDirectPort();
+        if (direct) {
+            if (!AgentVersionUtil.isAtLeast(connector.getVersion(), MIN_DIRECT_AGENT_VERSION)) {
+                return R.err(familyLabel + " 直连要求家庭 Agent " + MIN_DIRECT_AGENT_VERSION + " 或更高版本");
+            }
+            if (directPort == null || directPort < 1024 || directPort > 65535) {
+                return R.err("家庭 " + familyLabel + " 直连端口必须在 1024-65535 之间");
+            }
+            Integer duplicate = routeMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
+                    .eq("connector_id", connector.getId()).eq("access_mode", accessMode)
+                    .eq("direct_port", directPort).notIn("state", "deleted"));
+            if (duplicate != null && duplicate > 0) return R.err("该家庭设备的直连端口已被其他代理使用");
+            try {
+                directAddress = queryConnectorPublicIp(connector.getId(), family);
+                if (dto.getDynamicDnsRuleId() != null) {
+                    dynamicDnsRule = validateDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
+                }
+            } catch (RuntimeException error) {
+                return R.err(error.getMessage());
+            }
+            String portError = checkConnectorPort(connector.getId(), ipv6 ? "::" : "0.0.0.0", directPort, familyLabel);
+            if (portError != null) return R.err(portError);
+        }
+
+        Tunnel tunnel = null;
+        List<Node> path = new ArrayList<>();
+        if ("tunnel".equals(egressMode)) {
+            try {
+                tunnel = resolveEgressTunnel(dto.getEgressTunnelId(), egressMode, null, userId);
+            } catch (IllegalStateException error) {
+                return R.err(error.getMessage());
+            }
+            for (Long nodeId : TunnelRouteUtil.parseNodePath(tunnel)) path.add(nodeMapper.selectById(nodeId));
+        } else {
+            Node node = dto.getEgressNodeId() == null ? null : nodeMapper.selectById(dto.getEgressNodeId());
+            if (node == null) return R.err("请选择指定服务器出口");
+            if (!isAdmin()) {
+                R quota = userQuotaService.checkNodeQuota(userId, node, null);
+                if (quota.getCode() != 0) return quota;
+            }
+            try {
+                validateEgressNode(node);
+            } catch (IllegalStateException error) {
+                return R.err(error.getMessage());
+            }
+            path.add(node);
+        }
+        Node realityNode = path.get(0);
+        Node finalNode = path.get(path.size() - 1);
+        if (!AgentVersionUtil.isAtLeast(realityNode.getVersion(), MIN_REALITY_SERVER_AGENT_VERSION)) {
+            return R.err("首个出口节点 " + realityNode.getName() + " 的 Agent 需要升级到 "
+                    + MIN_REALITY_SERVER_AGENT_VERSION + " 或更高版本");
+        }
+        String realityServerName = StringUtils.defaultIfBlank(dto.getRealityServerName(), "www.cloudflare.com")
+                .trim().toLowerCase();
+        if (!realityServerName.matches("(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$")) {
+            return R.err("REALITY 伪装域名格式不正确");
+        }
+
+        jdbcTemplate.queryForObject("SELECT id FROM service_publish_lock WHERE id=1 FOR UPDATE", Integer.class);
+        PortPoolGrant ingressGrant = !direct && !isAdmin()
+                ? selectedGrant(dto.getIngressGrantId(), ingress.getId(), userId) : null;
+        if (!direct && !isAdmin() && ingressGrant == null) return R.err("所选入口端口资源未分配给当前用户或已被收回");
+        Integer ingressPort = directPort;
+        if (!direct) {
+            int start = ingressGrant == null ? ingress.getStartPort() : ingressGrant.getStartPort();
+            int end = ingressGrant == null ? ingress.getEndPort() : ingressGrant.getEndPort();
+            ingressPort = findAvailablePort(ingress.getId(), start, end, ingressGrant);
+            if (ingressPort == null) return R.err("公网入口端口池已没有可用端口");
+        }
+
+        boolean authEnabled = Boolean.TRUE.equals(dto.getAuthEnabled());
+        String authUsername = authEnabled ? StringUtils.defaultIfBlank(dto.getAuthUsername(), "cloudnest") : null;
+        String authPassword = authEnabled ? StringUtils.defaultIfBlank(dto.getAuthPassword(), randomHex(18)) : null;
+        long now = System.currentTimeMillis();
+        HomeProxyRoute route = new HomeProxyRoute();
+        route.setUserId(userId);
+        route.setName(dto.getName().trim());
+        route.setConnectorId(connector.getId());
+        route.setAccessMode(accessMode);
+        route.setIngressPoolId(ingress == null ? null : ingress.getId());
+        route.setEgressPoolId(null);
+        route.setEgressNodeId("single".equals(egressMode) ? realityNode.getId() : null);
+        route.setEgressMode(egressMode);
+        route.setEgressTunnelId(tunnel == null ? null : tunnel.getId());
+        route.setTransportMode("vless_reality");
+        route.setRealityServerName(realityServerName);
+        route.setPublicPort(ingressPort);
+        route.setDirectPort(direct ? directPort : null);
+        route.setDirectIpv6(direct && ipv6 ? directAddress : null);
+        route.setDirectIpv4(direct && !ipv6 ? directAddress : null);
+        route.setIpv6CheckedAt(direct && ipv6 ? now : null);
+        route.setIpCheckedAt(direct ? now : null);
+        route.setDynamicDnsRuleId(dynamicDnsRule == null ? null : number(dynamicDnsRule.get("id")));
+        route.setPublicDomain(dynamicDnsRule == null ? null : Objects.toString(dynamicDnsRule.get("record_name"), null));
+        route.setProxyType("socks5");
+        route.setAuthEnabled(authEnabled ? 1 : 0);
+        route.setAuthUsername(authUsername);
+        route.setAuthPassword(authEnabled ? encryptPassword(authPassword) : null);
+        route.setState("provisioning");
+        route.setCreatedTime(now);
+        route.setUpdatedTime(now);
+        routeMapper.insert(route);
+
+        PortLease ingressLease = null;
+        if (!direct) {
+            ingressLease = new PortLease();
+            ingressLease.setPoolId(ingress.getId());
+            ingressLease.setGrantId(ingressGrant == null ? null : ingressGrant.getId());
+            ingressLease.setUserId(userId);
+            ingressLease.setPort(ingressPort);
+            ingressLease.setProtocol("tcp");
+            ingressLease.setState("reserved");
+            ingressLease.setCreatedTime(now);
+            ingressLease.setUpdatedTime(now);
+            leaseMapper.insert(ingressLease);
+            route.setLeaseId(ingressLease.getId());
+        }
+
+        List<GatewayRuntime> gateways;
+        try {
+            List<GatewayPlan> plans = path.stream().map(node -> new GatewayPlan(node, null, null)).collect(Collectors.toList());
+            gateways = allocateGatewayPath(route, plans);
+        } catch (IllegalStateException error) {
+            if (ingressLease != null) leaseMapper.deleteById(ingressLease.getId());
+            routeMapper.deleteById(route.getId());
+            return R.err(error.getMessage());
+        }
+        HomeProxyGateway realityGateway = gateways.get(0).gateway();
+        route.setEgressGatewayPort(realityGateway.getGatewayPort());
+        routeMapper.updateById(route);
+
+        if (!direct) {
+            AgentPortCheckUtil.Result check = AgentPortCheckUtil.check(ingressNode,
+                    List.of(new AgentPortCheckUtil.Check("tcp", ingress.getBindIp(), ingressPort)));
+            if (!check.isAvailable()) return failRealityProvision(route, ingressLease, gateways, connector,
+                    "公网入口端口不可用：" + portCheckMessage(check));
+        }
+        String gatewayPortError = checkGatewayPorts(gateways);
+        if (gatewayPortError != null) return failRealityProvision(route, ingressLease, gateways, connector, gatewayPortError);
+
+        RealityClientEndpoint clientEndpoint;
+        try {
+            clientEndpoint = provisionRealityPath(route, connector, gateways);
+        } catch (RuntimeException error) {
+            return failRealityProvision(route, ingressLease, gateways, connector, error.getMessage());
+        }
+        String base = "home_proxy_" + route.getId();
+        String egressChain = base + "_egress";
+        List<GostUtil.PublishingProxyHop> egressHops = new ArrayList<>();
+        egressHops.add(new GostUtil.PublishingProxyHop("127.0.0.1:" + clientEndpoint.localPort(), null, null));
+        if (gateways.size() > 1) egressHops.addAll(publishingHops(gateways.subList(1, gateways.size())));
+        GostDto egressResult = GostUtil.AddPublishingChain(connector.getId(), egressChain, egressHops);
+        if (!ok(egressResult)) return failRealityProvision(route, ingressLease, gateways, connector,
+                "创建家庭出口链失败：" + message(egressResult));
+
+        GostDto serviceResult;
+        if (direct) {
+            serviceResult = GostUtil.AddDirectHomeProxyService(connector.getId(), base + "_service", egressChain,
+                    ipv6 ? "::" : "0.0.0.0", directPort, authEnabled, authUsername, authPassword);
+        } else {
+            String ingressChain = base + "_ingress";
+            GostDto ingressResult = GostUtil.AddPublishingChain(connector.getId(), ingressChain, poolAddress(ingress),
+                    ingress.getAuthUsername(), ingress.getAuthPassword());
+            if (!ok(ingressResult)) return failRealityProvision(route, ingressLease, gateways, connector,
+                    "创建家庭入口反向链失败：" + message(ingressResult));
+            serviceResult = GostUtil.AddHomeProxyService(connector.getId(), base + "_service", ingressChain,
+                    egressChain, ingress.getBindIp(), ingressPort, authEnabled, authUsername, authPassword);
+        }
+        if (!ok(serviceResult)) return failRealityProvision(route, ingressLease, gateways, connector,
+                "创建家庭 SOCKS5 服务失败：" + message(serviceResult));
+
+        EndpointProbeResult probe = direct
+                ? (ipv6 ? waitForIpv6Endpoint(finalNode, directAddress, directPort) : waitForEndpoint(finalNode, directAddress, directPort))
+                : waitForEndpoint(ingressNode, ingress.getPublicHost(), ingressPort);
+        if (probe.status == EndpointProbeStatus.UNREACHABLE) {
+            String error = direct ? directFailureMessage(familyLabel, directPort, probe.detail)
+                    : "公网入口端口未能在 12 秒内就绪，请检查节点防火墙和端口范围";
+            return failRealityProvision(route, ingressLease, gateways, connector, error);
+        }
+        route.setState("active");
+        route.setLastError(direct && ipv6 && probe.status == EndpointProbeStatus.PROBE_IPV6_UNSUPPORTED
+                ? ipv6UnverifiedMessage(finalNode, directPort) : null);
+        route.setUpdatedTime(System.currentTimeMillis());
+        routeMapper.updateById(route);
+        markLeaseActive(ingressLease);
+        syncDynamicDnsIfBound(route);
+        return R.ok(enrich(route, true));
+    }
+
     private R createDirect(HomeProxyRouteCreateDto dto, InternalConnector connector, Integer userId,
-                           String accessMode, String egressMode) {
+                           String accessMode, String egressMode, String transportMode) {
         boolean ipv6 = "ipv6_direct".equals(accessMode);
         String family = ipv6 ? "ipv6" : "ipv4";
         String familyLabel = ipv6 ? "IPv6" : "IPv4";
@@ -274,9 +501,15 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             }
         }
 
-        PortPool egress = "single".equals(egressMode) ? accessiblePool(dto.getEgressPoolId(), userId) : null;
-        if ("single".equals(egressMode) && egress == null) return R.err("请选择可用的家庭出口 VPS 端口池");
-        Node egressNode = egress == null ? null : nodeMapper.selectById(egress.getNodeId());
+        PortPool egress = "single".equals(egressMode) && dto.getEgressNodeId() == null
+                ? accessiblePool(dto.getEgressPoolId(), userId) : null;
+        if ("single".equals(egressMode) && egress == null && dto.getEgressNodeId() == null) return R.err("请选择指定服务器出口");
+        Node egressNode = dto.getEgressNodeId() != null ? nodeMapper.selectById(dto.getEgressNodeId())
+                : egress == null ? null : nodeMapper.selectById(egress.getNodeId());
+        if (dto.getEgressNodeId() != null && !isAdmin()) {
+            R quota = userQuotaService.checkNodeQuota(userId, egressNode, null);
+            if (quota.getCode() != 0) return quota;
+        }
         Tunnel egressTunnel;
         try {
             egressTunnel = resolveEgressTunnel(dto.getEgressTunnelId(), egressMode, egressNode, userId);
@@ -300,8 +533,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         route.setAccessMode(accessMode);
         route.setIngressPoolId(null);
         route.setEgressPoolId(egress == null ? null : egress.getId());
+        route.setEgressNodeId(dto.getEgressNodeId());
         route.setEgressMode(egressMode);
         route.setEgressTunnelId(egressTunnel == null ? null : egressTunnel.getId());
+        route.setTransportMode(transportMode);
         route.setPublicPort(directPort);
         route.setDirectIpv6(ipv6 ? directAddress : null);
         route.setDirectIpv4(ipv6 ? null : directAddress);
@@ -321,7 +556,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
         List<GatewayRuntime> gateways;
         try {
-            gateways = allocateGatewayPath(route, buildGatewayPlans(egressMode, egressTunnel, egress, egressGrant, userId));
+            gateways = allocateGatewayPath(route, buildGatewayPlans(egressMode, egressTunnel, egressNode, egress, egressGrant));
         } catch (IllegalStateException error) {
             routeMapper.deleteById(route.getId());
             return R.err(error.getMessage());
@@ -510,11 +745,11 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         }
     }
 
-    private List<GatewayPlan> buildGatewayPlans(String egressMode, Tunnel tunnel, PortPool finalPool,
-                                                 PortPoolGrant finalGrant, Integer userId) {
+    private List<GatewayPlan> buildGatewayPlans(String egressMode, Tunnel tunnel, Node finalNode, PortPool finalPool,
+                                                 PortPoolGrant finalGrant) {
         List<Long> nodePath = "tunnel".equals(egressMode)
                 ? TunnelRouteUtil.parseNodePath(tunnel)
-                : List.of(finalPool.getNodeId());
+                : List.of(finalNode.getId());
         List<GatewayPlan> plans = new ArrayList<>();
         for (Long nodeId : nodePath) {
             Node node = nodeMapper.selectById(nodeId);
@@ -570,9 +805,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 gateway.setGrantId(grant == null ? null : grant.getId());
                 gateway.setLeaseId(lease == null ? null : lease.getId());
                 gateway.setGatewayPort(port);
-                gateway.setGatewayName("tunnel".equals(route.getEgressMode())
-                        ? "home_proxy_" + route.getId() + "_egress_gateway_" + (index + 1)
-                        : "home_proxy_" + route.getId() + "_egress_gateway");
+                boolean reality = "vless_reality".equals(route.getTransportMode()) && index == 0;
+                gateway.setGatewayName(reality
+                        ? "home_proxy_" + route.getId() + "_reality_frontend"
+                        : "tunnel".equals(route.getEgressMode())
+                            ? "home_proxy_" + route.getId() + "_egress_gateway_" + (index + 1)
+                            : "home_proxy_" + route.getId() + "_egress_gateway");
+                gateway.setGatewayType(reality ? "reality" : "socks5");
+                gateway.setRuntimeName(reality ? "home_proxy_" + route.getId() + "_reality_server" : null);
                 gateway.setAuthUsername(username);
                 gateway.setAuthPassword(encryptGatewayPassword(password));
                 gateway.setCreatedTime(now);
@@ -599,6 +839,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
     private String provisionGateways(List<GatewayRuntime> gateways) {
         for (GatewayRuntime item : gateways) {
+            if ("reality".equals(item.gateway().getGatewayType())) continue;
             GostDto result = GostUtil.AddHomeEgressGateway(item.node().getId(), item.gateway().getGatewayName(),
                     item.pool() == null ? "" : item.pool().getBindIp(), item.gateway().getGatewayPort(), item.username(), item.password());
             if (!ok(result)) {
@@ -606,6 +847,40 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             }
         }
         return null;
+    }
+
+    private RealityClientEndpoint provisionRealityPath(HomeProxyRoute route, InternalConnector connector,
+                                                       List<GatewayRuntime> gateways) {
+        GatewayRuntime first = gateways.get(0);
+        HomeProxyGateway gateway = first.gateway();
+        GostDto runtime = GostUtil.AddRealityRuntime(first.node().getId(), gateway.getRuntimeName(), route.getRealityServerName());
+        if (!ok(runtime)) throw new IllegalStateException("准备首跳 REALITY 服务失败：" + message(runtime));
+        JSONObject data = runtime.getData() instanceof JSONObject ? (JSONObject) runtime.getData()
+                : JSONObject.parseObject(JSONObject.toJSONString(runtime.getData()));
+        Integer runtimePort = data == null ? null : data.getInteger("port");
+        String clientId = data == null ? null : data.getString("clientId");
+        String publicKey = data == null ? null : data.getString("publicKey");
+        String shortId = data == null ? null : data.getString("shortId");
+        if (runtimePort == null || StringUtils.isAnyBlank(clientId, publicKey, shortId)) {
+            throw new IllegalStateException("首跳 Agent 返回的 REALITY 配置不完整");
+        }
+        GostDto frontend = GostUtil.AddRealityFrontend(first.node().getId(), gateway.getGatewayName(), "",
+                gateway.getGatewayPort(), runtimePort, null);
+        if (!ok(frontend)) throw new IllegalStateException("创建首跳 REALITY 公网入口失败：" + message(frontend));
+        if (gateways.size() > 1) {
+            String gatewayError = provisionGateways(gateways.subList(1, gateways.size()));
+            if (gatewayError != null) throw new IllegalStateException(gatewayError);
+        }
+        String remoteHost = StringUtils.defaultIfBlank(first.node().getServerIp(), first.node().getIp());
+        String clientRuntimeName = realityClientRuntimeName(route);
+        GostDto client = GostUtil.AddRealityClientRuntime(connector.getId(), clientRuntimeName, remoteHost,
+                gateway.getGatewayPort(), clientId, publicKey, shortId, route.getRealityServerName());
+        if (!ok(client)) throw new IllegalStateException("创建家庭端 REALITY 客户端失败：" + message(client));
+        JSONObject clientData = client.getData() instanceof JSONObject ? (JSONObject) client.getData()
+                : JSONObject.parseObject(JSONObject.toJSONString(client.getData()));
+        Integer localPort = clientData == null ? null : clientData.getInteger("port");
+        if (localPort == null) throw new IllegalStateException("家庭 Agent 未返回 REALITY 本地代理端口");
+        return new RealityClientEndpoint(localPort);
     }
 
     private List<GostUtil.PublishingProxyHop> publishingHops(List<GatewayRuntime> gateways) {
@@ -641,11 +916,38 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         return R.err(error);
     }
 
+    private R failRealityProvision(HomeProxyRoute route, PortLease ingressLease, List<GatewayRuntime> gateways,
+                                   InternalConnector connector, String error) {
+        if (connector != null && WebSocketServer.isConnectorOnline(connector.getId())) {
+            try {
+                deleteConnectorRuntime(route, connector.getId());
+            } catch (Exception ignored) {
+            }
+        }
+        cleanupProvisionedGateways(gateways);
+        discardGatewayAllocations(route.getId(), gateways);
+        if (ingressLease != null && ingressLease.getId() != null) leaseMapper.deleteById(ingressLease.getId());
+        route.setLeaseId(null);
+        route.setEgressLeaseId(null);
+        if (!isDirectMode(route.getAccessMode())) route.setPublicPort(null);
+        route.setEgressGatewayPort(null);
+        route.setState("error");
+        route.setLastError(error);
+        route.setUpdatedTime(System.currentTimeMillis());
+        routeMapper.updateById(route);
+        return R.err(error);
+    }
+
     private void cleanupProvisionedGateways(List<GatewayRuntime> gateways) {
         for (GatewayRuntime item : gateways) {
             try {
                 if (WebSocketServer.isNodeOnline(item.node().getId())) {
-                    GostUtil.DeletePublishingGateway(item.node().getId(), item.gateway().getGatewayName());
+                    if ("reality".equals(item.gateway().getGatewayType())) {
+                        GostUtil.DeleteNamedService(item.node().getId(), item.gateway().getGatewayName());
+                        GostUtil.DeleteRealityRuntime(item.node().getId(), item.gateway().getRuntimeName());
+                    } else {
+                        GostUtil.DeletePublishingGateway(item.node().getId(), item.gateway().getGatewayName());
+                    }
                 }
             } catch (Exception ignored) {
             }
@@ -688,8 +990,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 cleaned = false;
                 continue;
             }
-            GostDto result = GostUtil.DeletePublishingGateway(node.getId(), gateway.getGatewayName());
-            if (!ok(result) && !containsNotFound(result)) cleaned = false;
+            if ("reality".equals(gateway.getGatewayType())) {
+                GostDto frontend = GostUtil.DeleteNamedService(node.getId(), gateway.getGatewayName());
+                GostDto runtime = GostUtil.DeleteRealityRuntime(node.getId(), gateway.getRuntimeName());
+                if ((!ok(frontend) && !containsNotFound(frontend)) || (!ok(runtime) && !containsNotFound(runtime))) cleaned = false;
+            } else {
+                GostDto result = GostUtil.DeletePublishingGateway(node.getId(), gateway.getGatewayName());
+                if (!ok(result) && !containsNotFound(result)) cleaned = false;
+            }
         }
         return cleaned;
     }
@@ -777,8 +1085,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
         PortPool ingress = route.getIngressPoolId() == null ? null : poolMapper.selectById(route.getIngressPoolId());
         PortPool egress = route.getEgressPoolId() == null ? null : poolMapper.selectById(route.getEgressPoolId());
+        Node egressNode = route.getEgressNodeId() == null ? null : nodeMapper.selectById(route.getEgressNodeId());
         if (StringUtils.isBlank(route.getAccessMode())) route.setAccessMode("relay");
         if (StringUtils.isBlank(route.getEgressMode())) route.setEgressMode("single");
+        if (StringUtils.isBlank(route.getTransportMode())) route.setTransportMode("standard_tcp");
         route.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         route.setConnectorName(connector == null ? "接入端已删除" : connector.getName());
         route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
@@ -786,7 +1096,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 ? ("ipv4_direct".equals(route.getAccessMode()) ? "家庭 IPv4 直连" : "家庭 IPv6 直连")
                 : ingress == null ? "入口端口池已删除" : ingress.getName());
         route.setEgressPoolName("tunnel".equals(route.getEgressMode())
-                ? "由出口隧道自动分配" : egress == null ? "出口端口池已删除" : egress.getName());
+                ? "由出口隧道自动分配" : egressNode != null ? egressNode.getName()
+                : egress == null ? "出口资源已删除" : egress.getName());
+        route.setEgressNodeName(egressNode == null ? null : egressNode.getName());
+        route.setEgressNodeOnline(egressNode != null && WebSocketServer.isNodeOnline(egressNode.getId()));
         Tunnel egressTunnel = route.getEgressTunnelId() == null ? null : tunnelMapper.selectById(route.getEgressTunnelId());
         route.setEgressTunnelName(egressTunnel == null ? null : egressTunnel.getName());
         List<Long> pathNodeIds = egressTunnel == null ? List.of() : TunnelRouteUtil.parseNodePath(egressTunnel);
@@ -795,6 +1108,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                             .eq("route_id", route.getId()).orderByAsc("sequence_no"))
                     .stream().map(HomeProxyGateway::getNodeId).collect(Collectors.toList());
         }
+        if (pathNodeIds.isEmpty() && egressNode != null) pathNodeIds = List.of(egressNode.getId());
         route.setEgressPathNodeDetails(pathNodeIds.stream().map(nodeId -> {
             Node node = nodeMapper.selectById(nodeId);
             TunnelPathNodeDto detail = new TunnelPathNodeDto();
@@ -827,6 +1141,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         String mode = StringUtils.defaultIfBlank(value, "single").trim().toLowerCase();
         if (!List.of("single", "tunnel").contains(mode)) {
             throw new IllegalArgumentException("家庭出口方式不受支持");
+        }
+        return mode;
+    }
+
+    private String normalizeTransportMode(String value) {
+        String mode = StringUtils.defaultIfBlank(value, "standard_tcp").trim().toLowerCase();
+        if (!List.of("standard_tcp", "socks5", "vless_reality").contains(mode)) {
+            throw new IllegalArgumentException("家庭出口传输方式不受支持");
         }
         return mode;
     }
@@ -950,16 +1272,27 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             Tunnel tunnel = tunnelMapper.selectById(route.getEgressTunnelId());
             return tunnel == null ? null : tunnelFinalNode(tunnel);
         }
+        if (route.getEgressNodeId() != null) return nodeMapper.selectById(route.getEgressNodeId());
         PortPool pool = route.getEgressPoolId() == null ? null : poolMapper.selectById(route.getEgressPoolId());
         return pool == null ? null : nodeMapper.selectById(pool.getNodeId());
     }
 
     private GostDto deleteConnectorRuntime(HomeProxyRoute route, Long connectorId) {
         String base = "home_proxy_" + route.getId();
+        GostDto serviceResult;
         if (isDirectMode(route.getAccessMode())) {
-            return GostUtil.DeleteDirectHomeProxyService(connectorId, base + "_service", base + "_egress");
+            serviceResult = GostUtil.DeleteDirectHomeProxyService(connectorId, base + "_service", base + "_egress");
+        } else {
+            serviceResult = GostUtil.DeleteHomeProxyService(connectorId, base + "_service", base + "_ingress", base + "_egress");
         }
-        return GostUtil.DeleteHomeProxyService(connectorId, base + "_service", base + "_ingress", base + "_egress");
+        if (!"vless_reality".equals(route.getTransportMode())) return serviceResult;
+        GostDto runtimeResult = GostUtil.DeleteConnectorRealityRuntime(connectorId, realityClientRuntimeName(route));
+        if (!ok(serviceResult) && !containsNotFound(serviceResult)) return serviceResult;
+        return runtimeResult;
+    }
+
+    private String realityClientRuntimeName(HomeProxyRoute route) {
+        return "home_proxy_" + route.getId() + "_reality_client";
     }
 
     private String pendingDeleteReason(boolean connectorCleaned, boolean gatewayCleaned) {
@@ -1163,6 +1496,9 @@ public class HomeProxyServiceImpl implements HomeProxyService {
 
     private record GatewayRuntime(HomeProxyGateway gateway, PortLease lease, Node node, PortPool pool,
                                   String username, String password) {
+    }
+
+    private record RealityClientEndpoint(Integer localPort) {
     }
 
     private void safeDeleteChains(Long connectorId, String... chains) {

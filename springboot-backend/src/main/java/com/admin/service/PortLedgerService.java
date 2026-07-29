@@ -245,7 +245,9 @@ public class PortLedgerService {
                     Node gatewayNode = nodes.get(gateway.getNodeId());
                     if (gatewayNode == null) continue;
                     boolean last = index == gateways.size() - 1;
-                    String detail = last ? "家庭代理落地出口网关" : "家庭代理出口路径第 " + (index + 1) + " 跳网关";
+                    String detail = "reality".equals(gateway.getGatewayType())
+                            ? "家庭代理 VLESS+REALITY 首跳入口"
+                            : last ? "家庭代理落地出口网关" : "家庭代理出口路径第 " + (index + 1) + " 跳网关";
                     add(entries, nodeEntry("home_proxy", status, gatewayNode, gateway.getGatewayPort(), gateway.getGatewayPort(), "tcp",
                             route.getUserId(), owner == null ? "未知用户" : owner.getUser(), route.getId(), route.getName(),
                             detail, route.getCreatedTime(), null));

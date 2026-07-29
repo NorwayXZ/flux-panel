@@ -108,6 +108,26 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
     }
 
+    public static GostDto AddRealityClientRuntime(Long connectorId, String runtimeName, String remoteHost,
+                                                   Integer remotePort, String clientId, String publicKey,
+                                                   String shortId, String serverName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        data.put("remoteHost", remoteHost);
+        data.put("remotePort", remotePort);
+        data.put("clientId", clientId);
+        data.put("publicKey", publicKey);
+        data.put("shortId", shortId);
+        data.put("serverName", serverName);
+        return WebSocketServer.sendConnectorMsg(connectorId, data, "AddRealityClientRuntime", 120);
+    }
+
+    public static GostDto DeleteConnectorRealityRuntime(Long connectorId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.sendConnectorMsg(connectorId, data, "DeleteRealityRuntime", 30);
+    }
+
     public static GostDto DeleteRealityRuntime(Long nodeId, String runtimeName) {
         JSONObject data = new JSONObject();
         data.put("name", runtimeName);
@@ -247,12 +267,14 @@ public class GostUtil {
         JSONArray hops = new JSONArray();
         int index = 1;
         for (PublishingProxyHop proxyHop : proxyHops) {
-            JSONObject auth = new JSONObject();
-            auth.put("username", proxyHop.username());
-            auth.put("password", proxyHop.password());
             JSONObject connector = new JSONObject();
             connector.put("type", "socks5");
-            connector.put("auth", auth);
+            if (StringUtils.isNotBlank(proxyHop.username()) || StringUtils.isNotBlank(proxyHop.password())) {
+                JSONObject auth = new JSONObject();
+                auth.put("username", proxyHop.username());
+                auth.put("password", proxyHop.password());
+                connector.put("auth", auth);
+            }
             JSONObject dialer = new JSONObject();
             dialer.put("type", "tcp");
             JSONObject node = new JSONObject();

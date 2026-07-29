@@ -678,6 +678,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "AddRealityRuntimeResponse"
 		response.Data = result
 
+	case "AddRealityClientRuntime":
+		var result realityRuntimeResponse
+		result, err = w.handleAddRealityClientRuntime(cmd.Data)
+		response.Type = "AddRealityClientRuntimeResponse"
+		response.Data = result
+
 	case "DeleteRealityRuntime":
 		err = w.handleDeleteRealityRuntime(cmd.Data)
 		response.Type = "DeleteRealityRuntimeResponse"
@@ -699,6 +705,21 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 
 	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) handleAddRealityClientRuntime(data interface{}) (realityRuntimeResponse, error) {
+	if w.realityManager == nil {
+		return realityRuntimeResponse{}, errors.New("REALITY runtime manager is unavailable")
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	var request realityClientRuntimeRequest
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return realityRuntimeResponse{}, err
+	}
+	return w.realityManager.addClient(request)
 }
 
 func (w *WebSocketReporter) handleAddRealityRuntime(data interface{}) (realityRuntimeResponse, error) {
