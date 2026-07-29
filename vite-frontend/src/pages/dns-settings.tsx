@@ -9,6 +9,7 @@ import { Switch } from '@heroui/switch';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, CloudCog, Globe2, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AccessResourceTabs from '@/components/access-resource-tabs';
 
 import {
   deleteDnsProviderAccount,
@@ -156,12 +157,13 @@ export default function DnsSettingsPage() {
     void loadData();
   };
 
-  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载 DNS 与域名" /></div>;
+  if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载域名管理" /></div>;
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+      <AccessResourceTabs />
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-sm text-default-500">域名基础设施</p><h1 className="mt-1 text-2xl font-semibold">DNS 与域名</h1></div>
+        <div><p className="text-sm text-default-500">资源中心</p><h1 className="mt-1 text-2xl font-semibold">域名管理</h1></div>
         <div className="flex flex-wrap gap-2"><Button variant="flat" startContent={<Plus size={18} />} onPress={openCreate}>添加 Cloudflare</Button><Button color="primary" startContent={<Plus size={18} />} onPress={openCarrierCreate}>添加线路 DNS</Button></div>
       </header>
 

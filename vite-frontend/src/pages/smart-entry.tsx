@@ -296,7 +296,7 @@ export default function SmartEntryPage() {
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
             </section>
 
-            {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings?add=carrier'); }}>前往 DNS 与域名添加</Button></div>}
+            {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings?add=carrier'); }}>前往资源中心添加</Button></div>}
 
             <section className="border-t border-divider pt-4">
               <div className="mb-3 flex items-end justify-between gap-3"><div><h3 className="text-sm font-semibold">运营商入口</h3><p className="mt-1 text-xs text-default-500">留空的运营商会自动使用默认入口；所有已选转发必须使用同一公网端口。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>

@@ -7,15 +7,14 @@ import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Tab, Tabs } from '@heroui/tabs';
-import { BookOpen, Copy, Download, Home, Plus, RefreshCw, Route, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
+import { BookOpen, Copy, Home, Laptop, Plus, RefreshCw, Route, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 import {
   createHomeProxyRoute,
-  createInternalConnector,
   deleteHomeProxyRoute,
   getDynamicDnsOverview,
-  getInternalConnectorInstall,
   getHomeProxyRoutes,
   getInternalConnectors,
   getPublishingPortPools,
@@ -24,7 +23,6 @@ import {
   type HomeProxyRoute,
   type InternalConnector,
   type PublishingPortPool,
-  type ConnectorPlatform,
   type DynamicDnsRule,
 } from '@/api';
 import { isAdmin } from '@/utils/auth';
@@ -82,25 +80,18 @@ const copy = async (value: string, label: string) => {
 };
 
 export default function HomeAccessPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [connectorModalOpen, setConnectorModalOpen] = useState(false);
-  const [commandModalOpen, setCommandModalOpen] = useState(false);
   const [guideRoute, setGuideRoute] = useState<HomeProxyRoute | null>(null);
-  const [commandLoading, setCommandLoading] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
-  const [command, setCommand] = useState('');
-  const [commandConnectorId, setCommandConnectorId] = useState<number | null>(null);
-  const [commandPlatform, setCommandPlatform] = useState<ConnectorPlatform>('linux');
-  const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
   const [routes, setRoutes] = useState<HomeProxyRoute[]>([]);
   const [connectors, setConnectors] = useState<InternalConnector[]>([]);
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [tunnels, setTunnels] = useState<TunnelOption[]>([]);
   const [dynamicDnsRules, setDynamicDnsRules] = useState<DynamicDnsRule[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
-  const [connectorForm, setConnectorForm] = useState<{ name: string; platform: ConnectorPlatform; allowedCidrs: string }>({ name: '', platform: 'linux', allowedCidrs: '' });
 
   const load = async () => {
     setLoading(true);
@@ -109,7 +100,7 @@ export default function HomeAccessPage() {
       getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(), getTunnelList(),
       adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
     ]);
-    if (routeRes.code === 0) setRoutes(routeRes.data || []); else toast.error(routeRes.msg || '加载家庭接入失败');
+    if (routeRes.code === 0) setRoutes(routeRes.data || []); else toast.error(routeRes.msg || '加载家庭网络中转失败');
     if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
     if (poolRes.code === 0) setPools(poolRes.data || []);
     if (tunnelRes.code === 0) setTunnels((tunnelRes.data || []) as TunnelOption[]);
@@ -135,7 +126,7 @@ export default function HomeAccessPage() {
         || (form.egressMode === 'single' && !form.egressPoolKey)
         || (form.egressMode === 'tunnel' && !form.egressTunnelId)
         || (form.accessMode === 'relay' && !form.ingressPoolKey)) {
-      toast.error('请完整选择家庭接入端、接入方式和出口路径');
+      toast.error('请完整选择家庭设备、接入方式和出口路径');
       return;
     }
     const directPort = Number(form.directPort);
@@ -189,56 +180,26 @@ export default function HomeAccessPage() {
     void load();
   };
 
-  const createConnector = async () => {
-    if (!connectorForm.name.trim()) return toast.error('请输入家庭设备名称');
-    setSubmitting(true);
-    const response = await createInternalConnector({
-      name: connectorForm.name.trim(), platform: connectorForm.platform,
-      allowedCidrs: connectorForm.allowedCidrs.trim() || undefined,
-    });
-    setSubmitting(false);
-    if (response.code !== 0) return toast.error(response.msg || '创建家庭接入端失败');
-    setConnectorModalOpen(false);
-    setCommand(response.data.installCommand);
-    setCommandConnectorId(response.data.connector.id);
-    setCommandPlatform(response.data.connector.platform || connectorForm.platform);
-    setCommandAction('install');
-    setCommandModalOpen(true);
-    setConnectorForm({ name: '', platform: 'linux', allowedCidrs: '' });
-    void load();
-  };
-
-  const refreshCommand = async (platform: ConnectorPlatform, action: 'install' | 'uninstall') => {
-    setCommandPlatform(platform);
-    setCommandAction(action);
-    if (commandConnectorId === null) return;
-    setCommandLoading(true);
-    const response = await getInternalConnectorInstall(commandConnectorId, platform, action);
-    setCommandLoading(false);
-    if (response.code !== 0) return toast.error(response.msg || '获取命令失败');
-    setCommand(response.data);
-  };
-
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">反向接入 · 代理链</p>
-          <h1 className="mt-1 text-2xl font-semibold">家庭接入</h1>
+          <p className="text-sm text-default-500">接入与发布</p>
+          <h1 className="mt-1 text-2xl font-semibold">家庭网络中转</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
             公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定 VPS 出口访问目标地址。优先使用家庭公网 IPv6 或公网 IPv4 直连；没有公网入站条件时可切换到公网中继模式。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="flat" startContent={<Download size={18} />} onPress={() => setConnectorModalOpen(true)}>添加家庭设备</Button>
-          <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建家庭代理</Button>
+          <Button variant="flat" startContent={<Laptop size={18} />} onPress={() => navigate('/home-devices')}>管理家庭设备</Button>
+          <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建中转</Button>
         </div>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行中', activeCount], ['家庭接入端', connectors.filter(item => item.online).length],
-          ['代理链', routes.length], ['公网直连', directCount],
+          ['运行中', activeCount], ['在线家庭设备', connectors.filter(item => item.online).length],
+          ['中转链路', routes.length], ['公网直连', directCount],
         ].map(([label, value]) => <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}
       </section>
 
@@ -247,7 +208,7 @@ export default function HomeAccessPage() {
       </div>
 
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : routes.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><Home size={32} /><span>暂无家庭代理链</span></div>
+        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><Home size={32} /><span>暂无家庭网络中转</span></div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {routes.map(route => {
@@ -258,7 +219,7 @@ export default function HomeAccessPage() {
             const directAddress = ipv6Direct ? route.directIpv6 : route.directIpv4;
             return <article key={route.id} className="rounded-lg border border-divider bg-content1 p-5">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><h2 className="truncate text-lg font-semibold">{route.name}</h2><p className="mt-1 text-sm text-default-500">{route.connectorName || '家庭接入端'} · {route.proxyType.toUpperCase()}</p></div>
+                <div className="min-w-0"><h2 className="truncate text-lg font-semibold">{route.name}</h2><p className="mt-1 text-sm text-default-500">{route.connectorName || '家庭设备'} · {route.proxyType.toUpperCase()}</p></div>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Chip size="sm" variant="flat" color={direct ? 'primary' : 'default'}>{accessLabel(route.accessMode)}</Chip>
                   <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
@@ -268,7 +229,7 @@ export default function HomeAccessPage() {
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
                 <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
                 <div><div className="text-default-500">{route.egressMode === 'tunnel' ? '出口网关端口' : '家庭出口 VPS 端口池'}</div><div className="mt-1 font-medium">{route.egressPoolName || '未知'}</div></div>
-                <div><div className="text-default-500">接入端状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
+                <div><div className="text-default-500">家庭设备状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
                 <div><div className="text-default-500">{direct ? '公网地址最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
                 {direct && <div className="md:col-span-2"><div className="text-default-500">动态 DNS</div><div className="mt-1 break-all font-medium">{route.publicDomain ? `${route.publicDomain} · 已绑定` : '未绑定，使用裸 IP 地址'}</div></div>}
                 {route.egressMode === 'tunnel' && <div className="md:col-span-2"><div className="text-default-500">出口隧道</div><div className="mt-1 font-medium">{route.egressTunnelName || '隧道已删除'}</div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(route.egressPathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents">{index > 0 && <span className="text-default-400">→</span>}<Chip size="sm" variant="flat" color={node.status === 1 ? (index === (route.egressPathNodeDetails?.length || 0) - 1 ? 'success' : 'default') : 'danger'}>{node.name}{index === (route.egressPathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}</div></div>}
@@ -298,9 +259,9 @@ export default function HomeAccessPage() {
       </div>
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl">
-        <ModalContent><ModalHeader>新建家庭代理</ModalHeader><ModalBody className="space-y-4">
-          <Input label="代理名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
-          <Select label="家庭接入端" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || ''), dynamicDnsRuleId: '' })}>
+        <ModalContent><ModalHeader>新建家庭网络中转</ModalHeader><ModalBody className="space-y-4">
+          <Input label="中转名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
+          <Select label="家庭设备" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || ''), dynamicDnsRuleId: '' })}>
             {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}</SelectItem>)}
           </Select>
           <Tabs aria-label="接入方式" selectedKey={form.accessMode} onSelectionChange={key => setForm({ ...form, accessMode: String(key) as FormState['accessMode'], dynamicDnsRuleId: '' })}>
@@ -351,34 +312,12 @@ export default function HomeAccessPage() {
               系统会从每个路径节点的端口范围自动分配一个网关端口，并纳入全局端口占用管理；最后一个节点作为公网出口。
             </div>
           </div>}
-          {isDirect(form.accessMode) && <Select label="动态 DNS 域名（可选）" description={form.accessMode === 'ipv4_direct' ? '只显示来源为该家庭接入端的 A 记录' : '只显示来源为该家庭接入端的 AAAA 记录'} selectedKeys={form.dynamicDnsRuleId ? [form.dynamicDnsRuleId] : []} onSelectionChange={keys => setForm({ ...form, dynamicDnsRuleId: String(Array.from(keys)[0] || '') })}>
+          {isDirect(form.accessMode) && <Select label="动态解析域名（可选）" description={form.accessMode === 'ipv4_direct' ? '只显示来源为该家庭设备的 A 记录' : '只显示来源为该家庭设备的 AAAA 记录'} selectedKeys={form.dynamicDnsRuleId ? [form.dynamicDnsRuleId] : []} onSelectionChange={keys => setForm({ ...form, dynamicDnsRuleId: String(Array.from(keys)[0] || '') })}>
             {matchingDnsRules.map(rule => <SelectItem key={String(rule.id)} textValue={rule.recordName}>{rule.recordName} · {rule.recordType} · {rule.lastStatus === 'success' ? '正常' : rule.lastStatus === 'error' ? '失败' : '待检测'}</SelectItem>)}
           </Select>}
           <Switch isSelected={form.authEnabled} onValueChange={value => setForm({ ...form, authEnabled: value })}>启用代理用户名密码认证</Switch>
           {form.authEnabled && <div className="grid gap-4 md:grid-cols-2"><Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} /><Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} /></div>}
-        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建代理</Button></ModalFooter></ModalContent>
-      </Modal>
-
-      <Modal isOpen={connectorModalOpen} onOpenChange={setConnectorModalOpen} size="xl">
-        <ModalContent><ModalHeader>添加家庭设备</ModalHeader><ModalBody className="space-y-4">
-          <Input label="设备名称" placeholder="家里 Windows 电脑" value={connectorForm.name} onValueChange={value => setConnectorForm({ ...connectorForm, name: value })} />
-          <Select label="操作系统" selectedKeys={[connectorForm.platform]} onSelectionChange={keys => setConnectorForm({ ...connectorForm, platform: String(Array.from(keys)[0] || 'linux') as ConnectorPlatform })}>
-            <SelectItem key="linux">Linux · amd64 / arm64</SelectItem>
-            <SelectItem key="windows">Windows · amd64 / arm64</SelectItem>
-            <SelectItem key="macos">macOS · Intel / Apple Silicon</SelectItem>
-          </Select>
-          <Input label="允许访问的家庭网段（可选）" placeholder="留空使用本机和常见内网网段" value={connectorForm.allowedCidrs} onValueChange={value => setConnectorForm({ ...connectorForm, allowedCidrs: value })} />
-        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setConnectorModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={createConnector}>生成安装命令</Button></ModalFooter></ModalContent>
-      </Modal>
-
-      <Modal isOpen={commandModalOpen} onOpenChange={setCommandModalOpen} size="2xl">
-        <ModalContent><ModalHeader>{commandAction === 'install' ? '安装' : '卸载'}家庭 Agent</ModalHeader><ModalBody className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {(['linux', 'windows', 'macos'] as ConnectorPlatform[]).map(platform => <Button key={platform} size="sm" color={commandPlatform === platform ? 'primary' : 'default'} variant={commandPlatform === platform ? 'solid' : 'flat'} onPress={() => refreshCommand(platform, commandAction)}>{platform === 'linux' ? 'Linux' : platform === 'windows' ? 'Windows' : 'macOS'}</Button>)}
-            <div className="ml-auto flex gap-2"><Button size="sm" variant={commandAction === 'install' ? 'solid' : 'flat'} color={commandAction === 'install' ? 'primary' : 'default'} onPress={() => refreshCommand(commandPlatform, 'install')}>安装</Button><Button size="sm" variant={commandAction === 'uninstall' ? 'solid' : 'flat'} color={commandAction === 'uninstall' ? 'danger' : 'default'} onPress={() => refreshCommand(commandPlatform, 'uninstall')}>卸载</Button></div>
-          </div>
-          <div className="rounded-md bg-default-100 p-4"><div className="mb-2 text-xs text-default-500">{commandPlatform === 'windows' ? '请使用管理员 PowerShell' : commandPlatform === 'macos' ? '请在终端执行，系统会要求管理员密码' : '请使用 root 用户或 sudo 执行'}</div>{commandLoading ? <Spinner size="sm" /> : <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-sm">{command}</pre>}</div>
-        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setCommandModalOpen(false)}>关闭</Button><Button color="primary" startContent={<Copy size={16} />} isDisabled={!command || commandLoading} onPress={() => copy(command, commandAction === 'install' ? '安装命令' : '卸载命令')}>复制命令</Button></ModalFooter></ModalContent>
+        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建中转</Button></ModalFooter></ModalContent>
       </Modal>
 
       <Modal isOpen={Boolean(guideRoute)} onOpenChange={open => !open && setGuideRoute(null)} size="3xl" scrollBehavior="inside">

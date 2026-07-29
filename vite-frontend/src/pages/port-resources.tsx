@@ -7,6 +7,7 @@ import { Spinner } from '@heroui/spinner';
 import { Chip } from '@heroui/chip';
 import { Boxes, CircleGauge, Plus, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import AccessResourceTabs from '@/components/access-resource-tabs';
 
 import {
   createPublishingPortPool,
@@ -110,8 +111,9 @@ export default function PortResourcesPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+      <AccessResourceTabs />
       <header className="flex items-end justify-between border-b border-divider pb-5">
-        <div><p className="text-sm text-default-500">内网穿透</p><h1 className="mt-1 text-2xl font-semibold">端口资源</h1></div>
+        <div><p className="text-sm text-default-500">资源中心</p><h1 className="mt-1 text-2xl font-semibold">端口资源</h1></div>
         <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建端口池</Button>
       </header>
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : pools.length === 0 ? (

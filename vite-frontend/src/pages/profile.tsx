@@ -9,7 +9,7 @@ import { isWebViewFunc } from '@/utils/panel';
 import { siteConfig } from '@/config/site';
 import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
-import { Boxes, CloudCog, RadioTower, ShieldCheck } from 'lucide-react';
+import { Boxes, RadioTower, ShieldCheck } from 'lucide-react';
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -59,11 +59,11 @@ export default function ProfilePage() {
   // 管理员菜单项
   const adminMenuItems: MenuItem[] = [
     {
-      path: '/dns-settings',
-      label: 'DNS 与域名',
-      icon: <CloudCog className="h-5 w-5" />,
-      color: 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400',
-      description: '管理 Cloudflare 与域名区域'
+      path: '/port-resources',
+      label: '资源中心',
+      icon: <Boxes className="h-5 w-5" />,
+      color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400',
+      description: '管理端口、家庭设备、域名与动态解析'
     },
     {
       path: '/cross-entry-failover',
@@ -71,13 +71,6 @@ export default function ProfilePage() {
       icon: <ShieldCheck className="h-5 w-5" />,
       color: 'bg-sky-100 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400',
       description: '管理跨入口自动切换'
-    },
-    {
-      path: '/port-resources',
-      label: '端口资源',
-      icon: <Boxes className="h-5 w-5" />,
-      color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400',
-      description: '管理公网端口池'
     },
     {
       path: '/limit',

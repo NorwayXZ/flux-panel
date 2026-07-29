@@ -285,7 +285,7 @@ export default function CrossEntryFailoverPage() {
               <Input
                 label="业务域名或主机记录"
                 placeholder={selectedZone ? `例如 glglg 或 glglg.${selectedZone.zoneName}` : '先选择 Cloudflare Zone'}
-                description={selectedZone ? `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录` : '凭据和 Zone 在“DNS 与域名”中统一管理'}
+                description={selectedZone ? `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录` : '凭据和 Zone 在“资源中心 - 域名管理”中统一维护'}
                 value={form.domain}
                 onValueChange={domain => setForm({ ...form, domain })}
               />
@@ -296,7 +296,7 @@ export default function CrossEntryFailoverPage() {
             {zoneOptions.length === 0 && (
               <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
                 <span>尚未登记 Cloudflare 凭据。先同步 Zone，之后这里直接选择即可。</span>
-                <Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings'); }}>前往 DNS 与域名</Button>
+                <Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings'); }}>前往域名管理</Button>
               </div>
             )}
 

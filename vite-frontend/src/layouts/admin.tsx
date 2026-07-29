@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, Boxes, CloudCog, Home, LockKeyhole, Network, RadioTower, RefreshCw, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { BellRing, Boxes, Home, LockKeyhole, Network, RadioTower, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -18,6 +18,7 @@ interface MenuItem {
   label: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
+  activePaths?: string[];
 }
 
 interface PasswordForm {
@@ -103,7 +104,7 @@ export default function AdminLayout({
     },
     {
       path: '/home-access',
-      label: '家庭接入',
+      label: '家庭网络中转',
       icon: <Home className="h-5 w-5" />
     },
     {
@@ -142,20 +143,9 @@ export default function AdminLayout({
     },
     {
       path: '/port-resources',
-      label: '端口资源',
+      label: '资源中心',
       icon: <Boxes className="h-5 w-5" />,
-      adminOnly: true
-    },
-    {
-      path: '/dns-settings',
-      label: 'DNS 与域名',
-      icon: <CloudCog className="h-5 w-5" />,
-      adminOnly: true
-    },
-    {
-      path: '/dynamic-dns',
-      label: '动态 DNS',
-      icon: <RefreshCw className="h-5 w-5" />,
+      activePaths: ['/port-resources', '/home-devices', '/dns-settings', '/dynamic-dns'],
       adminOnly: true
     },
     {
@@ -197,10 +187,10 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover', '/topology'] },
-    { label: '内网穿透', paths: ['/port-resources', '/service-publishing'] },
-    { label: '实用工具', paths: ['/private-proxy', '/home-access', '/network-tools'] },
-    { label: '系统管理', paths: ['/monitoring', '/limit', '/dns-settings', '/dynamic-dns', '/server-assets', '/user', '/config'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover'] },
+    { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access'] },
+    { label: '实用工具', paths: ['/private-proxy', '/network-tools'] },
+    { label: '系统管理', paths: ['/topology', '/monitoring', '/limit', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] }
   ];
 
@@ -378,7 +368,7 @@ export default function AdminLayout({
                 </h2>
                 <ul className="space-y-1">
                   {group.items.map((item) => {
-                    const isActive = location.pathname === item.path;
+                    const isActive = (item.activePaths || [item.path]).includes(location.pathname);
                     return (
                       <li key={item.path}>
                                      <button
