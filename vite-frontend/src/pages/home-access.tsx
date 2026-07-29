@@ -7,7 +7,7 @@ import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Tab, Tabs } from '@heroui/tabs';
-import { Copy, Download, Home, Plus, RefreshCw, Route, Trash2 } from 'lucide-react';
+import { BookOpen, Copy, Download, Home, Plus, RefreshCw, Route, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -71,6 +71,7 @@ export default function HomeAccessPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [connectorModalOpen, setConnectorModalOpen] = useState(false);
   const [commandModalOpen, setCommandModalOpen] = useState(false);
+  const [guideRoute, setGuideRoute] = useState<HomeProxyRoute | null>(null);
   const [commandLoading, setCommandLoading] = useState(false);
   const [refreshingId, setRefreshingId] = useState<number | null>(null);
   const [command, setCommand] = useState('');
@@ -241,6 +242,7 @@ export default function HomeAccessPage() {
               )}
               <div className="mt-5 flex flex-wrap justify-end gap-2">
                 {direct && <Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={refreshingId === route.id} onPress={() => refreshIpv6(route.id)}>检测 IPv6</Button>}
+                {direct && <Button size="sm" variant="flat" startContent={<BookOpen size={15} />} onPress={() => setGuideRoute(route)}>公网接入</Button>}
                 {route.state === 'active' && route.publicHost && route.publicPort && <Button size="sm" variant="flat" startContent={<Copy size={15} />} onPress={() => copy(endpoint, '代理地址')}>复制地址</Button>}
                 <Button size="sm" color="danger" variant="flat" startContent={<Trash2 size={15} />} onPress={() => remove(route.id)}>删除</Button>
               </div>
@@ -306,6 +308,67 @@ export default function HomeAccessPage() {
           </div>
           <div className="rounded-md bg-default-100 p-4"><div className="mb-2 text-xs text-default-500">{commandPlatform === 'windows' ? '请使用管理员 PowerShell' : commandPlatform === 'macos' ? '请在终端执行，系统会要求管理员密码' : '请使用 root 用户或 sudo 执行'}</div>{commandLoading ? <Spinner size="sm" /> : <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-sm">{command}</pre>}</div>
         </ModalBody><ModalFooter><Button variant="flat" onPress={() => setCommandModalOpen(false)}>关闭</Button><Button color="primary" startContent={<Copy size={16} />} isDisabled={!command || commandLoading} onPress={() => copy(command, commandAction === 'install' ? '安装命令' : '卸载命令')}>复制命令</Button></ModalFooter></ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(guideRoute)} onOpenChange={open => !open && setGuideRoute(null)} size="3xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader className="flex flex-col gap-1">
+            <span>公网 IPv6 接入</span>
+            <span className="text-sm font-normal text-default-500">{guideRoute?.name || '家庭代理'} · 路由器与系统防火墙配置</span>
+          </ModalHeader>
+          <ModalBody className="space-y-5 pb-6">
+            {guideRoute && <>
+              <section className="grid gap-px overflow-hidden rounded-lg border border-divider bg-divider sm:grid-cols-3">
+                <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">公网地址</div><div className="mt-1 break-all font-mono text-sm">{endpointText(guideRoute)}</div></div>
+                <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">代理认证</div><div className={`mt-1 font-medium ${guideRoute.authEnabled === 1 ? 'text-success' : 'text-danger'}`}>{guideRoute.authEnabled === 1 ? '已启用' : '未启用'}</div></div>
+                <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">接入端</div><div className={`mt-1 font-medium ${guideRoute.connectorOnline ? 'text-success' : 'text-danger'}`}>{guideRoute.connectorOnline ? '在线' : '离线'}</div></div>
+              </section>
+
+              {guideRoute.authEnabled !== 1 && <div className="flex gap-3 rounded-lg border border-danger-200 bg-danger-50 px-4 py-3 text-sm leading-6 text-danger-700 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-300">
+                <ShieldAlert className="mt-0.5 shrink-0" size={18} />
+                <div><div className="font-medium">当前 SOCKS5 没有认证</div><div>放行公网端口后，知道地址的人都能使用你的家庭宽带。只建议临时测试，长期使用请删除并重建为“启用认证”。</div></div>
+              </div>}
+
+              <section className="space-y-3 border-y border-divider py-4">
+                <div><h3 className="font-semibold">OpenWrt / iStoreOS 放行规则</h3><p className="mt-1 text-sm text-default-500">IPv6 不做端口映射，只需允许公网流量转发到家庭设备。</p></div>
+                <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+                  {[
+                    ['入口', '网络 → 防火墙 → 通信规则 → 添加'],
+                    ['协议与方向', 'TCP · wan → lan · 操作：接受'],
+                    ['目标地址', guideRoute.directIpv6 || '先点击“检测 IPv6”'],
+                    ['目标端口', String(guideRoute.publicPort || guideRoute.directPort || '-')],
+                    ['地址族限制', '仅 IPv6'],
+                    ['最后一步', '保存，然后点击“保存并应用”'],
+                  ].map(([label, value]) => <div key={label} className="min-w-0"><div className="text-default-500">{label}</div><div className="mt-1 break-all font-medium">{value}</div></div>)}
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <div className="flex items-center gap-2"><Terminal size={17} /><h3 className="font-semibold">先确认家庭设备正在监听</h3></div>
+                <div className="divide-y divide-divider rounded-lg border border-divider font-mono text-xs sm:text-sm">
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[110px_minmax(0,1fr)]"><span className="font-sans text-default-500">macOS</span><code className="break-all">netstat -anv -p tcp | grep {guideRoute.publicPort || guideRoute.directPort}</code></div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[110px_minmax(0,1fr)]"><span className="font-sans text-default-500">Linux</span><code className="break-all">ss -lntp | grep {guideRoute.publicPort || guideRoute.directPort}</code></div>
+                  <div className="grid gap-1 px-4 py-3 sm:grid-cols-[110px_minmax(0,1fr)]"><span className="font-sans text-default-500">Windows</span><code className="break-all">Get-NetTCPConnection -LocalPort {guideRoute.publicPort || guideRoute.directPort} -State Listen</code></div>
+                </div>
+              </section>
+
+              <section className="space-y-3 border-t border-divider pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-semibold">从家庭网络以外测试</h3><p className="mt-1 text-sm text-default-500">可在支持 IPv6 的 VPS、公司电脑或手机终端执行。</p></div><Button size="sm" variant="flat" startContent={<Copy size={15} />} isDisabled={!guideRoute.directIpv6 || !guideRoute.publicPort} onPress={() => copy(`nc -6 -vz ${guideRoute.directIpv6} ${guideRoute.publicPort}`, '测试命令')}>复制测试命令</Button></div>
+                <pre className="overflow-x-auto rounded-lg bg-default-100 p-4 font-mono text-sm">nc -6 -vz {guideRoute.directIpv6 || '&lt;家庭 IPv6&gt;'} {guideRoute.publicPort || guideRoute.directPort || '&lt;端口&gt;'}</pre>
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <div><div className="font-medium text-success">succeeded</div><div className="mt-1 text-default-500">公网路由、路由器规则和监听均正常。</div></div>
+                  <div><div className="font-medium text-danger">Connection refused</div><div className="mt-1 text-default-500">IPv6 已到达家庭网络，但端口未监听或被防火墙拒绝。</div></div>
+                  <div><div className="font-medium text-warning">timed out</div><div className="mt-1 text-default-500">路由器、运营商或系统防火墙静默丢弃了连接。</div></div>
+                </div>
+              </section>
+
+              <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
+                macOS、Windows 和手机可能使用会变化的临时 IPv6。地址变化后，请先点击卡片的“检测 IPv6”，再同步更新 OpenWrt 目标地址和代理客户端地址。
+              </div>
+            </>}
+          </ModalBody>
+          <ModalFooter><Button color="primary" onPress={() => setGuideRoute(null)}>完成</Button></ModalFooter>
+        </ModalContent>
       </Modal>
     </div>
   );
