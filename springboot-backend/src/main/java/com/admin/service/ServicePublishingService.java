@@ -2,6 +2,7 @@ package com.admin.service;
 
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.DomainRouteCreateDto;
+import com.admin.common.dto.DomainRouteBackendUpdateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
@@ -21,6 +22,7 @@ public interface ServicePublishingService {
     R renewPublishedService(Long id, Integer hours, boolean permanent);
     R deletePublishedService(Long id);
     R createDomainRoute(DomainRouteCreateDto dto);
+    R updateDomainRouteBackend(DomainRouteBackendUpdateDto dto);
     R listDomainRoutes();
     R deleteDomainRoute(Long id);
     R listManagedCertificates();

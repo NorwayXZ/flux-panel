@@ -17,6 +17,7 @@ import {
   HardDrive,
   LockKeyhole,
   Monitor,
+  Pencil,
   Plus,
   RadioTower,
   RefreshCw,
@@ -44,6 +45,7 @@ import {
   getPublishedServices,
   getPublishingPortPools,
   getDnsZoneOptions,
+  updateDomainRouteBackend,
   renewPublishedService,
   retryManagedCertificate,
   type InternalConnector,
@@ -156,6 +158,8 @@ export default function ServicePublishingPage() {
   const [commandAction, setCommandAction] = useState<'install' | 'uninstall'>('install');
   const [activeView, setActiveView] = useState('services');
   const [domainModal, setDomainModal] = useState(false);
+  const [backendEditRoute, setBackendEditRoute] = useState<DomainRoute | null>(null);
+  const [backendEditForm, setBackendEditForm] = useState({ host: '', port: '', scheme: 'http' as 'http' | 'https', path: '/' });
   const [serviceForm, setServiceForm] = useState(createEmptyServiceForm);
   const [selectedTemplateId, setSelectedTemplateId] = useState<ServiceTemplateId>('custom-tcp');
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
@@ -422,6 +426,35 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
+  const editDomainBackend = (route: DomainRoute) => {
+    setBackendEditRoute(route);
+    setBackendEditForm({
+      host: route.backendHost || '127.0.0.1',
+      port: String(route.backendPort || ''),
+      scheme: route.backendScheme === 'https' ? 'https' : 'http',
+      path: route.backendPath || '/',
+    });
+  };
+
+  const submitDomainBackend = async () => {
+    if (!backendEditRoute || !backendEditForm.host.trim()) return;
+    const port = Number(backendEditForm.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return toast.error('后端端口必须在 1-65535 之间');
+    setSubmitting(true);
+    const res = await updateDomainRouteBackend({
+      id: backendEditRoute.id,
+      backendHost: backendEditForm.host.trim(),
+      backendPort: port,
+      backendScheme: backendEditForm.scheme,
+      backendPath: backendEditForm.path.trim() || '/',
+    });
+    setSubmitting(false);
+    if (res.code !== 0) return toast.error(res.msg || '更新后端失败');
+    toast.success('后端配置已更新');
+    setBackendEditRoute(null);
+    loadData();
+  };
+
   const retryCertificate = async (id: number) => {
     const res = await retryManagedCertificate(id);
     if (res.code !== 0) return toast.error(res.msg || '重新申请证书失败');
@@ -568,7 +601,8 @@ export default function ServicePublishingPage() {
                         : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
                     </div>
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-1">
+                      {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑后端" title="编辑后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
                       {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
                     </div>
                   </article>
@@ -699,6 +733,22 @@ export default function ServicePublishingPage() {
             </div>
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setDomainModal(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainRoute}>创建域名直达</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(backendEditRoute)} onOpenChange={open => !open && setBackendEditRoute(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>编辑节点服务后端</ModalHeader>
+          <ModalBody className="grid gap-4 sm:grid-cols-2">
+            <Select label="后端协议" selectedKeys={[backendEditForm.scheme]} onSelectionChange={keys => setBackendEditForm({ ...backendEditForm, scheme: String(Array.from(keys)[0] || 'http') as 'http' | 'https' })}>
+              <SelectItem key="http">HTTP</SelectItem><SelectItem key="https">HTTPS</SelectItem>
+            </Select>
+            <Input label="后端端口" type="number" min={1} max={65535} value={backendEditForm.port} onValueChange={port => setBackendEditForm({ ...backendEditForm, port })} />
+            <Input className="sm:col-span-2" label="监听地址" value={backendEditForm.host} onValueChange={host => setBackendEditForm({ ...backendEditForm, host })} description="同节点通配监听可填写 0.0.0.0 或 ::。" />
+            <Input className="sm:col-span-2" label="后端根路径" value={backendEditForm.path} onValueChange={path => setBackendEditForm({ ...backendEditForm, path })} placeholder="/abc123/" />
+            <div className="sm:col-span-2 border-y border-divider py-3 text-sm text-default-500">保留现有域名、DNS 和 HTTPS 证书，只重新下发后端连接配置。</div>
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setBackendEditRoute(null)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainBackend}>保存并应用</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

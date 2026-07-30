@@ -2,6 +2,7 @@ package com.admin.service.impl;
 
 import com.admin.common.dto.GostDto;
 import com.admin.common.dto.DomainRouteCreateDto;
+import com.admin.common.dto.DomainRouteBackendUpdateDto;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
@@ -643,6 +644,49 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             domainRouteMapper.updateById(route);
         }
         return R.ok(enrichDomainRoute(route));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R updateDomainRouteBackend(DomainRouteBackendUpdateDto dto) {
+        if (!isAdmin()) return R.err("仅管理员可以编辑节点本机服务");
+        DomainRoute route = ownedDomainRoute(dto.getId());
+        if (route == null || !"direct".equals(route.getBackendType())
+                || !"managed_https".equals(route.getIngressMode()) || "deleted".equals(route.getState())) {
+            return R.err("节点本机域名入口不存在或不可编辑");
+        }
+        Node entryNode = nodeMapper.selectById(route.getNodeId());
+        Node backendNode = nodeMapper.selectById(route.getBackendNodeId());
+        if (entryNode == null || backendNode == null) return R.err("入口节点或后端节点不存在");
+        if (!WebSocketServer.isNodeOnline(entryNode.getId())) return R.err("入口节点离线，暂时不能更新配置");
+
+        String host = StringUtils.defaultIfBlank(dto.getBackendHost(), route.getBackendHost());
+        Integer port = dto.getBackendPort() == null ? route.getBackendPort() : dto.getBackendPort();
+        String scheme = StringUtils.defaultIfBlank(dto.getBackendScheme(), route.getBackendScheme()).toLowerCase(Locale.ROOT);
+        if (!DirectServiceTargetUtil.validListenerHost(host)) return R.err("后端监听地址格式不正确");
+        if (port == null || port < 1 || port > 65535) return R.err("后端端口必须在 1-65535 之间");
+        if (!List.of("http", "https").contains(scheme)) return R.err("后端协议只支持 HTTP 或 HTTPS");
+        final String backendPath;
+        try {
+            backendPath = SniDomainUtil.normalizeBackendPath(
+                    StringUtils.defaultIfBlank(dto.getBackendPath(), route.getBackendPath()));
+            DirectServiceTargetUtil.resolve(entryNode, backendNode, host, port);
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+
+        route.setBackendHost(host.trim());
+        route.setBackendPort(port);
+        route.setBackendScheme(scheme);
+        route.setBackendPath(backendPath);
+        route.setHealthState("pending");
+        route.setHealthStatusCode(null);
+        route.setHealthError(null);
+        route.setHealthCheckedAt(null);
+        route.setUpdatedTime(System.currentTimeMillis());
+        domainRouteMapper.updateById(route);
+        managedCertificateService.deployForRoute(route.getId());
+        return R.ok(enrichDomainRoute(domainRouteMapper.selectById(route.getId())));
     }
 
     @Override

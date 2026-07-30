@@ -935,6 +935,8 @@ export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
 export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId?: number; backendType?: 'mapping' | 'direct'; backendNodeId?: number; backendHost?: string; backendPort?: number; backendScheme?: 'http' | 'https'; backendPath?: string; entryNodeId?: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
+export const updateDomainRouteBackend = (data: { id: number; backendHost: string; backendPort: number; backendScheme: 'http' | 'https'; backendPath: string }) =>
+  Network.post<DomainRoute>("/service-publishing/domain/backend/update", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");
 export const deleteDomainRoute = (id: number) =>

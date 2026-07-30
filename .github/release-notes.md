@@ -1,3 +1,11 @@
+## 2.34.3 HTTPS service discovery correction
+
+- Probes HTTPS before HTTP during manual node service discovery, preventing TLS-enabled XUI panels from being misidentified when their HTTP listener returns a redirect or a generic error.
+- Rejects malformed `HTTP/0.0` responses instead of publishing them as valid HTTP services.
+- Adds an **Edit backend** action to direct domain routes. Administrators can correct the backend protocol, listener address, port, and root path without deleting the domain, DNS record, or HTTPS certificate.
+- Reapplies the existing managed HTTPS listener after an edit and rolls the database transaction back when deployment fails.
+- Panel `2.34.3` targets Agent `2.34.1`. Existing tunnels, forwards, mappings, DNS records, certificates, and listeners remain unchanged until an operator edits a route or manually scans a node.
+
 ## 2.34.2 One-click publish selection fix
 
 - Keeps the discovered service node preselected while the Domain Direct page loads its node options asynchronously.

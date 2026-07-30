@@ -172,7 +172,7 @@ func probeNodeServices(services []nodeDiscoveredService, timeout time.Duration) 
 }
 
 func probeNodeWebService(ctx context.Context, service *nodeDiscoveredService, timeout time.Duration) {
-	for _, scheme := range []string{"http", "https"} {
+	for _, scheme := range []string{"https", "http"} {
 		started := time.Now()
 		transport := &http.Transport{
 			Proxy:               nil,
@@ -195,6 +195,11 @@ func probeNodeWebService(ctx context.Context, service *nodeDiscoveredService, ti
 		request.Header.Set("User-Agent", "CloudNest-Node-Discovery")
 		response, err := client.Do(request)
 		if err != nil {
+			transport.CloseIdleConnections()
+			continue
+		}
+		if response.ProtoMajor < 1 {
+			response.Body.Close()
 			transport.CloseIdleConnections()
 			continue
 		}
