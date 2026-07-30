@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS lan_discovered_service (
     product varchar(160) DEFAULT NULL,
     title varchar(160) DEFAULT NULL,
     confidence varchar(16) NOT NULL DEFAULT 'medium',
-    sensitive tinyint NOT NULL DEFAULT 0,
+    `sensitive` tinyint NOT NULL DEFAULT 0,
     first_seen_at bigint NOT NULL,
     last_seen_at bigint NOT NULL,
     created_time bigint NOT NULL,

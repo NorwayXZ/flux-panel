@@ -1,6 +1,7 @@
 package com.admin.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import lombok.Data;
 
@@ -19,6 +20,7 @@ public class LanDiscoveredService implements Serializable {
     private String product;
     private String title;
     private String confidence;
+    @TableField("`sensitive`")
     private Integer sensitive;
     private Long firstSeenAt;
     private Long lastSeenAt;

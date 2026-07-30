@@ -28,7 +28,7 @@ public class LanDiscoverySchemaInitializer {
                 + "id bigint unsigned NOT NULL AUTO_INCREMENT, connector_id bigint NOT NULL, user_id int NOT NULL, "
                 + "host varchar(45) NOT NULL, port int NOT NULL, service_type varchar(40) NOT NULL, service_name varchar(100) NOT NULL, "
                 + "product varchar(160) DEFAULT NULL, title varchar(160) DEFAULT NULL, confidence varchar(16) NOT NULL DEFAULT 'medium', "
-                + "sensitive tinyint NOT NULL DEFAULT 0, first_seen_at bigint NOT NULL, last_seen_at bigint NOT NULL, "
+                + "`sensitive` tinyint NOT NULL DEFAULT 0, first_seen_at bigint NOT NULL, last_seen_at bigint NOT NULL, "
                 + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                 + "UNIQUE KEY uk_lan_service_endpoint (connector_id,host,port), "
                 + "KEY idx_lan_service_user (user_id,last_seen_at), KEY idx_lan_service_connector (connector_id,last_seen_at)"

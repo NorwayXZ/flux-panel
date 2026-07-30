@@ -1,3 +1,8 @@
+## 2.33.1 Fix LAN service discovery on MySQL 8
+
+- Escape the `sensitive` discovery-result column for MySQL 8 compatibility.
+- Keep existing discovery data and all other panel resources unchanged.
+
 ## 2.33.0 Domain Direct and independent HTTPS ingress
 
 - Renames the Internal Publishing domain workflow to **Domain Direct** and adds a **Bind domain** action directly to every active mapping card.

@@ -1,8 +1,10 @@
 package com.admin.config;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -18,6 +20,9 @@ class LanDiscoverySchemaInitializerTests {
 
         new LanDiscoverySchemaInitializer(jdbcTemplate).initialize();
 
-        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS lan_discovered_service"));
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate).execute(sqlCaptor.capture());
+        assertTrue(sqlCaptor.getValue().contains("CREATE TABLE IF NOT EXISTS lan_discovered_service"));
+        assertTrue(sqlCaptor.getValue().contains("`sensitive` tinyint"));
     }
 }
