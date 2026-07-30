@@ -1,3 +1,18 @@
+## 2.36.0 Network Quality Lab
+
+- Adds an administrator-only Network Quality Lab using existing Agents to measure DNS resolution, TCP connection, TLS handshake, HTTP(S) TTFB, P50/P95/P99 latency, successive-sample jitter, failure rate, and full-run interruptions.
+- Supports IPv4-only, IPv6-only, and automatic address-family probes; custom targets and Agent-to-Agent tests; 24-hour, 7-day, and 30-day trends; source-line and hour-of-day comparison; and downloadable Markdown reports.
+- Uses the source node's Server Asset line label for comparison. This is an existing-node viewpoint and is not presented as a real residential China Telecom, Unicom, or Mobile probe.
+- Keeps every task disabled by default, limits a round to 10 samples, enforces a five-minute minimum schedule, runs at most two probes globally, does not queue work beyond those slots, and automatically releases a stale running task after a restart or timeout.
+- Adds strict Agent-side validation and one fixed `QualityProbe` command. It does not execute arbitrary shell commands, scan port ranges, install packages, or change failover and forwarding state.
+
+### Upgrade and rollback impact
+
+- Panel and Agent move to `2.36.0`; only nodes selected as probe sources need the new Agent. Older Agents continue all existing tunnels, forwards, proxies, mappings, DNS, certificates, and terminal sessions.
+- Adds only `quality_probe_task`, `quality_probe_run`, and `quality_probe_sample`. Existing business tables and Agent runtime configurations are not rewritten.
+- No probe traffic exists until an administrator clicks **Run now** or explicitly enables a task. The Agent gains no additional resident process.
+- To stop only the feature, pause or delete its tasks. To roll back the complete panel release, run `sudo /usr/local/sbin/flux-panel-manager rollback`. Previous panels ignore the additive `quality_*` tables, which remain available if `2.36.0` is installed again.
+
 ## 2.34.5 Compressed XUI root-path rewrite correction
 
 - Requests an uncompressed backend response when a managed HTTPS route rewrites the backend root path, allowing HTML, CSS, JavaScript, and JSON body paths to be rewritten reliably for normal browsers that advertise gzip support.

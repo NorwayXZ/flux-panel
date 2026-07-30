@@ -657,6 +657,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "NetworkDiagnosticResponse"
 		response.Data = diagnosticResult
 
+	case "QualityProbe":
+		var probeResult qualityProbeResponse
+		probeResult, err = w.handleQualityProbe(cmd.Data)
+		response.Type = "QualityProbeResponse"
+		response.Data = probeResult
+
 	case "PublicIpQuery":
 		var publicIPResult publicIPResponse
 		publicIPResult, err = w.handlePublicIPQuery(cmd.Data)

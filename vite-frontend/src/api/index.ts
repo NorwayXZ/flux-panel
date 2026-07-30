@@ -262,6 +262,46 @@ export const runNetworkDiagnostic = (data: {
   timeoutMs?: number;
 }) => Network.post<NetworkDiagnosticResult>("/network-tools/run", data);
 
+export interface QualityLabNode {
+  id: number; name: string; ip?: string; serverIp?: string; status: number; version?: string; networkLine?: string;
+}
+export interface QualityProbeTask {
+  id: number; name: string; sourceNodeId: number; sourceNodeName: string; sourceNodeStatus: number; sourceNodeVersion?: string; sourceLine?: string;
+  targetType: 'custom' | 'node'; targetNodeId?: number; targetNodeName?: string; targetHost: string; port: number;
+  protocol: 'tcp' | 'tls' | 'http' | 'https'; path: string; serverName?: string; ipFamily: 'auto' | 'ipv4' | 'ipv6';
+  sampleCount: number; timeoutMs: number; intervalMinutes: number; retentionDays: number; enabled: boolean | number; running: boolean | number;
+  nextRunAt?: number; lastRunAt?: number; lastStatus: 'pending' | 'running' | 'success' | 'partial' | 'failed'; lastError?: string;
+  p50Ms?: number; p95Ms?: number; p99Ms?: number; jitterMs?: number; failureRate?: number; tcpAvgMs?: number; tlsAvgMs?: number;
+  ttfbAvgMs?: number; latestIpFamily?: string; latestStartedAt?: number;
+}
+export interface QualityRun {
+  id: number; status: string; resolvedAddress?: string; ipFamily: string; protocol: string; dnsMs: number; tcpAvgMs?: number;
+  tlsAvgMs?: number; ttfbAvgMs?: number; p50Ms?: number; p95Ms?: number; p99Ms?: number; jitterMs: number; failureRate: number;
+  successCount: number; sampleCount: number; httpStatus?: number; error?: string; startedAt: number; finishedAt: number;
+}
+export interface QualityAggregate {
+  runs: number; tcpAvgMs: number; tlsAvgMs: number; ttfbAvgMs: number; p50Ms: number; p95Ms: number; p99Ms: number;
+  jitterMs: number; failureRate: number; interruptions: number; lastRunAt: number;
+}
+export interface QualityComparison { label: string | number; runs: number; p95Ms?: number; jitterMs?: number; failureRate?: number }
+export interface QualityLabOverview {
+  minimumAgentVersion: string; nodes: QualityLabNode[]; tasks: QualityProbeTask[];
+  summary: { total: number; enabled: number; healthy: number; degraded: number; failed: number };
+  lineProfiles: QualityComparison[];
+}
+export interface QualityLabDetail {
+  task: QualityProbeTask; range: string; summary: QualityAggregate; runs: QualityRun[];
+  ipComparison: QualityComparison[]; lineComparison: QualityComparison[]; hourComparison: QualityComparison[];
+}
+export type QualityProbeTaskInput = Omit<QualityProbeTask, 'id' | 'sourceNodeName' | 'sourceNodeStatus' | 'sourceNodeVersion' | 'sourceLine' | 'targetNodeName' | 'running' | 'nextRunAt' | 'lastRunAt' | 'lastStatus' | 'lastError' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'jitterMs' | 'failureRate' | 'tcpAvgMs' | 'tlsAvgMs' | 'ttfbAvgMs' | 'latestIpFamily' | 'latestStartedAt'> & { id?: number };
+export const getQualityLabOverview = () => Network.post<QualityLabOverview>('/quality-lab/overview');
+export const saveQualityProbeTask = (data: QualityProbeTaskInput) => Network.post<QualityLabOverview>('/quality-lab/save', data);
+export const runQualityProbeTask = (id: number) => Network.post<{ id: number; state: string; message: string }>('/quality-lab/run', { id });
+export const toggleQualityProbeTask = (id: number, enabled: boolean) => Network.post<QualityLabOverview>('/quality-lab/toggle', { id, enabled });
+export const deleteQualityProbeTask = (id: number) => Network.post('/quality-lab/delete', { id });
+export const getQualityLabDetail = (id: number, range: '24h' | '7d' | '30d') => Network.post<QualityLabDetail>('/quality-lab/detail', { id, range });
+export const getQualityLabReport = (id: number, range: '24h' | '7d' | '30d') => Network.post<{ filename: string; content: string; generatedAt: number }>('/quality-lab/report', { id, range });
+
 // 转发服务控制操作 - 通过Java后端接口
 export const pauseForwardService = (forwardId: number) => Network.post("/forward/pause", { id: forwardId });
 export const resumeForwardService = (forwardId: number) => Network.post("/forward/resume", { id: forwardId });

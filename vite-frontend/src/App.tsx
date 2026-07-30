@@ -22,6 +22,7 @@ import SmartEntryPage from "@/pages/smart-entry";
 import DnsSettingsPage from "@/pages/dns-settings";
 import PrivateProxyPage from "@/pages/private-proxy";
 import NetworkToolsPage from "@/pages/network-tools";
+import QualityLabPage from "@/pages/quality-lab";
 import ServerAssetsPage from "@/pages/server-assets";
 import DynamicDnsPage from "@/pages/dynamic-dns";
 import HomeAccessPage from "@/pages/home-access";
@@ -280,6 +281,7 @@ function App() {
       <Route path="/home-access" element={<ProtectedRoute><HomeAccessPage /></ProtectedRoute>} />
       <Route path="/home-devices" element={<ProtectedRoute useSimpleLayout={true}><HomeDevicesPage /></ProtectedRoute>} />
       <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
+      <Route path="/quality-lab" element={<ProtectedRoute><QualityLabPage /></ProtectedRoute>} />
       <Route path="/guide" element={<ProtectedRoute useSimpleLayout={true}><GuidePage /></ProtectedRoute>} />
       <Route
         path="/port-resources"
