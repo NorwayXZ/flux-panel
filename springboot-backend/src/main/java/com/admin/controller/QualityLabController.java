@@ -21,6 +21,7 @@ public class QualityLabController {
     public QualityLabController(QualityLabService service) { this.service = service; }
 
     @RequireRole @PostMapping("/overview") public R overview() { return service.overview(); }
+    @RequireRole @PostMapping("/preflight") public R preflight(@Validated @RequestBody QualityProbeTaskDto dto) { return service.preflight(dto); }
     @RequireRole @LogAnnotation @PostMapping("/save") public R save(@Validated @RequestBody QualityProbeTaskDto dto) { return service.save(dto); }
     @RequireRole @LogAnnotation @PostMapping("/run") public R run(@RequestBody Map<String, Object> params) { return service.runNow(Long.valueOf(params.get("id").toString())); }
     @RequireRole @LogAnnotation @PostMapping("/toggle") public R toggle(@RequestBody Map<String, Object> params) { return service.toggle(Long.valueOf(params.get("id").toString()), Boolean.parseBoolean(params.get("enabled").toString())); }

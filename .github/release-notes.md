@@ -1,3 +1,12 @@
+## 2.36.2 Quality target validation
+
+- Explains common probe failures in plain language. In particular, `connection refused` now states that the target port has no listener or is actively rejected by its firewall, instead of looking like an Agent failure.
+- Renames the Agent-to-Agent field to **Target open port** and makes it explicit that an online Agent does not imply that arbitrary inbound ports such as `443` are open.
+- Adds an administrator-triggered listener lookup for a selected target node. It reads that node's existing TCP listener table and does not open ports or scan remote port ranges.
+- Adds a one-sample TCP preflight from the selected source Agent before a task is saved. A failed preflight is shown inline; administrators can still explicitly save it as an outage-monitoring task.
+- This is a panel-only release. Agent `2.36.0`, existing quality tasks and samples, nodes, tunnels, forwards, DNS records, ports, and services are unchanged.
+- Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.36.1 Mobile layout correction
 
 - Keeps the Network Quality Lab title, description, refresh action, and create action inside narrow phone viewports.

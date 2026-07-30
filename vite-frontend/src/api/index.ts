@@ -294,7 +294,11 @@ export interface QualityLabDetail {
   ipComparison: QualityComparison[]; lineComparison: QualityComparison[]; hourComparison: QualityComparison[];
 }
 export type QualityProbeTaskInput = Omit<QualityProbeTask, 'id' | 'sourceNodeName' | 'sourceNodeStatus' | 'sourceNodeVersion' | 'sourceLine' | 'targetNodeName' | 'running' | 'nextRunAt' | 'lastRunAt' | 'lastStatus' | 'lastError' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'jitterMs' | 'failureRate' | 'tcpAvgMs' | 'tlsAvgMs' | 'ttfbAvgMs' | 'latestIpFamily' | 'latestStartedAt'> & { id?: number };
+export interface QualityProbePreflight {
+  reachable: boolean; message: string; error?: string; resolvedAddress?: string; ipFamily?: string; tcpMs?: number;
+}
 export const getQualityLabOverview = () => Network.post<QualityLabOverview>('/quality-lab/overview');
+export const preflightQualityProbeTask = (data: QualityProbeTaskInput) => Network.post<QualityProbePreflight>('/quality-lab/preflight', data);
 export const saveQualityProbeTask = (data: QualityProbeTaskInput) => Network.post<QualityLabOverview>('/quality-lab/save', data);
 export const runQualityProbeTask = (id: number) => Network.post<{ id: number; state: string; message: string }>('/quality-lab/run', { id });
 export const toggleQualityProbeTask = (id: number, enabled: boolean) => Network.post<QualityLabOverview>('/quality-lab/toggle', { id, enabled });

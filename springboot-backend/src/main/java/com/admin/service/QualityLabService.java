@@ -117,6 +117,58 @@ public class QualityLabService {
         return overview();
     }
 
+    public R preflight(QualityProbeTaskDto dto) {
+        try {
+            normalizeAndValidate(dto);
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+        int active = activeProbes.incrementAndGet();
+        if (active > 2) {
+            activeProbes.decrementAndGet();
+            return R.err("当前已有 2 项探测在运行，请稍后再检查目标端口");
+        }
+        try {
+            Node source = nodeMapper.selectById(dto.getSourceNodeId());
+            if (!WebSocketServer.isNodeOnline(source.getId())) return R.err("执行节点离线，无法检查目标端口");
+            if (!AgentVersionUtil.isAtLeast(source.getVersion(), MIN_AGENT_VERSION)) {
+                return R.err("执行节点 Agent 需要升级到 " + MIN_AGENT_VERSION);
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("target", dto.getTargetHost());
+            payload.put("port", dto.getPort());
+            payload.put("protocol", "tcp");
+            payload.put("path", "/");
+            payload.put("serverName", null);
+            payload.put("ipFamily", dto.getIpFamily());
+            payload.put("count", 1);
+            payload.put("timeoutMs", Math.min(dto.getTimeoutMs(), 5_000));
+            GostDto response = WebSocketServer.send_msg(source.getId(), payload, "QualityProbe", 12);
+            if (response == null || !"OK".equals(response.getMsg()) || response.getData() == null) {
+                return R.err(response == null ? "执行节点 Agent 无响应" : response.getMsg());
+            }
+            JSONObject data = response.getData() instanceof JSONObject
+                    ? (JSONObject) response.getData()
+                    : JSONObject.parseObject(JSONObject.toJSONString(response.getData()));
+            JSONArray samples = data.getJSONArray("samples");
+            JSONObject sample = samples == null || samples.isEmpty() ? null : samples.getJSONObject(0);
+            boolean reachable = data.getIntValue("successCount") > 0;
+            String error = reachable ? null : probeError(data);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("reachable", reachable);
+            result.put("message", reachable ? "目标端口可以连接" : explainProbeError(error));
+            result.put("error", error);
+            result.put("resolvedAddress", data.getString("resolvedAddress"));
+            result.put("ipFamily", data.getString("ipFamily"));
+            result.put("tcpMs", sample == null ? null : numberOrNull(sample.get("tcpMs")));
+            return R.ok(result);
+        } catch (Exception e) {
+            return R.err("目标预检失败：" + explainProbeError(concise(e.getMessage())));
+        } finally {
+            activeProbes.decrementAndGet();
+        }
+    }
+
     public R runNow(Long id) {
         if (!exists(id)) return R.err("质量任务不存在");
         if (!submit(id, true)) return R.err(activeProbes.get() >= 2 ? "当前已有 2 项探测在运行，请稍后重试" : "该任务正在探测，请稍后查看结果");
@@ -408,6 +460,15 @@ public class QualityLabService {
             if (error != null) return error;
         }
         return null;
+    }
+    static String explainProbeError(String error) {
+        if (error == null || error.isBlank()) return "目标端口不可连接";
+        String lower = error.toLowerCase(Locale.ROOT);
+        if (lower.contains("connection refused")) return "目标端口未监听，或目标防火墙主动拒绝连接";
+        if (lower.contains("timeout") || lower.contains("timed out") || lower.contains("deadline exceeded")) return "连接目标端口超时，请检查防火墙、安全组和网络路由";
+        if (lower.contains("no route to host") || lower.contains("network is unreachable")) return "没有到目标地址的可用网络路由";
+        if (lower.contains("no such host") || lower.contains("server misbehaving")) return "目标域名无法解析";
+        return error;
     }
     private static long number(Object value) { return value instanceof Number ? ((Number) value).longValue() : 0; }
     private static double decimal(Object value) { return value instanceof Number ? ((Number) value).doubleValue() : 0; }
