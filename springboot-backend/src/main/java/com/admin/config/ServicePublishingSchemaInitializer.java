@@ -57,9 +57,13 @@ public class ServicePublishingSchemaInitializer {
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS domain_route ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
-                    + "domain varchar(253) NOT NULL, published_service_id bigint NOT NULL, node_id bigint NOT NULL, "
+                    + "domain varchar(253) NOT NULL, path_prefix varchar(255) NOT NULL DEFAULT '/', published_service_id bigint DEFAULT NULL, "
+                    + "backend_type varchar(24) NOT NULL DEFAULT 'mapping', backend_node_id bigint DEFAULT NULL, backend_host varchar(128) DEFAULT NULL, "
+                    + "backend_port int DEFAULT NULL, backend_scheme varchar(12) NOT NULL DEFAULT 'http', backend_path varchar(255) NOT NULL DEFAULT '/', node_id bigint NOT NULL, "
                     + "listen_port int NOT NULL DEFAULT 443, service_name varchar(120) NOT NULL, state varchar(24) NOT NULL, "
-                    + "last_error varchar(500) DEFAULT NULL, created_time bigint NOT NULL, updated_time bigint NOT NULL, "
+                    + "last_error varchar(500) DEFAULT NULL, health_state varchar(24) NOT NULL DEFAULT 'pending', health_status_code int DEFAULT NULL, "
+                    + "health_latency_ms bigint DEFAULT NULL, health_checked_at bigint DEFAULT NULL, health_error varchar(500) DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, updated_time bigint NOT NULL, "
                     + "PRIMARY KEY (id), UNIQUE KEY uk_domain_node_port (node_id, listen_port, domain), "
                     + "KEY idx_domain_user (user_id, state), KEY idx_domain_entry (node_id, listen_port, state), "
                     + "KEY idx_domain_mapping (published_service_id, state)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -148,8 +152,22 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("domain_route", "dns_record_id", "varchar(64) DEFAULT NULL AFTER dns_zone_id");
             ensureColumn("domain_route", "certificate_id", "bigint DEFAULT NULL AFTER dns_record_id");
             ensureColumn("domain_route", "path_prefix", "varchar(255) NOT NULL DEFAULT '/' AFTER domain");
+            ensureNullableColumn("domain_route", "published_service_id", "bigint DEFAULT NULL");
+            ensureColumn("domain_route", "backend_type", "varchar(24) NOT NULL DEFAULT 'mapping' AFTER published_service_id");
+            ensureColumn("domain_route", "backend_node_id", "bigint DEFAULT NULL AFTER backend_type");
+            ensureColumn("domain_route", "backend_host", "varchar(128) DEFAULT NULL AFTER backend_node_id");
+            ensureColumn("domain_route", "backend_port", "int DEFAULT NULL AFTER backend_host");
+            ensureColumn("domain_route", "backend_scheme", "varchar(12) NOT NULL DEFAULT 'http' AFTER backend_port");
+            ensureColumn("domain_route", "backend_path", "varchar(255) NOT NULL DEFAULT '/' AFTER backend_scheme");
+            ensureColumn("domain_route", "health_state", "varchar(24) NOT NULL DEFAULT 'pending' AFTER last_error");
+            ensureColumn("domain_route", "health_status_code", "int DEFAULT NULL AFTER health_state");
+            ensureColumn("domain_route", "health_latency_ms", "bigint DEFAULT NULL AFTER health_status_code");
+            ensureColumn("domain_route", "health_checked_at", "bigint DEFAULT NULL AFTER health_latency_ms");
+            ensureColumn("domain_route", "health_error", "varchar(500) DEFAULT NULL AFTER health_checked_at");
             replaceDomainRouteUniqueIndex();
             ensureIndex("domain_route", "idx_domain_certificate", "certificate_id, state");
+            ensureIndex("domain_route", "idx_domain_backend_node", "backend_node_id, state");
+            ensureIndex("domain_route", "idx_domain_health", "state, health_checked_at");
         } catch (DataAccessException e) {
             log.error("Service publishing storage initialization failed", e);
         }

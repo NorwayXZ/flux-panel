@@ -5,6 +5,7 @@ import com.admin.common.dto.SniRouteTargetDto;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.PublishedServiceTargetUtil;
+import com.admin.common.utils.DirectServiceTargetUtil;
 import com.admin.common.utils.SniDomainUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.admin.entity.Node;
@@ -278,11 +279,13 @@ public class ManagedCertificateService {
     private void configureEntry(long nodeId, int listenPort, String serviceName) {
         if (!WebSocketServer.isNodeOnline(nodeId)) throw new IllegalStateException("公网入口节点离线，证书将在节点恢复后自动部署");
         List<Map<String, Object>> routes = jdbcTemplate.queryForList(
-                "SELECT r.id,r.domain,r.path_prefix AS pathPrefix,r.state,r.certificate_id AS certificateId,p.public_port AS publicPort,"
+                "SELECT r.id,r.domain,r.path_prefix AS pathPrefix,r.backend_type AS backendType,r.backend_node_id AS backendNodeId,"
+                        + "r.backend_host AS backendHost,r.backend_port AS backendPort,r.backend_scheme AS backendScheme,r.backend_path AS backendPath,"
+                        + "r.state,r.certificate_id AS certificateId,p.public_port AS publicPort,"
                         + "pool.node_id AS mappingNodeId,pool.bind_ip AS bindIp,pool.public_host AS publicHost,"
                         + "c.private_key AS privateKey,c.certificate_chain AS certificateChain "
-                        + "FROM domain_route r JOIN published_service p ON p.id=r.published_service_id "
-                        + "JOIN port_pool pool ON pool.id=p.pool_id JOIN managed_certificate c ON c.id=r.certificate_id "
+                        + "FROM domain_route r LEFT JOIN published_service p ON p.id=r.published_service_id "
+                        + "LEFT JOIN port_pool pool ON pool.id=p.pool_id JOIN managed_certificate c ON c.id=r.certificate_id "
                         + "WHERE r.node_id=? AND r.listen_port=? AND r.ingress_mode='managed_https' AND r.state<>'deleted' "
                         + "AND c.state IN ('active','deployment_failed') "
                         + "ORDER BY CHAR_LENGTH(r.path_prefix) DESC,r.created_time", nodeId, listenPort);
@@ -306,15 +309,26 @@ public class ManagedCertificateService {
             tlsCertificateById.putIfAbsent(certId, Map.of("names", List.of(Objects.toString(route.get("domain"))),
                     "certFile", certPaths.getString("certFile"), "keyFile", certPaths.getString("keyFile")));
             Node entryNode = nodeMapper.selectById(nodeId);
-            Node mappingNode = nodeMapper.selectById(number(route.get("mappingNodeId")));
-            PortPool targetPool = new PortPool();
-            targetPool.setNodeId(number(route.get("mappingNodeId")));
-            targetPool.setBindIp(Objects.toString(route.get("bindIp"), ""));
-            targetPool.setPublicHost(Objects.toString(route.get("publicHost"), ""));
+            String targetAddress;
+            String backendScheme = Objects.toString(route.get("backendScheme"), "http");
+            String backendPath = Objects.toString(route.get("backendPath"), "/");
+            if ("direct".equals(Objects.toString(route.get("backendType")))) {
+                Node backendNode = nodeMapper.selectById(number(route.get("backendNodeId")));
+                targetAddress = DirectServiceTargetUtil.resolve(entryNode, backendNode,
+                        Objects.toString(route.get("backendHost"), "127.0.0.1"),
+                        ((Number) route.get("backendPort")).intValue());
+            } else {
+                Node mappingNode = nodeMapper.selectById(number(route.get("mappingNodeId")));
+                PortPool targetPool = new PortPool();
+                targetPool.setNodeId(number(route.get("mappingNodeId")));
+                targetPool.setBindIp(Objects.toString(route.get("bindIp"), ""));
+                targetPool.setPublicHost(Objects.toString(route.get("publicHost"), ""));
+                targetAddress = PublishedServiceTargetUtil.resolve(entryNode, mappingNode, targetPool,
+                        ((Number) route.get("publicPort")).intValue());
+            }
             targets.add(new SniRouteTargetDto(number(route.get("id")), Objects.toString(route.get("domain")),
-                    SniDomainUtil.normalizePathPrefix(Objects.toString(route.get("pathPrefix"), "/")),
-                    PublishedServiceTargetUtil.resolve(entryNode, mappingNode, targetPool,
-                            ((Number) route.get("publicPort")).intValue())));
+                    SniDomainUtil.normalizePathPrefix(Objects.toString(route.get("pathPrefix"), "/")), targetAddress,
+                    backendScheme, backendPath));
         }
         boolean update = routes.stream().anyMatch(route -> "active".equals(route.get("state")));
         GostDto configured = GostUtil.ConfigureManagedHttpsIngress(nodeId, serviceName, "", listenPort, targets,

@@ -162,7 +162,12 @@ export default function ServicePublishingPage() {
     name: '', allowedCidrs: '', platform: 'linux',
   });
   const isAdmin = localStorage.getItem('admin') === 'true' || localStorage.getItem('role_id') === '0';
-  const emptyDomainForm = () => ({ name: '', domain: '', pathPrefix: '/', publishedServiceId: '', entryNodeId: 'mapping', listenPort: '443', ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '' });
+  const emptyDomainForm = () => ({
+    name: '', domain: '', pathPrefix: '/', publishedServiceId: '', backendType: 'mapping' as 'mapping' | 'direct',
+    backendNodeId: '', backendHost: '127.0.0.1', backendPort: '', backendScheme: 'http' as 'http' | 'https',
+    backendPath: '/', entryNodeId: 'mapping', listenPort: '443',
+    ingressMode: (isAdmin ? 'managed_https' : 'passthrough') as 'managed_https' | 'passthrough', dnsZoneId: '',
+  });
   const [domainForm, setDomainForm] = useState(emptyDomainForm);
 
   const loadData = async () => {
@@ -192,6 +197,24 @@ export default function ServicePublishingPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('publish') === 'node-service') {
+      const backendNodeId = params.get('backendNodeId') || '';
+      setDomainForm(current => ({
+        ...current,
+        name: `${params.get('serviceName') || '节点服务'} 域名直达`,
+        backendType: 'direct',
+        backendNodeId,
+        backendHost: params.get('backendHost') || '127.0.0.1',
+        backendPort: params.get('backendPort') || '',
+        backendScheme: params.get('backendScheme') === 'https' ? 'https' : 'http',
+        entryNodeId: backendNodeId || 'mapping',
+        ingressMode: 'managed_https',
+      }));
+      setActiveView('domains');
+      setDomainModal(true);
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
     const connectorId = params.get('connectorId');
     const targetHost = params.get('targetHost');
     const targetPort = params.get('targetPort');
@@ -216,8 +239,8 @@ export default function ServicePublishingPage() {
   const selectedDomainMapping = useMemo(() => services.find(item => String(item.id) === domainForm.publishedServiceId), [services, domainForm.publishedServiceId]);
   const selectedDomainPool = useMemo(() => pools.find(item => item.id === selectedDomainMapping?.poolId), [pools, selectedDomainMapping]);
   const selectedEntryNode = useMemo(() => domainForm.entryNodeId === 'mapping'
-    ? entryNodes.find(item => item.id === selectedDomainPool?.nodeId)
-    : entryNodes.find(item => String(item.id) === domainForm.entryNodeId), [domainForm.entryNodeId, entryNodes, selectedDomainPool]);
+    ? entryNodes.find(item => item.id === (domainForm.backendType === 'direct' ? Number(domainForm.backendNodeId) : selectedDomainPool?.nodeId))
+    : entryNodes.find(item => String(item.id) === domainForm.entryNodeId), [domainForm.backendNodeId, domainForm.backendType, domainForm.entryNodeId, entryNodes, selectedDomainPool]);
   const selectedTemplate = useMemo(() => serviceTemplates.find(item => item.id === selectedTemplateId) || serviceTemplates[serviceTemplates.length - 1], [selectedTemplateId]);
 
   const applyServiceTemplate = (template: ServiceTemplate) => {
@@ -340,15 +363,25 @@ export default function ServicePublishingPage() {
   };
 
   const submitDomainRoute = async () => {
-    if (!domainForm.name.trim() || !domainForm.domain.trim() || !domainForm.publishedServiceId) return toast.error('请填写完整的域名直达配置');
-    if (domainForm.ingressMode === 'managed_https' && !domainForm.dnsZoneId) return toast.error('请选择证书和 DNS 使用的 Cloudflare Zone');
+    if (!domainForm.name.trim() || !domainForm.domain.trim()) return toast.error('请填写入口名称和访问域名');
+    if (domainForm.backendType === 'mapping' && !domainForm.publishedServiceId) return toast.error('请选择后端内网映射');
+    if (domainForm.backendType === 'direct' && (!domainForm.backendNodeId || !domainForm.backendHost.trim() || !domainForm.backendPort)) return toast.error('请填写完整的节点本机服务');
+    if (domainForm.ingressMode === 'managed_https' && !domainForm.dnsZoneId) return toast.error('请选择证书和 DNS 使用的域名配置');
     const listenPort = Number(domainForm.listenPort);
     if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) return toast.error('监听端口必须在 1-65535 之间');
+    const backendPort = domainForm.backendType === 'direct' ? Number(domainForm.backendPort) : undefined;
+    if (backendPort != null && (!Number.isInteger(backendPort) || backendPort < 1 || backendPort > 65535)) return toast.error('后端端口必须在 1-65535 之间');
     setSubmitting(true);
     const res = await createDomainRoute({
       name: domainForm.name.trim(),
       domain: domainForm.domain.trim(),
-      publishedServiceId: Number(domainForm.publishedServiceId),
+      backendType: domainForm.backendType,
+      publishedServiceId: domainForm.backendType === 'mapping' ? Number(domainForm.publishedServiceId) : undefined,
+      backendNodeId: domainForm.backendType === 'direct' ? Number(domainForm.backendNodeId) : undefined,
+      backendHost: domainForm.backendType === 'direct' ? domainForm.backendHost.trim() : undefined,
+      backendPort,
+      backendScheme: domainForm.backendType === 'direct' ? domainForm.backendScheme : undefined,
+      backendPath: domainForm.ingressMode === 'managed_https' ? domainForm.backendPath.trim() || '/' : '/',
       entryNodeId: domainForm.entryNodeId === 'mapping' ? undefined : Number(domainForm.entryNodeId),
       listenPort,
       ingressMode: domainForm.ingressMode,
@@ -497,11 +530,17 @@ export default function ServicePublishingPage() {
                       ? { label: '配置失败', color: 'danger' as const, detail: route.lastError || '证书申请或部署失败，将自动重试' }
                   : !route.nodeOnline
                     ? { label: '节点离线', color: 'danger' as const, detail: '公网入口节点离线' }
+                    : route.backendType === 'direct' && !route.backendNodeOnline
+                      ? { label: '后端离线', color: 'danger' as const, detail: '节点本机服务所在节点离线' }
                     : route.mappingState !== 'active'
                       ? { label: '映射不可用', color: 'danger' as const, detail: `后端映射状态：${stateMeta[route.mappingState]?.label || route.mappingState}` }
-                      : !route.connectorOnline
+                      : route.backendType !== 'direct' && !route.connectorOnline
                         ? { label: '接入端离线', color: 'danger' as const, detail: '内网接入端离线' }
-                        : { label: '运行中', color: 'success' as const, detail: managedHttps ? `HTTPS 有效至 ${formatTime(route.certificateExpiresAt)}` : 'TLS 透传正常' };
+                        : route.healthState === 'unhealthy'
+                          ? { label: '服务异常', color: 'danger' as const, detail: route.healthError || '完整访问链路健康检查失败' }
+                          : { label: '运行中', color: 'success' as const, detail: route.healthState === 'healthy'
+                            ? `健康 · ${route.healthStatusCode || '--'} · ${route.healthLatencyMs ?? '--'} ms`
+                            : managedHttps ? `HTTPS 有效至 ${formatTime(route.certificateExpiresAt)}` : 'TLS 透传正常' };
                 return (
                   <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
@@ -516,8 +555,10 @@ export default function ServicePublishingPage() {
                       <div className="mt-1 truncate text-xs text-default-500">DNS → {route.publicHost || '未配置'}</div>
                     </div>
                     <div className="min-w-0 text-sm">
-                      <div className="truncate">{route.mappingName}</div>
-                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.mappingPublicHost || '映射地址不可用'}:{route.mappingPublicPort}</div>
+                      <div className="flex min-w-0 items-center gap-2"><span className="truncate">{route.backendType === 'direct' ? route.backendNodeName || '节点本机服务' : route.mappingName}</span><Chip size="sm" variant="flat" color={route.backendType === 'direct' ? 'secondary' : 'default'}>{route.backendType === 'direct' ? '本机' : '映射'}</Chip></div>
+                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.backendType === 'direct'
+                        ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}`
+                        : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
                     </div>
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
                     <div className="flex justify-end">
@@ -596,7 +637,7 @@ export default function ServicePublishingPage() {
         <ModalContent>
           <ModalHeader>新增域名直达</ModalHeader>
           <ModalBody className="grid gap-4 sm:grid-cols-2">
-            <Tabs className="sm:col-span-2" aria-label="HTTPS 模式" selectedKey={domainForm.ingressMode} onSelectionChange={key => setDomainForm({ ...domainForm, ingressMode: String(key) as 'managed_https' | 'passthrough' })}>
+            <Tabs className="sm:col-span-2" aria-label="HTTPS 模式" selectedKey={domainForm.ingressMode} onSelectionChange={key => setDomainForm({ ...domainForm, ingressMode: String(key) as 'managed_https' | 'passthrough', backendType: String(key) === 'passthrough' ? 'mapping' : domainForm.backendType })}>
               {isAdmin ? <Tab key="managed_https" title="面板托管 HTTPS" /> : null}
               <Tab key="passthrough" title="TLS 原样透传" />
             </Tabs>
@@ -604,22 +645,36 @@ export default function ServicePublishingPage() {
             <Input label="访问域名" placeholder="app.example.com" value={domainForm.domain} onValueChange={value => setDomainForm({ ...domainForm, domain: value })} />
             {domainForm.ingressMode === 'managed_https' && (
               <>
-                <Select className="sm:col-span-2" label="Cloudflare Zone" placeholder="选择 DNS 与证书所属域名" selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
+                <Select className="sm:col-span-2" label="DNS 与域名配置" placeholder="选择 DNS 与证书所属域名" selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
                   {dnsZones.map(zone => <SelectItem key={String(zone.id)} textValue={`${zone.zoneName} ${zone.accountName}`}>{zone.zoneName} · {zone.accountName}</SelectItem>)}
                 </Select>
-                <Input className="sm:col-span-2" label="匹配路径" placeholder="/" value={domainForm.pathPrefix} onValueChange={value => setDomainForm({ ...domainForm, pathPrefix: value })} description="同一域名可添加多条路径规则；最长路径优先，例如 /api 优先于 /。" startContent={<Route size={16} className="text-default-400" />} />
+                <Input label="外部访问路径" placeholder="/" value={domainForm.pathPrefix} onValueChange={value => setDomainForm({ ...domainForm, pathPrefix: value })} description="浏览器访问的路径，例如 /。" startContent={<Route size={16} className="text-default-400" />} />
+                <Input label="后端根路径" placeholder="/abc123/" value={domainForm.backendPath} onValueChange={value => setDomainForm({ ...domainForm, backendPath: value })} description="请求转给后端时添加的根路径。" startContent={<Route size={16} className="text-default-400" />} />
               </>
             )}
-            <Select className="sm:col-span-2" label="后端内网映射" selectedKeys={domainForm.publishedServiceId ? [domainForm.publishedServiceId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, publishedServiceId: String(Array.from(keys)[0] || '') })}>
-              {services.filter(item => item.state === 'active').map(item => (
-                <SelectItem key={String(item.id)} textValue={`${item.name} ${item.publicHost}:${item.publicPort}`}>
-                  {item.name} · {item.publicHost}:{item.publicPort} · {item.connectorOnline ? '接入端在线' : '接入端离线'}
-                </SelectItem>
-              ))}
-            </Select>
+            {isAdmin && domainForm.ingressMode === 'managed_https' && <Tabs className="sm:col-span-2" aria-label="后端来源" selectedKey={domainForm.backendType} onSelectionChange={key => setDomainForm({ ...domainForm, backendType: String(key) as 'mapping' | 'direct', entryNodeId: 'mapping' })}>
+              <Tab key="mapping" title="已有内网映射" />
+              <Tab key="direct" title="节点本机服务" />
+            </Tabs>}
+            {domainForm.backendType === 'mapping' ? <Select className="sm:col-span-2" label="后端内网映射" selectedKeys={domainForm.publishedServiceId ? [domainForm.publishedServiceId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, publishedServiceId: String(Array.from(keys)[0] || '') })}>
+                {services.filter(item => item.state === 'active').map(item => (
+                  <SelectItem key={String(item.id)} textValue={`${item.name} ${item.publicHost}:${item.publicPort}`}>
+                    {item.name} · {item.publicHost}:{item.publicPort} · {item.connectorOnline ? '接入端在线' : '接入端离线'}
+                  </SelectItem>
+                ))}
+              </Select> : <>
+                <Select className="sm:col-span-2" label="服务所在节点" selectedKeys={domainForm.backendNodeId ? [domainForm.backendNodeId] : []} onSelectionChange={keys => { const value = String(Array.from(keys)[0] || ''); setDomainForm({ ...domainForm, backendNodeId: value, entryNodeId: value || 'mapping' }); }}>
+                  {entryNodes.map(node => <SelectItem key={String(node.id)} textValue={`${node.name} ${node.serverIp || node.ip || ''}`}>{node.name} · {node.serverIp || node.ip || '地址未知'} · {node.status === 1 ? '在线' : '离线'}</SelectItem>)}
+                </Select>
+                <Select label="后端协议" selectedKeys={[domainForm.backendScheme]} onSelectionChange={keys => setDomainForm({ ...domainForm, backendScheme: String(Array.from(keys)[0] || 'http') as 'http' | 'https' })}>
+                  <SelectItem key="http">HTTP</SelectItem><SelectItem key="https">HTTPS</SelectItem>
+                </Select>
+                <Input label="监听地址" value={domainForm.backendHost} onValueChange={value => setDomainForm({ ...domainForm, backendHost: value })} description="本机服务常见为 127.0.0.1 或 0.0.0.0。" />
+                <Input className="sm:col-span-2" label="后端端口" type="number" min={1} max={65535} value={domainForm.backendPort} onValueChange={value => setDomainForm({ ...domainForm, backendPort: value })} />
+              </>}
             {isAdmin && domainForm.ingressMode === 'managed_https' && (
               <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" selectedKeys={[domainForm.entryNodeId]} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
-                {[{ id: 'mapping', name: '跟随后端映射节点', address: '', online: true }, ...entryNodes.map(node => ({ id: String(node.id), name: node.name, address: node.serverIp || node.ip || '地址未知', online: node.status === 1 }))].map(node => (
+                {[{ id: 'mapping', name: domainForm.backendType === 'direct' ? '跟随服务所在节点' : '跟随后端映射节点', address: '', online: true }, ...entryNodes.map(node => ({ id: String(node.id), name: node.name, address: node.serverIp || node.ip || '地址未知', online: node.status === 1 }))].map(node => (
                   <SelectItem key={node.id} textValue={`${node.name} ${node.address}`}>
                     {node.name}{node.address ? ` · ${node.address}` : ''} · {node.online ? '在线' : '离线'}
                   </SelectItem>

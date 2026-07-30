@@ -25,6 +25,7 @@ import com.admin.mapper.UserMapper;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
+import com.admin.service.ServicePublishingService;
 import com.admin.service.TunnelService;
 import com.admin.service.UserTunnelService;
 import com.admin.service.UserQuotaService;
@@ -89,7 +90,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.32.2/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.34.0/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -111,6 +112,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     @Resource
     @Lazy
     private SpeedLimitService speedLimitService;
+
+    @Resource
+    @Lazy
+    private ServicePublishingService servicePublishingService;
 
     @Resource
     private UserNodeMapper userNodeMapper;
@@ -383,6 +388,9 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("forwardCount", 0L);
         summary.put("userTunnelCount", 0L);
         summary.put("speedLimitCount", 0L);
+        summary.put("domainRouteCount", 0);
+
+        int domainRouteCount = servicePublishingService.cleanupDomainRoutesForNode(nodeId);
 
         List<Long> tunnelIds = new ArrayList<>();
         List<Integer> tunnelIdInts = new ArrayList<>();
@@ -423,6 +431,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("forwardCount", forwardCount);
         summary.put("userTunnelCount", userTunnelCount);
         summary.put("speedLimitCount", speedLimitCount);
+        summary.put("domainRouteCount", domainRouteCount);
         userNodeMapper.delete(new QueryWrapper<UserNode>().eq("node_id", nodeId));
         return summary;
     }

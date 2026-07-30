@@ -60,4 +60,17 @@ class SniDomainUtilTests {
         assertEquals("/api", SniDomainUtil.normalizePathPrefix("api/"));
         assertThrows(IllegalArgumentException.class, () -> SniDomainUtil.normalizePathPrefix("/api?q=1"));
     }
+
+    @Test
+    void buildsBackendRootPathRewrite() {
+        JSONObject service = SniDomainUtil.buildManagedHttpsService(
+                "managed_https_8_443", "", 443,
+                List.of(new SniRouteTargetDto(1L, "xui.example.com", "/", "127.0.0.1:54321", "http", "/abc123")),
+                List.of(Map.of("names", List.of("xui.example.com"), "certFile", "/tmp/x.crt", "keyFile", "/tmp/x.key")));
+
+        JSONObject node = service.getJSONObject("forwarder").getJSONArray("nodes").getJSONObject(0);
+        assertEquals("^/(.*)$", node.getJSONObject("http").getJSONArray("rewriteURL").getJSONObject(0).getString("match"));
+        assertEquals("/abc123/$1", node.getJSONObject("http").getJSONArray("rewriteURL").getJSONObject(0).getString("replacement"));
+        assertEquals("/abc123", node.getJSONObject("http").getJSONObject("responseHeader").getString("@cloudnest.internalPath"));
+    }
 }

@@ -306,6 +306,12 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 
 `2.17.0` 将“DNS 与域名”和“内网映射”连接成完整 HTTPS 链路，`2.26.0` 增加证书管理页和同域名路径分流。管理员在域名入口选择已登记的 Cloudflare Zone 后，面板会自动创建 DNS-only 的 `A` 或 `AAAA` 记录，通过 Let’s Encrypt DNS-01 申请证书，并将证书、域名和路径规则下发到公网入口 Agent。内网 Web 服务只需提供普通 HTTP，不需要自己维护公网证书。
 
+`2.34.0` 在“添加节点”卡片增加手动“发现服务”。点击后，Agent 读取本机正在监听的 TCP 端口并识别 HTTP/HTTPS、进程信息和常见 Web 产品；存在 `/var/run/docker.sock` 时还会标注 Docker 容器名称、镜像和已发布 TCP 端口。扫描不会自动运行，也不会遍历全部端口。发现的 Web 服务可点击“一键发布”，确认域名、外部路径和后端根路径后直接接入托管 HTTPS，无需先占用一个额外公网映射端口。
+
+根路径改写示例：XUI 原地址为 `http://127.0.0.1:54321/abc123/` 时，填写外部访问路径 `/`、后端根路径 `/abc123`，即可使用 `https://xui.example.com/` 访问。Agent 会改写请求路径、后端重定向 `Location`、Cookie `Path` 和常见未压缩文本响应中的绝对根路径。部分强依赖绝对 URL、压缩响应或自行校验 Host 的应用仍可能需要在应用自身设置“外部 URL”。
+
+域名入口卡片每分钟显示一次真实访问健康检查，包括 HTTP 状态码、延迟、检查时间和简短错误。健康检查只负责观测，不会因为一次失败自动停止或删除服务。节点服务发现及直接发布需要入口 Agent `2.34.0` 或更高版本，并且目前只允许管理员使用，因为监听进程路径和容器信息属于敏感服务器信息。
+
 `2.33.2` 改进托管 HTTPS 的 DNS-01 验证。面板创建 TXT 记录后不再固定等待 8 秒，而是等待 Cloudflare 与 Google 公共 DNS 连续读取到正确记录后再提交 Let's Encrypt；页面会显示“DNS 同步中”，并将 Token 权限错误、DNS 同步超时和证书机构验证失败分别说明。面板重启后也会继续接管尚未完成的申请。
 
 `2.33.1` 修复 MySQL 8 下家庭服务发现查询失败的问题。服务发现结果中的 `sensitive` 字段已统一使用兼容 MySQL 8 的转义映射，新安装建表脚本也同步修复；不会改变已有家庭设备、发现结果或其他转发配置。
@@ -336,9 +342,9 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 - 同一入口端口可以承载多个托管 HTTPS 域名，但不能与第一阶段 TLS 原样透传混用。面板按 TLS SNI 选择证书，再按解密后的 HTTP Host 转发到对应映射。
 - 托管 HTTPS 需要公网入口 Agent `2.17.0` 或更高版本。旧 Agent 和旧域名入口不会被修改，节点、隧道、普通转发、内网映射及 TLS 原样透传继续运行。
 - `2.33.0` 不新增数据表或常驻进程，也不修改已有规则。回退前先删除新版创建的跨节点域名直达规则，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`。
-- 该阶段仅代理 HTTP/1.1 Web 服务，不提供路径改写、WebSocket 专项策略、WAF 或通配符证书。非 HTTP 的 TLS 服务继续使用第一阶段原样透传。
+- 该阶段仅代理 HTTP/1.1 Web 服务，`2.34.0` 支持基础根路径改写，但不提供 WebSocket 专项策略、WAF 或通配符证书。非 HTTP 的 TLS 服务继续使用第一阶段原样透传。
 
-升级会新增 `managed_certificate` 表，并向 `domain_route` 增加可空的 DNS、证书和入口模式字段。后端启动时自动完成兼容迁移，不删除或重写现有业务记录；手动维护数据库时，在第一阶段迁移之后执行 [`migrations/20260727_managed_https.sql`](migrations/20260727_managed_https.sql)。回退旧面板前，应先在新版删除托管 HTTPS 入口并确认 Agent 已移除对应监听，否则旧版不会继续续期或清理这些证书。
+升级会新增 `managed_certificate` 表，并向 `domain_route` 增加可空的 DNS、证书、入口模式、直接后端和健康状态字段。后端启动时自动完成兼容迁移，不删除或重写现有业务记录；手动维护数据库时，在第一阶段迁移之后执行 [`migrations/20260727_managed_https.sql`](migrations/20260727_managed_https.sql)，再按需执行 [`springboot-backend/src/main/resources/migrations/20260730_node_service_publishing.sql`](springboot-backend/src/main/resources/migrations/20260730_node_service_publishing.sql)。回退旧面板前，应先在新版删除直接发布的节点服务和托管 HTTPS 入口，并确认 Agent 已移除对应监听，否则旧版不会继续续期或清理这些证书。
 
 ### 全链路拓扑
 

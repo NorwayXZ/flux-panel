@@ -7,6 +7,7 @@ import com.admin.common.dto.NodeDto;
 import com.admin.common.dto.NodeUpdateDto;
 import com.admin.common.lang.R;
 import com.admin.service.AgentUpgradeService;
+import com.admin.service.NodeServiceDiscoveryService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,9 +27,12 @@ import java.util.Map;
 public class NodeController extends BaseController {
 
     private final AgentUpgradeService agentUpgradeService;
+    private final NodeServiceDiscoveryService nodeServiceDiscoveryService;
 
-    public NodeController(AgentUpgradeService agentUpgradeService) {
+    public NodeController(AgentUpgradeService agentUpgradeService,
+                          NodeServiceDiscoveryService nodeServiceDiscoveryService) {
         this.agentUpgradeService = agentUpgradeService;
+        this.nodeServiceDiscoveryService = nodeServiceDiscoveryService;
     }
 
     @LogAnnotation
@@ -108,6 +112,13 @@ public class NodeController extends BaseController {
         Long nodeId = params != null && params.get("nodeId") != null
                 ? Long.valueOf(params.get("nodeId").toString()) : null;
         return R.ok(agentUpgradeService.history(nodeId));
+    }
+
+    @LogAnnotation
+    @RequireRole
+    @PostMapping("/discovery/scan")
+    public R discoverServices(@RequestBody Map<String, Object> params) {
+        return nodeServiceDiscoveryService.scan(Long.parseLong(params.get("nodeId").toString()));
     }
 
     @LogAnnotation

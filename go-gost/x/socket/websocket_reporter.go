@@ -669,6 +669,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "LanDiscoveryResponse"
 		response.Data = discoveryResult
 
+	case "NodeServiceDiscovery":
+		var discoveryResult nodeServiceDiscoveryResponse
+		discoveryResult, err = w.handleNodeServiceDiscovery(cmd.Data)
+		response.Type = "NodeServiceDiscoveryResponse"
+		response.Data = discoveryResult
+
 	case "AgentUpgrade":
 		var upgradeResult agentUpgradeResponse
 		upgradeResult, err = w.handleAgentUpgrade(cmd.Data)

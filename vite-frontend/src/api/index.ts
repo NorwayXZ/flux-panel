@@ -29,6 +29,19 @@ export const getNodeList = () => Network.post("/node/list");
 export const updateNode = (data: any) => Network.post("/node/update", data);
 export const deleteNode = (id: number) => Network.post("/node/delete", { id });
 export const getNodeInstallCommand = (id: number) => Network.post("/node/install", { id });
+export interface NodeDiscoveredService {
+  host: string; probeHost: string; port: number; protocol: string; serviceName: string;
+  processName?: string; processId?: number; executable?: string; product?: string; title?: string;
+  httpStatus?: number; latencyMs?: number; containerId?: string; containerName?: string;
+  containerImage?: string; sensitive?: boolean;
+}
+export interface NodeServiceDiscoveryResult {
+  nodeId: number; nodeName: string; nodeAddress?: string; services: NodeDiscoveredService[];
+  listenerCount: number; webServiceCount: number; dockerAvailable: boolean; scannedAt: number;
+  durationMs: number; minimumAgentVersion: string;
+}
+export const discoverNodeServices = (nodeId: number) =>
+  Network.post<NodeServiceDiscoveryResult>("/node/discovery/scan", { nodeId });
 export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
   return Network.post("/node/check-status", params);
@@ -771,9 +784,22 @@ export interface DomainRoute {
   name: string;
   domain: string;
   pathPrefix?: string;
+  backendType?: 'mapping' | 'direct';
+  backendNodeId?: number;
+  backendNodeName?: string;
+  backendNodeOnline?: boolean;
+  backendHost?: string;
+  backendPort?: number;
+  backendScheme?: 'http' | 'https';
+  backendPath?: string;
+  healthState?: string;
+  healthStatusCode?: number;
+  healthLatencyMs?: number;
+  healthCheckedAt?: number;
+  healthError?: string;
   ownerUserName: string;
   ownerRoleId?: number;
-  publishedServiceId: number;
+  publishedServiceId?: number;
   mappingName: string;
   mappingState: string;
   mappingPublicPort?: number;
@@ -907,7 +933,7 @@ export const renewPublishedService = (id: number, hours?: number, permanent = fa
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>
   Network.post("/service-publishing/service/delete", { id });
-export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId: number; entryNodeId?: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
+export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId?: number; backendType?: 'mapping' | 'direct'; backendNodeId?: number; backendHost?: string; backendPort?: number; backendScheme?: 'http' | 'https'; backendPath?: string; entryNodeId?: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");

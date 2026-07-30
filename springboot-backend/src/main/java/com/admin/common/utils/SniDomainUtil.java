@@ -47,6 +47,10 @@ public final class SniDomainUtil {
         return path;
     }
 
+    public static String normalizeBackendPath(String value) {
+        return normalizePathPrefix(value);
+    }
+
     public static JSONObject buildIngressService(String serviceName, String bindIp, int listenPort,
                                                   List<SniRouteTargetDto> targets) {
         JSONObject service = new JSONObject();
@@ -102,12 +106,58 @@ public final class SniDomainUtil {
         service.put("listener", listener);
         JSONArray nodes = service.getJSONObject("forwarder").getJSONArray("nodes");
         for (int i = 0; i < nodes.size(); i++) {
-            nodes.getJSONObject(i).getJSONObject("filter").put("protocol", "http");
+            JSONObject node = nodes.getJSONObject(i);
+            node.getJSONObject("filter").put("protocol", "http");
             String pathPrefix = targets.get(i).getPathPrefix();
             if (StringUtils.isNotBlank(pathPrefix)) {
-                nodes.getJSONObject(i).getJSONObject("filter").put("path", pathPrefix);
+                node.getJSONObject("filter").put("path", pathPrefix);
+            }
+            String backendPath = normalizeBackendPath(targets.get(i).getBackendPath());
+            String externalPath = normalizePathPrefix(pathPrefix);
+            JSONObject http = new JSONObject();
+            JSONObject requestHeaders = new JSONObject();
+            requestHeaders.put("X-Forwarded-Proto", "https");
+            http.put("requestHeader", requestHeaders);
+            if (!backendPath.equals(externalPath)) {
+                JSONArray rewriteURL = new JSONArray();
+                JSONObject rewrite = new JSONObject();
+                rewrite.put("match", requestPathPattern(externalPath));
+                rewrite.put("replacement", requestPathReplacement(backendPath));
+                rewriteURL.add(rewrite);
+                http.put("rewriteURL", rewriteURL);
+                JSONObject responseHeaders = new JSONObject();
+                responseHeaders.put("@cloudnest.internalPath", backendPath);
+                responseHeaders.put("@cloudnest.externalPath", externalPath);
+                http.put("responseHeader", responseHeaders);
+
+                JSONArray bodyRewrites = new JSONArray();
+                for (String type : List.of("text/html", "text/css", "application/javascript", "application/json")) {
+                    JSONObject bodyRewrite = new JSONObject();
+                    bodyRewrite.put("type", type);
+                    bodyRewrite.put("match", java.util.regex.Pattern.quote(backendPath + "/"));
+                    bodyRewrite.put("replacement", externalPath.equals("/") ? "/" : externalPath + "/");
+                    bodyRewrites.add(bodyRewrite);
+                }
+                http.put("rewriteBody", bodyRewrites);
+            }
+            node.put("http", http);
+            if ("https".equalsIgnoreCase(targets.get(i).getBackendScheme())) {
+                JSONObject tlsBackend = new JSONObject();
+                tlsBackend.put("secure", false);
+                tlsBackend.put("options", new JSONObject());
+                node.put("tls", tlsBackend);
             }
         }
         return service;
+    }
+
+    private static String requestPathPattern(String externalPath) {
+        if ("/".equals(externalPath)) return "^/(.*)$";
+        return "^" + java.util.regex.Pattern.quote(externalPath) + "(?:/(.*))?$";
+    }
+
+    private static String requestPathReplacement(String backendPath) {
+        if ("/".equals(backendPath)) return "/$1";
+        return backendPath + "/$1";
     }
 }

@@ -1,0 +1,15 @@
+ALTER TABLE domain_route
+  MODIFY COLUMN published_service_id bigint DEFAULT NULL,
+  ADD COLUMN backend_type varchar(24) NOT NULL DEFAULT 'mapping' AFTER published_service_id,
+  ADD COLUMN backend_node_id bigint DEFAULT NULL AFTER backend_type,
+  ADD COLUMN backend_host varchar(128) DEFAULT NULL AFTER backend_node_id,
+  ADD COLUMN backend_port int DEFAULT NULL AFTER backend_host,
+  ADD COLUMN backend_scheme varchar(12) NOT NULL DEFAULT 'http' AFTER backend_port,
+  ADD COLUMN backend_path varchar(255) NOT NULL DEFAULT '/' AFTER backend_scheme,
+  ADD COLUMN health_state varchar(24) NOT NULL DEFAULT 'pending' AFTER last_error,
+  ADD COLUMN health_status_code int DEFAULT NULL AFTER health_state,
+  ADD COLUMN health_latency_ms bigint DEFAULT NULL AFTER health_status_code,
+  ADD COLUMN health_checked_at bigint DEFAULT NULL AFTER health_latency_ms,
+  ADD COLUMN health_error varchar(500) DEFAULT NULL AFTER health_checked_at,
+  ADD KEY idx_domain_backend_node (backend_node_id, state),
+  ADD KEY idx_domain_health (state, health_checked_at);

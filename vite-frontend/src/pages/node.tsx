@@ -11,7 +11,7 @@ import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { ClipboardCopy, RefreshCw, ServerCog, SquareTerminal } from 'lucide-react';
+import { ClipboardCopy, Container, Globe2, Radar, RefreshCw, ServerCog, SquareTerminal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
@@ -29,6 +29,9 @@ import {
   getManualAgentUpgradeCommand,
   startAgentUpgrade,
   startBatchAgentUpgrade,
+  discoverNodeServices,
+  type NodeDiscoveredService,
+  type NodeServiceDiscoveryResult,
   type AgentUpgradeStatusItem,
 } from "@/api";
 
@@ -140,6 +143,10 @@ export default function NodePage() {
   const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
   const [upgradeBatch, setUpgradeBatch] = useState(false);
   const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [discoveryNode, setDiscoveryNode] = useState<Node | null>(null);
+  const [discoveryResult, setDiscoveryResult] = useState<NodeServiceDiscoveryResult | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
   const [form, setForm] = useState<NodeForm>({
     id: null,
     name: '',
@@ -152,6 +159,41 @@ export default function NodePage() {
     socks: 0
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const openServiceDiscovery = (node: Node) => {
+    setDiscoveryNode(node);
+    setDiscoveryResult(null);
+    setDiscoveryOpen(true);
+  };
+
+  const runServiceDiscovery = async () => {
+    if (!discoveryNode) return;
+    setDiscoveryLoading(true);
+    try {
+      const response = await discoverNodeServices(discoveryNode.id);
+      if (response.code !== 0) return toast.error(response.msg || '节点服务发现失败');
+      setDiscoveryResult(response.data);
+      if ((response.data.services || []).length === 0) toast('没有发现正在监听的 TCP 服务');
+    } catch {
+      toast.error('节点服务发现失败');
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  };
+
+  const publishDiscoveredService = (service: NodeDiscoveredService) => {
+    if (!discoveryNode || !['http', 'https'].includes(service.protocol)) return;
+    const params = new URLSearchParams({
+      publish: 'node-service',
+      backendNodeId: String(discoveryNode.id),
+      backendHost: service.host,
+      backendPort: String(service.port),
+      backendScheme: service.protocol,
+      serviceName: service.serviceName || service.title || `${service.protocol.toUpperCase()} ${service.port}`,
+    });
+    setDiscoveryOpen(false);
+    navigate(`/service-publishing?${params.toString()}`);
+  };
   
   // 安装命令相关状态
   const [installCommandModal, setInstallCommandModal] = useState(false);
@@ -627,9 +669,11 @@ export default function NodePage() {
         const forwardCount = Number(summary.forwardCount || 0);
         const userTunnelCount = Number(summary.userTunnelCount || 0);
         const speedLimitCount = Number(summary.speedLimitCount || 0);
-        const cleanupText = tunnelCount > 0
-          ? `，已清理 ${tunnelCount} 个隧道、${forwardCount} 个转发、${userTunnelCount} 个授权、${speedLimitCount} 个限速规则`
-          : '';
+        const domainRouteCount = Number(summary.domainRouteCount || 0);
+        const cleanupParts = [];
+        if (domainRouteCount > 0) cleanupParts.push(`${domainRouteCount} 个域名直达`);
+        if (tunnelCount > 0) cleanupParts.push(`${tunnelCount} 个隧道`, `${forwardCount} 个转发`, `${userTunnelCount} 个授权`, `${speedLimitCount} 个限速规则`);
+        const cleanupText = cleanupParts.length > 0 ? `，已清理 ${cleanupParts.join('、')}` : '';
         toast.success(`节点删除成功${cleanupText}`);
         setNodeList(prev => prev.filter(n => n.id !== nodeToDelete.id));
         setDeleteModalOpen(false);
@@ -1033,6 +1077,18 @@ export default function NodePage() {
 
               {/* 操作按钮 */}
               <div className="space-y-1.5">
+                {adminMode && <Button
+                  size="sm"
+                  variant="flat"
+                  color="default"
+                  onPress={() => openServiceDiscovery(node)}
+                  isDisabled={node.connectionStatus !== 'online'}
+                  startContent={<Radar size={15} />}
+                  className="w-full min-h-8"
+                  title={node.connectionStatus === 'online' ? '手动读取本机监听端口和 Docker 服务' : '节点离线，无法发现服务'}
+                >
+                  发现服务
+                </Button>}
                 <div className={adminMode ? "grid grid-cols-2 gap-1.5" : "flex gap-1.5"}>
                   {adminMode && <Button
                     size="sm"
@@ -1376,6 +1432,52 @@ export default function NodePage() {
           </ModalContent>
         </Modal>
 
+        {/* 节点服务发现 */}
+        <Modal isOpen={discoveryOpen} onOpenChange={setDiscoveryOpen} size="5xl" scrollBehavior="inside" backdrop="blur">
+          <ModalContent>
+            <ModalHeader className="flex items-center justify-between gap-3 pr-12">
+              <div>
+                <div>{discoveryNode?.name || '节点'} · 服务发现</div>
+                <div className="mt-1 text-xs font-normal text-default-500">仅在点击扫描时读取本机监听端口，不会后台持续扫描。</div>
+              </div>
+              <Button size="sm" color="primary" startContent={discoveryLoading ? undefined : <Radar size={16} />} isLoading={discoveryLoading} onPress={runServiceDiscovery}>开始扫描</Button>
+            </ModalHeader>
+            <ModalBody className="pb-6">
+              {!discoveryResult && !discoveryLoading && <div className="flex min-h-56 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><Radar size={30} /><span className="text-sm">点击“开始扫描”读取当前监听服务</span></div>}
+              {discoveryLoading && <div className="flex min-h-56 items-center justify-center gap-3"><Spinner size="sm" /><span className="text-sm text-default-500">正在读取监听端口并识别 Web 服务...</span></div>}
+              {discoveryResult && !discoveryLoading && <>
+                <div className="grid gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-4">
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">监听服务</div><div className="mt-1 text-xl font-semibold">{discoveryResult.listenerCount}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">Web 服务</div><div className="mt-1 text-xl font-semibold">{discoveryResult.webServiceCount}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">Docker</div><div className="mt-1 text-sm font-medium">{discoveryResult.dockerAvailable ? '已连接' : '未检测到'}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">扫描耗时</div><div className="mt-1 text-sm font-medium">{discoveryResult.durationMs} ms</div></div>
+                </div>
+                {discoveryResult.services.length === 0 ? <div className="flex min-h-40 items-center justify-center border-y border-divider text-sm text-default-500">没有发现正在监听的 TCP 服务</div> : <div className="grid gap-3 lg:grid-cols-2">
+                  {discoveryResult.services.map(service => {
+                    const web = service.protocol === 'http' || service.protocol === 'https';
+                    return <article key={`${service.host}:${service.port}`} className="rounded-md border border-divider bg-content1 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{service.serviceName}</span><Chip size="sm" variant="flat" color={web ? 'success' : 'default'}>{service.protocol.toUpperCase()}</Chip>{service.containerName && <Chip size="sm" variant="flat" color="secondary" startContent={<Container size={12} />}>Docker</Chip>}</div>
+                          <div className="mt-1 font-mono text-sm text-default-600">{service.host}:{service.port}</div>
+                        </div>
+                        <Button size="sm" color="primary" variant="flat" startContent={<Globe2 size={15} />} isDisabled={!web} onPress={() => publishDiscoveredService(service)}>一键发布</Button>
+                      </div>
+                      <div className="mt-3 grid gap-2 border-t border-divider pt-3 text-xs sm:grid-cols-2">
+                        <div><span className="text-default-500">进程：</span>{service.processName || '未识别'}{service.processId ? ` · PID ${service.processId}` : ''}</div>
+                        <div><span className="text-default-500">响应：</span>{service.httpStatus || '--'}{service.latencyMs != null ? ` · ${service.latencyMs} ms` : ''}</div>
+                        {service.title && <div className="truncate sm:col-span-2" title={service.title}><span className="text-default-500">网页标题：</span>{service.title}</div>}
+                        {service.containerName && <div className="truncate sm:col-span-2" title={service.containerImage}><span className="text-default-500">容器：</span>{service.containerName} · {service.containerImage}</div>}
+                      </div>
+                      {!web && <div className="mt-3 text-xs text-default-500">当前一键发布仅支持识别为 HTTP 或 HTTPS 的服务。</div>}
+                    </article>;
+                  })}
+                </div>}
+              </>}
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+
         {/* 删除确认模态框 */}
         <Modal 
           isOpen={deleteModalOpen}
@@ -1394,7 +1496,7 @@ export default function NodePage() {
                 <ModalBody>
                   <p>确定要删除节点 <strong>"{nodeToDelete?.name}"</strong> 吗？</p>
                   <p className="text-small text-default-500">
-                    节点在线且有关联隧道时，系统会阻止删除；如需清理失效隧道，请到隧道管理删除隧道。节点离线时会同时删除使用该节点的隧道、转发、用户隧道授权和限速规则，且不可恢复。
+                    节点在线且有关联隧道时，系统会阻止删除；如需清理失效隧道，请到隧道管理删除隧道。删除节点会同时清理以它作为入口或后端的域名直达；节点离线时还会删除相关隧道、转发、用户隧道授权和限速规则，且不可恢复。
                   </p>
                 </ModalBody>
                 <ModalFooter>

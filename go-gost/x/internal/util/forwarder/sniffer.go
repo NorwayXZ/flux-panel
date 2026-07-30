@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -481,10 +482,14 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriter, node 
 	xio.SetReadDeadline(cc, time.Time{})
 
 	if len(responseHeader) > 0 {
+		rewriteCloudNestProxyResponse(req, resp, responseHeader)
 		if resp.Header == nil {
 			resp.Header = http.Header{}
 		}
 		for k, v := range responseHeader {
+			if strings.HasPrefix(k, "@cloudnest.") {
+				continue
+			}
 			resp.Header.Set(k, v)
 		}
 	}
@@ -551,6 +556,74 @@ func (h *Sniffer) httpRoundTrip(ctx context.Context, rw, cc io.ReadWriter, node 
 	}
 
 	return
+}
+
+func rewriteCloudNestProxyResponse(req *http.Request, resp *http.Response, settings map[string]string) {
+	internalPath := normalizeCloudNestPath(settings["@cloudnest.internalPath"])
+	externalPath := normalizeCloudNestPath(settings["@cloudnest.externalPath"])
+	if internalPath == externalPath || internalPath == "/" {
+		return
+	}
+	if location := resp.Header.Get("Location"); location != "" {
+		resp.Header.Set("Location", rewriteCloudNestLocation(location, internalPath, externalPath, req.Host))
+	}
+	cookies := resp.Header.Values("Set-Cookie")
+	if len(cookies) > 0 {
+		resp.Header.Del("Set-Cookie")
+		for _, cookie := range cookies {
+			resp.Header.Add("Set-Cookie", rewriteCloudNestCookiePath(cookie, internalPath, externalPath))
+		}
+	}
+}
+
+func rewriteCloudNestLocation(rawLocation, internalPath, externalPath, externalHost string) string {
+	parsed, err := url.Parse(rawLocation)
+	if err != nil {
+		return rawLocation
+	}
+	if parsed.Path != internalPath && !strings.HasPrefix(parsed.Path, internalPath+"/") {
+		return rawLocation
+	}
+	suffix := strings.TrimPrefix(parsed.Path, internalPath)
+	parsed.Path = joinCloudNestPath(externalPath, suffix)
+	if parsed.IsAbs() {
+		parsed.Scheme = "https"
+		parsed.Host = externalHost
+	}
+	return parsed.String()
+}
+
+func rewriteCloudNestCookiePath(cookie, internalPath, externalPath string) string {
+	parts := strings.Split(cookie, ";")
+	for i := 1; i < len(parts); i++ {
+		trimmed := strings.TrimSpace(parts[i])
+		if !strings.HasPrefix(strings.ToLower(trimmed), "path=") {
+			continue
+		}
+		path := strings.TrimSpace(trimmed[len("path="):])
+		if path == internalPath || strings.HasPrefix(path, internalPath+"/") {
+			parts[i] = " Path=" + externalPath
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+func normalizeCloudNestPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "/" {
+		return "/"
+	}
+	return "/" + strings.Trim(value, "/")
+}
+
+func joinCloudNestPath(prefix, suffix string) string {
+	if prefix == "/" {
+		return "/" + strings.TrimPrefix(suffix, "/")
+	}
+	if suffix == "" || suffix == "/" {
+		return prefix + "/"
+	}
+	return prefix + "/" + strings.TrimPrefix(suffix, "/")
 }
 
 func upgradeType(h http.Header) string {

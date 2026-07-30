@@ -28,5 +28,6 @@ public interface ServicePublishingService {
     R listLeaseEvents(Long serviceId);
     R listPortLedger(PortLedgerQueryDto query);
     R diagnosePort(Long nodeId, Integer port);
+    int cleanupDomainRoutesForNode(Long nodeId);
     void processLeaseLifecycle();
 }

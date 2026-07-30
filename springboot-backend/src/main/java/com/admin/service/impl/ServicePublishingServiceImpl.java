@@ -13,6 +13,7 @@ import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.ConnectorInstallCommandUtil;
+import com.admin.common.utils.DirectServiceTargetUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.PublishedServiceTargetUtil;
@@ -473,16 +474,6 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R createDomainRoute(DomainRouteCreateDto dto) {
         portAllocationLockMapper.lockForUpdate();
         jdbcTemplate.queryForObject("SELECT id FROM service_publish_lock WHERE id=1 FOR UPDATE", Integer.class);
-        PublishedService mapping = publishedServiceMapper.selectById(dto.getPublishedServiceId());
-        if (mapping == null || !"active".equals(mapping.getState())
-                || (!isAdmin() && !Objects.equals(mapping.getUserId(), currentUserId()))) {
-            return R.err("内网映射不存在、不可用或无权访问");
-        }
-        PortPool pool = poolMapper.selectById(mapping.getPoolId());
-        if (pool == null || pool.getStatus() == 0) return R.err("映射对应的端口资源已停用");
-        Node mappingNode = nodeMapper.selectById(pool.getNodeId());
-        if (mappingNode == null) return R.err("映射对应的公网节点不存在");
-
         String ingressMode = StringUtils.defaultIfBlank(dto.getIngressMode(), "passthrough").toLowerCase(Locale.ROOT);
         if (!List.of("passthrough", "managed_https").contains(ingressMode)) {
             return R.err("不支持的域名入口模式");
@@ -493,16 +484,49 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (dto.getEntryNodeId() != null && !isAdmin()) {
             return R.err("只有管理员可以选择独立的域名入口节点");
         }
-        Node requestedNode = dto.getEntryNodeId() == null ? mappingNode : nodeMapper.selectById(dto.getEntryNodeId());
+
+        String backendType = StringUtils.defaultIfBlank(dto.getBackendType(), "mapping").toLowerCase(Locale.ROOT);
+        if (!List.of("mapping", "direct").contains(backendType)) return R.err("不支持的后端类型");
+        PublishedService mapping = null;
+        PortPool pool = null;
+        Node backendNode;
+        if ("mapping".equals(backendType)) {
+            mapping = publishedServiceMapper.selectById(dto.getPublishedServiceId());
+            if (mapping == null || !"active".equals(mapping.getState())
+                    || (!isAdmin() && !Objects.equals(mapping.getUserId(), currentUserId()))) {
+                return R.err("内网映射不存在、不可用或无权访问");
+            }
+            pool = poolMapper.selectById(mapping.getPoolId());
+            if (pool == null || pool.getStatus() == 0) return R.err("映射对应的端口资源已停用");
+            backendNode = nodeMapper.selectById(pool.getNodeId());
+            if (backendNode == null) return R.err("映射对应的公网节点不存在");
+        } else {
+            if (!isAdmin()) return R.err("节点本机服务发布仅允许管理员配置");
+            if (!"managed_https".equals(ingressMode)) return R.err("节点本机服务当前仅支持面板托管 HTTPS");
+            backendNode = dto.getBackendNodeId() == null ? null : nodeMapper.selectById(dto.getBackendNodeId());
+            if (backendNode == null) return R.err("后端节点不存在");
+            if (dto.getBackendPort() == null) return R.err("后端端口不能为空");
+            if (!DirectServiceTargetUtil.validListenerHost(dto.getBackendHost())) return R.err("后端监听地址格式不正确");
+            String backendScheme = StringUtils.defaultIfBlank(dto.getBackendScheme(), "http").toLowerCase(Locale.ROOT);
+            if (!List.of("http", "https").contains(backendScheme)) return R.err("后端协议只支持 HTTP 或 HTTPS");
+        }
+
+        Node requestedNode = dto.getEntryNodeId() == null ? backendNode : nodeMapper.selectById(dto.getEntryNodeId());
         if (requestedNode == null) return R.err("所选域名入口节点不存在");
         final String domain;
         final String pathPrefix;
+        final String backendPath;
         try {
             domain = "managed_https".equals(ingressMode)
                     ? dnsProviderService.normalizeDomain(dto.getDnsZoneId(), dto.getDomain())
                     : SniDomainUtil.normalizeDomain(dto.getDomain());
             pathPrefix = "managed_https".equals(ingressMode)
                     ? SniDomainUtil.normalizePathPrefix(dto.getPathPrefix()) : "/";
+            backendPath = "managed_https".equals(ingressMode)
+                    ? SniDomainUtil.normalizeBackendPath(dto.getBackendPath()) : "/";
+            if ("direct".equals(backendType)) {
+                DirectServiceTargetUtil.resolve(requestedNode, backendNode, dto.getBackendHost(), dto.getBackendPort());
+            }
         } catch (IllegalArgumentException e) {
             return R.err(e.getMessage());
         }
@@ -531,6 +555,13 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         Long entryNodeId = existingEntry == null ? requestedNode.getId() : existingEntry.getNodeId();
         Node entryNode = nodeMapper.selectById(entryNodeId);
         if (entryNode == null) return R.err("域名入口节点不存在");
+        if ("direct".equals(backendType)) {
+            try {
+                DirectServiceTargetUtil.resolve(entryNode, backendNode, dto.getBackendHost(), dto.getBackendPort());
+            } catch (IllegalArgumentException e) {
+                return R.err(e.getMessage());
+            }
+        }
         if (!WebSocketServer.isNodeOnline(entryNodeId)) return R.err("公网节点离线，暂时不能配置域名入口");
         if ("managed_https".equals(ingressMode)
                 && !AgentVersionUtil.isAtLeast(entryNode.getVersion(), MIN_MANAGED_HTTPS_AGENT_VERSION)) {
@@ -551,13 +582,21 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setName(dto.getName().trim());
         route.setDomain(domain);
         route.setPathPrefix(pathPrefix);
-        route.setPublishedServiceId(mapping.getId());
+        route.setPublishedServiceId(mapping == null ? null : mapping.getId());
+        route.setBackendType(backendType);
+        route.setBackendNodeId("direct".equals(backendType) ? backendNode.getId() : null);
+        route.setBackendHost("direct".equals(backendType) ? dto.getBackendHost().trim() : null);
+        route.setBackendPort("direct".equals(backendType) ? dto.getBackendPort() : null);
+        route.setBackendScheme("direct".equals(backendType)
+                ? StringUtils.defaultIfBlank(dto.getBackendScheme(), "http").toLowerCase(Locale.ROOT) : "http");
+        route.setBackendPath(backendPath);
         route.setNodeId(entryNodeId);
         route.setListenPort(dto.getListenPort());
         route.setServiceName(existingEntry == null ? domainIngressName(entryNodeId, dto.getListenPort()) : existingEntry.getServiceName());
         route.setIngressMode(ingressMode);
         route.setDnsZoneId("managed_https".equals(ingressMode) ? dto.getDnsZoneId() : null);
         route.setState("managed_https".equals(ingressMode) ? "certificate_pending" : "provisioning");
+        route.setHealthState("pending");
         route.setCreatedTime(now);
         route.setUpdatedTime(now);
         try {
@@ -660,6 +699,21 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R diagnosePort(Long nodeId, Integer port) {
         if (nodeId == null || port == null || port < 1 || port > 65535) return R.err("节点和端口参数不正确");
         return R.ok(portLedgerService.diagnose(nodeId, port));
+    }
+
+    @Override
+    public int cleanupDomainRoutesForNode(Long nodeId) {
+        List<DomainRoute> routes = domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
+                .ne("state", "deleted")
+                .and(q -> q.eq("node_id", nodeId).or().eq("backend_node_id", nodeId)));
+        for (DomainRoute route : routes) {
+            route.setState("delete_pending");
+            route.setLastError("关联节点正在删除，等待清理域名入口");
+            route.setUpdatedTime(System.currentTimeMillis());
+            domainRouteMapper.updateById(route);
+            cleanupDomainRoute(route);
+        }
+        return routes.size();
     }
 
     @Override
@@ -767,16 +821,20 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
         PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
         InternalConnector connector = mapping == null ? null : connectorMapper.selectById(mapping.getConnectorId());
+        Node backendNode = route.getBackendNodeId() == null ? null : nodeMapper.selectById(route.getBackendNodeId());
         route.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         route.setOwnerRoleId(owner == null ? null : owner.getRoleId());
         route.setNodeName(node == null ? "节点已删除" : node.getName());
         route.setNodeOnline(node != null && WebSocketServer.isNodeOnline(node.getId()));
         route.setPublicHost(node == null ? null : StringUtils.firstNonBlank(node.getServerIp(), node.getIp()));
         route.setMappingPublicHost(pool == null ? null : pool.getPublicHost());
-        route.setMappingName(mapping == null ? "映射已删除" : mapping.getName());
-        route.setMappingState(mapping == null ? "deleted" : mapping.getState());
+        boolean direct = "direct".equals(route.getBackendType());
+        route.setMappingName(direct ? "节点本机服务" : mapping == null ? "映射已删除" : mapping.getName());
+        route.setMappingState(direct ? "active" : mapping == null ? "deleted" : mapping.getState());
         route.setMappingPublicPort(mapping == null ? null : mapping.getPublicPort());
         route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
+        route.setBackendNodeName(backendNode == null ? null : backendNode.getName());
+        route.setBackendNodeOnline(backendNode != null && WebSocketServer.isNodeOnline(backendNode.getId()));
         if (route.getCertificateId() != null) {
             List<Map<String, Object>> certificates = jdbcTemplate.queryForList(
                     "SELECT state,expires_at AS expiresAt,issuer FROM managed_certificate WHERE id=?", route.getCertificateId());
@@ -797,14 +855,23 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
                 .and(q -> q.eq("ingress_mode", "passthrough").or().isNull("ingress_mode"))
                 .in("state", "active", "provisioning").orderByAsc("created_time"));
         for (DomainRoute route : routes) {
-            PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
-            PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
-            if (mapping == null || pool == null || mapping.getPublicPort() == null) continue;
             Node entryNode = nodeMapper.selectById(route.getNodeId());
-            Node mappingNode = nodeMapper.selectById(pool.getNodeId());
-            if (entryNode == null || mappingNode == null) continue;
-            targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), null,
-                    PublishedServiceTargetUtil.resolve(entryNode, mappingNode, pool, mapping.getPublicPort())));
+            if (entryNode == null) continue;
+            if ("direct".equals(route.getBackendType())) {
+                Node backendNode = nodeMapper.selectById(route.getBackendNodeId());
+                if (backendNode == null || route.getBackendPort() == null) continue;
+                targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), null,
+                        DirectServiceTargetUtil.resolve(entryNode, backendNode, route.getBackendHost(), route.getBackendPort()),
+                        route.getBackendScheme(), route.getBackendPath()));
+            } else {
+                PublishedService mapping = publishedServiceMapper.selectById(route.getPublishedServiceId());
+                PortPool pool = mapping == null ? null : poolMapper.selectById(mapping.getPoolId());
+                if (mapping == null || pool == null || mapping.getPublicPort() == null) continue;
+                Node mappingNode = nodeMapper.selectById(pool.getNodeId());
+                if (mappingNode == null) continue;
+                targets.add(new SniRouteTargetDto(route.getId(), route.getDomain(), null,
+                        PublishedServiceTargetUtil.resolve(entryNode, mappingNode, pool, mapping.getPublicPort())));
+            }
         }
         if (targets.isEmpty()) return GostUtil.DeleteDomainIngress(nodeId, serviceName);
         return GostUtil.ConfigureDomainIngress(nodeId, serviceName, "", listenPort, targets, update);

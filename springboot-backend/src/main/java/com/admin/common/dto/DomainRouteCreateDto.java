@@ -18,8 +18,23 @@ public class DomainRouteCreateDto {
     @Size(max = 253, message = "域名不能超过253个字符")
     private String domain;
 
-    @NotNull(message = "内网映射不能为空")
     private Long publishedServiceId;
+
+    private String backendType = "mapping";
+
+    private Long backendNodeId;
+
+    @Size(max = 128, message = "后端监听地址不能超过128个字符")
+    private String backendHost;
+
+    @Min(value = 1, message = "后端端口不能小于1")
+    @Max(value = 65535, message = "后端端口不能大于65535")
+    private Integer backendPort;
+
+    private String backendScheme = "http";
+
+    @Size(max = 255, message = "后端根路径不能超过255个字符")
+    private String backendPath = "/";
 
     private Long entryNodeId;
 

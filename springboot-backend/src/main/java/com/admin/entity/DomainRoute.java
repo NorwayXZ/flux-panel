@@ -16,6 +16,12 @@ public class DomainRoute implements Serializable {
     private String domain;
     private String pathPrefix;
     private Long publishedServiceId;
+    private String backendType;
+    private Long backendNodeId;
+    private String backendHost;
+    private Integer backendPort;
+    private String backendScheme;
+    private String backendPath;
     private Long nodeId;
     private Integer listenPort;
     private String serviceName;
@@ -27,6 +33,11 @@ public class DomainRoute implements Serializable {
     private String lastError;
     private Long createdTime;
     private Long updatedTime;
+    private String healthState;
+    private Integer healthStatusCode;
+    private Long healthLatencyMs;
+    private Long healthCheckedAt;
+    private String healthError;
 
     @TableField(exist = false)
     private String ownerUserName;
@@ -48,6 +59,10 @@ public class DomainRoute implements Serializable {
     private Integer mappingPublicPort;
     @TableField(exist = false)
     private Boolean connectorOnline;
+    @TableField(exist = false)
+    private String backendNodeName;
+    @TableField(exist = false)
+    private Boolean backendNodeOnline;
     @TableField(exist = false)
     private String certificateState;
     @TableField(exist = false)

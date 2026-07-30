@@ -124,9 +124,11 @@ public class TopologyService {
         String filter = admin ? "" : " WHERE r.user_id=" + userId;
         List<Map<String, Object>> routes = jdbcTemplate.queryForList(
                 "SELECT r.id,r.user_id AS userId,u.user,r.name,r.domain,r.state,r.ingress_mode AS ingressMode,r.listen_port AS listenPort,"
-                        + "r.node_id AS nodeId,p.id AS mappingId,p.name AS mappingName,p.state AS mappingState,p.target_host AS targetHost,"
+                        + "r.node_id AS nodeId,r.backend_type AS backendType,r.backend_node_id AS backendNodeId,"
+                        + "r.backend_host AS backendHost,r.backend_port AS backendPort,r.backend_scheme AS backendScheme,r.health_state AS healthState,"
+                        + "p.id AS mappingId,p.name AS mappingName,p.state AS mappingState,p.target_host AS targetHost,"
                         + "p.target_port AS targetPort,p.connector_id AS connectorId,c.name AS connectorName,cert.state AS certificateState "
-                        + "FROM domain_route r JOIN published_service p ON p.id=r.published_service_id "
+                        + "FROM domain_route r LEFT JOIN published_service p ON p.id=r.published_service_id "
                         + "LEFT JOIN internal_connector c ON c.id=p.connector_id LEFT JOIN user u ON u.id=r.user_id "
                         + "LEFT JOIN managed_certificate cert ON cert.id=r.certificate_id" + filter
                         + (filter.isEmpty() ? " WHERE" : " AND") + " r.state<>'deleted' ORDER BY r.created_time DESC");
@@ -135,9 +137,10 @@ public class TopologyService {
             long routeId = number(route.get("id"));
             int ownerId = intValue(route.get("userId"));
             long nodeId = number(route.get("nodeId"));
-            long mappingId = number(route.get("mappingId"));
-            long connectorId = number(route.get("connectorId"));
-            String routeStatus = domainRouteStatus(route, nodeId, connectorId);
+            boolean direct = "direct".equals(Objects.toString(route.get("backendType")));
+            long connectorId = nullableNumber(route.get("connectorId"), -1);
+            long backendNodeId = nullableNumber(route.get("backendNodeId"), -1);
+            String routeStatus = domainRouteStatus(route, nodeId, connectorId, backendNodeId, direct);
             String userNode = addUser(graph, ownerId, Objects.toString(route.get("user"), "用户" + ownerId));
             String domainNode = "domain-route:" + routeId;
             graph.node(new TopologyNode(domainNode, "domain", Objects.toString(route.get("domain")),
@@ -146,6 +149,21 @@ public class TopologyService {
             graph.edge(userNode, domainNode, "域名", routeStatus, true);
             String publicNode = addPublicNode(graph, nodeId, nodeRows.get(nodeId));
             graph.edge(domainNode, publicNode, "入口 :" + route.get("listenPort"), nodeStatus(nodeId), true);
+            if (direct) {
+                String backendPublicNode = addPublicNode(graph, backendNodeId, nodeRows.get(backendNodeId));
+                if (backendNodeId != nodeId) {
+                    graph.edge(publicNode, backendPublicNode, "节点直连", nodeStatus(backendNodeId), true);
+                }
+                String serviceNode = "node-service:" + routeId;
+                String health = normalizeStatus(Objects.toString(route.get("healthState"), "pending"));
+                graph.node(new TopologyNode(serviceNode, "service", Objects.toString(route.get("name"), "节点本机服务"),
+                        Objects.toString(route.get("backendScheme"), "http") + "://"
+                                + Objects.toString(route.get("backendHost"), "127.0.0.1") + ":" + route.get("backendPort"),
+                        health, "/service-publishing", ownerId));
+                graph.edge(backendPublicNode, serviceNode, "本机 Web 服务", health, true);
+                continue;
+            }
+            long mappingId = number(route.get("mappingId"));
             String mappingNode = "mapping:" + mappingId;
             String mappingStatus = "active".equals(route.get("mappingState")) ? "healthy" : "offline";
             graph.node(new TopologyNode(mappingNode, "mapping", Objects.toString(route.get("mappingName")),
@@ -223,10 +241,17 @@ public class TopologyService {
         return new ArrayList<>(path);
     }
 
-    private String domainRouteStatus(Map<String, Object> route, long nodeId, long connectorId) {
+    private String domainRouteStatus(Map<String, Object> route, long nodeId, long connectorId,
+                                     long backendNodeId, boolean direct) {
         String state = Objects.toString(route.get("state"));
         if (List.of("certificate_failed", "deployment_failed", "delete_pending").contains(state)) return "failed";
-        if (!WebSocketServer.isNodeOnline(nodeId) || !WebSocketServer.isConnectorOnline(connectorId)) return "offline";
+        if (!WebSocketServer.isNodeOnline(nodeId)) return "offline";
+        if (direct) {
+            if (backendNodeId < 0 || !WebSocketServer.isNodeOnline(backendNodeId)) return "offline";
+            if ("unhealthy".equals(route.get("healthState"))) return "failed";
+        } else if (connectorId < 0 || !WebSocketServer.isConnectorOnline(connectorId)) {
+            return "offline";
+        }
         if (List.of("renewal_failed", "deployment_failed").contains(Objects.toString(route.get("certificateState")))) return "degraded";
         return "active".equals(state) ? "healthy" : "degraded";
     }
