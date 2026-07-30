@@ -1,3 +1,9 @@
+## 2.34.5 Compressed XUI root-path rewrite correction
+
+- Requests an uncompressed backend response when a managed HTTPS route rewrites the backend root path, allowing HTML, CSS, JavaScript, and JSON body paths to be rewritten reliably for normal browsers that advertise gzip support.
+- Fixes XUI domain routes that returned HTTP 200 but rendered a blank page because their compressed HTML still referenced the private backend root path.
+- Existing domains, DNS records, certificates, tunnels, forwards, mappings, and XUI configuration remain unchanged.
+
 ## 2.34.4 Agent release alignment and health cleanup
 
 - Aligns the panel and Agent release versions so the self-updater downloads Agent `2.34.4` from Release `2.34.4`, preventing a valid update from being rejected after resolving an older same-named Agent release.

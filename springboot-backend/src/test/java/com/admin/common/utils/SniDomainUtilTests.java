@@ -72,5 +72,6 @@ class SniDomainUtilTests {
         assertEquals("^/(.*)$", node.getJSONObject("http").getJSONArray("rewriteURL").getJSONObject(0).getString("match"));
         assertEquals("/abc123/$1", node.getJSONObject("http").getJSONArray("rewriteURL").getJSONObject(0).getString("replacement"));
         assertEquals("/abc123", node.getJSONObject("http").getJSONObject("responseHeader").getString("@cloudnest.internalPath"));
+        assertEquals("identity", node.getJSONObject("http").getJSONObject("requestHeader").getString("Accept-Encoding"));
     }
 }

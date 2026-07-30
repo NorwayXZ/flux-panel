@@ -119,6 +119,8 @@ public final class SniDomainUtil {
             requestHeaders.put("X-Forwarded-Proto", "https");
             http.put("requestHeader", requestHeaders);
             if (!backendPath.equals(externalPath)) {
+                // Body path rewriting requires an uncompressed backend response.
+                requestHeaders.put("Accept-Encoding", "identity");
                 JSONArray rewriteURL = new JSONArray();
                 JSONObject rewrite = new JSONObject();
                 rewrite.put("match", requestPathPattern(externalPath));
