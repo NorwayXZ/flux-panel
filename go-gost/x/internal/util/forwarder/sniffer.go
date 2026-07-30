@@ -38,6 +38,7 @@ import (
 	xstats "github.com/go-gost/x/observer/stats"
 	stats_wrapper "github.com/go-gost/x/observer/stats/wrapper"
 	xrecorder "github.com/go-gost/x/recorder"
+	"github.com/go-gost/x/telemetry"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
 	"golang.org/x/time/rate"
@@ -140,6 +141,7 @@ func (h *Sniffer) HandleHTTP(ctx context.Context, conn net.Conn, opts ...HandleO
 	}
 
 	ro := ho.RecorderObject
+	telemetry.ObserveHost(ro.Service, req.Host)
 	ro.HTTP = &xrecorder.HTTPRecorderObject{
 		Host:   req.Host,
 		Proto:  req.Proto,
@@ -154,6 +156,7 @@ func (h *Sniffer) HandleHTTP(ctx context.Context, conn net.Conn, opts ...HandleO
 
 	if clientIP := xhttp.GetClientIP(req); clientIP != nil {
 		ro.ClientIP = clientIP.String()
+		telemetry.ObserveSource(ro.Service, ro.ClientIP, "forwarded")
 	}
 	{
 		clientAddr := ro.RemoteAddr
@@ -842,6 +845,7 @@ func (h *Sniffer) HandleTLS(ctx context.Context, conn net.Conn, opts ...HandleOp
 	ctx = ctxvalue.ContextWithClientAddr(ctx, ctxvalue.ClientAddr(ro.RemoteAddr))
 
 	host := clientHello.ServerName
+	telemetry.ObserveHost(ro.Service, host)
 	if host != "" {
 		if _, _, err := net.SplitHostPort(host); err != nil {
 			host = net.JoinHostPort(strings.Trim(host, "[]"), "443")

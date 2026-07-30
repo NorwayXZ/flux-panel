@@ -14,6 +14,7 @@ import com.admin.service.HomeProxyService;
 import com.admin.service.NatTraversalService;
 import com.admin.service.LanDiscoveryService;
 import com.admin.service.ServicePublishingService;
+import com.admin.service.ServiceTelemetryService;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,6 +40,9 @@ public class ServicePublishingController {
 
     @Resource
     private LanDiscoveryService lanDiscoveryService;
+
+    @Resource
+    private ServiceTelemetryService serviceTelemetryService;
 
     @LogAnnotation @PostMapping("/home-proxy/create")
     public R createHomeProxy(@Validated @RequestBody com.admin.common.dto.HomeProxyRouteCreateDto dto) {
@@ -158,6 +162,19 @@ public class ServicePublishingController {
     @LogAnnotation @PostMapping("/service/list")
     public R listServices() {
         return service.listPublishedServices();
+    }
+
+    @PostMapping("/telemetry/summary")
+    public R telemetrySummary() {
+        return serviceTelemetryService.summaries();
+    }
+
+    @PostMapping("/telemetry/detail")
+    public R telemetryDetail(@RequestBody Map<String, Object> params) {
+        Object type = params.get("resourceType");
+        Object id = params.get("resourceId");
+        if (type == null || id == null) return R.err("缺少服务类型或服务编号");
+        return serviceTelemetryService.detail(type.toString(), Long.valueOf(id.toString()));
     }
 
     @LogAnnotation @PostMapping("/service/renew")

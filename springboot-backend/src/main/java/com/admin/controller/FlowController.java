@@ -7,11 +7,14 @@ import com.admin.common.lang.R;
 import com.admin.service.UserQuotaService;
 import com.admin.service.PrivateProxyService;
 import com.admin.service.SmartEntryService;
+import com.admin.service.ServiceTelemetryService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.TrafficBillingUtil;
 import com.admin.entity.*;
+import com.admin.mapper.InternalConnectorMapper;
+import com.admin.mapper.PublishedServiceMapper;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
@@ -77,6 +80,15 @@ public class FlowController extends BaseController {
 
     @Resource
     SmartEntryService smartEntryService;
+
+    @Resource
+    ServiceTelemetryService serviceTelemetryService;
+
+    @Resource
+    InternalConnectorMapper internalConnectorMapper;
+
+    @Resource
+    PublishedServiceMapper publishedServiceMapper;
 
     /**
      * 加密消息包装器
@@ -153,7 +165,11 @@ public class FlowController extends BaseController {
     public String uploadFlowData(@RequestBody String rawData, String secret) {
         // 1. 验证节点权限
         Node reportingNode = nodeService.getOne(new QueryWrapper<Node>().eq("secret", secret).last("LIMIT 1"));
-        if (reportingNode == null) {
+        InternalConnector reportingConnector = reportingNode == null
+                ? internalConnectorMapper.selectOne(new QueryWrapper<InternalConnector>()
+                    .eq("secret", secret).eq("status", 1).last("LIMIT 1"))
+                : null;
+        if (reportingNode == null && reportingConnector == null) {
             return SUCCESS_RESPONSE;
         }
 
@@ -165,11 +181,25 @@ public class FlowController extends BaseController {
         if (Objects.equals(flowDataList.getN(), "web_api")) {
             return SUCCESS_RESPONSE;
         }
+        if (reportingConnector != null && !connectorOwnsService(reportingConnector, flowDataList.getN())) {
+            return SUCCESS_RESPONSE;
+        }
 
         // 记录日志
         log.info("节点上报流量数据{}", flowDataList);
         // 4. 处理流量数据
-        return processFlowData(flowDataList, reportingNode.getId());
+        // Connector IDs use a negative namespace so they cannot collide with public node IDs.
+        Long reporterId = reportingNode != null ? reportingNode.getId() : -reportingConnector.getId();
+        return processFlowData(flowDataList, reporterId);
+    }
+
+    private boolean connectorOwnsService(InternalConnector connector, String serviceName) {
+        if (connector == null || serviceName == null || !serviceName.matches("^publish_\\d+_rtcp$")) return false;
+        String id = serviceName.substring("publish_".length(), serviceName.length() - "_rtcp".length());
+        PublishedService service = publishedServiceMapper.selectById(id);
+        return service != null && Objects.equals(service.getConnectorId(), connector.getId())
+                && Objects.equals(service.getServiceName(), serviceName)
+                && !List.of("released", "deleted").contains(service.getState());
     }
 
     /**
@@ -229,8 +259,13 @@ public class FlowController extends BaseController {
     private String processFlowData(FlowDto flowDataList, Long reportingNodeId) {
         String serviceName = flowDataList.getN();
         if (serviceName == null || serviceName.isBlank()) return SUCCESS_RESPONSE;
+        serviceTelemetryService.record(reportingNodeId, flowDataList);
+        if (reportingNodeId < 0) return SUCCESS_RESPONSE;
         if (serviceName.startsWith("private-proxy-")) {
             privateProxyService.recordTraffic(serviceName, flowDataList.getD(), flowDataList.getU());
+            return SUCCESS_RESPONSE;
+        }
+        if (!serviceName.matches("^\\d+_\\d+_\\d+$")) {
             return SUCCESS_RESPONSE;
         }
         String[] serviceIds = parseServiceName(serviceName);

@@ -8,6 +8,9 @@ import { Spinner } from '@heroui/spinner';
 import { Tab, Tabs } from '@heroui/tabs';
 import {
   Clock3,
+  Activity,
+  ArrowDown,
+  ArrowUp,
   Copy,
   Database,
   ExternalLink,
@@ -43,6 +46,8 @@ import {
   getInternalConnectors,
   getNodeList,
   getPublishedServices,
+  getServiceTelemetryDetail,
+  getServiceTelemetrySummary,
   getPublishingPortPools,
   getDnsZoneOptions,
   updateDomainRouteBackend,
@@ -53,6 +58,7 @@ import {
   type DomainRoute,
   type ManagedCertificate,
   type PublishedService,
+  type ServiceTelemetry,
   type PublishingPortPool,
   type DnsZoneOption,
 } from '@/api';
@@ -83,6 +89,15 @@ const stateMeta: Record<string, { label: string; color: 'success' | 'warning' | 
 const formatTime = (value?: number) => value
   ? new Date(value).toLocaleString('zh-CN', { hour12: false })
   : '无限制';
+
+const formatBytes = (value = 0) => {
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const formatSpeed = (value = 0) => `${formatBytes(value)}/s`;
 
 const platformMeta: Record<ConnectorPlatform, { label: string; commandLabel: string }> = {
   linux: { label: 'Linux', commandLabel: '终端命令' },
@@ -148,6 +163,9 @@ export default function ServicePublishingPage() {
   const [pools, setPools] = useState<PublishingPortPool[]>([]);
   const [dnsZones, setDnsZones] = useState<DnsZoneOption[]>([]);
   const [entryNodes, setEntryNodes] = useState<EntryNodeOption[]>([]);
+  const [telemetry, setTelemetry] = useState<Record<string, ServiceTelemetry>>({});
+  const [telemetryDetail, setTelemetryDetail] = useState<ServiceTelemetry | null>(null);
+  const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [serviceModal, setServiceModal] = useState(false);
   const [connectorModal, setConnectorModal] = useState(false);
   const [commandModal, setCommandModal] = useState(false);
@@ -197,7 +215,42 @@ export default function ServicePublishingPage() {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  const loadTelemetry = async () => {
+    const res = await getServiceTelemetrySummary();
+    if (res.code !== 0) return;
+    const next: Record<string, ServiceTelemetry> = {};
+    for (const item of res.data || []) next[`${item.resourceType}:${item.resourceId}`] = item;
+    setTelemetry(next);
+  };
+
+  useEffect(() => { loadData(); loadTelemetry(); }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && ['services', 'domains'].includes(activeView)) loadTelemetry();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (!telemetryDetail) return;
+    const resourceType = telemetryDetail.resourceType;
+    const resourceId = telemetryDetail.resourceId;
+    const timer = window.setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      const res = await getServiceTelemetryDetail(resourceType, resourceId);
+      if (res.code === 0) setTelemetryDetail(res.data);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [telemetryDetail?.resourceType, telemetryDetail?.resourceId]);
+
+  const openTelemetry = async (resourceType: 'service' | 'domain', resourceId: number) => {
+    setTelemetryLoading(true);
+    const res = await getServiceTelemetryDetail(resourceType, resourceId);
+    setTelemetryLoading(false);
+    if (res.code !== 0) return toast.error(res.msg || '读取流量详情失败');
+    setTelemetryDetail(res.data);
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -511,6 +564,7 @@ export default function ServicePublishingPage() {
             <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
               {services.map(service => {
                 const meta = stateMeta[service.state] || { label: service.state, color: 'default' as const };
+                const stats = telemetry[`service:${service.id}`];
                 return (
                   <article key={service.id} className="rounded-lg border border-divider bg-content1 p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -530,8 +584,14 @@ export default function ServicePublishingPage() {
                       <div><dt className="text-default-500">内网接入端</dt><dd className="mt-1 flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${service.connectorOnline ? 'bg-success' : 'bg-danger'}`} />{service.connectorName}</dd></div>
                       <div className="col-span-2"><dt className="text-default-500">有效期</dt><dd className="mt-1">{service.permanent ? '永久有效' : formatTime(service.expiresAt)}</dd></div>
                     </dl>
+                    <div className="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-divider bg-divider text-sm">
+                      <div className="min-w-0 bg-default-50 px-3 py-2"><div className="text-xs text-default-500">当前连接</div><div className="mt-1 truncate font-medium">{stats?.currentConnections || 0}</div></div>
+                      <div className="min-w-0 bg-default-50 px-3 py-2"><div className="text-xs text-default-500">实时速率</div><div className="mt-1 truncate font-medium" title={`上传 ${formatSpeed(stats?.uploadSpeed)} · 下载 ${formatSpeed(stats?.downloadSpeed)}`}>↑ {formatSpeed(stats?.uploadSpeed)} · ↓ {formatSpeed(stats?.downloadSpeed)}</div></div>
+                      <div className="min-w-0 bg-default-50 px-3 py-2"><div className="text-xs text-default-500">今日双向</div><div className="mt-1 truncate font-medium">{formatBytes(stats?.todayTotal)}</div></div>
+                    </div>
                     {service.lastError && <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">{service.lastError}</div>}
                     <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-divider pt-3">
+                      <Button size="sm" variant="light" startContent={<Activity size={15} />} onPress={() => openTelemetry('service', service.id)}>流量详情</Button>
                       {service.state === 'active' && <Button size="sm" variant="flat" color="primary" startContent={<Globe2 size={15} />} onPress={() => bindDomain(service)}>绑定域名</Button>}
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="flat" startContent={<Clock3 size={15} />} onPress={() => renew(service.id)}>续期 24 小时</Button>}
                       {service.state === 'active' && !service.permanent && <Button size="sm" variant="light" color="primary" onPress={() => makePermanent(service.id)}>改为永久</Button>}
@@ -553,11 +613,12 @@ export default function ServicePublishingPage() {
             </div>
           ) : (
             <div className="overflow-hidden rounded-lg border border-divider">
-              <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
-                <span>域名</span><span>公网入口</span><span>后端映射</span><span>状态</span><span>操作</span>
+              <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
+                <span>域名</span><span>公网入口</span><span>后端映射</span><span>实时访问</span><span>状态</span><span>操作</span>
               </div>
               {domainRoutes.map(route => {
                 const managedHttps = route.ingressMode === 'managed_https';
+                const stats = telemetry[`domain:${route.id}`];
                 const status = route.state === 'delete_pending'
                   ? { label: '待删除', color: 'warning' as const, detail: route.lastError || '等待公网节点处理' }
                   : route.certificateState === 'dns_propagating'
@@ -582,7 +643,7 @@ export default function ServicePublishingPage() {
                             ? `健康 · ${route.healthStatusCode || '--'} · ${route.healthLatencyMs ?? '--'} ms`
                             : managedHttps ? `HTTPS 有效至 ${formatTime(route.certificateExpiresAt)}` : 'TLS 透传正常' };
                 return (
-                  <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_auto] lg:items-center">
+                  <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{route.name}</span><Chip size="sm" variant="flat" color={managedHttps ? 'success' : 'primary'}>{managedHttps ? '托管 HTTPS' : 'TLS 透传'}</Chip></div>
                       <a className="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline" href={`https://${route.domain}${route.listenPort === 443 ? '' : `:${route.listenPort}`}${managedHttps ? route.pathPrefix || '/' : ''}`} target="_blank" rel="noreferrer">
@@ -600,8 +661,10 @@ export default function ServicePublishingPage() {
                         ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}`
                         : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
                     </div>
+                    <div className="min-w-0 text-sm"><div>{stats?.currentConnections || 0} 个连接</div><div className="mt-1 truncate text-xs text-default-500">↑ {formatSpeed(stats?.uploadSpeed)} · ↓ {formatSpeed(stats?.downloadSpeed)}</div></div>
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
                     <div className="flex justify-end gap-1">
+                      <Button isIconOnly size="sm" variant="light" aria-label="流量详情" title="流量详情" onPress={() => openTelemetry('domain', route.id)}><Activity size={16} /></Button>
                       {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑后端" title="编辑后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
                       {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
                     </div>
@@ -673,6 +736,51 @@ export default function ServicePublishingPage() {
           </div>
         </Tab>
       </Tabs>
+
+      <Modal isOpen={telemetryLoading || Boolean(telemetryDetail)} onOpenChange={open => !open && setTelemetryDetail(null)} size="3xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader className="flex items-center gap-2"><Activity size={19} />连接与流量详情</ModalHeader>
+          <ModalBody className="gap-5">
+            {telemetryLoading && !telemetryDetail ? <div className="flex min-h-48 items-center justify-center"><Spinner /></div> : telemetryDetail && (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-divider pb-4">
+                  <div className="min-w-0"><h3 className="truncate text-lg font-semibold">{telemetryDetail.name}</h3><div className="mt-1 text-sm text-default-500">创建者 · {telemetryDetail.ownerUserName} · {formatTime(telemetryDetail.createdTime)}</div></div>
+                  <Chip size="sm" variant="flat" color={telemetryDetail.updatedAt && Date.now() - telemetryDetail.updatedAt < 20000 ? 'success' : 'default'}>{telemetryDetail.updatedAt ? `更新于 ${formatTime(telemetryDetail.updatedAt)}` : '等待 Agent 数据'}</Chip>
+                </div>
+                {telemetryDetail.sharedIngress && <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-700 dark:text-warning-400">该域名与其他域名共用同一 HTTPS 入口。连接数和字节数是入口汇总；下方域名记录用于确认实际访问分布。</div>}
+                {telemetryDetail.sharedTotalsHidden && <div className="rounded-md border border-primary/25 bg-primary/10 px-3 py-2 text-sm text-primary">为保护同一入口下其他用户的数据，普通用户不显示共享入口的汇总连接与流量；域名访问记录仍只展示当前域名。</div>}
+                <section className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-4">
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">当前连接</div><div className="mt-1 text-xl font-semibold">{telemetryDetail.currentConnections}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="flex items-center gap-1 text-xs text-default-500"><ArrowUp size={13} />上传速度</div><div className="mt-1 text-base font-semibold">{formatSpeed(telemetryDetail.uploadSpeed)}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="flex items-center gap-1 text-xs text-default-500"><ArrowDown size={13} />下载速度</div><div className="mt-1 text-base font-semibold">{formatSpeed(telemetryDetail.downloadSpeed)}</div></div>
+                  <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">失败连接</div><div className="mt-1 text-xl font-semibold">{telemetryDetail.failedConnections}</div></div>
+                </section>
+                <section>
+                  <h4 className="text-sm font-semibold">今日流量</h4>
+                  <div className="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-divider bg-divider text-sm">
+                    <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">上传</div><div className="mt-1 font-medium">{formatBytes(telemetryDetail.todayUpload)}</div></div>
+                    <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">下载</div><div className="mt-1 font-medium">{formatBytes(telemetryDetail.todayDownload)}</div></div>
+                    <div className="bg-content1 px-4 py-3"><div className="text-xs text-default-500">双向合计</div><div className="mt-1 font-medium">{formatBytes(telemetryDetail.todayTotal)}</div></div>
+                  </div>
+                </section>
+                <section className="grid gap-5 md:grid-cols-3">
+                  <div className="min-w-0"><h4 className="text-sm font-semibold">最近来源地址</h4><div className="mt-3 overflow-hidden rounded-md border border-divider">
+                    {(telemetryDetail.sources || []).length === 0 ? <div className="px-4 py-8 text-center text-sm text-default-500">暂无来源样本</div> : telemetryDetail.sources?.map(item => <div key={`${item.sourceKind}:${item.value}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t border-divider px-3 py-2 text-sm first:border-t-0"><div className="min-w-0"><div className="truncate font-mono">{item.value}</div><div className="mt-1 text-xs text-default-500">{item.sourceKind === 'forwarded' ? '转发链保留地址' : item.sourceKind === 'real' ? '已确认真实来源' : 'Agent 可见上一跳'}</div></div><div className="text-right"><div>{item.count} 次</div><div className="mt-1 text-xs text-default-500">{formatTime(item.lastSeen)}</div></div></div>)}
+                  </div></div>
+                  <div className="min-w-0"><h4 className="text-sm font-semibold">Top 来源</h4><div className="mt-3 overflow-hidden rounded-md border border-divider">
+                    {(telemetryDetail.topSources || []).length === 0 ? <div className="px-4 py-8 text-center text-sm text-default-500">暂无来源排行</div> : telemetryDetail.topSources?.map(item => <div key={`top:${item.sourceKind}:${item.value}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t border-divider px-3 py-2 text-sm first:border-t-0"><span className="truncate font-mono">{item.value}</span><span>{item.count} 次</span></div>)}
+                  </div></div>
+                  <div className="min-w-0"><h4 className="text-sm font-semibold">访问域名</h4><div className="mt-3 overflow-hidden rounded-md border border-divider">
+                    {(telemetryDetail.domains || []).length === 0 ? <div className="px-4 py-8 text-center text-sm text-default-500">TCP 映射没有域名信息，或尚无 HTTP/SNI 样本</div> : telemetryDetail.domains?.map(item => <div key={item.value} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-t border-divider px-3 py-2 text-sm first:border-t-0"><span className="truncate font-mono">{item.value}</span><span>{item.count} 次</span></div>)}
+                  </div></div>
+                </section>
+                <div className="border-t border-divider pt-3 text-xs leading-5 text-default-500">上传表示服务向访问端发送的数据，下载表示访问端进入服务的数据。UDP 的连接数按会话超时估算；多级 TCP 转发未保留源地址时只显示 Agent 实际看到的上一跳。</div>
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setTelemetryDetail(null)}>关闭</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
 
       <Modal isOpen={domainModal} onOpenChange={setDomainModal} size="2xl" scrollBehavior="inside">
         <ModalContent>

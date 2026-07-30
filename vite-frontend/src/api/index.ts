@@ -54,6 +54,7 @@ export interface AgentUpgradeTask {
   message?: string;
   requestedAt: number;
   updatedAt: number;
+  live?: boolean;
   finishedAt?: number;
 }
 
@@ -779,6 +780,37 @@ export interface PublishedService {
   lastError?: string;
 }
 
+export interface ServiceTelemetrySample {
+  value: string;
+  sourceKind?: 'real' | 'forwarded' | 'previous_hop' | string;
+  count: number;
+  lastSeen: number;
+}
+
+export interface ServiceTelemetry {
+  resourceType: 'service' | 'domain';
+  resourceId: number;
+  serviceName: string;
+  name: string;
+  domain?: string;
+  ownerUserId: number;
+  ownerUserName: string;
+  createdTime: number;
+  currentConnections: number;
+  uploadSpeed: number;
+  downloadSpeed: number;
+  failedConnections: number;
+  todayUpload: number;
+  todayDownload: number;
+  todayTotal: number;
+  updatedAt: number;
+  sharedIngress?: boolean;
+  sharedTotalsHidden?: boolean;
+  sources?: ServiceTelemetrySample[];
+  topSources?: ServiceTelemetrySample[];
+  domains?: ServiceTelemetrySample[];
+}
+
 export interface DomainRoute {
   id: number;
   name: string;
@@ -929,6 +961,10 @@ export const createPublishedService = (data: any) =>
   Network.post<PublishedService>("/service-publishing/service/create", data);
 export const getPublishedServices = () =>
   Network.post<PublishedService[]>("/service-publishing/service/list");
+export const getServiceTelemetrySummary = () =>
+  Network.post<ServiceTelemetry[]>("/service-publishing/telemetry/summary");
+export const getServiceTelemetryDetail = (resourceType: 'service' | 'domain', resourceId: number) =>
+  Network.post<ServiceTelemetry>("/service-publishing/telemetry/detail", { resourceType, resourceId });
 export const renewPublishedService = (id: number, hours?: number, permanent = false) =>
   Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
 export const deletePublishedService = (id: number) =>

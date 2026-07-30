@@ -27,6 +27,7 @@ import (
 	xnet "github.com/go-gost/x/internal/net"
 	xmetrics "github.com/go-gost/x/metrics"
 	xstats "github.com/go-gost/x/observer/stats"
+	"github.com/go-gost/x/telemetry"
 	"github.com/rs/xid"
 )
 
@@ -219,15 +220,18 @@ func (s *defaultService) Serve() error {
 		}
 
 		clientAddr := conn.RemoteAddr().String()
+		sourceKind := "previous_hop"
 		if ca, ok := conn.(xnet.ClientAddr); ok {
 			if addr := ca.ClientAddr(); addr != nil {
 				clientAddr = addr.String()
+				sourceKind = "forwarded"
 			}
 		}
 		clientIP := clientAddr
 		if h, _, _ := net.SplitHostPort(clientAddr); h != "" {
 			clientIP = h
 		}
+		telemetry.ObserveSource(s.name, clientIP, sourceKind)
 
 		sid := xid.New().String()
 		ctx := ctxvalue.ContextWithSid(ctx, ctxvalue.Sid(sid))
@@ -378,11 +382,28 @@ func (s *defaultService) observeStats(ctx context.Context) {
 			}
 
 			isUpdated := st.IsUpdated()
+			if !isUpdated {
+				currentConns := st.Get(stats.KindCurrentConns)
+				if currentConns > 0 {
+					sources, hosts := telemetry.Snapshot(s.name)
+					_, _ = sendTrafficReport(ctx, TrafficReportItem{
+						N: s.name,
+						T: st.Get(stats.KindTotalConns),
+						C: currentConns,
+						E: st.Get(stats.KindTotalErrs),
+						A: time.Now().UnixMilli(),
+						S: sources,
+						H: hosts,
+					})
+				}
+				continue
+			}
 			if isUpdated {
 				inputBytes := st.Get(stats.KindInputBytes)
 				outputBytes := st.Get(stats.KindOutputBytes)
 				totalConns := st.Get(stats.KindTotalConns)
 				currentConns := st.Get(stats.KindCurrentConns)
+				totalErrs := st.Get(stats.KindTotalErrs)
 
 				evs := []observer.Event{
 					xstats.StatsEvent{
@@ -392,16 +413,21 @@ func (s *defaultService) observeStats(ctx context.Context) {
 						CurrentConns: currentConns,
 						InputBytes:   inputBytes,
 						OutputBytes:  outputBytes,
-						TotalErrs:    st.Get(stats.KindTotalErrs),
+						TotalErrs:    totalErrs,
 					},
 				}
-				if outputBytes > 0 || inputBytes > 0 || totalConns > 0 || currentConns > 0 {
+				if outputBytes > 0 || inputBytes > 0 || totalConns > 0 || currentConns > 0 || totalErrs > 0 {
+					sources, hosts := telemetry.Snapshot(s.name)
 					reportItems := TrafficReportItem{
 						N: s.name,
 						U: int64(outputBytes),
 						D: int64(inputBytes),
 						T: totalConns,
 						C: currentConns,
+						E: totalErrs,
+						A: time.Now().UnixMilli(),
+						S: sources,
+						H: hosts,
 					}
 					success, err := sendTrafficReport(ctx, reportItems)
 					if err != nil {

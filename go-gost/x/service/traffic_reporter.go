@@ -13,6 +13,7 @@ import (
 	"github.com/go-gost/x/config"
 	"github.com/go-gost/x/internal/util/crypto"
 	"github.com/go-gost/x/registry"
+	"github.com/go-gost/x/telemetry"
 )
 
 var httpReportURL string
@@ -21,11 +22,15 @@ var httpAESCrypto *crypto.AESCrypto // 新增：HTTP上报加密器
 
 // TrafficReportItem 流量报告项（压缩格式）
 type TrafficReportItem struct {
-	N string `json:"n"` // 服务名（name缩写）
-	U int64  `json:"u"` // 上行流量（up缩写）
-	D int64  `json:"d"` // 下行流量（down缩写）
-	T uint64 `json:"t"` // 累计连接数（total缩写）
-	C uint64 `json:"c"` // 当前连接数（current缩写）
+	N string             `json:"n"`           // 服务名（name缩写）
+	U int64              `json:"u"`           // 上行流量（up缩写）
+	D int64              `json:"d"`           // 下行流量（down缩写）
+	T uint64             `json:"t"`           // 累计连接数（total缩写）
+	C uint64             `json:"c"`           // 当前连接数（current缩写）
+	E uint64             `json:"e,omitempty"` // 累计失败数（errors缩写）
+	A int64              `json:"a,omitempty"` // Agent 采样时间（at缩写）
+	S []telemetry.Sample `json:"s,omitempty"` // 有界来源地址摘要
+	H []telemetry.Sample `json:"h,omitempty"` // 有界域名摘要
 }
 
 func SetHTTPReportURL(addr string, secret string) {
