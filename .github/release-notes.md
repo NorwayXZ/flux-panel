@@ -1,3 +1,10 @@
+## 2.33.2 Reliable DNS-01 propagation checks
+
+- Wait for both Cloudflare and Google public DNS to read the ACME TXT value in two consecutive rounds before triggering Let's Encrypt validation.
+- Show a dedicated DNS propagation state and separate permission, propagation-timeout, and certificate-authority failures.
+- Resume interrupted issuing, renewal, and DNS propagation work after a panel restart.
+- Preserve all active certificates and domain routes during the upgrade.
+
 ## 2.33.1 Fix LAN service discovery on MySQL 8
 
 - Escape the `sensitive` discovery-result column for MySQL 8 compatibility.

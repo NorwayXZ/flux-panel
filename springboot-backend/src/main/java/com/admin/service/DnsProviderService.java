@@ -27,6 +27,7 @@ import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +39,9 @@ import java.util.Objects;
 @Service
 public class DnsProviderService {
     private static final String CF_API = "https://api.cloudflare.com/client/v4";
+    private static final List<String> DNS_OVER_HTTPS_ENDPOINTS = List.of(
+            "https://cloudflare-dns.com/dns-query",
+            "https://dns.google/resolve");
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -224,6 +228,53 @@ public class DnsProviderService {
         ZoneAccess zone = loadZoneAccess(zoneRefId);
         exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records/" + recordId,
                 HttpMethod.DELETE, new HttpEntity<>(headers(zone.token())));
+    }
+
+    public void waitForDnsChallengePropagation(String recordName, String expectedValue, Duration timeout) {
+        waitForDnsChallengePropagation(recordName, expectedValue, timeout, Duration.ofSeconds(3), 2);
+    }
+
+    void waitForDnsChallengePropagation(String recordName, String expectedValue, Duration timeout,
+                                        Duration pollInterval, int requiredConsecutiveRounds) {
+        long deadline = System.nanoTime() + Math.max(1L, timeout.toNanos());
+        int consecutiveRounds = 0;
+        while (System.nanoTime() < deadline) {
+            boolean visibleEverywhere = DNS_OVER_HTTPS_ENDPOINTS.stream()
+                    .allMatch(endpoint -> txtRecordVisible(endpoint, recordName, expectedValue));
+            consecutiveRounds = visibleEverywhere ? consecutiveRounds + 1 : 0;
+            if (consecutiveRounds >= Math.max(1, requiredConsecutiveRounds)) return;
+            try {
+                Thread.sleep(Math.max(1L, pollInterval.toMillis()));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("等待 DNS 同步时任务被中断", e);
+            }
+        }
+        throw new IllegalStateException("DNS 同步超时：TXT 验证记录在 2 分钟内未被公共 DNS 稳定读取，面板将在 15 分钟后自动重试");
+    }
+
+    boolean txtRecordVisible(String endpoint, String recordName, String expectedValue) {
+        try {
+            URI uri = UriComponentsBuilder.fromHttpUrl(endpoint)
+                    .queryParam("name", recordName).queryParam("type", "TXT").build(true).toUri();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.valueOf("application/dns-json")));
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+            JSONObject json = JSON.parseObject(response.getBody());
+            if (json == null || json.getIntValue("Status") != 0) return false;
+            JSONArray answers = json.getJSONArray("Answer");
+            if (answers == null) return false;
+            for (int i = 0; i < answers.size(); i++) {
+                JSONObject answer = answers.getJSONObject(i);
+                if (answer.getIntValue("type") != 16) continue;
+                String value = StringUtils.strip(Objects.toString(answer.get("data"), ""), "\"");
+                if (expectedValue.equals(value)) return true;
+            }
+        } catch (RuntimeException ignored) {
+            // A resolver may be temporarily unavailable. The propagation loop retries both resolvers.
+        }
+        return false;
     }
 
     public void releaseDomainRouteRecord(Long ownerId) {

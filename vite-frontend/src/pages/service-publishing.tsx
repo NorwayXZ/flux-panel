@@ -71,6 +71,7 @@ const stateMeta: Record<string, { label: string; color: 'success' | 'warning' | 
   cleanup_pending: { label: '到期待清理', color: 'danger' },
   delete_pending: { label: '删除待清理', color: 'danger' },
   certificate_pending: { label: '申请证书', color: 'primary' },
+  dns_propagating: { label: 'DNS 同步中', color: 'primary' },
   certificate_failed: { label: '证书失败', color: 'danger' },
   deployment_failed: { label: '部署失败', color: 'danger' },
   expired: { label: '已到期', color: 'warning' },
@@ -486,6 +487,8 @@ export default function ServicePublishingPage() {
                 const managedHttps = route.ingressMode === 'managed_https';
                 const status = route.state === 'delete_pending'
                   ? { label: '待删除', color: 'warning' as const, detail: route.lastError || '等待公网节点处理' }
+                  : route.certificateState === 'dns_propagating'
+                    ? { label: 'DNS 同步中', color: 'primary' as const, detail: route.lastError || '正在等待公共 DNS 读取验证记录' }
                   : route.certificateState === 'renewal_failed'
                     ? { label: '续签异常', color: 'warning' as const, detail: route.lastError || '当前证书仍在使用，面板将自动重试续签' }
                   : ['certificate_pending', 'provisioning'].includes(route.state) && managedHttps
@@ -547,7 +550,7 @@ export default function ServicePublishingPage() {
                     ? { label: '有效', color: 'success' as const }
                     : failed
                       ? { label: certificate.state === 'renewal_failed' ? '续签失败' : '申请失败', color: 'danger' as const }
-                      : { label: certificate.state === 'renewing' ? '续签中' : '申请中', color: 'primary' as const };
+                      : { label: certificate.state === 'dns_propagating' ? 'DNS 同步中' : certificate.state === 'renewing' ? '续签中' : '申请中', color: 'primary' as const };
                   return (
                     <article key={certificate.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1fr_1.1fr_auto] lg:items-center">
                       <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate font-mono font-medium">{certificate.domain}</span><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip></div><div className="mt-1 truncate text-xs text-default-500">{certificate.issuer || '等待签发机构'}</div></div>

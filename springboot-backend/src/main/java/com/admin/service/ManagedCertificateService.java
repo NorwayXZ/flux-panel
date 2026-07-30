@@ -83,7 +83,8 @@ public class ManagedCertificateService {
         long now = System.currentTimeMillis();
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT id,state FROM managed_certificate WHERE "
-                        + "((state IN ('pending','failed','renewal_failed','deployment_failed') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) "
+                        + "((state IN ('pending','issuing','renewing','dns_propagating','failed','renewal_failed','deployment_failed') "
+                        + "AND (next_attempt_at IS NULL OR next_attempt_at<=?)) "
                         + "OR (state='active' AND expires_at IS NOT NULL AND expires_at<=?)) ORDER BY updated_time LIMIT 10",
                 now, now + RENEW_BEFORE_MS);
         for (Map<String, Object> row : rows) {
@@ -172,7 +173,7 @@ public class ManagedCertificateService {
             }
             renewal = certificate.get("certificateChain") != null;
             mark(certificateId, renewal ? "renewing" : "issuing", null, null);
-            IssuedCertificate issued = issue(certificate);
+            IssuedCertificate issued = issue(certificateId, certificate);
             long now = System.currentTimeMillis();
             jdbcTemplate.update("UPDATE managed_certificate SET account_key=?,private_key=?,certificate_chain=?,issuer=?,serial_number=?,"
                             + "not_before=?,expires_at=?,state='active',last_error=NULL,last_attempt_at=?,next_attempt_at=NULL,updated_time=? WHERE id=?",
@@ -203,7 +204,7 @@ public class ManagedCertificateService {
         }
     }
 
-    private IssuedCertificate issue(Map<String, Object> certificate) throws Exception {
+    private IssuedCertificate issue(long certificateId, Map<String, Object> certificate) throws Exception {
         long zoneId = number(certificate.get("zoneId"));
         String domain = Objects.toString(certificate.get("domain"));
         KeyPair accountKey = readOrCreateKey(certificate.get("accountKey"));
@@ -217,10 +218,15 @@ public class ManagedCertificateService {
             String recordName = challenge.getRRName(authorization.getIdentifier());
             String recordId = dnsProviderService.createDnsChallenge(zoneId, recordName, challenge.getDigest());
             try {
-                Thread.sleep(8_000L);
+                updateDnsChallengeStatus(certificateId, "dns_propagating",
+                        "等待 DNS 同步：正在确认 Cloudflare 与 Google 均可读取 TXT 验证记录");
+                dnsProviderService.waitForDnsChallengePropagation(
+                        recordName, challenge.getDigest(), Duration.ofMinutes(2));
+                updateDnsChallengeStatus(certificateId, "issuing",
+                        "DNS 已同步，正在等待 Let's Encrypt 完成验证");
                 challenge.trigger();
                 if (challenge.waitForCompletion(Duration.ofMinutes(2)) != Status.VALID) {
-                    throw new IllegalStateException("DNS 验证未通过，请检查 Cloudflare Token 的 DNS 编辑权限");
+                    throw new IllegalStateException("Let's Encrypt 未能完成 DNS 验证，面板将在 15 分钟后自动重试");
                 }
             } finally {
                 try {
@@ -342,6 +348,13 @@ public class ManagedCertificateService {
         long now = System.currentTimeMillis();
         jdbcTemplate.update("UPDATE managed_certificate SET state=?,last_error=?,last_attempt_at=?,next_attempt_at=?,updated_time=? WHERE id=?",
                 state, error, now, nextAttempt, now, id);
+    }
+
+    private void updateDnsChallengeStatus(long certificateId, String state, String detail) {
+        mark(certificateId, state, null, null);
+        jdbcTemplate.update("UPDATE domain_route SET last_error=?,updated_time=? "
+                        + "WHERE certificate_id=? AND state<>'deleted'",
+                detail, System.currentTimeMillis(), certificateId);
     }
 
     private String encrypt(String value) { return new AESCrypto(encryptionSecret).encrypt(value); }
