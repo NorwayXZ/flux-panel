@@ -1,3 +1,9 @@
+## 2.37.1 Reliable forwarded-route port allocation
+
+- When a new forward uses automatic port allocation, the panel now asks a current Agent whether the candidate port is already occupied by another local process before choosing it.
+- This applies to the public entry listener and the internally allocated hop ports used by multi-hop and multi-line tunnel routes. An occupied port is skipped automatically instead of failing the entire deployment after selection.
+- Existing forwards, tunnel paths, port allocations, DNS, domain routes, mappings, certificates, and Agent versions are unchanged. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if required.
+
 ## 2.36.3 Port reuse overview
 
 - Adds a dedicated **Port reuse** overview to Domain Direct.

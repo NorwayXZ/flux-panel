@@ -147,7 +147,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 4. 分配端口
-        PortAllocation portAllocation = allocatePorts(tunnel, forwardDto.getInPort());
+        PortAllocation portAllocation = allocatePorts(
+                tunnel,
+                forwardDto.getInPort(),
+                null,
+                normalizeProtocolMode(forwardDto.getProtocolMode())
+        );
         if (portAllocation.isHasError()) {
             return R.err(portAllocation.getErrorMessage());
         }
@@ -440,7 +445,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         Integer specifiedInPort = forwardUpdateDto.getInPort() == null
                 ? existForward.getInPort()
                 : forwardUpdateDto.getInPort();
-        PortAllocation primaryAllocation = allocatePorts(tunnel, specifiedInPort, forwardUpdateDto.getId());
+        PortAllocation primaryAllocation = allocatePorts(
+                tunnel,
+                specifiedInPort,
+                forwardUpdateDto.getId(),
+                normalizeProtocolMode(forwardUpdateDto.getProtocolMode())
+        );
         if (primaryAllocation.isHasError()) {
             return R.err(primaryAllocation.getErrorMessage());
         }
@@ -1348,7 +1358,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     return PortAllocation.error("节点不存在：" + nodeId);
                 }
                 String namespace = PortNamespaceUtil.fromNode(node);
-                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(namespace));
+                Integer hopPort = allocatePortForNode(
+                        nodeId,
+                        excludeForwardId,
+                        reservedPorts.get(namespace),
+                        Collections.singletonList(new AgentPortCheckUtil.Check(
+                                "quic".equalsIgnoreCase(tunnel.getProtocol()) ? "udp" : "tcp", "", null))
+                );
                 if (hopPort == null) {
                     return PortAllocation.error("节点 " + nodeId + " 端口已满，无法为线路 " + tunnel.getName() + " 分配端口");
                 }
@@ -1390,14 +1406,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 分配端口
      */
-    private PortAllocation allocatePorts(Tunnel tunnel, Integer specifiedInPort) {
-        return allocatePorts(tunnel, specifiedInPort, null);
-    }
-
     /**
-     * 分配端口
+     * 分配端口。自动分配时会由 Agent 复核实际监听状态，避免账本外的进程占用端口。
      */
-    private PortAllocation allocatePorts(Tunnel tunnel, Integer specifiedInPort, Long excludeForwardId) {
+    private PortAllocation allocatePorts(Tunnel tunnel, Integer specifiedInPort, Long excludeForwardId,
+                                         String protocolMode) {
         Integer inPort;
 
         if (specifiedInPort != null) {
@@ -1408,7 +1421,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             inPort = specifiedInPort;
         } else {
             // 用户未指定端口时自动分配
-            inPort = allocateInPort(tunnel, excludeForwardId);
+            inPort = allocateInPort(tunnel, excludeForwardId, protocolMode);
             if (inPort == null) {
                 return PortAllocation.error("隧道入口端口已满，无法分配新端口");
             }
@@ -1429,7 +1442,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     return PortAllocation.error("节点不存在：" + nodeId);
                 }
                 String namespace = PortNamespaceUtil.fromNode(node);
-                Integer hopPort = allocatePortForNode(nodeId, excludeForwardId, reservedPorts.get(namespace));
+                Integer hopPort = allocatePortForNode(
+                        nodeId,
+                        excludeForwardId,
+                        reservedPorts.get(namespace),
+                        Collections.singletonList(new AgentPortCheckUtil.Check(
+                                "quic".equalsIgnoreCase(tunnel.getProtocol()) ? "udp" : "tcp", "", null))
+                );
                 if (hopPort == null) {
                     return PortAllocation.error("节点 " + nodeId + " 端口已满，无法分配新端口");
                 }
@@ -2521,8 +2540,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 为隧道分配一个可用的入口端口（可排除指定的转发ID）
      */
-    private Integer allocateInPort(Tunnel tunnel, Long excludeForwardId) {
-        return allocatePortForNode(tunnel.getInNodeId(), excludeForwardId);
+    private Integer allocateInPort(Tunnel tunnel, Long excludeForwardId, String protocolMode) {
+        List<AgentPortCheckUtil.Check> checks = new ArrayList<>();
+        if ("tcp".equals(protocolMode) || PROTOCOL_MODE_TCP_UDP.equals(protocolMode)) {
+            checks.add(new AgentPortCheckUtil.Check("tcp", tunnel.getTcpListenAddr(), null));
+        }
+        if ("udp".equals(protocolMode) || PROTOCOL_MODE_TCP_UDP.equals(protocolMode)) {
+            checks.add(new AgentPortCheckUtil.Check("udp", tunnel.getUdpListenAddr(), null));
+        }
+        return allocatePortForNode(tunnel.getInNodeId(), excludeForwardId, Collections.emptySet(), checks);
     }
 
     /**
@@ -2544,6 +2570,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private Integer allocatePortForNode(Long nodeId, Long excludeForwardId, Set<Integer> additionallyReserved) {
+        return allocatePortForNode(nodeId, excludeForwardId, additionallyReserved, Collections.emptyList());
+    }
+
+    private Integer allocatePortForNode(Long nodeId, Long excludeForwardId, Set<Integer> additionallyReserved,
+                                        List<AgentPortCheckUtil.Check> liveChecks) {
         // 获取节点信息
         Node node = nodeService.getById(nodeId);
         if (node == null) {
@@ -2558,11 +2589,21 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 在节点端口范围内寻找未使用的端口
         for (int port = node.getPortSta(); port <= node.getPortEnd(); port++) {
-            if (!usedPorts.contains(port)) {
+            if (!usedPorts.contains(port) && isAgentPortAvailable(node, liveChecks, port)) {
                 return port;
             }
         }
         return null;
+    }
+
+    private boolean isAgentPortAvailable(Node node, List<AgentPortCheckUtil.Check> checks, int port) {
+        if (checks == null || checks.isEmpty()) {
+            return true;
+        }
+        List<AgentPortCheckUtil.Check> requested = checks.stream()
+                .map(check -> new AgentPortCheckUtil.Check(check.getNetwork(), check.getHost(), port))
+                .collect(Collectors.toList());
+        return AgentPortCheckUtil.check(node, requested).isAvailable();
     }
 
     /**
