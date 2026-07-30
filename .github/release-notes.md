@@ -1,3 +1,10 @@
+## 2.34.2 One-click publish selection fix
+
+- Keeps the discovered service node preselected while the Domain Direct page loads its node options asynchronously.
+- Removes transient invalid-selection warnings and prevents an empty node selector from flashing on slower connections.
+- This is a frontend-only follow-up. It does not change the database, Agent, nodes, tunnels, forwards, mappings, DNS records, certificates, or active listeners.
+- Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed. Agent `2.34.0` remains current and does not need another upgrade.
+
 ## 2.34.1 Runtime image artifact fix
 
 - Fixes the runtime Docker build contexts so the backend image contains the JAR built by the current workflow and the frontend image contains the current Vite `dist` output.

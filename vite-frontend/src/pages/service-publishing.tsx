@@ -237,6 +237,13 @@ export default function ServicePublishingPage() {
   const onlineConnectors = useMemo(() => connectors.filter(item => item.online).length, [connectors]);
   const selectedPool = useMemo(() => pools.find(item => `${item.id}:${item.grantId || 'admin'}` === serviceForm.poolAccessKey), [pools, serviceForm.poolAccessKey]);
   const selectedDomainMapping = useMemo(() => services.find(item => String(item.id) === domainForm.publishedServiceId), [services, domainForm.publishedServiceId]);
+  const selectedBackendNodeKeys = useMemo(() => entryNodes.some(node => String(node.id) === domainForm.backendNodeId)
+    ? [domainForm.backendNodeId]
+    : [], [domainForm.backendNodeId, entryNodes]);
+  const selectedEntryNodeKeys = useMemo(() => domainForm.entryNodeId === 'mapping'
+    || entryNodes.some(node => String(node.id) === domainForm.entryNodeId)
+    ? [domainForm.entryNodeId]
+    : [], [domainForm.entryNodeId, entryNodes]);
   const selectedDomainPool = useMemo(() => pools.find(item => item.id === selectedDomainMapping?.poolId), [pools, selectedDomainMapping]);
   const selectedEntryNode = useMemo(() => domainForm.entryNodeId === 'mapping'
     ? entryNodes.find(item => item.id === (domainForm.backendType === 'direct' ? Number(domainForm.backendNodeId) : selectedDomainPool?.nodeId))
@@ -663,7 +670,7 @@ export default function ServicePublishingPage() {
                   </SelectItem>
                 ))}
               </Select> : <>
-                <Select className="sm:col-span-2" label="服务所在节点" selectedKeys={domainForm.backendNodeId ? [domainForm.backendNodeId] : []} onSelectionChange={keys => { const value = String(Array.from(keys)[0] || ''); setDomainForm({ ...domainForm, backendNodeId: value, entryNodeId: value || 'mapping' }); }}>
+                <Select className="sm:col-span-2" label="服务所在节点" selectedKeys={selectedBackendNodeKeys} onSelectionChange={keys => { const value = String(Array.from(keys)[0] || ''); setDomainForm({ ...domainForm, backendNodeId: value, entryNodeId: value || 'mapping' }); }}>
                   {entryNodes.map(node => <SelectItem key={String(node.id)} textValue={`${node.name} ${node.serverIp || node.ip || ''}`}>{node.name} · {node.serverIp || node.ip || '地址未知'} · {node.status === 1 ? '在线' : '离线'}</SelectItem>)}
                 </Select>
                 <Select label="后端协议" selectedKeys={[domainForm.backendScheme]} onSelectionChange={keys => setDomainForm({ ...domainForm, backendScheme: String(Array.from(keys)[0] || 'http') as 'http' | 'https' })}>
@@ -673,7 +680,7 @@ export default function ServicePublishingPage() {
                 <Input className="sm:col-span-2" label="后端端口" type="number" min={1} max={65535} value={domainForm.backendPort} onValueChange={value => setDomainForm({ ...domainForm, backendPort: value })} />
               </>}
             {isAdmin && domainForm.ingressMode === 'managed_https' && (
-              <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" selectedKeys={[domainForm.entryNodeId]} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
+              <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" selectedKeys={selectedEntryNodeKeys} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
                 {[{ id: 'mapping', name: domainForm.backendType === 'direct' ? '跟随服务所在节点' : '跟随后端映射节点', address: '', online: true }, ...entryNodes.map(node => ({ id: String(node.id), name: node.name, address: node.serverIp || node.ip || '地址未知', online: node.status === 1 }))].map(node => (
                   <SelectItem key={node.id} textValue={`${node.name} ${node.address}`}>
                     {node.name}{node.address ? ` · ${node.address}` : ''} · {node.online ? '在线' : '离线'}
