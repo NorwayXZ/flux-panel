@@ -15,7 +15,7 @@ public class PrivateProxyCreateDto {
     private String name;
     @NotNull
     private Long nodeId;
-    @NotBlank @Pattern(regexp = "socks5|http|shadowsocks|vless_reality", message = "不支持的代理类型")
+    @NotBlank @Pattern(regexp = "socks5|http|shadowsocks|vless_reality|trojan|hysteria2|tuic|wireguard", message = "不支持的代理类型")
     private String proxyType;
     @Size(max = 128)
     private String bindIp;

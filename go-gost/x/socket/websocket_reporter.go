@@ -136,6 +136,7 @@ type WebSocketReporter struct {
 	aesCrypto       *crypto.AESCrypto // 新增：AES加密器
 	terminalManager *TerminalManager
 	realityManager  *realityRuntimeManager
+	proxyManager    *privateProxyRuntimeManager
 	natManager      *natRuntimeManager
 }
 
@@ -165,6 +166,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	}
 	reporter.terminalManager = NewTerminalManager(reporter.sendTerminalEvent)
 	reporter.realityManager = newRealityRuntimeManager()
+	reporter.proxyManager = newPrivateProxyRuntimeManager()
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	return reporter
 }
@@ -173,6 +175,9 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 func (w *WebSocketReporter) Start() {
 	if w.realityManager != nil {
 		go w.realityManager.restore()
+	}
+	if w.proxyManager != nil {
+		go w.proxyManager.restore()
 	}
 	if w.natManager != nil {
 		go w.natManager.restore()
@@ -188,6 +193,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.realityManager != nil {
 		w.realityManager.stopAll()
+	}
+	if w.proxyManager != nil {
+		w.proxyManager.stopAll()
 	}
 	if w.natManager != nil {
 		w.natManager.stopAll()
@@ -714,6 +722,24 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleDeleteRealityRuntime(cmd.Data)
 		response.Type = "DeleteRealityRuntimeResponse"
 
+	case "AddPrivateProxyRuntime":
+		var result privateProxyRuntimeResponse
+		result, err = w.handleAddPrivateProxyRuntime(cmd.Data)
+		response.Type = "AddPrivateProxyRuntimeResponse"
+		response.Data = result
+
+	case "DeletePrivateProxyRuntime":
+		err = w.handleDeletePrivateProxyRuntime(cmd.Data)
+		response.Type = "DeletePrivateProxyRuntimeResponse"
+
+	case "PausePrivateProxyRuntime":
+		err = w.handlePausePrivateProxyRuntime(cmd.Data)
+		response.Type = "PausePrivateProxyRuntimeResponse"
+
+	case "ResumePrivateProxyRuntime":
+		err = w.handleResumePrivateProxyRuntime(cmd.Data)
+		response.Type = "ResumePrivateProxyRuntimeResponse"
+
 	case "NatPrepare":
 		var request natPrepareRequest
 		err = decodeCommandData(cmd.Data, &request)
@@ -826,6 +852,56 @@ func (w *WebSocketReporter) handleDeleteRealityRuntime(data interface{}) error {
 		return err
 	}
 	return w.realityManager.delete(request.Name)
+}
+
+func (w *WebSocketReporter) handleAddPrivateProxyRuntime(data interface{}) (privateProxyRuntimeResponse, error) {
+	if w.proxyManager == nil {
+		return privateProxyRuntimeResponse{}, errors.New("private proxy runtime manager is unavailable")
+	}
+	var request privateProxyRuntimeRequest
+	if err := decodeCommandData(data, &request); err != nil {
+		return privateProxyRuntimeResponse{}, err
+	}
+	return w.proxyManager.add(request)
+}
+
+func (w *WebSocketReporter) handleDeletePrivateProxyRuntime(data interface{}) error {
+	if w.proxyManager == nil {
+		return errors.New("private proxy runtime manager is unavailable")
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return err
+	}
+	return w.proxyManager.delete(request.Name)
+}
+
+func (w *WebSocketReporter) handlePausePrivateProxyRuntime(data interface{}) error {
+	if w.proxyManager == nil {
+		return errors.New("private proxy runtime manager is unavailable")
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return err
+	}
+	return w.proxyManager.pause(request.Name)
+}
+
+func (w *WebSocketReporter) handleResumePrivateProxyRuntime(data interface{}) error {
+	if w.proxyManager == nil {
+		return errors.New("private proxy runtime manager is unavailable")
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return err
+	}
+	return w.proxyManager.resume(request.Name)
 }
 
 type managedCertificatePayload struct {

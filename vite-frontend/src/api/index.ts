@@ -177,7 +177,7 @@ export const updateForward = (data: any) => Network.post("/forward/update", data
 export const deleteForward = (id: number) => Network.post("/forward/delete", { id });
 export const forceDeleteForward = (id: number) => Network.post("/forward/force-delete", { id });
 
-export type PrivateProxyType = 'socks5' | 'http' | 'shadowsocks' | 'vless_reality';
+export type PrivateProxyType = 'socks5' | 'http' | 'shadowsocks' | 'vless_reality' | 'trojan' | 'hysteria2' | 'tuic' | 'wireguard';
 
 export interface PrivateProxyItem {
   id: number;
@@ -233,6 +233,9 @@ export interface PrivateProxyClientConfig {
   fingerprint?: string;
   flow?: string;
   runtimeVersion?: string;
+  clientPrivateKey?: string;
+  serverPublicKey?: string;
+  clientAddress?: string;
 }
 
 export const getPrivateProxies = () => Network.post<PrivateProxyItem[]>("/private-proxy/list");

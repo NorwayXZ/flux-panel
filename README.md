@@ -45,7 +45,7 @@
 - 支持通过 Agent 加密通道打开管理员网页终端，无需额外开放 SSH 端口
 - 节点卡片支持单节点或批量一键升级 Agent，并提供校验、回滚和升级状态记录
 - 在线升级失败、回滚或超时后提供不含节点密钥的手动升级命令，并自动尝试备用下载地址
-- 支持带强制认证、来源白名单和有效期的 SOCKS5、HTTP、Shadowsocks 与 VLESS+REALITY 私人代理
+- 支持 SOCKS5、HTTP、Shadowsocks、VLESS+REALITY、Trojan、Hysteria2、TUIC v5 与 WireGuard 私人代理
 - 提供由指定节点执行的 Ping、TCP、DNS 和路由诊断工具箱
 - 网络质量实验室长期记录 TCP、TLS、TTFB、P50/P95/P99、抖动、失败率及 IPv4/IPv6 线路画像
 - 服务器资产中心统一记录厂商、地区、配置、成本、到期、线路、套餐、标签和续费提醒
@@ -97,6 +97,14 @@ Agent 只向面板返回检测到的公网 IPv4 或 IPv6，DNS 密钥不会下�
 升级只新增 `server_asset`、`dynamic_dns_provider`、`dynamic_dns_rule` 和 `dynamic_dns_history` 表，并向 Telegram 配置增加两个开关，不改写现有业务表。`2.26.6` 将动态 DNS 的检测来源扩展到家庭接入端，并允许家庭代理绑定对应 A/AAAA 规则；手动维护数据库时除 [`migrations/20260728_server_assets_dynamic_dns.sql`](migrations/20260728_server_assets_dynamic_dns.sql) 外，还可执行 [`migrations/20260729_home_proxy_ipv4_ddns.sql`](migrations/20260729_home_proxy_ipv4_ddns.sql)。回退到旧版时新表和新增字段会被忽略；动态 DNS 将停止自动更新，但 DNS 服务商中最后一次成功写入的记录会保留。出现异常可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
 
 ### 私人代理与网络诊断
+
+`2.38.0` 将私人代理按“通用代理、加密代理、QUIC 加速、设备组网”重新分组，并增加 Trojan、Hysteria2、TUIC v5 与 WireGuard。新协议仅在 Linux 节点 Agent `2.38.0` 或更高版本启用，旧节点和已有 SOCKS5、HTTP、Shadowsocks、VLESS+REALITY 不会被重启或改写。
+
+- Trojan、Hysteria2、TUIC v5 由 Agent 按需下载并启动独立 Sing-box 运行时。每个实例拥有私有配置、私有 TLS 证书和独立进程；删除实例会停止进程并清理该实例的密钥、配置和日志。首次创建会额外下载约 20-35 MB 的运行时缓存，之后复用缓存。
+- 这三个协议默认使用 Agent 自动生成的自签名 TLS 证书，客户端导入链接已包含允许该证书的参数。连接仍会加密，但客户端不会验证服务器域名身份；需要严格证书校验的场景应继续使用“域名直达”的托管 HTTPS 或等待后续绑定托管证书能力。
+- WireGuard 使用 Agent 内置的 userspace WireGuard 运行时，不要求单独安装 `wireguard-tools`。它会创建一个专属 TUN 接口、开启 IPv4 转发，并只添加属于该实例的 NAT 与转发规则；暂停或删除实例会删除自己创建的规则和接口，不会清空服务器原有防火墙规则。Linux 节点仍需要 `/dev/net/tun`、`iproute2`、`sysctl` 和 `iptables` 可用，否则创建会给出明确失败原因。
+- QUIC 与 WireGuard 使用 UDP，除端口账本外，还必须在云厂商安全组和节点防火墙中放行相同 UDP 端口。Trojan 使用 TCP。高级协议当前不支持来源 IP 白名单，也不复用 GOST 的逐服务流量计量；卡片会保持运行状态、到期、暂停、恢复和端口占用管理。
+- 回退前请先删除新版创建的 Trojan、Hysteria2、TUIC 和 WireGuard 实例并等待对应卡片消失，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`。旧面板不认识这些 Agent 运行时；已有四种代理、节点、隧道、转发、域名、端口资源和用户数据不受影响。
 
 `2.20.0` 为私人代理新增 Shadowsocks 与 VLESS+REALITY。创建 Shadowsocks 时可选择 AES-128-GCM、AES-256-GCM 或 ChaCha20-IETF-Poly1305，并在同一公网端口同时提供 TCP 与 UDP；创建 VLESS+REALITY 时只需填写普通 HTTPS 伪装域名，Agent 会自动生成 UUID、X25519 密钥和 Short ID。连接信息采用按需读取，列表接口不会返回密码、私钥或客户端导入链接。
 

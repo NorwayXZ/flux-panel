@@ -42,6 +42,7 @@ public class PrivateProxyService {
     private static final String DEFAULT_REALITY_SERVER_NAME = "www.cloudflare.com";
     private static final String MIN_AGENT_VERSION = "2.19.0";
     private static final String MIN_REALITY_AGENT_VERSION = "2.20.0";
+    private static final String MIN_ADVANCED_PROXY_AGENT_VERSION = "2.38.0";
     private final PrivateProxyMapper proxyMapper;
     private final NodeMapper nodeMapper;
     private final UserMapper userMapper;
@@ -79,6 +80,10 @@ public class PrivateProxyService {
                 && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_REALITY_AGENT_VERSION)) {
             return R.err("VLESS+REALITY 需要节点 Agent " + MIN_REALITY_AGENT_VERSION + " 或更高版本");
         }
+        if (isAdvancedRuntime(proxyType)
+                && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_ADVANCED_PROXY_AGENT_VERSION)) {
+            return R.err(protocolLabel(proxyType) + " 需要节点 Agent " + MIN_ADVANCED_PROXY_AGENT_VERSION + " 或更高版本");
+        }
         String username = StringUtils.trimToEmpty(dto.getAuthUsername());
         String password = StringUtils.defaultString(dto.getAuthPassword());
         String cipher = StringUtils.defaultIfBlank(dto.getCipher(), "aes-256-gcm");
@@ -95,6 +100,9 @@ public class PrivateProxyService {
         if ("vless_reality".equals(proxyType) && realityServerName == null) {
             return R.err("请填写有效的 REALITY 伪装域名，不要包含协议或路径");
         }
+        if (isAdvancedRuntime(proxyType) && password.length() < 8) {
+            return R.err(protocolLabel(proxyType) + " 密钥至少 8 位");
+        }
         if (node.getPortSta() != null && dto.getListenPort() < node.getPortSta()
                 || node.getPortEnd() != null && dto.getListenPort() > node.getPortEnd()) {
             return R.err("监听端口不在节点允许范围内");
@@ -103,6 +111,9 @@ public class PrivateProxyService {
         if (!bindIp.isEmpty() && !validIp(bindIp)) return R.err("监听 IP 格式不正确");
         List<String> cidrs = parseCidrs(dto.getAllowedCidrs());
         if (cidrs == null) return R.err("IP 白名单格式不正确，请使用 CIDR 并以逗号分隔");
+        if (isAdvancedRuntime(proxyType) && !cidrs.isEmpty()) {
+            return R.err(protocolLabel(proxyType) + " 暂不支持来源 IP 白名单，请先留空创建");
+        }
         if (Boolean.FALSE.equals(dto.getPermanent()) && (dto.getLeaseHours() == null || dto.getLeaseHours() < 1)) {
             return R.err("定时代理必须填写有效期");
         }
@@ -111,7 +122,9 @@ public class PrivateProxyService {
         }
         List<AgentPortCheckUtil.Check> checks = "shadowsocks".equals(proxyType)
                 ? List.of(new AgentPortCheckUtil.Check("tcp", bindIp, dto.getListenPort()),
-                    new AgentPortCheckUtil.Check("udp", bindIp, dto.getListenPort()))
+                new AgentPortCheckUtil.Check("udp", bindIp, dto.getListenPort()))
+                : isUdpAdvancedRuntime(proxyType)
+                ? List.of(new AgentPortCheckUtil.Check("udp", bindIp, dto.getListenPort()))
                 : List.of(new AgentPortCheckUtil.Check("tcp", bindIp, dto.getListenPort()));
         AgentPortCheckUtil.Result portCheck = AgentPortCheckUtil.check(node, checks);
         if (!portCheck.isAvailable()) return R.err(portCheck.getMessage());
@@ -124,7 +137,7 @@ public class PrivateProxyService {
         proxy.setProxyType(proxyType);
         proxy.setBindIp(bindIp);
         proxy.setListenPort(dto.getListenPort());
-        proxy.setAuthUsername("shadowsocks".equals(proxyType) ? cipher : ("vless_reality".equals(proxyType) ? "待生成" : username));
+        proxy.setAuthUsername("shadowsocks".equals(proxyType) ? cipher : ("vless_reality".equals(proxyType) || isAdvancedRuntime(proxyType) ? "待生成" : username));
         proxy.setAuthPassword(crypto.encrypt("vless_reality".equals(proxyType) ? UUID.randomUUID().toString() : password));
         proxy.setAllowedCidrs(String.join(",", cidrs));
         proxy.setState("provisioning");
@@ -168,6 +181,33 @@ public class PrivateProxyService {
                 clientConfig.put("fingerprint", "chrome");
                 clientConfig.put("flow", "xtls-rprx-vision");
                 clientConfig.put("runtimeVersion", runtimeData.getString("version"));
+            } else if (isAdvancedRuntime(proxyType)) {
+                GostDto runtime = GostUtil.AddPrivateProxyRuntime(node.getId(), advancedRuntimeName(proxy), proxyType,
+                        bindIp, proxy.getListenPort(), password);
+                requireGost(runtime, "创建 " + protocolLabel(proxyType) + " 运行时失败");
+                JSONObject runtimeData = JSONObject.parseObject(JSONObject.toJSONString(runtime.getData()));
+                if (runtimeData == null) throw new IllegalStateException("Agent 返回的 " + protocolLabel(proxyType) + " 配置为空");
+                clientConfig = new LinkedHashMap<>();
+                clientConfig.put("password", password);
+                clientConfig.put("serverName", StringUtils.defaultIfBlank(runtimeData.getString("serverName"), "cloudnest.local"));
+                clientConfig.put("runtimeVersion", runtimeData.getString("version"));
+                if ("tuic".equals(proxyType)) {
+                    String clientId = runtimeData.getString("clientId");
+                    if (StringUtils.isBlank(clientId)) throw new IllegalStateException("Agent 返回的 TUIC UUID 不完整");
+                    proxy.setAuthUsername(clientId);
+                    clientConfig.put("clientId", clientId);
+                } else if ("wireguard".equals(proxyType)) {
+                    String privateKey = runtimeData.getString("clientPrivateKey");
+                    String publicKey = runtimeData.getString("serverPublicKey");
+                    String clientAddress = runtimeData.getString("clientAddress");
+                    if (StringUtils.isAnyBlank(privateKey, publicKey, clientAddress)) {
+                        throw new IllegalStateException("Agent 返回的 WireGuard 密钥不完整");
+                    }
+                    proxy.setAuthUsername("WireGuard");
+                    clientConfig.put("clientPrivateKey", privateKey);
+                    clientConfig.put("serverPublicKey", publicKey);
+                    clientConfig.put("clientAddress", clientAddress);
+                }
             } else {
                 requireGost(GostUtil.AddPrivateProxy(node.getId(), proxy.getServiceName(), proxyType, bindIp,
                         proxy.getListenPort(), username, password, proxy.getAdmissionName()), "创建代理失败");
@@ -253,7 +293,7 @@ public class PrivateProxyService {
         Node node = nodeMapper.selectById(proxy.getNodeId());
         R quota = userQuotaService.checkNodeQuota(proxy.getUserId(), node, proxy.getId());
         if (quota.getCode() == 0) return;
-        GostDto paused = GostUtil.PauseNamedServices(proxy.getNodeId(), runtimeServiceNames(proxy));
+        GostDto paused = pauseRuntime(proxy);
         if (gostSuccess(paused)) {
             updateState(proxy, "paused", quota.getMsg());
         } else {
@@ -267,7 +307,7 @@ public class PrivateProxyService {
         PrivateProxy proxy = owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
         if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以暂停");
-        GostDto result = GostUtil.PauseNamedServices(proxy.getNodeId(), runtimeServiceNames(proxy));
+        GostDto result = pauseRuntime(proxy);
         if (!gostSuccess(result)) return R.err(gostMessage(result));
         updateState(proxy, "paused", null);
         return R.ok();
@@ -281,7 +321,7 @@ public class PrivateProxyService {
         Node node = nodeMapper.selectById(proxy.getNodeId());
         R quota = isAdmin() ? R.ok() : userQuotaService.checkNodeQuota(proxy.getUserId(), node, proxy.getId());
         if (quota.getCode() != 0) return quota;
-        GostDto result = GostUtil.ResumeNamedServices(proxy.getNodeId(), runtimeServiceNames(proxy));
+        GostDto result = resumeRuntime(proxy);
         if (!gostSuccess(result)) return R.err(gostMessage(result));
         updateState(proxy, "active", null);
         return R.ok();
@@ -341,11 +381,15 @@ public class PrivateProxyService {
 
     private boolean cleanupRuntime(PrivateProxy proxy, Node node) {
         if (node == null) return false;
-        GostDto serviceResult = GostUtil.DeleteNamedServices(node.getId(), runtimeServiceNames(proxy));
-        boolean serviceClean = gostCleanupSuccess(serviceResult);
+        boolean serviceClean = true;
+        if (!isAdvancedRuntime(proxy.getProxyType())) {
+            serviceClean = gostCleanupSuccess(GostUtil.DeleteNamedServices(node.getId(), runtimeServiceNames(proxy)));
+        }
         boolean advancedRuntimeClean = true;
         if ("vless_reality".equals(proxy.getProxyType())) {
             advancedRuntimeClean = gostCleanupSuccess(GostUtil.DeleteRealityRuntime(node.getId(), realityRuntimeName(proxy)));
+        } else if (isAdvancedRuntime(proxy.getProxyType())) {
+            advancedRuntimeClean = gostCleanupSuccess(GostUtil.DeletePrivateProxyRuntime(node.getId(), advancedRuntimeName(proxy)));
         }
         boolean admissionClean = true;
         if (proxy.getAdmissionName() != null) {
@@ -394,6 +438,10 @@ public class PrivateProxyService {
         return proxy.getServiceName() + "-xray";
     }
 
+    private String advancedRuntimeName(PrivateProxy proxy) {
+        return proxy.getServiceName() + "-singbox";
+    }
+
     private String normalizeServerName(String value) {
         String result = StringUtils.trimToEmpty(value).toLowerCase();
         if (result.endsWith(".")) result = result.substring(0, result.length() - 1);
@@ -415,6 +463,25 @@ public class PrivateProxyService {
                     + "?encryption=none&flow=xtls-rprx-vision&security=reality&type=tcp&headerType=none"
                     + "&sni=" + url(config.getString("serverName")) + "&fp=chrome&pbk=" + url(config.getString("publicKey"))
                     + "&sid=" + url(config.getString("shortId")) + "#" + label;
+        }
+        if ("trojan".equals(proxy.getProxyType())) {
+            return "trojan://" + url(config.getString("password")) + "@" + authorityHost + ":" + proxy.getListenPort()
+                    + "?security=tls&sni=" + url(config.getString("serverName")) + "&allowInsecure=1#" + label;
+        }
+        if ("hysteria2".equals(proxy.getProxyType())) {
+            return "hysteria2://" + url(config.getString("password")) + "@" + authorityHost + ":" + proxy.getListenPort()
+                    + "?sni=" + url(config.getString("serverName")) + "&insecure=1#" + label;
+        }
+        if ("tuic".equals(proxy.getProxyType())) {
+            return "tuic://" + url(config.getString("clientId")) + ":" + url(config.getString("password")) + "@"
+                    + authorityHost + ":" + proxy.getListenPort() + "?congestion_control=bbr&sni="
+                    + url(config.getString("serverName")) + "&allow_insecure=1#" + label;
+        }
+        if ("wireguard".equals(proxy.getProxyType())) {
+            return "[Interface]\nPrivateKey = " + config.getString("clientPrivateKey") + "\nAddress = "
+                    + config.getString("clientAddress") + "\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = "
+                    + config.getString("serverPublicKey") + "\nEndpoint = " + authorityHost + ":" + proxy.getListenPort()
+                    + "\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n";
         }
         return proxy.getProxyType() + "://" + url(config.getString("username")) + ":"
                 + url(config.getString("password")) + "@" + authorityHost + ":" + proxy.getListenPort() + "#" + label;
@@ -439,6 +506,37 @@ public class PrivateProxyService {
     }
     private String gostMessage(GostDto result) { return result == null ? "Agent 无响应" : StringUtils.defaultIfBlank(result.getMsg(), "Agent 无响应"); }
     private boolean isAdmin() { return Objects.equals(JwtUtil.getRoleIdFromToken(), 0); }
+
+    private boolean isAdvancedRuntime(String proxyType) {
+        return "trojan".equals(proxyType) || "hysteria2".equals(proxyType)
+                || "tuic".equals(proxyType) || "wireguard".equals(proxyType);
+    }
+
+    private boolean isUdpAdvancedRuntime(String proxyType) {
+        return "hysteria2".equals(proxyType) || "tuic".equals(proxyType) || "wireguard".equals(proxyType);
+    }
+
+    private GostDto pauseRuntime(PrivateProxy proxy) {
+        return isAdvancedRuntime(proxy.getProxyType())
+                ? GostUtil.PausePrivateProxyRuntime(proxy.getNodeId(), advancedRuntimeName(proxy))
+                : GostUtil.PauseNamedServices(proxy.getNodeId(), runtimeServiceNames(proxy));
+    }
+
+    private GostDto resumeRuntime(PrivateProxy proxy) {
+        return isAdvancedRuntime(proxy.getProxyType())
+                ? GostUtil.ResumePrivateProxyRuntime(proxy.getNodeId(), advancedRuntimeName(proxy))
+                : GostUtil.ResumeNamedServices(proxy.getNodeId(), runtimeServiceNames(proxy));
+    }
+
+    private String protocolLabel(String proxyType) {
+        switch (proxyType) {
+            case "trojan": return "Trojan";
+            case "hysteria2": return "Hysteria2";
+            case "tuic": return "TUIC v5";
+            case "wireguard": return "WireGuard";
+            default: return proxyType;
+        }
+    }
     private boolean isAdminUser(Integer userId) {
         User user = userMapper.selectById(userId);
         return user != null && Objects.equals(user.getRoleId(), 0);

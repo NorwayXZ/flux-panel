@@ -497,3 +497,11 @@
 - This is a panel-only release. Agent `2.36.0`, installed tunnels, forwards, nodes, ports, mappings, certificates, and existing DNS records are not restarted or rewritten.
 - Adds `domain_route_backend` and `cross_entry_dns_record`, plus additive defaulted fields on `forward`, `domain_route`, and cross-entry tables. Normal startup performs the migration; [`migrations/20260731_load_balancing.sql`](../migrations/20260731_load_balancing.sql) is available for manual maintenance.
 - To stop active-active DNS before returning to `2.36.3`, change each affected group back to **Primary/backup failover** in the new UI so the panel clears its extra DNS records. Then run `sudo /usr/local/sbin/flux-panel-manager rollback`.
+## 2.38.0 Advanced private proxy protocols
+
+- Adds grouped private-proxy creation for Trojan, Hysteria2, TUIC v5, and WireGuard while keeping SOCKS5, HTTP, Shadowsocks, and VLESS+REALITY unchanged.
+- Trojan, Hysteria2, and TUIC run through a per-instance Sing-box runtime. The Agent validates the generated configuration before it starts the listener, stores runtime state and TLS material with owner-only permissions, and cleans the instance when creation fails.
+- WireGuard uses the Agent's embedded userspace runtime on Linux. It creates only an instance-specific TUN interface and NAT/forward rules, then removes those exact resources on pause/delete. It does not clear existing firewall rules.
+- New protocols require Linux Agent `2.38.0`; older Agents keep all existing forwarding and proxy services running normally. QUIC and WireGuard require the corresponding UDP port to be open in both the provider security group and node firewall.
+- Advanced-protocol instances do not yet support source-IP allowlists or GOST per-service traffic counters. The UI states this at creation time rather than silently accepting an ineffective setting.
+- Roll back safely by deleting the new advanced instances first and waiting for their cards to disappear, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Existing proxy types, nodes, tunnels, forwards, DNS, certificates, mappings, and user resources are not modified.

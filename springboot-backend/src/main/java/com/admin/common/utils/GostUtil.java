@@ -134,6 +134,35 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, data, "DeleteRealityRuntime", 30);
     }
 
+    public static GostDto AddPrivateProxyRuntime(Long nodeId, String runtimeName, String proxyType, String bindIp,
+                                                 Integer port, String password) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        data.put("proxyType", proxyType);
+        data.put("bindIp", StringUtils.defaultString(bindIp));
+        data.put("listenPort", port);
+        data.put("password", password);
+        return WebSocketServer.send_msg(nodeId, data, "AddPrivateProxyRuntime", 120);
+    }
+
+    public static GostDto DeletePrivateProxyRuntime(Long nodeId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.send_msg(nodeId, data, "DeletePrivateProxyRuntime", 30);
+    }
+
+    public static GostDto PausePrivateProxyRuntime(Long nodeId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.send_msg(nodeId, data, "PausePrivateProxyRuntime", 30);
+    }
+
+    public static GostDto ResumePrivateProxyRuntime(Long nodeId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.send_msg(nodeId, data, "ResumePrivateProxyRuntime", 120);
+    }
+
     public static GostDto DeleteNamedService(Long nodeId, String serviceName) {
         return DeleteNamedServices(nodeId, List.of(serviceName));
     }
