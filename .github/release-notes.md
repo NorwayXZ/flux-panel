@@ -1,3 +1,12 @@
+## 2.36.3 Port reuse overview
+
+- Adds a dedicated **Port reuse** overview to Domain Direct.
+- Groups domain rules by the same public ingress node, listening port, and ingress mode, so users can immediately see which domains share one public IP and port.
+- Shows the shared ingress address, HTTPS mode, domain count, healthy/pending/abnormal counts, backend service, current connections, and live traffic for each rule.
+- Sorts abnormal groups after healthy groups while keeping the existing per-rule actions available in a collapsed **All domain rules** section.
+- This is a frontend-only presentation enhancement. It does not allocate ports, modify DNS, rebuild HTTPS listeners, change the database schema, or upgrade Agents.
+- Existing forwarding, tunnel, mapping, DNS, certificate, and service configurations are unchanged. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.36.2 Quality target validation
 
 - Explains common probe failures in plain language. In particular, `connection refused` now states that the target port has no listener or is actively rejected by its firewall, instead of looking like an Agent failure.

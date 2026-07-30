@@ -19,6 +19,7 @@ import {
   Globe2,
   HardDrive,
   LockKeyhole,
+  Layers3,
   Monitor,
   Pencil,
   Plus,
@@ -98,6 +99,23 @@ const formatBytes = (value = 0) => {
 };
 
 const formatSpeed = (value = 0) => `${formatBytes(value)}/s`;
+
+const domainRouteStatus = (route: DomainRoute) => {
+  const managedHttps = route.ingressMode === 'managed_https';
+  if (route.state === 'delete_pending') return { label: '待删除', color: 'warning' as const, kind: 'pending' as const, detail: route.lastError || '等待公网节点处理' };
+  if (route.certificateState === 'dns_propagating') return { label: 'DNS 同步中', color: 'primary' as const, kind: 'pending' as const, detail: route.lastError || '正在等待公共 DNS 读取验证记录' };
+  if (route.certificateState === 'renewal_failed') return { label: '续签异常', color: 'warning' as const, kind: 'abnormal' as const, detail: route.lastError || '当前证书仍在使用，面板将自动重试续签' };
+  if (['certificate_pending', 'provisioning'].includes(route.state) && managedHttps) return { label: '申请中', color: 'primary' as const, kind: 'pending' as const, detail: route.lastError || '正在完成 DNS 验证和证书部署' };
+  if (['certificate_failed', 'deployment_failed'].includes(route.state)) return { label: '配置失败', color: 'danger' as const, kind: 'abnormal' as const, detail: route.lastError || '证书申请或部署失败，将自动重试' };
+  if (!route.nodeOnline) return { label: '节点离线', color: 'danger' as const, kind: 'abnormal' as const, detail: '公网入口节点离线' };
+  if (route.backendType === 'direct' && !route.backendNodeOnline) return { label: '后端离线', color: 'danger' as const, kind: 'abnormal' as const, detail: '节点本机服务所在节点离线' };
+  if (route.mappingState !== 'active') return { label: '映射不可用', color: 'danger' as const, kind: 'abnormal' as const, detail: `后端映射状态：${stateMeta[route.mappingState]?.label || route.mappingState}` };
+  if (route.backendType !== 'direct' && !route.connectorOnline) return { label: '接入端离线', color: 'danger' as const, kind: 'abnormal' as const, detail: '内网接入端离线' };
+  if (route.healthState === 'unhealthy') return { label: '服务异常', color: 'danger' as const, kind: 'abnormal' as const, detail: route.healthError || '完整访问链路健康检查失败' };
+  return { label: '运行中', color: 'success' as const, kind: 'healthy' as const, detail: route.healthState === 'healthy'
+    ? `健康 · ${route.healthStatusCode || '--'} · ${route.healthLatencyMs ?? '--'} ms`
+    : managedHttps ? `HTTPS 有效至 ${formatTime(route.certificateExpiresAt)}` : 'TLS 透传正常' };
+};
 
 const platformMeta: Record<ConnectorPlatform, { label: string; commandLabel: string }> = {
   linux: { label: 'Linux', commandLabel: '终端命令' },
@@ -306,6 +324,24 @@ export default function ServicePublishingPage() {
     ? entryNodes.find(item => item.id === (domainForm.backendType === 'direct' ? Number(domainForm.backendNodeId) : selectedDomainPool?.nodeId))
     : entryNodes.find(item => String(item.id) === domainForm.entryNodeId), [domainForm.backendNodeId, domainForm.backendType, domainForm.entryNodeId, entryNodes, selectedDomainPool]);
   const selectedTemplate = useMemo(() => serviceTemplates.find(item => item.id === selectedTemplateId) || serviceTemplates[serviceTemplates.length - 1], [selectedTemplateId]);
+  const domainIngressGroups = useMemo(() => {
+    const groups = new Map<string, DomainRoute[]>();
+    domainRoutes.filter(route => route.state !== 'deleted').forEach(route => {
+      const key = `${route.nodeId}:${route.listenPort}:${route.ingressMode || 'passthrough'}`;
+      groups.set(key, [...(groups.get(key) || []), route]);
+    });
+    return Array.from(groups.entries()).map(([key, routes]) => {
+      const healthy = routes.filter(route => domainRouteStatus(route).kind === 'healthy').length;
+      const pending = routes.filter(route => domainRouteStatus(route).kind === 'pending').length;
+      const abnormal = routes.length - healthy - pending;
+      const first = routes[0];
+      return { key, routes, healthy, pending, abnormal, first };
+    }).sort((a, b) => {
+      const aRank = a.abnormal > 0 ? 2 : a.pending > 0 ? 1 : 0;
+      const bRank = b.abnormal > 0 ? 2 : b.pending > 0 ? 1 : 0;
+      return aRank - bRank || a.first.nodeName.localeCompare(b.first.nodeName, 'zh-CN') || a.first.listenPort - b.first.listenPort;
+    });
+  }, [domainRoutes]);
 
   const applyServiceTemplate = (template: ServiceTemplate) => {
     const previousTemplate = serviceTemplates.find(item => item.id === selectedTemplateId);
@@ -612,36 +648,93 @@ export default function ServicePublishingPage() {
               <span>暂无域名直达规则</span>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-divider">
-              <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
-                <span>域名</span><span>公网入口</span><span>后端映射</span><span>实时访问</span><span>状态</span><span>操作</span>
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
+                <Layers3 className="mt-0.5 shrink-0 text-primary" size={18} />
+                <div className="min-w-0">
+                  <div className="font-medium">端口复用</div>
+                  <div className="mt-1 text-default-500">多个域名可以共用同一个公网入口和监听端口。托管 HTTPS 会根据域名和路径分流；删除其中一条规则不会影响同组其他域名。</div>
+                </div>
               </div>
-              {domainRoutes.map(route => {
+              <div className="space-y-3">
+                {domainIngressGroups.map(group => {
+                  const first = group.first;
+                  const managedHttps = first.ingressMode === 'managed_https';
+                  const groupStatus = group.abnormal > 0
+                    ? { label: `${group.abnormal} 条异常`, color: 'danger' as const }
+                    : group.pending > 0
+                      ? { label: `${group.pending} 条处理中`, color: 'primary' as const }
+                      : { label: '全部正常', color: 'success' as const };
+                  return (
+                    <details key={group.key} open className="overflow-hidden rounded-lg border border-divider bg-content1">
+                      <summary className="cursor-pointer list-none px-4 py-4 [&::-webkit-details-marker]:hidden">
+                        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold">{first.nodeName}</span>
+                              <Chip size="sm" variant="flat" color={managedHttps ? 'success' : 'primary'}>{managedHttps ? '托管 HTTPS' : 'TLS 透传'}</Chip>
+                              <Chip size="sm" variant="flat" color={groupStatus.color}>{groupStatus.label}</Chip>
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-default-500">
+                              <span className="font-mono text-default-700 dark:text-default-300">{first.publicHost || '公网地址未配置'}:{first.listenPort}</span>
+                              <span>共用 {group.routes.length} 个域名入口</span>
+                              <span>{first.nodeOnline ? '入口节点在线' : '入口节点离线'}</span>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-default-500">
+                            <span className="rounded-md bg-success/10 px-2 py-1 text-success-700 dark:text-success-400">正常 {group.healthy}</span>
+                            {group.pending > 0 && <span className="rounded-md bg-primary/10 px-2 py-1 text-primary">处理中 {group.pending}</span>}
+                            {group.abnormal > 0 && <span className="rounded-md bg-danger/10 px-2 py-1 text-danger">异常 {group.abnormal}</span>}
+                          </div>
+                        </div>
+                      </summary>
+                      <div className="border-t border-divider">
+                        <div className="hidden grid-cols-[1.15fr_1.15fr_1.25fr_1fr_auto] gap-4 bg-default-100 px-4 py-2.5 text-xs text-default-500 lg:grid">
+                          <span>域名与路径</span><span>后端服务</span><span>访问情况</span><span>状态</span><span>操作</span>
+                        </div>
+                        {group.routes.map(route => {
+                          const routeStatus = domainRouteStatus(route);
+                          const stats = telemetry[`domain:${route.id}`];
+                          const managedRoute = route.ingressMode === 'managed_https';
+                          return (
+                            <div key={route.id} className="grid gap-3 border-t border-divider px-4 py-3 first:border-t-0 lg:grid-cols-[1.15fr_1.15fr_1.25fr_1fr_auto] lg:items-center">
+                              <div className="min-w-0">
+                                <a className="flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline" href={`https://${route.domain}${route.listenPort === 443 ? '' : `:${route.listenPort}`}${managedRoute ? route.pathPrefix || '/' : ''}`} target="_blank" rel="noreferrer">
+                                  <span className="truncate">{route.domain}{managedRoute ? route.pathPrefix || '/' : ''}</span><ExternalLink className="shrink-0" size={13} />
+                                </a>
+                                <div className="mt-1 truncate text-xs text-default-500">{route.name} · {route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
+                              </div>
+                              <div className="min-w-0 text-sm">
+                                <div className="flex min-w-0 items-center gap-2"><span className="truncate">{route.backendType === 'direct' ? route.backendNodeName || '节点本机服务' : route.mappingName}</span><Chip size="sm" variant="flat" color={route.backendType === 'direct' ? 'secondary' : 'default'}>{route.backendType === 'direct' ? '本机' : '映射'}</Chip></div>
+                                <div className="mt-1 truncate font-mono text-xs text-default-500">{route.backendType === 'direct' ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}` : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
+                              </div>
+                              <div className="min-w-0 text-sm"><div>{stats?.currentConnections || 0} 个连接</div><div className="mt-1 truncate text-xs text-default-500">↑ {formatSpeed(stats?.uploadSpeed)} · ↓ {formatSpeed(stats?.downloadSpeed)}</div></div>
+                              <div className="min-w-0"><Chip size="sm" variant="flat" color={routeStatus.color}>{routeStatus.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{routeStatus.detail}</div></div>
+                              <div className="flex justify-end gap-1">
+                                <Button isIconOnly size="sm" variant="light" aria-label="流量详情" title="流量详情" onPress={() => openTelemetry('domain', route.id)}><Activity size={16} /></Button>
+                                {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑后端" title="编辑后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
+                                {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+              <details className="overflow-hidden rounded-lg border border-divider bg-content1">
+                <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  全部域名规则 <span className="ml-2 text-xs font-normal text-default-500">用于逐条查看、编辑和删除</span>
+                </summary>
+                <div className="border-t border-divider">
+                <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
+                  <span>域名</span><span>公网入口</span><span>后端映射</span><span>实时访问</span><span>状态</span><span>操作</span>
+                </div>
+                {domainRoutes.map(route => {
                 const managedHttps = route.ingressMode === 'managed_https';
                 const stats = telemetry[`domain:${route.id}`];
-                const status = route.state === 'delete_pending'
-                  ? { label: '待删除', color: 'warning' as const, detail: route.lastError || '等待公网节点处理' }
-                  : route.certificateState === 'dns_propagating'
-                    ? { label: 'DNS 同步中', color: 'primary' as const, detail: route.lastError || '正在等待公共 DNS 读取验证记录' }
-                  : route.certificateState === 'renewal_failed'
-                    ? { label: '续签异常', color: 'warning' as const, detail: route.lastError || '当前证书仍在使用，面板将自动重试续签' }
-                  : ['certificate_pending', 'provisioning'].includes(route.state) && managedHttps
-                    ? { label: '申请中', color: 'primary' as const, detail: route.lastError || '正在完成 DNS 验证和证书部署' }
-                    : ['certificate_failed', 'deployment_failed'].includes(route.state)
-                      ? { label: '配置失败', color: 'danger' as const, detail: route.lastError || '证书申请或部署失败，将自动重试' }
-                  : !route.nodeOnline
-                    ? { label: '节点离线', color: 'danger' as const, detail: '公网入口节点离线' }
-                    : route.backendType === 'direct' && !route.backendNodeOnline
-                      ? { label: '后端离线', color: 'danger' as const, detail: '节点本机服务所在节点离线' }
-                    : route.mappingState !== 'active'
-                      ? { label: '映射不可用', color: 'danger' as const, detail: `后端映射状态：${stateMeta[route.mappingState]?.label || route.mappingState}` }
-                      : route.backendType !== 'direct' && !route.connectorOnline
-                        ? { label: '接入端离线', color: 'danger' as const, detail: '内网接入端离线' }
-                        : route.healthState === 'unhealthy'
-                          ? { label: '服务异常', color: 'danger' as const, detail: route.healthError || '完整访问链路健康检查失败' }
-                          : { label: '运行中', color: 'success' as const, detail: route.healthState === 'healthy'
-                            ? `健康 · ${route.healthStatusCode || '--'} · ${route.healthLatencyMs ?? '--'} ms`
-                            : managedHttps ? `HTTPS 有效至 ${formatTime(route.certificateExpiresAt)}` : 'TLS 透传正常' };
+                const status = domainRouteStatus(route);
                 return (
                   <article key={route.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] lg:items-center">
                     <div className="min-w-0">
@@ -671,6 +764,8 @@ export default function ServicePublishingPage() {
                   </article>
                 );
               })}
+                </div>
+              </details>
             </div>
           )}
         </Tab>
