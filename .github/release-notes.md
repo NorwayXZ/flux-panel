@@ -1,3 +1,10 @@
+## 2.36.1 Mobile layout correction
+
+- Keeps the Network Quality Lab title, description, refresh action, and create action inside narrow phone viewports.
+- Uses a stable two-column mobile action row and responsive title size so no header text or button label is clipped.
+- This is a panel-only layout follow-up. Agent `2.36.0`, quality samples, nodes, tunnels, forwards, DNS, ports, and active services are unchanged.
+- Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.36.0 Network Quality Lab
 
 - Adds an administrator-only Network Quality Lab using existing Agents to measure DNS resolution, TCP connection, TLS handshake, HTTP(S) TTFB, P50/P95/P99 latency, successive-sample jitter, failure rate, and full-run interruptions.

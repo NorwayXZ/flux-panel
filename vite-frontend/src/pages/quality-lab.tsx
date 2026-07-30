@@ -128,9 +128,9 @@ export default function QualityLabPage() {
   ];
 
   return <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
-    <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
-      <div><p className="text-sm text-default-500">实用工具</p><h1 className="mt-1 text-2xl font-semibold">网络质量实验室</h1><p className="mt-2 max-w-3xl text-sm text-default-500">由现有 Agent 定时建立线路画像。任务默认关闭，不创建任务就不会产生探测流量。</p></div>
-      <div className="flex gap-2"><Button isIconOnly variant="flat" title="刷新" onPress={() => void load()}><RefreshCw size={17} /></Button><Button color="primary" startContent={<Plus size={17} />} onPress={openCreate}>新建质量任务</Button></div>
+    <header className="flex min-w-0 flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0"><p className="text-sm text-default-500">实用工具</p><h1 className="mt-1 text-xl font-semibold sm:text-2xl">网络质量实验室</h1><p className="mt-2 max-w-3xl text-sm text-default-500">由现有 Agent 定时建立线路画像。任务默认关闭，不创建任务就不会产生探测流量。</p></div>
+      <div className="grid w-full grid-cols-[44px_minmax(0,1fr)] gap-2 sm:flex sm:w-auto"><Button isIconOnly className="h-11 w-11 min-w-11" variant="flat" title="刷新" onPress={() => void load()}><RefreshCw size={17} /></Button><Button className="min-w-0" color="primary" startContent={<Plus size={17} />} onPress={openCreate}>新建质量任务</Button></div>
     </header>
 
     <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-label="质量摘要">
