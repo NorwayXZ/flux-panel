@@ -1,3 +1,10 @@
+## 2.34.4 Agent release alignment and health cleanup
+
+- Aligns the panel and Agent release versions so the self-updater downloads Agent `2.34.4` from Release `2.34.4`, preventing a valid update from being rejected after resolving an older same-named Agent release.
+- Explicitly clears a domain route's previous health error when a later health check succeeds.
+- Includes the HTTPS-first node service discovery and editable direct-domain backend correction introduced in `2.34.3`.
+- Existing tunnels, forwards, mappings, domain records, certificates, listeners, and node configuration remain unchanged.
+
 ## 2.34.3 HTTPS service discovery correction
 
 - Probes HTTPS before HTTP during manual node service discovery, preventing TLS-enabled XUI panels from being misidentified when their HTTP listener returns a redirect or a generic error.

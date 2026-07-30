@@ -5,6 +5,7 @@ import com.admin.mapper.DomainRouteMapper;
 import com.admin.mapper.NodeMapper;
 import com.admin.entity.Node;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -61,10 +62,18 @@ public class DomainRouteHealthService {
             route.setHealthLatencyMs(System.currentTimeMillis() - started);
             route.setHealthError(shorten(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
-        route.setHealthCheckedAt(System.currentTimeMillis());
-        route.setUpdatedTime(System.currentTimeMillis());
+        long checkedAt = System.currentTimeMillis();
+        route.setHealthCheckedAt(checkedAt);
+        route.setUpdatedTime(checkedAt);
         try {
-            domainRouteMapper.updateById(route);
+            domainRouteMapper.update(null, new UpdateWrapper<DomainRoute>()
+                    .eq("id", route.getId())
+                    .set("health_state", route.getHealthState())
+                    .set("health_status_code", route.getHealthStatusCode())
+                    .set("health_latency_ms", route.getHealthLatencyMs())
+                    .set("health_checked_at", checkedAt)
+                    .set("health_error", route.getHealthError())
+                    .set("updated_time", checkedAt));
         } catch (Exception e) {
             log.warn("Could not store health state for domain route {}: {}", route.getId(), e.getMessage());
         }
