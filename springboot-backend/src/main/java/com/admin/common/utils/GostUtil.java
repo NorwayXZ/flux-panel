@@ -485,6 +485,47 @@ public class GostUtil {
         return WebSocketServer.send_msg(node_id, services, "AddService");
     }
 
+    public static GostDto AddBalancedService(Long nodeId, String name, Integer inPort, Integer limiter,
+                                              String remoteAddr, Tunnel tunnel, String targetStrategy,
+                                              String interfaceName, String protocolMode,
+                                              List<String> chainNames, String routeStrategy) {
+        return sendBalancedService(nodeId, name, inPort, limiter, remoteAddr, tunnel, targetStrategy,
+                interfaceName, protocolMode, chainNames, routeStrategy, "AddService");
+    }
+
+    public static GostDto UpdateBalancedService(Long nodeId, String name, Integer inPort, Integer limiter,
+                                                 String remoteAddr, Tunnel tunnel, String targetStrategy,
+                                                 String interfaceName, String protocolMode,
+                                                 List<String> chainNames, String routeStrategy) {
+        return sendBalancedService(nodeId, name, inPort, limiter, remoteAddr, tunnel, targetStrategy,
+                interfaceName, protocolMode, chainNames, routeStrategy, "UpdateService");
+    }
+
+    private static GostDto sendBalancedService(Long nodeId, String name, Integer inPort, Integer limiter,
+                                                String remoteAddr, Tunnel tunnel, String targetStrategy,
+                                                String interfaceName, String protocolMode,
+                                                List<String> chainNames, String routeStrategy, String operation) {
+        JSONArray services = new JSONArray();
+        for (String protocol : protocolsForMode(protocolMode)) {
+            JSONObject service = createServiceConfig(name, inPort, limiter, remoteAddr, protocol,
+                    tunnel.getType(), tunnel, targetStrategy, interfaceName, name);
+            JSONObject handler = service.getJSONObject("handler");
+            handler.remove("chain");
+            JSONObject group = new JSONObject();
+            JSONArray chains = new JSONArray();
+            for (String chainName : chainNames) chains.add(chainName + "_chains");
+            group.put("chains", chains);
+            JSONObject selector = new JSONObject();
+            selector.put("strategy", normalizeRouteStrategy(routeStrategy));
+            selector.put("maxFails", 1);
+            selector.put("failTimeout", "30s");
+            group.put("selector", selector);
+            handler.put("chainGroup", group);
+            services.add(service);
+        }
+        return WebSocketServer.send_msg(nodeId, services, operation);
+    }
+
     public static GostDto UpdateService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName) {
         return UpdateService(node_id, name, in_port, limiter, remoteAddr, fow_type, tunnel, strategy, interfaceName, "tcp_udp", name);
     }
@@ -617,8 +658,14 @@ public class GostUtil {
     }
 
     public static GostDto AddChains(Long node_id, String name, List<String> remoteAddrs, String protocol, String interfaceName) {
-        JSONObject data = createChainData(name, remoteAddrs, protocol, interfaceName);
+        JSONObject data = createChainData(name, remoteAddrs, protocol, interfaceName, null);
         return WebSocketServer.send_msg(node_id, data, "AddChains");
+    }
+
+    public static GostDto AddWeightedChains(Long nodeId, String name, List<String> remoteAddrs,
+                                             String protocol, String interfaceName, Integer weight) {
+        return WebSocketServer.send_msg(nodeId,
+                createChainData(name, remoteAddrs, protocol, interfaceName, weight), "AddChains");
     }
 
     public static GostDto UpdateChains(Long node_id, String name, String remoteAddr, String protocol, String interfaceName) {
@@ -626,14 +673,14 @@ public class GostUtil {
     }
 
     public static GostDto UpdateChains(Long node_id, String name, List<String> remoteAddrs, String protocol, String interfaceName) {
-        JSONObject data = createChainData(name, remoteAddrs, protocol, interfaceName);
+        JSONObject data = createChainData(name, remoteAddrs, protocol, interfaceName, null);
         JSONObject req = new JSONObject();
         req.put("chain", name + "_chains");
         req.put("data", data);
        return WebSocketServer.send_msg(node_id, req, "UpdateChains");
     }
 
-    private static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol, String interfaceName) {
+    private static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol, String interfaceName, Integer weight) {
         JSONArray hops = new JSONArray();
         int index = 1;
         for (String remoteAddr : remoteAddrs) {
@@ -673,7 +720,18 @@ public class GostUtil {
         JSONObject data = new JSONObject();
         data.put("name", name + "_chains");
         data.put("hops", hops);
+        if (weight != null) {
+            JSONObject metadata = new JSONObject();
+            metadata.put("weight", Math.max(1, Math.min(1000, weight)));
+            data.put("metadata", metadata);
+        }
         return data;
+    }
+
+    private static String normalizeRouteStrategy(String strategy) {
+        if (Objects.equals(strategy, "rand") || Objects.equals(strategy, "weighted")) return "rand";
+        if (Objects.equals(strategy, "hash")) return "hash";
+        return "round";
     }
 
     public static GostDto DeleteChains(Long node_id, String name) {

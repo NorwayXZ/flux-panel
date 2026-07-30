@@ -5,6 +5,7 @@ import com.admin.common.aop.LogAnnotation;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.DomainRouteCreateDto;
 import com.admin.common.dto.DomainRouteBackendUpdateDto;
+import com.admin.common.dto.DomainRoutePoolUpdateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
 import com.admin.common.dto.PortLedgerQueryDto;
@@ -198,6 +199,11 @@ public class ServicePublishingController {
     @LogAnnotation @RequireRole @PostMapping("/domain/backend/update")
     public R updateDomainRouteBackend(@Validated @RequestBody DomainRouteBackendUpdateDto dto) {
         return service.updateDomainRouteBackend(dto);
+    }
+
+    @LogAnnotation @RequireRole @PostMapping("/domain/pool/update")
+    public R updateDomainRoutePool(@Validated @RequestBody DomainRoutePoolUpdateDto dto) {
+        return service.updateDomainRoutePool(dto);
     }
 
     @LogAnnotation @PostMapping("/domain/list")

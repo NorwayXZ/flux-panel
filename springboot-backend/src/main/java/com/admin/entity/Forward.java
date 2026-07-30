@@ -47,6 +47,11 @@ public class Forward extends BaseEntity{
     private String routeMode;
 
     /**
+     * balance 模式的新连接调度策略：round、rand、weighted 或 hash。
+     */
+    private String routeBalanceStrategy;
+
+    /**
      * 候选线路及各自端口、健康状态的 JSON 配置。
      */
     private String routeConfig;

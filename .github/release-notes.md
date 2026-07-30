@@ -479,3 +479,15 @@
 - 发布流水线会执行新构建的 Agent 并核对 `--agent-version`，版本不一致时阻止发布。
 - 家庭代理删除后立即从页面和统计中移除；离线家庭接入端中的残留配置仍由后台任务在其恢复连接后清理。
 - 本次变更不修改现有隧道、转发、端口分配或节点配置；Agent 升级会短暂重启对应节点服务。
+## 2.37.0 Three-stage load balancing
+
+- Adds real same-ingress L4 tunnel balancing: round robin, random, weighted random, and source-IP hash select a GOST chain for each new connection. Existing connections remain untouched.
+- Adds managed HTTPS backend pools with health-based member removal/recovery, round/random/weighted selection, and optional source-IP affinity. Existing one-backend routes are migrated additively as their first pool member.
+- Extends Cross-entry Failover with **Active-active DNS**. Healthy entries are published together as DNS-only A/AAAA records; unhealthy entries are removed after the configured failure threshold and restored after recovery.
+- DNS active-active is explicitly resolver-level distribution, not strict connection-level weighting or Anycast. It affects fresh DNS resolution and new connections only; all-down groups retain their last DNS answer and are marked offline rather than publishing an empty set.
+
+### Upgrade and rollback impact
+
+- This is a panel-only release. Agent `2.36.0`, installed tunnels, forwards, nodes, ports, mappings, certificates, and existing DNS records are not restarted or rewritten.
+- Adds `domain_route_backend` and `cross_entry_dns_record`, plus additive defaulted fields on `forward`, `domain_route`, and cross-entry tables. Normal startup performs the migration; [`migrations/20260731_load_balancing.sql`](../migrations/20260731_load_balancing.sql) is available for manual maintenance.
+- To stop active-active DNS before returning to `2.36.3`, change each affected group back to **Primary/backup failover** in the new UI so the panel clears its extra DNS records. Then run `sudo /usr/local/sbin/flux-panel-manager rollback`.

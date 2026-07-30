@@ -14,6 +14,12 @@ public class ForwardRouteDto {
 
     private Integer priority;
 
+    private Integer weight = 100;
+
+    private Boolean enabled = true;
+
+    private Boolean draining = false;
+
     private Integer outPort;
 
     private String hopPorts;

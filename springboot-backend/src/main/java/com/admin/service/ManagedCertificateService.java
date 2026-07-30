@@ -281,6 +281,7 @@ public class ManagedCertificateService {
         List<Map<String, Object>> routes = jdbcTemplate.queryForList(
                 "SELECT r.id,r.domain,r.path_prefix AS pathPrefix,r.backend_type AS backendType,r.backend_node_id AS backendNodeId,"
                         + "r.backend_host AS backendHost,r.backend_port AS backendPort,r.backend_scheme AS backendScheme,r.backend_path AS backendPath,"
+                        + "r.backend_strategy AS backendStrategy,r.session_affinity AS sessionAffinity,"
                         + "r.state,r.certificate_id AS certificateId,p.public_port AS publicPort,"
                         + "pool.node_id AS mappingNodeId,pool.bind_ip AS bindIp,pool.public_host AS publicHost,"
                         + "c.private_key AS privateKey,c.certificate_chain AS certificateChain "
@@ -308,27 +309,15 @@ public class ManagedCertificateService {
             if (certPaths == null) throw new IllegalStateException("Agent 未返回证书文件位置");
             tlsCertificateById.putIfAbsent(certId, Map.of("names", List.of(Objects.toString(route.get("domain"))),
                     "certFile", certPaths.getString("certFile"), "keyFile", certPaths.getString("keyFile")));
-            Node entryNode = nodeMapper.selectById(nodeId);
-            String targetAddress;
-            String backendScheme = Objects.toString(route.get("backendScheme"), "http");
-            String backendPath = Objects.toString(route.get("backendPath"), "/");
-            if ("direct".equals(Objects.toString(route.get("backendType")))) {
-                Node backendNode = nodeMapper.selectById(number(route.get("backendNodeId")));
-                targetAddress = DirectServiceTargetUtil.resolve(entryNode, backendNode,
-                        Objects.toString(route.get("backendHost"), "127.0.0.1"),
-                        ((Number) route.get("backendPort")).intValue());
-            } else {
-                Node mappingNode = nodeMapper.selectById(number(route.get("mappingNodeId")));
-                PortPool targetPool = new PortPool();
-                targetPool.setNodeId(number(route.get("mappingNodeId")));
-                targetPool.setBindIp(Objects.toString(route.get("bindIp"), ""));
-                targetPool.setPublicHost(Objects.toString(route.get("publicHost"), ""));
-                targetAddress = PublishedServiceTargetUtil.resolve(entryNode, mappingNode, targetPool,
-                        ((Number) route.get("publicPort")).intValue());
+            List<SniRouteTargetDto> routeTargets = new ArrayList<>();
+            appendBackendPoolTargets(route, nodeMapper.selectById(nodeId), routeTargets);
+            // Do not replace a working shared HTTPS ingress with an empty route when
+            // every backend for one domain is unhealthy. A later recovery re-applies it.
+            if (routeTargets.isEmpty()) {
+                log.warn("Keeping existing HTTPS ingress {}:{} because route {} has no healthy backend", nodeId, listenPort, route.get("id"));
+                return;
             }
-            targets.add(new SniRouteTargetDto(number(route.get("id")), Objects.toString(route.get("domain")),
-                    SniDomainUtil.normalizePathPrefix(Objects.toString(route.get("pathPrefix"), "/")), targetAddress,
-                    backendScheme, backendPath));
+            targets.addAll(routeTargets);
         }
         boolean update = routes.stream().anyMatch(route -> "active".equals(route.get("state")));
         GostDto configured = GostUtil.ConfigureManagedHttpsIngress(nodeId, serviceName, "", listenPort, targets,
@@ -337,6 +326,42 @@ public class ManagedCertificateService {
         long now = System.currentTimeMillis();
         jdbcTemplate.update("UPDATE domain_route SET state='active',last_error=NULL,updated_time=? "
                 + "WHERE node_id=? AND listen_port=? AND ingress_mode='managed_https' AND state<>'deleted'", now, nodeId, listenPort);
+    }
+
+    private void appendBackendPoolTargets(Map<String, Object> route, Node entryNode, List<SniRouteTargetDto> targets) {
+        long routeId = number(route.get("id"));
+        List<Map<String, Object>> members = jdbcTemplate.queryForList(
+                "SELECT b.id,b.backend_type AS backendType,b.published_service_id AS publishedServiceId,b.backend_node_id AS backendNodeId,"
+                        + "b.backend_host AS backendHost,b.backend_port AS backendPort,b.backend_scheme AS backendScheme,b.backend_path AS backendPath,"
+                        + "b.weight,p.public_port AS publicPort,pool.node_id AS mappingNodeId,pool.bind_ip AS bindIp,pool.public_host AS publicHost "
+                        + "FROM domain_route_backend b LEFT JOIN published_service p ON p.id=b.published_service_id "
+                        + "LEFT JOIN port_pool pool ON pool.id=p.pool_id WHERE b.route_id=? AND b.enabled=1 AND b.health_state<>'unhealthy' ORDER BY b.position,b.id",
+                routeId);
+        Integer total = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM domain_route_backend WHERE route_id=?", Integer.class, routeId);
+        if ((total == null || total == 0) && members.isEmpty()) members = List.of(route);
+        for (Map<String, Object> member : members) {
+            String targetAddress;
+            if ("direct".equals(Objects.toString(member.get("backendType")))) {
+                Node backendNode = nodeMapper.selectById(number(member.get("backendNodeId")));
+                if (backendNode == null || member.get("backendPort") == null) continue;
+                targetAddress = DirectServiceTargetUtil.resolve(entryNode, backendNode,
+                        Objects.toString(member.get("backendHost"), "127.0.0.1"), ((Number) member.get("backendPort")).intValue());
+            } else {
+                if (member.get("mappingNodeId") == null || member.get("publicPort") == null) continue;
+                Node mappingNode = nodeMapper.selectById(number(member.get("mappingNodeId")));
+                if (mappingNode == null) continue;
+                PortPool pool = new PortPool();
+                pool.setNodeId(number(member.get("mappingNodeId")));
+                pool.setBindIp(Objects.toString(member.get("bindIp"), ""));
+                pool.setPublicHost(Objects.toString(member.get("publicHost"), ""));
+                targetAddress = PublishedServiceTargetUtil.resolve(entryNode, mappingNode, pool, ((Number) member.get("publicPort")).intValue());
+            }
+            targets.add(new SniRouteTargetDto(routeId, member.get("id") == null ? 0L : number(member.get("id")),
+                    Objects.toString(route.get("domain")), SniDomainUtil.normalizePathPrefix(Objects.toString(route.get("pathPrefix"), "/")),
+                    targetAddress, Objects.toString(member.get("backendScheme"), "http"), Objects.toString(member.get("backendPath"), "/"),
+                    member.get("weight") == null ? 100 : ((Number) member.get("weight")).intValue(),
+                    Objects.toString(route.get("backendStrategy"), "round"), Objects.toString(route.get("sessionAffinity"), "none")));
+        }
     }
 
     private Map<String, Object> loadCertificate(long id) {

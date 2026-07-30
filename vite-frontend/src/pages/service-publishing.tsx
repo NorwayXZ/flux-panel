@@ -52,11 +52,13 @@ import {
   getPublishingPortPools,
   getDnsZoneOptions,
   updateDomainRouteBackend,
+  updateDomainRoutePool,
   renewPublishedService,
   retryManagedCertificate,
   type InternalConnector,
   type ConnectorPlatform,
   type DomainRoute,
+  type DomainRouteBackendMember,
   type ManagedCertificate,
   type PublishedService,
   type ServiceTelemetry,
@@ -196,6 +198,10 @@ export default function ServicePublishingPage() {
   const [domainModal, setDomainModal] = useState(false);
   const [backendEditRoute, setBackendEditRoute] = useState<DomainRoute | null>(null);
   const [backendEditForm, setBackendEditForm] = useState({ host: '', port: '', scheme: 'http' as 'http' | 'https', path: '/' });
+  const [backendPoolRoute, setBackendPoolRoute] = useState<DomainRoute | null>(null);
+  const [backendPoolStrategy, setBackendPoolStrategy] = useState<'round' | 'rand' | 'weighted'>('round');
+  const [backendPoolAffinity, setBackendPoolAffinity] = useState<'none' | 'ip_hash'>('none');
+  const [backendPoolMembers, setBackendPoolMembers] = useState<DomainRouteBackendMember[]>([]);
   const [serviceForm, setServiceForm] = useState(createEmptyServiceForm);
   const [selectedTemplateId, setSelectedTemplateId] = useState<ServiceTemplateId>('custom-tcp');
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
@@ -544,6 +550,32 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
+  const openBackendPool = (route: DomainRoute) => {
+    const fallback: DomainRouteBackendMember = { name: '默认后端', backendType: route.backendType || 'direct', publishedServiceId: route.publishedServiceId, backendNodeId: route.backendNodeId, backendHost: route.backendHost || '127.0.0.1', backendPort: route.backendPort, backendScheme: route.backendScheme || 'http', backendPath: route.backendPath || '/', weight: 100, enabled: true };
+    setBackendPoolRoute(route);
+    setBackendPoolStrategy(route.backendStrategy || 'round');
+    setBackendPoolAffinity(route.sessionAffinity || 'none');
+    setBackendPoolMembers((route.backendMembers?.length ? route.backendMembers : [fallback]).map(member => ({ ...member, enabled: Boolean(member.enabled) })));
+  };
+
+  const updatePoolMember = (index: number, patch: Partial<DomainRouteBackendMember>) => setBackendPoolMembers(current => current.map((member, position) => position === index ? { ...member, ...patch } : member));
+
+  const submitBackendPool = async () => {
+    if (!backendPoolRoute || backendPoolMembers.length === 0) return;
+    for (const member of backendPoolMembers) {
+      if (!member.name.trim()) return toast.error('请填写后端名称');
+      if (member.backendType === 'mapping' && !member.publishedServiceId) return toast.error(`${member.name} 未选择内网映射`);
+      if (member.backendType === 'direct' && (!member.backendNodeId || !member.backendPort)) return toast.error(`${member.name} 的节点或端口不完整`);
+    }
+    setSubmitting(true);
+    const res = await updateDomainRoutePool({ id: backendPoolRoute.id, strategy: backendPoolStrategy, sessionAffinity: backendPoolAffinity, members: backendPoolMembers });
+    setSubmitting(false);
+    if (res.code !== 0) return toast.error(res.msg || '保存后端池失败');
+    toast.success('HTTPS 后端池已更新');
+    setBackendPoolRoute(null);
+    loadData();
+  };
+
   const retryCertificate = async (id: number) => {
     const res = await retryManagedCertificate(id);
     if (res.code !== 0) return toast.error(res.msg || '重新申请证书失败');
@@ -712,7 +744,8 @@ export default function ServicePublishingPage() {
                               <div className="min-w-0"><Chip size="sm" variant="flat" color={routeStatus.color}>{routeStatus.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{routeStatus.detail}</div></div>
                               <div className="flex justify-end gap-1">
                                 <Button isIconOnly size="sm" variant="light" aria-label="流量详情" title="流量详情" onPress={() => openTelemetry('domain', route.id)}><Activity size={16} /></Button>
-                                {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑后端" title="编辑后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
+                                {managedRoute && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="管理后端池" title="管理后端池" onPress={() => openBackendPool(route)}><Layers3 size={16} /></Button>}
+                                {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑默认后端" title="编辑默认后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
                                 {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
                               </div>
                             </div>
@@ -758,7 +791,8 @@ export default function ServicePublishingPage() {
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
                     <div className="flex justify-end gap-1">
                       <Button isIconOnly size="sm" variant="light" aria-label="流量详情" title="流量详情" onPress={() => openTelemetry('domain', route.id)}><Activity size={16} /></Button>
-                      {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑后端" title="编辑后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
+                      {route.ingressMode === 'managed_https' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="管理后端池" title="管理后端池" onPress={() => openBackendPool(route)}><Layers3 size={16} /></Button>}
+                      {route.backendType === 'direct' && route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" aria-label="编辑默认后端" title="编辑默认后端" onPress={() => editDomainBackend(route)}><Pencil size={16} /></Button>}
                       {route.state !== 'delete_pending' && <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除域名入口" onPress={() => removeDomainRoute(route.id)}><Trash2 size={16} /></Button>}
                     </div>
                   </article>
@@ -952,6 +986,39 @@ export default function ServicePublishingPage() {
             <div className="sm:col-span-2 border-y border-divider py-3 text-sm text-default-500">保留现有域名、DNS 和 HTTPS 证书，只重新下发后端连接配置。</div>
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setBackendEditRoute(null)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitDomainBackend}>保存并应用</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(backendPoolRoute)} onOpenChange={open => !open && setBackendPoolRoute(null)} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>HTTPS 后端池 · {backendPoolRoute?.domain}{backendPoolRoute?.pathPrefix || '/'}</ModalHeader>
+          <ModalBody className="gap-5">
+            <section className="grid gap-3 sm:grid-cols-2">
+              <Select label="新请求调度" selectedKeys={[backendPoolStrategy]} onSelectionChange={keys => setBackendPoolStrategy(String(Array.from(keys)[0] || 'round') as typeof backendPoolStrategy)}>
+                <SelectItem key="round">轮询 · 依次分配</SelectItem><SelectItem key="rand">随机 · 均匀选择</SelectItem><SelectItem key="weighted">加权随机 · 按权重分配</SelectItem>
+              </Select>
+              <Select label="会话保持" selectedKeys={[backendPoolAffinity]} onSelectionChange={keys => setBackendPoolAffinity(String(Array.from(keys)[0] || 'none') as typeof backendPoolAffinity)}>
+                <SelectItem key="none">关闭</SelectItem><SelectItem key="ip_hash">来源 IP 固定后端</SelectItem>
+              </Select>
+            </section>
+            <section className="divide-y divide-divider border-y border-divider">
+              {backendPoolMembers.map((member, index) => (
+                <div key={member.id || index} className="grid gap-3 py-4 lg:grid-cols-12 lg:items-end">
+                  <Input className="lg:col-span-3" label={`后端 ${index + 1}`} value={member.name} onValueChange={name => updatePoolMember(index, { name })} />
+                  <Select className="lg:col-span-2" label="来源" selectedKeys={[member.backendType]} onSelectionChange={keys => updatePoolMember(index, { backendType: String(Array.from(keys)[0] || 'direct') as 'mapping' | 'direct' })}>
+                    <SelectItem key="direct">节点服务</SelectItem><SelectItem key="mapping">内网映射</SelectItem>
+                  </Select>
+                  {member.backendType === 'mapping' ? <Select className="lg:col-span-4" label="内网映射" selectedKeys={member.publishedServiceId ? [String(member.publishedServiceId)] : []} onSelectionChange={keys => updatePoolMember(index, { publishedServiceId: Number(Array.from(keys)[0]) })}>{services.filter(service => service.state === 'active').map(service => <SelectItem key={String(service.id)}>{service.name} · {service.publicPort}</SelectItem>)}</Select> : <><Select className="lg:col-span-3" label="后端节点" selectedKeys={member.backendNodeId ? [String(member.backendNodeId)] : []} onSelectionChange={keys => updatePoolMember(index, { backendNodeId: Number(Array.from(keys)[0]) })}>{entryNodes.map(node => <SelectItem key={String(node.id)}>{node.name}</SelectItem>)}</Select><Input className="lg:col-span-2" label="端口" type="number" value={String(member.backendPort || '')} onValueChange={value => updatePoolMember(index, { backendPort: Number(value) || undefined })} /></>}
+                  <Input className="lg:col-span-2" label="权重" type="number" min={1} max={1000} value={String(member.weight || 100)} isDisabled={backendPoolStrategy !== 'weighted'} onValueChange={value => updatePoolMember(index, { weight: Number(value) || 100 })} />
+                  <div className="flex items-center justify-end gap-2 lg:col-span-1"><Chip size="sm" variant="flat" color={member.healthState === 'healthy' ? 'success' : member.healthState === 'unhealthy' ? 'danger' : 'default'}>{member.healthState === 'healthy' ? '健康' : member.healthState === 'unhealthy' ? '异常' : '待检查'}</Chip><Button isIconOnly size="sm" variant="light" color="danger" aria-label="移除后端" isDisabled={backendPoolMembers.length <= 1} onPress={() => setBackendPoolMembers(current => current.filter((_, position) => position !== index))}><Trash2 size={15} /></Button></div>
+                  {member.backendType === 'direct' && <div className="grid gap-3 lg:col-span-12 lg:grid-cols-12"><Select className="lg:col-span-2" label="协议" selectedKeys={[member.backendScheme || 'http']} onSelectionChange={keys => updatePoolMember(index, { backendScheme: String(Array.from(keys)[0] || 'http') as 'http' | 'https' })}><SelectItem key="http">HTTP</SelectItem><SelectItem key="https">HTTPS</SelectItem></Select><Input className="lg:col-span-4" label="监听地址" value={member.backendHost || '127.0.0.1'} onValueChange={backendHost => updatePoolMember(index, { backendHost })} /><Input className="lg:col-span-4" label="后端根路径" value={member.backendPath || '/'} onValueChange={backendPath => updatePoolMember(index, { backendPath })} /><Button className="lg:col-span-2" variant={Boolean(member.enabled) ? 'flat' : 'bordered'} color={Boolean(member.enabled) ? 'success' : 'default'} onPress={() => updatePoolMember(index, { enabled: !Boolean(member.enabled) })}>{Boolean(member.enabled) ? '已启用' : '已停用'}</Button></div>}
+                </div>
+              ))}
+            </section>
+            <Button variant="flat" startContent={<Plus size={16} />} isDisabled={backendPoolMembers.length >= 10} onPress={() => setBackendPoolMembers(current => [...current, { name: `后端 ${current.length + 1}`, backendType: 'direct', backendHost: '127.0.0.1', backendScheme: 'http', backendPath: '/', weight: 100, enabled: true }])}>添加后端</Button>
+            <p className="text-xs leading-5 text-default-500">异常后端连续检测失败后自动摘除，恢复后自动加入。来源 IP 会话保持适合登录态服务；已经建立的连接不会迁移。</p>
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setBackendPoolRoute(null)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submitBackendPool}>保存并应用</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

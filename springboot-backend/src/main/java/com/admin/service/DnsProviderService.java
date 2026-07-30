@@ -349,6 +349,75 @@ public class DnsProviderService {
                 System.currentTimeMillis(), ownerId);
     }
 
+    /**
+     * Keeps one managed record as the stable anchor and creates/removes the extra
+     * Cloudflare records required by an active-active entry group. The anchor is
+     * deliberately retained for old-panel rollback compatibility.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public DnsPoolSyncResult syncCrossEntryActiveRecords(Long zoneRefId, String anchorRecordId, String domain, String type,
+                                                           int ttl, Long groupId, List<CrossEntryDnsTarget> targets) {
+        if (zoneRefId == null) throw new IllegalArgumentException("多入口同时运行需要使用面板管理的 Cloudflare Zone");
+        if (StringUtils.isBlank(anchorRecordId)) throw new IllegalArgumentException("缺少入口 DNS 记录");
+        if (targets == null || targets.isEmpty()) throw new IllegalArgumentException("没有健康入口可写入 DNS");
+        ZoneAccess zone = loadZoneAccess(zoneRefId);
+        String fqdn = normalizeDomain(zoneRefId, domain);
+        for (CrossEntryDnsTarget target : targets) validateRecord(type, target.content());
+
+        long now = System.currentTimeMillis();
+        CrossEntryDnsTarget anchor = targets.get(0);
+        updateRecord(zone, anchorRecordId, fqdn, type, anchor.content(), ttl);
+        jdbcTemplate.update("UPDATE dns_managed_record SET content=?,ttl=?,owner_type='cross_entry',owner_id=?,status='active',last_error=NULL,updated_time=? "
+                        + "WHERE zone_id=? AND provider_record_id=?",
+                anchor.content(), ttl, groupId, now, zoneRefId, anchorRecordId);
+
+        List<Map<String, Object>> existing = jdbcTemplate.queryForList(
+                "SELECT id,member_id AS memberId,provider_record_id AS providerRecordId,content FROM cross_entry_dns_record WHERE group_id=?", groupId);
+        Map<Long, Map<String, Object>> byMember = new LinkedHashMap<>();
+        for (Map<String, Object> row : existing) byMember.put(number(row.get("memberId")).longValue(), row);
+        int created = 0;
+        int removed = 0;
+
+        // A member promoted to the stable anchor must not retain a duplicate record.
+        Map<String, Object> duplicateAnchor = byMember.remove(anchor.memberId());
+        if (duplicateAnchor != null) {
+            deleteRecord(zone, Objects.toString(duplicateAnchor.get("providerRecordId")));
+            jdbcTemplate.update("DELETE FROM cross_entry_dns_record WHERE id=?", duplicateAnchor.get("id"));
+            removed++;
+        }
+        for (int index = 1; index < targets.size(); index++) {
+            CrossEntryDnsTarget target = targets.get(index);
+            Map<String, Object> row = byMember.remove(target.memberId());
+            if (row == null) {
+                String recordId = createRecord(zone, fqdn, type, target.content(), ttl);
+                jdbcTemplate.update("INSERT INTO cross_entry_dns_record (group_id,member_id,provider_record_id,content,created_time,updated_time) VALUES (?,?,?,?,?,?)",
+                        groupId, target.memberId(), recordId, target.content(), now, now);
+                created++;
+            } else {
+                updateRecord(zone, Objects.toString(row.get("providerRecordId")), fqdn, type, target.content(), ttl);
+                jdbcTemplate.update("UPDATE cross_entry_dns_record SET content=?,updated_time=? WHERE id=?", target.content(), now, row.get("id"));
+            }
+        }
+        for (Map<String, Object> stale : byMember.values()) {
+            deleteRecord(zone, Objects.toString(stale.get("providerRecordId")));
+            jdbcTemplate.update("DELETE FROM cross_entry_dns_record WHERE id=?", stale.get("id"));
+            removed++;
+        }
+        return new DnsPoolSyncResult(created, removed, targets.size());
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void clearCrossEntryActiveRecords(Long zoneRefId, Long groupId) {
+        if (groupId == null) return;
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT provider_record_id AS providerRecordId FROM cross_entry_dns_record WHERE group_id=?", groupId);
+        if (zoneRefId != null) {
+            ZoneAccess zone = loadZoneAccess(zoneRefId);
+            for (Map<String, Object> row : rows) deleteRecord(zone, Objects.toString(row.get("providerRecordId")));
+        }
+        jdbcTemplate.update("DELETE FROM cross_entry_dns_record WHERE group_id=?", groupId);
+    }
+
     private List<CloudflareZone> fetchZones(String token) {
         List<CloudflareZone> zones = new ArrayList<>();
         int page = 1;
@@ -406,6 +475,11 @@ public class DnsProviderService {
     private void updateRecord(ZoneAccess zone, String recordId, String fqdn, String type, String content, int ttl) {
         exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records/" + recordId, HttpMethod.PUT,
                 new HttpEntity<>(recordBody(fqdn, type, content, ttl), headers(zone.token())));
+    }
+
+    private void deleteRecord(ZoneAccess zone, String recordId) {
+        exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records/" + recordId,
+                HttpMethod.DELETE, new HttpEntity<>(headers(zone.token())));
     }
 
     private Map<String, Object> recordBody(String fqdn, String type, String content, int ttl) {
@@ -497,5 +571,7 @@ public class DnsProviderService {
     }
 
     public record ZoneAccess(long id, String providerZoneId, String zoneName, String token) {}
+    public record CrossEntryDnsTarget(long memberId, String content) {}
+    public record DnsPoolSyncResult(int created, int removed, int active) {}
     private record CloudflareZone(String id, String name) {}
 }

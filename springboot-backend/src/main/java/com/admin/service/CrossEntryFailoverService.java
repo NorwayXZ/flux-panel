@@ -94,7 +94,7 @@ public class CrossEntryFailoverService {
                 "SELECT g.id,g.name,g.domain,g.dns_zone_id AS dnsZoneId,g.zone_id AS zoneId,z.zone_name AS zoneName,g.record_id AS recordId,g.record_type AS recordType,g.ttl,"
                         + "probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                         + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,"
-                        + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,enabled,state,active_member_id AS activeMemberId,"
+                        + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
                         + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
                         + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
@@ -174,20 +174,21 @@ public class CrossEntryFailoverService {
             if (id == null) {
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_group "
                                 + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
-                                + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,routing_mode,enabled,state,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
-                        dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(),
+                        dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
                         dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,dns_zone_id=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
                                 + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,cooldown_seconds=?,"
-                                + "auto_failback=?,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
+                                + "auto_failback=?,routing_mode=?,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
-                        dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getEnabled(), now, id);
+                        dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(), dto.getEnabled(), now, id);
+                dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
 
@@ -196,10 +197,10 @@ public class CrossEntryFailoverService {
             for (int priority = 0; priority < forwards.size(); priority++) {
                 Map<String, Object> forward = forwards.get(priority);
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_member "
-                                + "(group_id,forward_id,priority,entry_node_id,entry_host,entry_address,entry_port,forward_name,node_name,status,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,'unknown',?,?)",
-                        id, number(forward.get("id")).longValue(), priority, number(forward.get("inNodeId")).longValue(),
-                        forward.get("entryHost"), forward.get("entryAddress"), number(forward.get("inPort")).intValue(),
+                        + "(group_id,forward_id,priority,weight,enabled,entry_node_id,entry_host,entry_address,entry_port,forward_name,node_name,status,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?, ?,?,?,?,?,?,'unknown',?,?)",
+                        id, number(forward.get("id")).longValue(), priority, memberWeight(dto, priority), true,
+                        number(forward.get("inNodeId")).longValue(), forward.get("entryHost"), forward.get("entryAddress"), number(forward.get("inPort")).intValue(),
                         forward.get("name"), forward.get("nodeName"), now, now);
                 Long memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
                 if (priority == 0) primaryMemberId = memberId;
@@ -207,7 +208,9 @@ public class CrossEntryFailoverService {
                     retainedActiveMemberId = memberId;
                 }
             }
-            Long activeMemberId = retainedActiveMemberId == null ? primaryMemberId : retainedActiveMemberId;
+            Long activeMemberId = "active_active".equals(dto.getRoutingMode())
+                    ? primaryMemberId
+                    : (retainedActiveMemberId == null ? primaryMemberId : retainedActiveMemberId);
             boolean configuredEntryChanged = previousActiveForwardId != null && retainedActiveMemberId == null;
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END WHERE id=?",
                     activeMemberId, configuredEntryChanged, now, id);
@@ -234,7 +237,12 @@ public class CrossEntryFailoverService {
                 addEvent(id, null, activeMemberId, "配置移除了当前入口", "success",
                         Objects.toString(previousActiveName, "原入口") + " -> " + selectedEntry.get("nodeName"));
             }
-            updateCloudflareDns(loadGroup(id), selectedEntry);
+            Map<String, Object> savedGroup = loadGroup(id);
+            if ("active_active".equals(dto.getRoutingMode())) {
+                syncActiveEntries(savedGroup, loadMembers(id), "已发布全部入口");
+            } else {
+                updateCloudflareDns(savedGroup, selectedEntry);
+            }
             return R.ok(Map.of("id", id));
         } catch (IllegalArgumentException | IllegalStateException e) {
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
@@ -245,6 +253,8 @@ public class CrossEntryFailoverService {
     @Transactional
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        Map<String, Object> group = loadGroup(id);
+        dnsProviderService.clearCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")), id);
         dnsProviderService.releaseRecord(id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -324,6 +334,10 @@ public class CrossEntryFailoverService {
         members = loadMembers(groupId);
         Map<String, Object> active = memberById(members, nullableLong(group.get("activeMemberId")));
         if (active == null && !members.isEmpty()) active = members.get(0);
+        if ("active_active".equals(Objects.toString(group.get("routingMode"), "failover"))) {
+            updateActiveActiveGroup(group, members, now);
+            return;
+        }
         boolean activeFailed = active == null || "unhealthy".equals(active.get("status"));
         List<CrossEntryFailoverPolicy.Member> snapshots = members.stream()
                 .map(member -> new CrossEntryFailoverPolicy.Member(
@@ -413,6 +427,49 @@ public class CrossEntryFailoverService {
             telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
                     Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), detail, false, now);
         }
+    }
+
+    /** Active-active DNS is connection selection at resolver time, not a TCP connection migrator. */
+    private void updateActiveActiveGroup(Map<String, Object> group, List<Map<String, Object>> members, long now) {
+        List<Map<String, Object>> healthy = members.stream()
+                .filter(member -> bool(member.get("enabled")) && "healthy".equals(member.get("status")))
+                .collect(Collectors.toList());
+        long groupId = number(group.get("id")).longValue();
+        Map<String, Object> previous = memberById(members, nullableLong(group.get("activeMemberId")));
+        if (healthy.isEmpty()) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='offline',last_error='所有入口均不可用，DNS 保持上一次可用记录',last_checked_at=?,updated_time=? WHERE id=?",
+                    now, now, groupId);
+            return;
+        }
+        Map<String, Object> representative = healthy.get(0);
+        try {
+            DnsProviderService.DnsPoolSyncResult result = syncActiveEntries(group, healthy, null);
+            String state = healthy.size() == members.size() ? "healthy" : "degraded";
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=NULL,last_checked_at=?,updated_time=? WHERE id=?",
+                    representative.get("id"), state, now, now, groupId);
+            if (result.created() > 0 || result.removed() > 0) {
+                addEvent(groupId, previous == null ? null : nullableLong(previous.get("id")), nullableLong(representative.get("id")),
+                        "入口成员已更新", "success", "健康入口 " + result.active() + " 条；新增 " + result.created() + " 条 DNS 记录，移除 " + result.removed() + " 条");
+            }
+        } catch (RuntimeException e) {
+            String error = shorten("DNS 同步失败：" + e.getMessage(), 500);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    error, now, now, groupId);
+            addEvent(groupId, previous == null ? null : nullableLong(previous.get("id")), nullableLong(representative.get("id")),
+                    "入口成员同步失败", "failed", error);
+        }
+    }
+
+    private DnsProviderService.DnsPoolSyncResult syncActiveEntries(Map<String, Object> group, List<Map<String, Object>> members, String ignoredReason) {
+        List<DnsProviderService.CrossEntryDnsTarget> targets = members.stream()
+                .filter(member -> bool(member.get("enabled")) && !"unhealthy".equals(member.get("status")))
+                .map(member -> new DnsProviderService.CrossEntryDnsTarget(number(member.get("id")).longValue(),
+                        Objects.toString(member.get("entryAddress"))))
+                .collect(Collectors.toList());
+        return dnsProviderService.syncCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")),
+                Objects.toString(group.get("recordId")), Objects.toString(group.get("domain")),
+                Objects.toString(group.get("recordType")), number(group.get("ttl")).intValue(),
+                number(group.get("id")).longValue(), targets);
     }
 
     private void updateCloudflareDns(Map<String, Object> group, Map<String, Object> member) {
@@ -521,6 +578,12 @@ public class CrossEntryFailoverService {
         dto.setFailureThreshold(clamp(dto.getFailureThreshold(), 1, 10));
         dto.setRecoveryThreshold(clamp(dto.getRecoveryThreshold(), 2, 20));
         dto.setCooldownSeconds(clamp(dto.getCooldownSeconds(), 10, 3600));
+        String routingMode = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getRoutingMode(), "failover"), Locale.ROOT);
+        if (!Set.of("failover", "active_active").contains(routingMode)) throw new IllegalArgumentException("入口模式不正确");
+        if ("active_active".equals(routingMode) && dto.getDnsZoneId() == null) {
+            throw new IllegalArgumentException("多入口同时运行需要使用面板管理的 Cloudflare Zone");
+        }
+        dto.setRoutingMode(routingMode);
         dto.setAutoFailback(Boolean.TRUE.equals(dto.getAutoFailback()));
         dto.setEnabled(!Boolean.FALSE.equals(dto.getEnabled()));
     }
@@ -529,14 +592,14 @@ public class CrossEntryFailoverService {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,name,domain,dns_zone_id AS dnsZoneId,zone_id AS zoneId,record_id AS recordId,api_token AS apiToken,"
                 + "record_type AS recordType,ttl,probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                 + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,cooldown_seconds AS cooldownSeconds,"
-                + "auto_failback AS autoFailback,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
+                + "auto_failback AS autoFailback,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);
     }
 
     private List<Map<String, Object>> loadMembers(long groupId) {
-        return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,entry_node_id AS entryNodeId,"
+        return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
                 + "entry_host AS entryHost,entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
                 + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt "
@@ -640,6 +703,12 @@ public class CrossEntryFailoverService {
 
     private int clamp(Integer value, int min, int max) {
         return Math.max(min, Math.min(max, value == null ? min : value));
+    }
+
+    private int memberWeight(CrossEntryFailoverSaveDto dto, int index) {
+        if (dto.getMemberWeights() == null || index >= dto.getMemberWeights().size()) return 100;
+        Integer value = dto.getMemberWeights().get(index);
+        return clamp(value, 1, 1000);
     }
 
     private String shorten(String value, int max) {

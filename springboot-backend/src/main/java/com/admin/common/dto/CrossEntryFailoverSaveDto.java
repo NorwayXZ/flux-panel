@@ -35,6 +35,12 @@ public class CrossEntryFailoverSaveDto {
     private Boolean autoFailback = false;
     private Boolean enabled = true;
 
+    /** failover keeps one DNS answer; active_active publishes every healthy entry. */
+    private String routingMode = "failover";
+
+    /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
+    private List<Integer> memberWeights;
+
     /** 第一项为主入口，其余按顺序作为备用入口。 */
     @NotEmpty(message = "请至少选择两个入口转发")
     private List<Long> memberForwardIds;

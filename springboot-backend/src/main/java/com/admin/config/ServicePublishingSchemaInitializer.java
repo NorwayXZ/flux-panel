@@ -75,6 +75,16 @@ public class ServicePublishingSchemaInitializer {
                     + "next_attempt_at bigint DEFAULT NULL, created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                     + "UNIQUE KEY uk_managed_certificate_domain (zone_id,domain), KEY idx_certificate_renewal (state,expires_at,next_attempt_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS domain_route_backend ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT, route_id bigint NOT NULL, position int NOT NULL DEFAULT 0, name varchar(100) NOT NULL, "
+                    + "backend_type varchar(24) NOT NULL DEFAULT 'direct', published_service_id bigint DEFAULT NULL, backend_node_id bigint DEFAULT NULL, "
+                    + "backend_host varchar(128) DEFAULT NULL, backend_port int DEFAULT NULL, backend_scheme varchar(12) NOT NULL DEFAULT 'http', "
+                    + "backend_path varchar(255) NOT NULL DEFAULT '/', weight int NOT NULL DEFAULT 100, enabled tinyint NOT NULL DEFAULT 1, "
+                    + "health_state varchar(24) NOT NULL DEFAULT 'pending', fail_count int NOT NULL DEFAULT 0, success_count int NOT NULL DEFAULT 0, "
+                    + "health_latency_ms bigint DEFAULT NULL, health_error varchar(500) DEFAULT NULL, health_checked_at bigint DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
+                    + "UNIQUE KEY uk_domain_backend_position (route_id,position), KEY idx_domain_backend_health (enabled,health_checked_at), "
+                    + "KEY idx_domain_backend_route (route_id,enabled)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS service_publish_lock (id int NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.update("INSERT IGNORE INTO service_publish_lock (id) VALUES (1)");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS service_telemetry_latest ("
@@ -182,6 +192,12 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("domain_route", "health_latency_ms", "bigint DEFAULT NULL AFTER health_status_code");
             ensureColumn("domain_route", "health_checked_at", "bigint DEFAULT NULL AFTER health_latency_ms");
             ensureColumn("domain_route", "health_error", "varchar(500) DEFAULT NULL AFTER health_checked_at");
+            ensureColumn("domain_route", "backend_strategy", "varchar(24) NOT NULL DEFAULT 'round' AFTER backend_path");
+            ensureColumn("domain_route", "session_affinity", "varchar(24) NOT NULL DEFAULT 'none' AFTER backend_strategy");
+            jdbcTemplate.update("INSERT IGNORE INTO domain_route_backend "
+                    + "(route_id,position,name,backend_type,published_service_id,backend_node_id,backend_host,backend_port,backend_scheme,backend_path,weight,enabled,health_state,created_time,updated_time) "
+                    + "SELECT id,0,'默认后端',backend_type,published_service_id,backend_node_id,backend_host,backend_port,backend_scheme,backend_path,100,1,'pending',created_time,updated_time "
+                    + "FROM domain_route WHERE ingress_mode='managed_https' AND state<>'deleted'");
             replaceDomainRouteUniqueIndex();
             ensureIndex("domain_route", "idx_domain_certificate", "certificate_id, state");
             ensureIndex("domain_route", "idx_domain_backend_node", "backend_node_id, state");

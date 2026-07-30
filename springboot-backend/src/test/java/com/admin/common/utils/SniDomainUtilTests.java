@@ -74,4 +74,21 @@ class SniDomainUtilTests {
         assertEquals("/abc123", node.getJSONObject("http").getJSONObject("responseHeader").getString("@cloudnest.internalPath"));
         assertEquals("identity", node.getJSONObject("http").getJSONObject("requestHeader").getString("Accept-Encoding"));
     }
+
+    @Test
+    void buildsWeightedBackendPoolAndPrefersIpAffinityWhenRequested() {
+        SniRouteTargetDto weighted = new SniRouteTargetDto(1L, 11L, "app.example.com", "/", "127.0.0.1:20001",
+                "http", "/", 250, "weighted", "none");
+        SniRouteTargetDto sticky = new SniRouteTargetDto(1L, 12L, "app.example.com", "/", "127.0.0.1:20002",
+                "http", "/", 100, "round", "ip_hash");
+
+        JSONObject service = SniDomainUtil.buildManagedHttpsService("managed_https_8_443", "", 443,
+                List.of(weighted, sticky), List.of(Map.of("names", List.of("app.example.com"),
+                        "certFile", "/tmp/x.crt", "keyFile", "/tmp/x.key")));
+
+        JSONObject forwarder = service.getJSONObject("forwarder");
+        assertEquals("hash", forwarder.getJSONObject("selector").getString("strategy"));
+        assertEquals(250, forwarder.getJSONArray("nodes").getJSONObject(0).getJSONObject("metadata").getIntValue("weight"));
+        assertEquals("domain_route_1_backend_12", forwarder.getJSONArray("nodes").getJSONObject(1).getString("name"));
+    }
 }

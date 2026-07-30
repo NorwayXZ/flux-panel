@@ -58,7 +58,8 @@ interface Forward {
   userName?: string;
   userId?: number;
   inx?: number;
-  routeMode?: 'single' | 'failover' | 'latency';
+  routeMode?: 'single' | 'failover' | 'latency' | 'balance';
+  routeBalanceStrategy?: 'round' | 'rand' | 'weighted' | 'hash';
   routeConfig?: string;
   activeTunnelId?: number;
   protocolMode?: 'tcp' | 'udp' | 'tcp_udp';
@@ -99,7 +100,9 @@ interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
-  routeMode: 'single' | 'failover' | 'latency';
+  routeMode: 'single' | 'failover' | 'latency' | 'balance';
+  routeBalanceStrategy: 'round' | 'rand' | 'weighted' | 'hash';
+  routeWeights: Record<number, number>;
   routeTunnelIds: number[];
   protocolMode: 'tcp' | 'udp' | 'tcp_udp';
   batchMode: boolean;
@@ -111,6 +114,9 @@ interface ForwardRoute {
   tunnelId: number;
   tunnelName?: string;
   priority?: number;
+  weight?: number;
+  enabled?: boolean;
+  draining?: boolean;
   status?: 'unknown' | 'healthy' | 'unhealthy';
   latency?: number | null;
   packetLoss?: number | null;
@@ -241,6 +247,8 @@ export default function ForwardPage() {
     interfaceName: '',
     strategy: 'fifo',
     routeMode: 'single',
+    routeBalanceStrategy: 'round',
+    routeWeights: {},
     routeTunnelIds: [],
     protocolMode: 'tcp_udp',
     batchMode: false,
@@ -496,7 +504,7 @@ export default function ForwardPage() {
     }
 
     if (form.routeMode !== 'single' && form.routeTunnelIds.length === 0) {
-      newErrors.routeTunnelIds = '主备或低延迟模式至少需要一条候选线路';
+      newErrors.routeTunnelIds = '多线路模式至少需要一条候选线路';
     }
 
     if (!form.remoteAddr.trim()) {
@@ -558,6 +566,8 @@ export default function ForwardPage() {
       interfaceName: '',
       strategy: 'fifo',
       routeMode: 'single',
+      routeBalanceStrategy: 'round',
+      routeWeights: {},
       routeTunnelIds: [],
       protocolMode: 'tcp_udp',
       batchMode: false,
@@ -583,6 +593,8 @@ export default function ForwardPage() {
       interfaceName: forward.interfaceName || '',
       strategy: forward.strategy || 'fifo',
       routeMode: forward.routeMode || (routes.length > 1 ? 'failover' : 'single'),
+      routeBalanceStrategy: forward.routeBalanceStrategy || 'round',
+      routeWeights: Object.fromEntries(routes.map(route => [route.tunnelId, route.weight || 100])),
       routeTunnelIds: routes
         .map(route => route.tunnelId)
         .filter(tunnelId => tunnelId !== forward.tunnelId),
@@ -680,6 +692,8 @@ export default function ForwardPage() {
           interfaceName: form.interfaceName,
           strategy: addressCount > 1 ? form.strategy : 'fifo',
           routeMode: form.routeMode,
+          routeBalanceStrategy: form.routeBalanceStrategy,
+          routeWeights: form.routeWeights,
           routeTunnelIds,
           protocolMode: form.protocolMode
         };
@@ -694,6 +708,8 @@ export default function ForwardPage() {
           interfaceName: form.interfaceName,
           strategy: addressCount > 1 ? form.strategy : 'fifo',
           routeMode: form.routeMode,
+          routeBalanceStrategy: form.routeBalanceStrategy,
+          routeWeights: form.routeWeights,
           routeTunnelIds,
           protocolMode: form.protocolMode,
           batchEndPort: form.batchMode ? form.batchEndPort : null,
@@ -1251,6 +1267,7 @@ export default function ForwardPage() {
   const getRouteModeDisplay = (routeMode?: string): string => {
     if (routeMode === 'failover') return '主备切换';
     if (routeMode === 'latency') return '低延迟选路';
+    if (routeMode === 'balance') return '多线路负载均衡';
     return '单线路';
   };
 
@@ -1455,10 +1472,11 @@ export default function ForwardPage() {
                 </div>
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] text-default-400">当前线路</div>
+                <div className="text-[11px] text-default-400">{forward.routeMode === 'balance' ? '负载池' : '当前线路'}</div>
                 <div className={activeRoute.status === 'unhealthy' ? "text-xs font-medium text-danger truncate" : "text-xs font-medium truncate"}>
-                  {getRouteStatusText(activeRoute)}
-                  {typeof activeRoute.latency === 'number' ? ` · ${activeRoute.latency.toFixed(0)} ms` : ''}
+                  {forward.routeMode === 'balance'
+                    ? `${healthyRouteCount}/${routes.length} 条可用`
+                    : <>{getRouteStatusText(activeRoute)}{typeof activeRoute.latency === 'number' ? ` · ${activeRoute.latency.toFixed(0)} ms` : ''}</>}
                 </div>
               </div>
               <div className="min-w-0">
@@ -1480,9 +1498,11 @@ export default function ForwardPage() {
                   : <ShieldAlert size={15} aria-hidden="true" />}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-default-400">容灾状态</div>
+                <div className="text-[11px] text-default-400">{forward.routeMode === 'balance' ? '调度状态' : '容灾状态'}</div>
                 <div className="truncate text-xs font-medium">
-                  {routes.length > 1
+                  {forward.routeMode === 'balance'
+                    ? `${forward.routeBalanceStrategy === 'hash' ? '来源 IP 固定' : forward.routeBalanceStrategy === 'weighted' ? '按权重分配' : forward.routeBalanceStrategy === 'rand' ? '随机分配' : '依次轮询'} · 仅调度新连接`
+                    : routes.length > 1
                     ? `${activeIsPrimary ? '主线路承载' : '备用线路承载'} · ${healthyRouteCount}/${routes.length} 可用`
                     : '单线路 · 未配置备用线路'}
                 </div>
@@ -1900,11 +1920,12 @@ export default function ForwardPage() {
                         <p className="text-xs text-default-500">候选线路必须与主线路使用同一个入口节点。</p>
                       </div>
                       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-                        <div className="grid grid-cols-3 overflow-hidden rounded-md border border-divider">
+                        <div className="grid grid-cols-2 overflow-hidden rounded-md border border-divider sm:grid-cols-4">
                           {([
                             ['single', '单线路'],
                             ['failover', '主备切换'],
-                            ['latency', '低延迟']
+                            ['latency', '低延迟'],
+                            ['balance', '负载均衡']
                           ] as const).map(([value, label]) => (
                             <Button
                               key={value}
@@ -1945,6 +1966,23 @@ export default function ForwardPage() {
                           </Select>
                         )}
                       </div>
+                      {form.routeMode === 'balance' && (
+                        <div className="mt-4 grid gap-3 border-t border-divider pt-4 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)]">
+                          <Select label="新连接调度" selectedKeys={[form.routeBalanceStrategy]} variant="bordered" onSelectionChange={keys => setForm(prev => ({ ...prev, routeBalanceStrategy: String(Array.from(keys)[0] || 'round') as ForwardForm['routeBalanceStrategy'] }))}>
+                            <SelectItem key="round">轮询 · 每条线路依次使用</SelectItem>
+                            <SelectItem key="rand">随机 · 均匀随机选择</SelectItem>
+                            <SelectItem key="weighted">加权随机 · 按线路权重分配</SelectItem>
+                            <SelectItem key="hash">IP 哈希 · 同一来源固定线路</SelectItem>
+                          </Select>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {[form.tunnelId, ...form.routeTunnelIds].filter((id): id is number => Boolean(id)).map(id => {
+                              const tunnel = tunnels.find(item => item.id === id);
+                              return <Input key={id} type="number" min={1} max={1000} label={tunnel?.name || `线路 ${id}`} value={String(form.routeWeights[id] || 100)} isDisabled={form.routeBalanceStrategy !== 'weighted'} onValueChange={value => setForm(prev => ({ ...prev, routeWeights: { ...prev.routeWeights, [id]: Math.max(1, Math.min(1000, Number(value) || 100)) } }))} description={form.routeBalanceStrategy === 'weighted' ? '权重越高，获得的新连接越多' : '仅加权随机策略使用'} />;
+                            })}
+                          </div>
+                          <p className="text-xs leading-5 text-default-500 lg:col-span-2">仅支持同入口的隧道线路。异常线路自动摘除，恢复后自动加入；已经建立的 TCP 连接不会迁移。</p>
+                        </div>
+                      )}
                     </section>
 
                     {!isEdit && (
@@ -2410,7 +2448,7 @@ export default function ForwardPage() {
                   <ModalHeader className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <ShieldCheck size={20} className="text-success" aria-hidden="true" />
-                      <h2 className="text-xl font-bold">线路容灾详情</h2>
+                      <h2 className="text-xl font-bold">线路调度详情</h2>
                     </div>
                     <p className="truncate text-small font-normal text-default-500">
                       {currentFailoverForward?.name || '转发线路'}
@@ -2424,8 +2462,8 @@ export default function ForwardPage() {
                           <div className="truncate text-sm font-medium">{getRouteModeDisplay(currentFailoverForward.routeMode)}</div>
                         </div>
                         <div className="min-w-0">
-                          <div className="text-xs text-default-400">当前承载</div>
-                          <div className="truncate text-sm font-medium">{detailActive?.tunnelName || currentFailoverForward.tunnelName}</div>
+                          <div className="text-xs text-default-400">{currentFailoverForward.routeMode === 'balance' ? '可用成员' : '当前承载'}</div>
+                          <div className="truncate text-sm font-medium">{currentFailoverForward.routeMode === 'balance' ? `${detailRoutes.filter(route => route.status === 'healthy').length}/${detailRoutes.length}` : (detailActive?.tunnelName || currentFailoverForward.tunnelName)}</div>
                         </div>
                         <div className="min-w-0">
                           <div className="text-xs text-default-400">自动切换次数</div>
@@ -2455,7 +2493,9 @@ export default function ForwardPage() {
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="truncate text-sm font-medium">{route.tunnelName || `线路 ${route.tunnelId}`}</span>
-                                  {isActive && <Chip size="sm" color="primary" variant="flat">当前</Chip>}
+                                  {currentFailoverForward?.routeMode !== 'balance' && isActive && <Chip size="sm" color="primary" variant="flat">当前</Chip>}
+                                  {currentFailoverForward?.routeMode === 'balance' && <Chip size="sm" color={isHealthy ? 'success' : 'default'} variant="flat">{isHealthy ? '负载池内' : '已摘除'}</Chip>}
+                                  {currentFailoverForward?.routeMode === 'balance' && <Chip size="sm" variant="flat">权重 {route.weight || 100}</Chip>}
                                   {(route.priority || 0) === 0 && <Chip size="sm" variant="flat">主线</Chip>}
                                 </div>
                                 <p className="mt-0.5 truncate text-xs text-default-500" title={route.message}>
@@ -2477,7 +2517,7 @@ export default function ForwardPage() {
                     </section>
 
                     <section>
-                      <h3 className="mb-2 text-sm font-semibold">自动切换记录</h3>
+                      <h3 className="mb-2 text-sm font-semibold">线路调度记录</h3>
                       {failoverLoading ? (
                         <div className="flex items-center justify-center gap-2 py-10 text-sm text-default-500">
                           <Spinner size="sm" />

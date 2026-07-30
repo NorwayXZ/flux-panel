@@ -76,13 +76,21 @@ public final class SniDomainUtil {
             filter.put("protocol", "tls");
             filter.put("host", target.getDomain());
             JSONObject node = new JSONObject();
-            node.put("name", "domain_route_" + target.getRouteId());
+            node.put("name", "domain_route_" + target.getRouteId() + "_backend_" + (target.getBackendId() == null ? 0 : target.getBackendId()));
             node.put("addr", target.getTargetAddress());
             node.put("filter", filter);
+            JSONObject metadata = new JSONObject();
+            metadata.put("weight", Math.max(1, Math.min(1000, target.getWeight() == null ? 100 : target.getWeight())));
+            node.put("metadata", metadata);
             nodes.add(node);
         }
         JSONObject selector = new JSONObject();
-        selector.put("strategy", "fifo");
+        boolean sticky = targets.stream().anyMatch(target -> "ip_hash".equals(target.getSessionAffinity()));
+        boolean random = targets.stream().anyMatch(target -> "rand".equals(target.getSelectionStrategy())
+                || "weighted".equals(target.getSelectionStrategy()));
+        selector.put("strategy", sticky ? "hash" : random ? "rand" : "round");
+        selector.put("maxFails", 1);
+        selector.put("failTimeout", "30s");
         JSONObject forwarder = new JSONObject();
         forwarder.put("selector", selector);
         forwarder.put("nodes", nodes);

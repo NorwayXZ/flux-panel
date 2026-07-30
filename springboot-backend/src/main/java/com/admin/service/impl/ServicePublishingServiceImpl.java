@@ -3,6 +3,7 @@ package com.admin.service.impl;
 import com.admin.common.dto.GostDto;
 import com.admin.common.dto.DomainRouteCreateDto;
 import com.admin.common.dto.DomainRouteBackendUpdateDto;
+import com.admin.common.dto.DomainRoutePoolUpdateDto;
 import com.admin.common.dto.InternalConnectorCreateDto;
 import com.admin.common.dto.PortPoolCreateDto;
 import com.admin.common.dto.PublishedServiceCreateDto;
@@ -591,6 +592,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setBackendScheme("direct".equals(backendType)
                 ? StringUtils.defaultIfBlank(dto.getBackendScheme(), "http").toLowerCase(Locale.ROOT) : "http");
         route.setBackendPath(backendPath);
+        route.setBackendStrategy("round");
+        route.setSessionAffinity("none");
         route.setNodeId(entryNodeId);
         route.setListenPort(dto.getListenPort());
         route.setServiceName(existingEntry == null ? domainIngressName(entryNodeId, dto.getListenPort()) : existingEntry.getServiceName());
@@ -605,6 +608,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         } catch (DuplicateKeyException e) {
             return R.err("该域名入口刚刚被其他任务创建，请刷新后重试");
         }
+        insertInitialBackend(route);
 
         if ("managed_https".equals(ingressMode)) {
             try {
@@ -684,6 +688,53 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setHealthError(null);
         route.setHealthCheckedAt(null);
         route.setUpdatedTime(System.currentTimeMillis());
+        domainRouteMapper.updateById(route);
+        jdbcTemplate.update("UPDATE domain_route_backend SET backend_host=?,backend_port=?,backend_scheme=?,backend_path=?,health_state='pending',"
+                        + "fail_count=0,success_count=0,health_error=NULL,health_checked_at=NULL,updated_time=? WHERE route_id=? AND position=0",
+                route.getBackendHost(), route.getBackendPort(), route.getBackendScheme(), route.getBackendPath(),
+                System.currentTimeMillis(), route.getId());
+        managedCertificateService.deployForRoute(route.getId());
+        return R.ok(enrichDomainRoute(domainRouteMapper.selectById(route.getId())));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R updateDomainRoutePool(DomainRoutePoolUpdateDto dto) {
+        if (!isAdmin()) return R.err("仅管理员可以配置 HTTPS 后端池");
+        DomainRoute route = ownedDomainRoute(dto.getId());
+        if (route == null || !"managed_https".equals(route.getIngressMode()) || "deleted".equals(route.getState())) {
+            return R.err("托管 HTTPS 域名入口不存在");
+        }
+        String strategy = StringUtils.defaultIfBlank(dto.getStrategy(), "round").toLowerCase(Locale.ROOT);
+        String affinity = StringUtils.defaultIfBlank(dto.getSessionAffinity(), "none").toLowerCase(Locale.ROOT);
+        if (!List.of("round", "rand", "weighted").contains(strategy)) return R.err("不支持的后端调度策略");
+        if (!List.of("none", "ip_hash").contains(affinity)) return R.err("不支持的会话保持策略");
+        if (dto.getMembers().size() > 10) return R.err("一个域名路径最多配置 10 个后端");
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        for (int index = 0; index < dto.getMembers().size(); index++) {
+            normalized.add(normalizeBackendMember(route, dto.getMembers().get(index), index));
+        }
+        jdbcTemplate.update("DELETE FROM domain_route_backend WHERE route_id=?", route.getId());
+        long now = System.currentTimeMillis();
+        for (Map<String, Object> member : normalized) {
+            jdbcTemplate.update("INSERT INTO domain_route_backend "
+                            + "(route_id,position,name,backend_type,published_service_id,backend_node_id,backend_host,backend_port,backend_scheme,backend_path,weight,enabled,health_state,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)",
+                    route.getId(), member.get("position"), member.get("name"), member.get("backendType"), member.get("publishedServiceId"),
+                    member.get("backendNodeId"), member.get("backendHost"), member.get("backendPort"), member.get("backendScheme"),
+                    member.get("backendPath"), member.get("weight"), member.get("enabled"), now, now);
+        }
+        Map<String, Object> first = normalized.get(0);
+        route.setBackendStrategy(strategy);
+        route.setSessionAffinity(affinity);
+        route.setBackendType(Objects.toString(first.get("backendType")));
+        route.setPublishedServiceId(numberOrNull(first.get("publishedServiceId")));
+        route.setBackendNodeId(numberOrNull(first.get("backendNodeId")));
+        route.setBackendHost(Objects.toString(first.get("backendHost"), null));
+        route.setBackendPort(first.get("backendPort") == null ? null : ((Number) first.get("backendPort")).intValue());
+        route.setBackendScheme(Objects.toString(first.get("backendScheme"), "http"));
+        route.setBackendPath(Objects.toString(first.get("backendPath"), "/"));
+        route.setUpdatedTime(now);
         domainRouteMapper.updateById(route);
         managedCertificateService.deployForRoute(route.getId());
         return R.ok(enrichDomainRoute(domainRouteMapper.selectById(route.getId())));
@@ -879,6 +930,14 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setConnectorOnline(connector != null && WebSocketServer.isConnectorOnline(connector.getId()));
         route.setBackendNodeName(backendNode == null ? null : backendNode.getName());
         route.setBackendNodeOnline(backendNode != null && WebSocketServer.isNodeOnline(backendNode.getId()));
+        route.setBackendMembers(jdbcTemplate.queryForList(
+                "SELECT b.id,b.position,b.name,b.backend_type AS backendType,b.published_service_id AS publishedServiceId,"
+                        + "b.backend_node_id AS backendNodeId,b.backend_host AS backendHost,b.backend_port AS backendPort,"
+                        + "b.backend_scheme AS backendScheme,b.backend_path AS backendPath,b.weight,b.enabled,b.health_state AS healthState,"
+                        + "b.health_latency_ms AS healthLatencyMs,b.health_error AS healthError,b.health_checked_at AS healthCheckedAt,"
+                        + "COALESCE(p.name,n.name,'后端') AS targetName FROM domain_route_backend b "
+                        + "LEFT JOIN published_service p ON p.id=b.published_service_id LEFT JOIN node n ON n.id=b.backend_node_id "
+                        + "WHERE b.route_id=? ORDER BY b.position,b.id", route.getId()));
         if (route.getCertificateId() != null) {
             List<Map<String, Object>> certificates = jdbcTemplate.queryForList(
                     "SELECT state,expires_at AS expiresAt,issuer FROM managed_certificate WHERE id=?", route.getCertificateId());
@@ -890,6 +949,74 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
             }
         }
         return route;
+    }
+
+    private void insertInitialBackend(DomainRoute route) {
+        if (!"managed_https".equals(route.getIngressMode())) return;
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("INSERT IGNORE INTO domain_route_backend "
+                        + "(route_id,position,name,backend_type,published_service_id,backend_node_id,backend_host,backend_port,backend_scheme,backend_path,weight,enabled,health_state,created_time,updated_time) "
+                        + "VALUES (?,0,'默认后端',?,?,?,?,?,?,?,100,1,'pending',?,?)",
+                route.getId(), route.getBackendType(), route.getPublishedServiceId(), route.getBackendNodeId(),
+                route.getBackendHost(), route.getBackendPort(), route.getBackendScheme(), route.getBackendPath(), now, now);
+    }
+
+    private Map<String, Object> normalizeBackendMember(DomainRoute route, Map<String, Object> source, int position) {
+        String type = Objects.toString(source.getOrDefault("backendType", "direct")).toLowerCase(Locale.ROOT);
+        if (!List.of("mapping", "direct").contains(type)) throw new IllegalArgumentException("后端类型不正确");
+        String name = StringUtils.defaultIfBlank(Objects.toString(source.get("name"), null), "后端 " + (position + 1));
+        if (name.length() > 100) throw new IllegalArgumentException("后端名称不能超过 100 个字符");
+        Map<String, Object> member = new HashMap<>();
+        member.put("position", position);
+        member.put("name", name.trim());
+        member.put("backendType", type);
+        member.put("weight", Math.max(1, Math.min(1000, intValue(source.get("weight"), 100))));
+        member.put("enabled", truthy(source.getOrDefault("enabled", true)));
+        String path = SniDomainUtil.normalizeBackendPath(Objects.toString(source.getOrDefault("backendPath", "/")));
+        member.put("backendPath", path);
+        if ("mapping".equals(type)) {
+            Long mappingId = numberOrNull(source.get("publishedServiceId"));
+            PublishedService mapping = mappingId == null ? null : publishedServiceMapper.selectById(mappingId);
+            if (mapping == null || !"active".equals(mapping.getState())) throw new IllegalArgumentException("后端映射不可用：" + name);
+            member.put("publishedServiceId", mappingId);
+            member.put("backendNodeId", null);
+            member.put("backendHost", null);
+            member.put("backendPort", null);
+            member.put("backendScheme", "http");
+        } else {
+            Long nodeId = numberOrNull(source.get("backendNodeId"));
+            Node backendNode = nodeId == null ? null : nodeMapper.selectById(nodeId);
+            if (backendNode == null) throw new IllegalArgumentException("后端节点不存在：" + name);
+            String host = StringUtils.defaultIfBlank(Objects.toString(source.get("backendHost"), null), "127.0.0.1");
+            int port = intValue(source.get("backendPort"), 0);
+            String scheme = Objects.toString(source.getOrDefault("backendScheme", "http")).toLowerCase(Locale.ROOT);
+            if (!DirectServiceTargetUtil.validListenerHost(host) || port < 1 || port > 65535) throw new IllegalArgumentException("后端地址不正确：" + name);
+            if (!List.of("http", "https").contains(scheme)) throw new IllegalArgumentException("后端协议不正确：" + name);
+            Node entryNode = nodeMapper.selectById(route.getNodeId());
+            DirectServiceTargetUtil.resolve(entryNode, backendNode, host, port);
+            member.put("publishedServiceId", null);
+            member.put("backendNodeId", nodeId);
+            member.put("backendHost", host.trim());
+            member.put("backendPort", port);
+            member.put("backendScheme", scheme);
+        }
+        return member;
+    }
+
+    private Long numberOrNull(Object value) {
+        if (value == null || value.toString().isBlank()) return null;
+        return value instanceof Number ? ((Number) value).longValue() : Long.parseLong(value.toString());
+    }
+
+    private int intValue(Object value, int fallback) {
+        if (value == null || value.toString().isBlank()) return fallback;
+        return value instanceof Number ? ((Number) value).intValue() : Integer.parseInt(value.toString());
+    }
+
+    private boolean truthy(Object value) {
+        return value instanceof Boolean ? (Boolean) value
+                : value instanceof Number ? ((Number) value).intValue() != 0
+                : Boolean.parseBoolean(Objects.toString(value, "false"));
     }
 
     private GostDto configureDomainIngress(Long nodeId, Integer listenPort, String serviceName, boolean update) {

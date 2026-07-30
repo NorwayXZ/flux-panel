@@ -29,7 +29,7 @@ services:
       retries: 20
 
   backend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.36.3}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.37.0}
     container_name: springboot-backend
     restart: unless-stopped
     environment:

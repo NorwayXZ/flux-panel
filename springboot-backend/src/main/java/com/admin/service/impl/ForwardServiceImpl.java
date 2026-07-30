@@ -63,6 +63,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final String ROUTE_MODE_SINGLE = "single";
     private static final String ROUTE_MODE_FAILOVER = "failover";
     private static final String ROUTE_MODE_LATENCY = "latency";
+    private static final String ROUTE_MODE_BALANCE = "balance";
     private static final String ROUTE_STATUS_HEALTHY = "healthy";
     private static final String ROUTE_STATUS_UNHEALTHY = "unhealthy";
     private static final String ROUTE_STATUS_UNKNOWN = "unknown";
@@ -158,6 +159,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (routeAllocation.isHasError()) {
             return R.err(routeAllocation.getErrorMessage());
         }
+        applyRouteWeights(routeAllocation.getRoutes(), forwardDto.getRouteWeights());
         R systemPortCheck = validateAgentPorts(routeValidation.getTunnels(), routeAllocation.getRoutes(),
                 portAllocation.getInPort(), normalizeProtocolMode(forwardDto.getProtocolMode()));
         if (systemPortCheck.getCode() != 0) {
@@ -319,8 +321,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             Node outNode = nodeService.getById(forward.getOutNodeId());
             forward.setOutNodeStatus(outNode == null ? 0 : outNode.getStatus());
         }
-        boolean routeUnhealthy = persisted != null
-                && ROUTE_STATUS_UNHEALTHY.equals(getActiveRoute(persisted, getForwardRoutes(persisted)).getStatus());
+        boolean routeUnhealthy = false;
+        if (persisted != null) {
+            List<ForwardRouteDto> persistedRoutes = getForwardRoutes(persisted);
+            routeUnhealthy = ROUTE_MODE_BALANCE.equals(persisted.getRouteMode())
+                    ? persistedRoutes.stream().noneMatch(this::isBalanceRouteEligible)
+                    : ROUTE_STATUS_UNHEALTHY.equals(getActiveRoute(persisted, persistedRoutes).getStatus());
+        }
         forward.setNodeOffline(nodeOffline || routeUnhealthy);
     }
 
@@ -445,6 +452,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (routeAllocation.isHasError()) {
             return R.err(routeAllocation.getErrorMessage());
         }
+        applyRouteWeights(routeAllocation.getRoutes(), forwardUpdateDto.getRouteWeights());
 
         // 6. 更新Forward对象
         Forward updatedForward = updateForwardEntity(
@@ -1177,6 +1185,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             }
             tunnels.add(tunnel);
         }
+        if (ROUTE_MODE_BALANCE.equals(normalizeRouteMode(requestedMode, tunnels.size()))
+                && tunnels.stream().anyMatch(tunnel -> !Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD))) {
+            return RouteValidationResult.error("负载均衡模式当前仅支持隧道线路；直接端口线路请使用目标地址池");
+        }
         return RouteValidationResult.success(tunnels);
     }
 
@@ -1213,7 +1225,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (routeCount <= 1) {
             return ROUTE_MODE_SINGLE;
         }
-        if (ROUTE_MODE_FAILOVER.equals(routeMode) || ROUTE_MODE_LATENCY.equals(routeMode)) {
+        if (ROUTE_MODE_FAILOVER.equals(routeMode) || ROUTE_MODE_LATENCY.equals(routeMode)
+                || ROUTE_MODE_BALANCE.equals(routeMode)) {
             return routeMode;
         }
         return ROUTE_MODE_FAILOVER;
@@ -1304,6 +1317,20 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         route.setOutPort(allocation.getOutPort());
         route.setHopPorts(TunnelRouteUtil.joinHopPorts(allocation.getHopPorts()));
         return route;
+    }
+
+    private void applyRouteWeights(List<ForwardRouteDto> routes, Map<Integer, Integer> weights) {
+        for (ForwardRouteDto route : routes) {
+            int value = weights == null ? 100 : weights.getOrDefault(route.getTunnelId(), 100);
+            route.setWeight(Math.max(1, Math.min(1000, value)));
+            route.setEnabled(true);
+            route.setDraining(false);
+        }
+    }
+
+    private String normalizeBalanceStrategy(String strategy) {
+        if (Set.of("round", "rand", "weighted", "hash").contains(strategy)) return strategy;
+        return "round";
     }
 
     private PortAllocation allocateRoutePorts(Tunnel tunnel, Long excludeForwardId, Map<String, Set<Integer>> reservedPorts) {
@@ -1427,6 +1454,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setOutPort(portAllocation.getOutPort());
         forward.setHopPorts(TunnelRouteUtil.joinHopPorts(portAllocation.getHopPorts()));
         forward.setRouteMode(normalizeRouteMode(forwardDto.getRouteMode(), routes.size()));
+        forward.setRouteBalanceStrategy(normalizeBalanceStrategy(forwardDto.getRouteBalanceStrategy()));
         forward.setRouteConfig(JSON.toJSONString(routes));
         forward.setActiveTunnelId(routes.get(0).getTunnelId());
         forward.setProtocolMode(normalizeProtocolMode(forwardDto.getProtocolMode()));
@@ -1447,6 +1475,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setOutPort(portAllocation.getOutPort());
         forward.setHopPorts(TunnelRouteUtil.joinHopPorts(portAllocation.getHopPorts()));
         forward.setRouteMode(normalizeRouteMode(forwardUpdateDto.getRouteMode(), routes.size()));
+        forward.setRouteBalanceStrategy(normalizeBalanceStrategy(forwardUpdateDto.getRouteBalanceStrategy()));
         forward.setRouteConfig(JSON.toJSONString(routes));
         forward.setActiveTunnelId(routes.get(0).getTunnelId());
         forward.setProtocolMode(normalizeProtocolMode(forwardUpdateDto.getProtocolMode()));
@@ -1479,7 +1508,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         ForwardRouteDto activeRoute = getActiveRoute(forward, routes);
         Tunnel activeTunnel = validateTunnel(activeRoute.getTunnelId());
         Node activeInNode = nodeService.getById(activeTunnel.getInNodeId());
-        R serviceResult = createMainService(activeInNode, serviceName, forward, activeRoute, limiter, activeTunnel);
+        R serviceResult = ROUTE_MODE_BALANCE.equals(forward.getRouteMode())
+                ? createBalancedMainService(activeInNode, serviceName, forward, routes, limiter, activeTunnel)
+                : createMainService(activeInNode, serviceName, forward, activeRoute, limiter, activeTunnel);
         if (serviceResult.getCode() != 0) {
             deleteRouteInfrastructureBestEffort(forward, routes, serviceName);
             return serviceResult;
@@ -1628,6 +1659,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
     }
 
+    private R createWeightedChainService(NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts,
+                                         String protocol, String interfaceName, Integer weight) {
+        List<String> remoteAddrs = buildHopAddresses(nodeInfo, hopPorts);
+        GostDto result = GostUtil.AddWeightedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs,
+                protocol, interfaceName, weight);
+        return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
     /**
      * 创建远程服务
      */
@@ -1669,6 +1708,44 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 chainName
         );
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
+    private R createBalancedMainService(Node inNode, String serviceName, Forward forward,
+                                        List<ForwardRouteDto> routes, Integer limiter, Tunnel tunnel) {
+        List<ForwardRouteDto> eligible = routes.stream()
+                .filter(this::isBalanceRouteEligible)
+                .collect(Collectors.toList());
+        if (eligible.isEmpty()) return R.err("负载均衡没有可用线路");
+        List<String> chainNames = eligible.stream()
+                .map(route -> routeResourceName(forward, serviceName, route))
+                .collect(Collectors.toList());
+        GostDto result = GostUtil.AddBalancedService(inNode.getId(), serviceName, forward.getInPort(), limiter,
+                forward.getRemoteAddr(), tunnel, forward.getStrategy(), null,
+                normalizeProtocolMode(forward.getProtocolMode()), chainNames, forward.getRouteBalanceStrategy());
+        return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
+    private R updateBalancedMainService(Node inNode, String serviceName, Forward forward,
+                                        List<ForwardRouteDto> routes, Integer limiter, Tunnel tunnel) {
+        List<ForwardRouteDto> eligible = routes.stream()
+                .filter(this::isBalanceRouteEligible)
+                .collect(Collectors.toList());
+        if (eligible.isEmpty()) return R.err("负载均衡没有可用线路");
+        List<String> chainNames = eligible.stream()
+                .map(route -> routeResourceName(forward, serviceName, route))
+                .collect(Collectors.toList());
+        GostDto result = GostUtil.UpdateBalancedService(inNode.getId(), serviceName, forward.getInPort(), limiter,
+                forward.getRemoteAddr(), tunnel, forward.getStrategy(), null,
+                normalizeProtocolMode(forward.getProtocolMode()), chainNames, forward.getRouteBalanceStrategy());
+        if (gostMessage(result).contains(GOST_NOT_FOUND_MSG)) {
+            return createBalancedMainService(inNode, serviceName, forward, routes, limiter, tunnel);
+        }
+        return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
+    }
+
+    private boolean isBalanceRouteEligible(ForwardRouteDto route) {
+        return !Boolean.FALSE.equals(route.getEnabled()) && !Boolean.TRUE.equals(route.getDraining())
+                && !ROUTE_STATUS_UNHEALTHY.equals(route.getStatus());
     }
 
     /**
@@ -1733,13 +1810,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String routeServiceName = routeResourceName(forward, mainServiceName, route);
         List<Integer> hopPorts = getForwardHopPorts(routeForward, tunnel);
 
-        R chainResult = createChainService(
-                routeNodeInfo,
-                routeServiceName,
-                hopPorts,
-                tunnel.getProtocol(),
-                tunnel.getInterfaceName()
-        );
+        R chainResult = ROUTE_MODE_BALANCE.equals(forward.getRouteMode())
+                ? createWeightedChainService(routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(),
+                        tunnel.getInterfaceName(), route.getWeight())
+                : createChainService(routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(), tunnel.getInterfaceName());
         if (chainResult.getCode() != 0) {
             return chainResult;
         }
@@ -1982,6 +2056,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         ForwardRouteDto previousActive = getActiveRoute(forward, routes);
+        Set<Integer> previousBalanceMembers = balanceMemberIds(routes);
         List<String> previousActiveTargets = previousActive.getHealthyTargets() == null
                 ? Collections.emptyList()
                 : new ArrayList<>(previousActive.getHealthyTargets());
@@ -1999,6 +2074,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         long now = System.currentTimeMillis();
+        if (ROUTE_MODE_BALANCE.equals(forward.getRouteMode())) {
+            refreshBalancedRoutePool(forward, routes, previousBalanceMembers, targetHealthByRoute, now);
+            return;
+        }
         ForwardRouteFailoverPolicy.Decision decision = ForwardRouteFailoverPolicy.select(
                 normalizeRouteMode(forward.getRouteMode(), routes.size()),
                 routes,
@@ -2061,6 +2140,54 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setLastHealthCheck(now);
         forward.setUpdatedTime(now);
         this.updateById(forward);
+    }
+
+    private Set<Integer> balanceMemberIds(List<ForwardRouteDto> routes) {
+        return routes.stream().filter(this::isBalanceRouteEligible).map(ForwardRouteDto::getTunnelId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private void refreshBalancedRoutePool(Forward forward, List<ForwardRouteDto> routes,
+                                          Set<Integer> previousMembers,
+                                          Map<Integer, List<ForwardTargetHealthDto>> targetHealthByRoute,
+                                          long now) {
+        Set<Integer> currentMembers = balanceMemberIds(routes);
+        if (!currentMembers.equals(previousMembers) && !currentMembers.isEmpty()) {
+            Tunnel primaryTunnel = validateTunnel(forward.getTunnelId());
+            UserTunnel userTunnel = primaryTunnel == null ? null
+                    : getUserTunnel(forward.getUserId(), primaryTunnel.getId().intValue());
+            String serviceName = buildServiceName(forward.getId(), forward.getUserId(), userTunnel);
+            Node inNode = primaryTunnel == null ? null : nodeService.getById(primaryTunnel.getInNodeId());
+            R result = inNode == null ? R.err("入口节点不存在")
+                    : updateBalancedMainService(inNode, serviceName, forward, routes,
+                            userTunnel == null ? null : userTunnel.getSpeedId(), primaryTunnel);
+            if (result.getCode() == 0) {
+                for (Integer removed : previousMembers.stream().filter(id -> !currentMembers.contains(id)).toList()) {
+                    ForwardRouteDto route = routeById(routes, removed);
+                    recordRouteSwitch(forward, route, null, "线路异常，已从负载池摘除", "balance_remove", "success", route == null ? null : route.getMessage());
+                }
+                for (Integer added : currentMembers.stream().filter(id -> !previousMembers.contains(id)).toList()) {
+                    ForwardRouteDto route = routeById(routes, added);
+                    recordRouteSwitch(forward, null, route, "线路恢复，已重新加入负载池", "balance_join", "success", null);
+                }
+            } else {
+                recordRouteSwitch(forward, null, null, "负载池更新失败", "balance_update", "failed", result.getMsg());
+            }
+        } else if (currentMembers.isEmpty() && !previousMembers.isEmpty()) {
+            recordRouteSwitch(forward, null, null, "全部线路异常，保留最后可用配置", "balance_empty", "failed", "等待任一线路恢复");
+        }
+        ForwardRouteDto displayRoute = routes.stream().filter(route -> currentMembers.contains(route.getTunnelId()))
+                .findFirst().orElse(getActiveRoute(forward, routes));
+        forward.setActiveTunnelId(displayRoute.getTunnelId());
+        forward.setRouteConfig(JSON.toJSONString(routes));
+        forward.setTargetHealth(JSON.toJSONString(targetHealthByRoute.getOrDefault(displayRoute.getTunnelId(), Collections.emptyList())));
+        forward.setLastHealthCheck(now);
+        forward.setUpdatedTime(now);
+        this.updateById(forward);
+    }
+
+    private ForwardRouteDto routeById(List<ForwardRouteDto> routes, Integer tunnelId) {
+        return routes.stream().filter(route -> Objects.equals(route.getTunnelId(), tunnelId)).findFirst().orElse(null);
     }
 
     private RouteProbeResult probeRoute(Forward forward, ForwardRouteDto route, Tunnel tunnel) {

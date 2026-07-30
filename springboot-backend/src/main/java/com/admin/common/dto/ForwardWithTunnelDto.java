@@ -138,6 +138,8 @@ public class ForwardWithTunnelDto {
 
     private String routeMode;
 
+    private String routeBalanceStrategy;
+
     private String routeConfig;
 
     private Integer activeTunnelId;

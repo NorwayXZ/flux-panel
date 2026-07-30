@@ -329,6 +329,8 @@ export interface CrossEntryMember {
   id: number;
   forwardId: number;
   priority: number;
+  weight?: number;
+  enabled?: boolean | number;
   entryNodeId: number;
   entryHost: string;
   entryAddress: string;
@@ -359,6 +361,7 @@ export interface CrossEntryGroup {
   recoveryThreshold: number;
   cooldownSeconds: number;
   autoFailback: boolean | number;
+  routingMode?: 'failover' | 'active_active';
   enabled: boolean | number;
   state: 'unknown' | 'healthy' | 'degraded' | 'offline' | 'switching' | 'error';
   activeMemberId?: number;
@@ -868,6 +871,9 @@ export interface DomainRoute {
   backendPort?: number;
   backendScheme?: 'http' | 'https';
   backendPath?: string;
+  backendStrategy?: 'round' | 'rand' | 'weighted';
+  sessionAffinity?: 'none' | 'ip_hash';
+  backendMembers?: DomainRouteBackendMember[];
   healthState?: string;
   healthStatusCode?: number;
   healthLatencyMs?: number;
@@ -895,6 +901,26 @@ export interface DomainRoute {
   certificateState?: string;
   certificateExpiresAt?: number;
   certificateIssuer?: string;
+}
+
+export interface DomainRouteBackendMember {
+  id?: number;
+  position?: number;
+  name: string;
+  backendType: 'mapping' | 'direct';
+  publishedServiceId?: number;
+  backendNodeId?: number;
+  backendHost?: string;
+  backendPort?: number;
+  backendScheme?: 'http' | 'https';
+  backendPath?: string;
+  weight: number;
+  enabled: boolean | number;
+  healthState?: 'pending' | 'healthy' | 'unhealthy';
+  healthLatencyMs?: number;
+  healthError?: string;
+  healthCheckedAt?: number;
+  targetName?: string;
 }
 
 export interface ManagedCertificate {
@@ -1017,6 +1043,8 @@ export const createDomainRoute = (data: { name: string; domain: string; pathPref
   Network.post<DomainRoute>("/service-publishing/domain/create", data);
 export const updateDomainRouteBackend = (data: { id: number; backendHost: string; backendPort: number; backendScheme: 'http' | 'https'; backendPath: string }) =>
   Network.post<DomainRoute>("/service-publishing/domain/backend/update", data);
+export const updateDomainRoutePool = (data: { id: number; strategy: 'round' | 'rand' | 'weighted'; sessionAffinity: 'none' | 'ip_hash'; members: DomainRouteBackendMember[] }) =>
+  Network.post<DomainRoute>("/service-publishing/domain/pool/update", data);
 export const getDomainRoutes = () =>
   Network.post<DomainRoute[]>("/service-publishing/domain/list");
 export const deleteDomainRoute = (id: number) =>

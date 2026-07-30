@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
+import java.util.Map;
 
 @Data
 public class DomainRoute implements Serializable {
@@ -22,6 +24,8 @@ public class DomainRoute implements Serializable {
     private Integer backendPort;
     private String backendScheme;
     private String backendPath;
+    private String backendStrategy;
+    private String sessionAffinity;
     private Long nodeId;
     private Integer listenPort;
     private String serviceName;
@@ -69,4 +73,6 @@ public class DomainRoute implements Serializable {
     private Long certificateExpiresAt;
     @TableField(exist = false)
     private String certificateIssuer;
+    @TableField(exist = false)
+    private List<Map<String, Object>> backendMembers;
 }

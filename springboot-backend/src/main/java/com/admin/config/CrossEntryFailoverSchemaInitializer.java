@@ -50,6 +50,16 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_event", "from_node_name", "varchar(100) DEFAULT NULL AFTER to_member_id");
             ensureColumn("cross_entry_failover_event", "to_node_name", "varchar(100) DEFAULT NULL AFTER from_node_name");
             ensureColumn("cross_entry_failover_group", "dns_zone_id", "bigint DEFAULT NULL AFTER domain");
+            // Default stays failover so upgrading never changes existing DNS behaviour.
+            ensureColumn("cross_entry_failover_group", "routing_mode", "varchar(24) NOT NULL DEFAULT 'failover' AFTER auto_failback");
+            ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");
+            ensureColumn("cross_entry_failover_member", "enabled", "tinyint NOT NULL DEFAULT 1 AFTER weight");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"
+                    + "provider_record_id varchar(64) NOT NULL,content varchar(255) NOT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"
+                    + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_dns_member (group_id,member_id),"
+                    + "UNIQUE KEY uk_cross_entry_dns_provider (provider_record_id),KEY idx_cross_entry_dns_group (group_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);
         }

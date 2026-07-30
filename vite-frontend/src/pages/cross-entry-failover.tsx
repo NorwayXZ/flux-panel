@@ -40,7 +40,7 @@ const emptyForm = {
   id: undefined as number | undefined,
   name: '', domain: '', dnsZoneId: '', recordId: '', recordType: 'A' as 'A' | 'AAAA', ttl: '60',
   profile: 'fast' as ProfileKey, probeIntervalMs: '2000', connectTimeoutMs: '1200', failureThreshold: '2',
-  recoveryThreshold: '3', cooldownSeconds: '30', autoFailback: false, enabled: true, memberForwardIds: ['', ''],
+  recoveryThreshold: '3', cooldownSeconds: '30', autoFailback: false, routingMode: 'failover' as 'failover' | 'active_active', enabled: true, memberForwardIds: ['', ''],
 };
 
 const truthy = (value: boolean | number) => value === true || value === 1;
@@ -126,7 +126,7 @@ export default function CrossEntryFailoverPage() {
       recordType: group.recordType, ttl: String(group.ttl), profile, probeIntervalMs: String(group.probeIntervalMs),
       connectTimeoutMs: String(group.connectTimeoutMs), failureThreshold: String(group.failureThreshold),
       recoveryThreshold: String(group.recoveryThreshold), cooldownSeconds: String(group.cooldownSeconds),
-      autoFailback: truthy(group.autoFailback), enabled: truthy(group.enabled), memberForwardIds: group.members.map(item => String(item.forwardId)),
+      autoFailback: truthy(group.autoFailback), routingMode: group.routingMode || 'failover', enabled: truthy(group.enabled), memberForwardIds: group.members.map(item => String(item.forwardId)),
     });
     setFormOpen(true);
   };
@@ -228,11 +228,12 @@ export default function CrossEntryFailoverPage() {
           {groups.map(group => {
             const meta = truthy(group.enabled) ? stateMeta(group.state) : { label: '已停用', color: 'default' as const };
             const active = group.members.find(item => item.id === group.activeMemberId);
+            const activeActive = group.routingMode === 'active_active';
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -242,10 +243,10 @@ export default function CrossEntryFailoverPage() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-divider py-3 text-sm sm:grid-cols-4">
-                    <div><p className="text-xs text-default-500">当前入口</p><p className="mt-1 truncate font-medium">{active?.nodeName || '未确定'}</p></div>
+                    <div><p className="text-xs text-default-500">{activeActive ? 'DNS 锚点' : '当前入口'}</p><p className="mt-1 truncate font-medium">{active?.nodeName || '未确定'}</p></div>
                     <div><p className="text-xs text-default-500">检测周期</p><p className="mt-1 font-medium">{group.probeIntervalMs / 1000} 秒</p></div>
                     <div><p className="text-xs text-default-500">失败阈值</p><p className="mt-1 font-medium">连续 {group.failureThreshold} 次</p></div>
-                    <div><p className="text-xs text-default-500">上次切换</p><p className="mt-1 truncate font-medium">{group.lastSwitchEvent ? timeText(group.lastSwitchEvent.createdTime) : (group.lastSwitchAt ? timeText(group.lastSwitchAt) : '未切换')}</p><p className="mt-1 truncate text-xs text-default-500">{eventRouteText(group.lastSwitchEvent)}</p></div>
+                    <div><p className="text-xs text-default-500">{activeActive ? '健康入口' : '上次切换'}</p><p className="mt-1 truncate font-medium">{activeActive ? `${group.members.filter(item => item.status === 'healthy').length}/${group.members.length} 条` : (group.lastSwitchEvent ? timeText(group.lastSwitchEvent.createdTime) : (group.lastSwitchAt ? timeText(group.lastSwitchAt) : '未切换'))}</p><p className="mt-1 truncate text-xs text-default-500">{activeActive ? 'DNS 仅返回健康入口' : eventRouteText(group.lastSwitchEvent)}</p></div>
                   </div>
 
                   <div className="space-y-2">
@@ -253,13 +254,13 @@ export default function CrossEntryFailoverPage() {
                       const isActive = member.id === group.activeMemberId;
                       return (
                         <div key={member.id} className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
-                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{isActive && <Chip size="sm" color="primary" variant="flat">当前承载</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{index === 0 ? '主入口' : `备用 ${index}`} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p></div>
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p></div>
                           <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p><p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p></div>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-default-500"><span>最近检测：{timeText(group.lastCheckedAt)}</span><span>{truthy(group.autoFailback) ? '主入口恢复后自动回切' : '切换后保持当前入口'}</span></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-default-500"><span>最近检测：{timeText(group.lastCheckedAt)}</span><span>{activeActive ? '健康入口同时写入 DNS；仅影响新连接' : (truthy(group.autoFailback) ? '主入口恢复后自动回切' : '切换后保持当前入口')}</span></div>
                   {group.lastError && <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">{group.lastError}</p>}
                 </CardBody>
               </Card>
@@ -291,7 +292,17 @@ export default function CrossEntryFailoverPage() {
               />
               <Select label="DNS 记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
               <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
+              <Select label="入口调度模式" selectedKeys={[form.routingMode]} onSelectionChange={keys => setForm({ ...form, routingMode: String(Array.from(keys)[0] || 'failover') as 'failover' | 'active_active' })}>
+                <SelectItem key="failover">主备容灾（默认）</SelectItem>
+                <SelectItem key="active_active">多入口同时运行（DNS）</SelectItem>
+              </Select>
             </section>
+
+            <div className="border-l-2 border-primary bg-primary-50/60 px-3 py-3 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+              {form.routingMode === 'active_active'
+                ? '所有健康入口会同时写入同一业务域名的 DNS 记录。客户端 DNS 解析后选择其中一个入口，失效入口会在检测确认后从记录集合摘除。它只影响新的解析和新连接，普通 DNS 不提供严格按权重的连接级均衡。'
+                : '域名始终只指向一个当前入口。主入口连续失败后切到备用入口，适合希望地址稳定、只在故障时切换的业务。'}
+            </div>
 
             {zoneOptions.length === 0 && (
               <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
@@ -300,11 +311,11 @@ export default function CrossEntryFailoverPage() {
               </div>
             )}
 
-            <section className="border-t border-divider pt-4"><div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">入口顺序</h3><p className="mt-1 text-xs text-default-500">第一条为主入口，其余按顺序作为备用入口。公网端口必须相同。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>
+            <section className="border-t border-divider pt-4"><div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">{form.routingMode === 'active_active' ? '入口成员' : '入口顺序'}</h3><p className="mt-1 text-xs text-default-500">{form.routingMode === 'active_active' ? '全部健康成员同时参与 DNS 返回；第一条用于保留兼容的 DNS 锚点。' : '第一条为主入口，其余按顺序作为备用入口。'} 公网端口必须相同。</p></div><Chip size="sm" variant="flat">端口 {selectedPort || '-'}</Chip></div>
               <div className="space-y-2">
                 {form.memberForwardIds.map((id, index) => (
                   <div key={`${index}-${id}`} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-                    <span className="w-14 text-xs font-medium text-default-500">{index === 0 ? '主入口' : `备用 ${index}`}</span>
+                    <span className="w-14 text-xs font-medium text-default-500">{form.routingMode === 'active_active' ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)}</span>
                     <Select aria-label={index === 0 ? '主入口转发' : `备用入口 ${index}`} placeholder="选择一个现有转发" selectedKeys={id ? [id] : []} onSelectionChange={keys => { const values = [...form.memberForwardIds]; values[index] = String(Array.from(keys)[0] || ''); setForm({ ...form, memberForwardIds: values }); }}>
                       {forwardOptions.map(option => <SelectItem key={String(option.id)} textValue={`${option.nodeName} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
                     </Select>
@@ -312,13 +323,13 @@ export default function CrossEntryFailoverPage() {
                   </div>
                 ))}
               </div>
-              <Button className="mt-3" size="sm" variant="flat" startContent={<Plus size={16} />} isDisabled={form.memberForwardIds.length >= 10} onPress={() => setForm({ ...form, memberForwardIds: [...form.memberForwardIds, ''] })}>添加备用入口</Button>
+              <Button className="mt-3" size="sm" variant="flat" startContent={<Plus size={16} />} isDisabled={form.memberForwardIds.length >= 10} onPress={() => setForm({ ...form, memberForwardIds: [...form.memberForwardIds, ''] })}>{form.routingMode === 'active_active' ? '添加入口成员' : '添加备用入口'}</Button>
               {selectionProblem && <p className="mt-2 text-xs text-warning">{selectionProblem}</p>}
             </section>
 
             <section className="border-t border-divider pt-4"><h3 className="text-sm font-semibold">失效检测</h3><div className="mt-3 grid grid-cols-3 gap-2">{(Object.keys(profiles) as PresetProfileKey[]).map(key => <button type="button" key={key} onClick={() => selectProfile(key)} className={`min-h-20 rounded-md border p-3 text-left transition-colors ${form.profile === key ? 'border-primary bg-primary-50 dark:bg-primary-500/10' : 'border-divider hover:bg-default-100'}`}><span className="text-sm font-medium">{profiles[key].label}</span><span className="mt-1 block text-xs text-default-500">{profiles[key].note}</span></button>)}</div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Input type="number" label="探测间隔（毫秒）" value={form.probeIntervalMs} onValueChange={probeIntervalMs => setForm({ ...form, profile: 'custom', probeIntervalMs })} /><Input type="number" label="连接超时（毫秒）" value={form.connectTimeoutMs} onValueChange={connectTimeoutMs => setForm({ ...form, profile: 'custom', connectTimeoutMs })} /><Input type="number" label="连续失败次数" value={form.failureThreshold} onValueChange={failureThreshold => setForm({ ...form, profile: 'custom', failureThreshold })} /><Input type="number" label="恢复确认次数" value={form.recoveryThreshold} onValueChange={recoveryThreshold => setForm({ ...form, profile: 'custom', recoveryThreshold })} /><Input type="number" label="回切冷却（秒）" value={form.cooldownSeconds} onValueChange={cooldownSeconds => setForm({ ...form, profile: 'custom', cooldownSeconds })} /></div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch><Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch></div>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">{form.routingMode === 'failover' ? <Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch> : <span className="text-xs text-default-500">多入口模式不回切，健康成员会自动恢复到 DNS 记录。</span>}<Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch></div>
             </section>
 
             <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">面板会自动创建或更新仅 DNS 记录，不开启 Cloudflare 代理。请确保面板服务器能访问各公网入口端口。检测和 DNS 更新可在数秒内完成，但运营商及客户端 DNS 缓存仍可能延迟实际生效；已经建立的连接需要重新连接。</div>
