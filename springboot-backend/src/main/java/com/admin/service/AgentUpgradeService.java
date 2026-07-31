@@ -340,12 +340,12 @@ public class AgentUpgradeService {
                 + " </dev/null >/dev/null 2>&1 & started=$?; "
                 + "else nohup /bin/sh -c " + shellQuote("sleep 1; " + run)
                 + " </dev/null >/dev/null 2>&1 & started=$?; fi; "
-                + "if [ \"$started\" -ne 0 ]; then echo FLUX_UPGRADE_FAILED; "
-                + "else echo FLUX_UPGRADE_STARTED; i=0; while [ \"$i\" -lt 150 ]; do "
+                + "if [ \"$started\" -ne 0 ]; then printf 'FLUX_%s\\n' 'UPGRADE_FAILED'; "
+                + "else printf 'FLUX_%s\\n' 'UPGRADE_STARTED'; i=0; while [ \"$i\" -lt 150 ]; do "
                 + "if [ -f \"$RESULT\" ]; then code=$(cat \"$RESULT\" 2>/dev/null || echo 1); "
-                + "if [ \"$code\" = 0 ]; then echo FLUX_UPGRADE_FINISHED; "
-                + "else echo FLUX_UPGRADE_FAILED; tail -n 20 \"$LOG\" 2>/dev/null; fi; break; fi; "
-                + "i=$((i+1)); sleep 2; done; fi; else echo FLUX_UPGRADE_FAILED; fi";
+                + "if [ \"$code\" = 0 ]; then printf 'FLUX_%s\\n' 'UPGRADE_FINISHED'; "
+                + "else printf 'FLUX_%s\\n' 'UPGRADE_FAILED'; tail -n 20 \"$LOG\" 2>/dev/null; fi; break; fi; "
+                + "i=$((i+1)); sleep 2; done; fi; else printf 'FLUX_%s\\n' 'UPGRADE_FAILED'; fi";
     }
 
     private String shellQuote(String value) {

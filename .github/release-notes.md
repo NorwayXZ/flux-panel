@@ -1,3 +1,8 @@
+## 2.41.1 Terminal bootstrap marker fix
+
+- Fixes online upgrades from Agent `2.8.0` through `2.40.x` being marked failed before the detached helper started. Interactive terminals echo the submitted bootstrap command, and the old command contained the literal failure marker; the backend could mistake that echo for an executed failure result and close the session early.
+- Bootstrap result markers are now assembled only when the command reaches the corresponding execution branch, so terminal echo cannot trigger a false failure. Agent target version remains `2.41.0`; existing nodes, services, DNS, certificates, ports, tunnels, forwards, and proxy configuration are unchanged.
+
 ## 2.41.0 System self-check and safe staged Agent upgrades
 
 - Adds an admin-only **System Self-Check** center under System Management. A manual run checks Agent connectivity and identity baselines, system DNS versus public DoH, IPv4/IPv6 capability, the port ledger versus real listeners, tunnel/forward/domain/certificate dependency chains, DDNS failures, and multi-entry routes that still converge on one exit endpoint. Missing IPv6 is reported as skipped instead of failed, and router-specific causes are never asserted without evidence.

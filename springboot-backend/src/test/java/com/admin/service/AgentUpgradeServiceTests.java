@@ -40,8 +40,11 @@ class AgentUpgradeServiceTests {
         assertTrue(command.contains("setsid"));
         assertTrue(command.contains(" -U"));
         assertTrue(command.contains("FLUX_AGENT_UPDATE_TASK_ID="));
-        assertTrue(command.contains("FLUX_UPGRADE_STARTED"));
-        assertTrue(command.contains("FLUX_UPGRADE_FAILED"));
+        assertTrue(command.contains("printf 'FLUX_%s\\n' 'UPGRADE_STARTED'"));
+        assertTrue(command.contains("printf 'FLUX_%s\\n' 'UPGRADE_FAILED'"));
+        assertFalse(command.contains("FLUX_UPGRADE_STARTED"));
+        assertFalse(command.contains("FLUX_UPGRADE_FAILED"));
+        assertFalse(command.contains("FLUX_UPGRADE_FINISHED"));
         assertTrue(command.contains("flux-agent-update-12345678-123.log"));
         assertTrue(command.contains(".result"));
         assertFalse(command.contains("sudo"));
