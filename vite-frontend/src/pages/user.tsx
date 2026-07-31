@@ -155,6 +155,7 @@ interface PortEditorState {
 }
 
 type GrantProxyType = Extract<PrivateProxyType, 'socks5' | 'http' | 'shadowsocks' | 'vless_reality'>;
+type GrantRealityPreset = 'www.cloudflare.com' | 'www.google.com' | 'custom';
 
 interface ProxyGrantEditorState {
   id?: number;
@@ -165,6 +166,7 @@ interface ProxyGrantEditorState {
   authUsername: string;
   authPassword: string;
   cipher: 'aes-128-gcm' | 'aes-256-gcm' | 'chacha20-ietf-poly1305';
+  realityPreset: GrantRealityPreset;
   realityServerName: string;
   flowLimit: number;
   flowUnlimited: boolean;
@@ -177,7 +179,8 @@ interface ProxyGrantEditorState {
 
 const emptyProxyGrant = (): ProxyGrantEditorState => ({
   name: '', nodeId: null, proxyType: 'socks5', listenPort: 0,
-  authUsername: '', authPassword: '', cipher: 'aes-256-gcm', realityServerName: 'www.cloudflare.com',
+  authUsername: '', authPassword: '', cipher: 'aes-256-gcm',
+  realityPreset: 'www.cloudflare.com', realityServerName: 'www.cloudflare.com',
   flowLimit: 100, flowUnlimited: false, flowResetDay: 0,
   permanent: true, expiresAt: null, speedUnlimited: true, speedLimitMbps: 100,
 });
@@ -900,6 +903,7 @@ export default function UserPage() {
       authUsername: '',
       authPassword: '',
       cipher: 'aes-256-gcm',
+      realityPreset: 'www.cloudflare.com',
       realityServerName: 'www.cloudflare.com',
       flowLimit: proxy.flowLimit || 0,
       flowUnlimited: proxy.flowUnlimited === 1,
@@ -927,6 +931,12 @@ export default function UserPage() {
       if (proxyGrantEditor.proxyType === 'shadowsocks' && proxyGrantEditor.authPassword.length < 8) {
         return toast.error('Shadowsocks 密码至少 8 位');
       }
+      if (proxyGrantEditor.proxyType === 'vless_reality') {
+        const serverName = proxyGrantEditor.realityServerName.trim();
+        if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(serverName)) {
+          return toast.error('请填写有效的 REALITY 伪装域名，不要包含协议、端口或路径');
+        }
+      }
     }
     setProxyGrantSaving(true);
     try {
@@ -949,7 +959,7 @@ export default function UserPage() {
             authUsername: proxyGrantEditor.authUsername.trim(),
             authPassword: proxyGrantEditor.authPassword,
             cipher: proxyGrantEditor.cipher,
-            realityServerName: proxyGrantEditor.realityServerName,
+            realityServerName: proxyGrantEditor.realityServerName.trim(),
             permanent: proxyGrantEditor.permanent,
             expiresAt: proxyGrantEditor.expiresAt?.getTime(),
             flowLimit: proxyGrantEditor.flowLimit,
@@ -1421,7 +1431,17 @@ export default function UserPage() {
                   <Input label="监听端口" type="number" min={1} max={65535} value={String(proxyGrantEditor.listenPort || '')} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, listenPort: Number(value) || 0 } : prev)} />
                   {(proxyGrantEditor.proxyType === 'socks5' || proxyGrantEditor.proxyType === 'http') && <><Input label="代理用户名" value={proxyGrantEditor.authUsername} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authUsername: value } : prev)} /><Input label="代理密码" type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成代理密码" title="生成代理密码" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} /></>}
                   {proxyGrantEditor.proxyType === 'shadowsocks' && <><Select label="加密方式" selectedKeys={[proxyGrantEditor.cipher]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, cipher: String(Array.from(keys)[0]) as ProxyGrantEditorState['cipher'] } : prev)}><SelectItem key="aes-256-gcm">AES-256-GCM</SelectItem><SelectItem key="aes-128-gcm">AES-128-GCM</SelectItem><SelectItem key="chacha20-ietf-poly1305">ChaCha20-IETF-Poly1305</SelectItem></Select><Input label="连接密码" type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成连接密码" title="生成连接密码" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} /></>}
-                  {proxyGrantEditor.proxyType === 'vless_reality' && <Select className="md:col-span-2" label="REALITY 伪装站" selectedKeys={[proxyGrantEditor.realityServerName]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, realityServerName: String(Array.from(keys)[0]) } : prev)}><SelectItem key="www.cloudflare.com">Cloudflare</SelectItem><SelectItem key="www.google.com">Google</SelectItem></Select>}
+                  {proxyGrantEditor.proxyType === 'vless_reality' && <>
+                    <Select className="md:col-span-2" label="REALITY 伪装站" selectedKeys={[proxyGrantEditor.realityPreset]} onSelectionChange={keys => {
+                      const preset = String(Array.from(keys)[0] || 'www.cloudflare.com') as GrantRealityPreset;
+                      setProxyGrantEditor(prev => prev ? { ...prev, realityPreset: preset, realityServerName: preset === 'custom' ? '' : preset } : prev);
+                    }} description="推荐站点已经过真实握手验证；也可以填写自己的 TLS 1.3 站点。">
+                      <SelectItem key="www.cloudflare.com">Cloudflare（推荐）</SelectItem>
+                      <SelectItem key="www.google.com">Google</SelectItem>
+                      <SelectItem key="custom">自定义域名</SelectItem>
+                    </Select>
+                    {proxyGrantEditor.realityPreset === 'custom' && <Input className="md:col-span-2" label="自定义伪装域名" placeholder="仅填写支持 TLS 1.3 的域名" value={proxyGrantEditor.realityServerName} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, realityServerName: value } : prev)} description="不要填写 https://、端口或路径；部分 HTTPS 站点不兼容 REALITY，创建后请验证连接。" />}
+                  </>}
                 </div>
               </>}
 

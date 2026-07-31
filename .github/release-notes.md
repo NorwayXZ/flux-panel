@@ -1,3 +1,9 @@
+## 2.39.1 Custom REALITY camouflage for user grants
+
+- Adds the missing **Custom domain** option to administrator-created VLESS+REALITY user grants, matching the standalone private-proxy form.
+- Shows a dedicated custom-domain field and rejects empty or malformed values containing a scheme, port, or path before submission; backend validation remains authoritative.
+- This is a frontend-only hotfix. It does not change the database, Agent, ports, proxy runtimes, nodes, tunnels, forwards, or the existing test instances. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.37.1 Reliable forwarded-route port allocation
 
 - When a new forward uses automatic port allocation, the panel now asks a current Agent whether the candidate port is already occupied by another local process before choosing it.
