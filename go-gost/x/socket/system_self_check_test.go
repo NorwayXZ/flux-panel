@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestNormalizeSelfCheckDomains(t *testing.T) {
@@ -23,6 +24,17 @@ func TestInspectRequestedPortsFindsListener(t *testing.T) {
 	results := inspectRequestedPorts([]systemSelfCheckPortRequest{{Network: "tcp", Port: port}, {Network: "invalid", Port: 1}})
 	if len(results) != 1 || !results[0].Listening || results[0].Port != port {
 		t.Fatalf("listener was not detected: %#v", results)
+	}
+}
+
+func TestInspectRequestedPortsSkipsSocketScanWhenEmpty(t *testing.T) {
+	started := time.Now()
+	results := inspectRequestedPorts(nil)
+	if len(results) != 0 {
+		t.Fatalf("expected no results, got %#v", results)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("empty port inspection unexpectedly took %s", elapsed)
 	}
 }
 

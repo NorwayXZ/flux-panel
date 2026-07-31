@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 @Service
 public class SystemSelfCheckService {
     public static final String MIN_AGENT_VERSION = "2.41.0";
-    public static final String MIN_CONNECTOR_SELF_CHECK_VERSION = "2.41.2";
+    public static final String MIN_CONNECTOR_SELF_CHECK_VERSION = "2.41.3";
     private final JdbcTemplate jdbcTemplate;
     private final NodeService nodeService;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {

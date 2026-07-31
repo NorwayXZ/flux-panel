@@ -1,3 +1,9 @@
+## 2.41.3 macOS Connector self-check timeout fix
+
+- Skips the expensive system-wide socket enumeration when a Connector self-check does not request local listener inspection. This prevents some macOS Connectors from exceeding the panel's 45-second response deadline before DNS, IPv4/IPv6, default-route, and entry-port results can be returned.
+- Adds a three-second hard timeout to local route commands so an unresponsive operating-system utility cannot block the entire check. The check remains read-only and does not alter DNS, routes, firewall rules, interfaces, or existing services.
+- Connector `2.41.3` is required for the corrected local check. Panel and Agent rollback remain available; existing nodes, tunnels, forwards, ports, domains, certificates, proxies, and Connector configuration are not rebuilt.
+
 ## 2.41.2 Local device and Connector self-check
 
 - Adds a separate self-check scope for registered Windows, macOS, and Linux Connectors. The Connector reports local interfaces, IPv4/IPv6 outbound capability, system DNS, default routes, and TCP reachability to the panel and the panel's registered entry ports.

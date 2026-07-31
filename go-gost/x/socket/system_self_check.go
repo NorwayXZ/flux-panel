@@ -176,8 +176,13 @@ func isDefaultRouteLine(line string) bool {
 }
 
 func execCommandOutput(name string, args ...string) (string, error) {
-	command := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, name, args...)
 	output, err := command.Output()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%s timed out", name)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -450,6 +455,9 @@ func inspectIPFamily(ipv6 bool) systemSelfCheckFamily {
 }
 
 func inspectRequestedPorts(requests []systemSelfCheckPortRequest) []systemSelfCheckPortResult {
+	if len(requests) == 0 {
+		return []systemSelfCheckPortResult{}
+	}
 	listening := make(map[string]bool)
 	if connections, err := psnet.Connections("all"); err == nil {
 		for _, connection := range connections {
