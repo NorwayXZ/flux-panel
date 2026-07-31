@@ -1,6 +1,8 @@
 package socket
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -17,10 +19,22 @@ func TestAgentUpdateValidation(t *testing.T) {
 	}
 }
 
+func TestRenderedAgentUpdateHelperIsValidShell(t *testing.T) {
+	request := agentUpgradeRequest{TaskID: "12345678-1234-1234-1234-123456789012", TargetVersion: "2.41.0"}
+	script := renderAgentUpdateHelper(request, "/etc/gost/gost", "/etc/gost/.gost.update", "/etc/gost/status.json", "/etc/gost/helper.sh")
+	path := t.TempDir() + "/helper.sh"
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("/bin/sh", "-n", path).CombinedOutput(); err != nil {
+		t.Fatalf("generated helper is invalid shell: %v: %s", err, output)
+	}
+}
+
 func TestRenderAgentUpdateHelper(t *testing.T) {
 	request := agentUpgradeRequest{TaskID: "12345678-1234-1234-1234-123456789012", TargetVersion: "2.13.0"}
 	script := renderAgentUpdateHelper(request, "/etc/gost/gost", "/etc/gost/.gost.update", "/etc/gost/status.json", "/etc/gost/helper.sh")
-	for _, expected := range []string{"write_status installing", "mv -f \"$PREVIOUS\" \"$EXECUTABLE\"", "write_status success", "write_status rolled_back"} {
+	for _, expected := range []string{"write_status installing", "write_status awaiting_reconnect", ".agent-update-connected-", "mv -f \"$PREVIOUS\" \"$EXECUTABLE\"", "write_status success", "write_status rolled_back"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("helper script is missing %q", expected)
 		}

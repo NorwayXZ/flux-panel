@@ -111,6 +111,10 @@ run_systemd_test() {
   cat > "$mock_dir/systemctl" <<EOF
 #!/bin/sh
 printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+if [ "\${1:-}" = "start" ] && [ -f "$case_root/etc/gost/.agent-update-status.json" ]; then
+  task_id=\$(sed -n 's/.*"taskId":"\([^"]*\)".*/\1/p' "$case_root/etc/gost/.agent-update-status.json")
+  [ -n "\$task_id" ] && printf 'test-version\n' > "$case_root/etc/gost/.agent-update-connected-\$task_id"
+fi
 exit 0
 EOF
   chmod 755 "$mock_dir/systemctl"
@@ -161,6 +165,10 @@ EOF
   cat > "$mock_dir/systemctl" <<EOF
 #!/bin/sh
 printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+if [ "\${1:-}" = "start" ] && [ -f "$case_root/etc/gost/.agent-update-status.json" ]; then
+  task_id=\$(sed -n 's/.*"taskId":"\([^"]*\)".*/\1/p' "$case_root/etc/gost/.agent-update-status.json")
+  [ -n "\$task_id" ] && printf 'test-version\n' > "$case_root/etc/gost/.agent-update-connected-\$task_id"
+fi
 exit 0
 EOF
   chmod 755 "$mock_dir/systemctl"
@@ -180,6 +188,81 @@ EOF
   ! grep -Fq 'network-online.target' "$case_root/etc/systemd/system/gost.service"
   grep -Fq 'systemctl daemon-reload ' "$event_log"
   grep -Fq 'systemctl enable gost' "$event_log"
+  test ! -e "$case_root/etc/gost/gost.previous"
+  test ! -e "$case_root/etc/gost/.agent-update-status.json"
+}
+
+run_systemd_update_rollback_test() {
+  case_root="$TEST_ROOT/systemd-update-rollback"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$case_root/etc/gost" "$case_root/etc/systemd/system"
+  printf '#!/bin/sh\nprintf old-agent\n' > "$case_root/etc/gost/gost"
+  chmod 755 "$case_root/etc/gost/gost"
+  printf '{}\n' > "$case_root/etc/gost/config.json"
+  printf '[Service]\n' > "$case_root/etc/systemd/system/gost.service"
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/systemctl"
+
+  if PATH="$mock_dir:$PATH" \
+    GOST_KEEP_SCRIPT=1 \
+    GOST_SERVICE_MANAGER=systemd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost \
+    GOST_INSTALL_DIR="$case_root/etc/gost" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -U >/dev/null 2>&1; then
+    printf 'expected disconnected update to fail\n' >&2
+    exit 1
+  fi
+
+  grep -Fq 'old-agent' "$case_root/etc/gost/gost"
+  grep -Fq '"state":"rolled_back"' "$case_root/etc/gost/.agent-update-status.json"
+  grep -Fq 'systemctl start gost' "$event_log"
+}
+
+run_identity_replacement_guard_test() {
+  case_root="$TEST_ROOT/identity-guard"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$case_root/etc/gost" "$case_root/etc/systemd/system"
+  printf '#!/bin/sh\nexit 0\n' > "$case_root/etc/gost/gost"
+  chmod 755 "$case_root/etc/gost/gost"
+  cat > "$case_root/etc/gost/config.json" <<EOF
+{
+  "addr": "old-panel:6366",
+  "secret": "old-secret",
+  "role": "node"
+}
+EOF
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s %s\n' "\${1:-}" "\${2:-}" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/systemctl"
+
+  if PATH="$mock_dir:$PATH" GOST_KEEP_SCRIPT=1 GOST_SERVICE_MANAGER=systemd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost GOST_INSTALL_DIR="$case_root/etc/gost" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -a new-panel:6366 -s new-secret >/dev/null 2>&1; then
+    printf 'expected identity replacement guard to reject install\n' >&2
+    exit 1
+  fi
+  grep -Fq '"secret": "old-secret"' "$case_root/etc/gost/config.json"
+
+  PATH="$mock_dir:$PATH" GOST_KEEP_SCRIPT=1 GOST_SERVICE_MANAGER=systemd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost GOST_INSTALL_DIR="$case_root/etc/gost" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -a new-panel:6366 -s new-secret -R >/dev/null
+  grep -Fq '"secret": "new-secret"' "$case_root/etc/gost/config.json"
 }
 
 run_connector_uninstall_test() {
@@ -293,6 +376,8 @@ grep -Fq 'if ($Uninstall)' "$PROJECT_DIR/install-connector.ps1"
 run_openrc_test
 run_systemd_test
 run_systemd_update_test
+run_systemd_update_rollback_test
+run_identity_replacement_guard_test
 run_connector_uninstall_test
 run_macos_bootstrap_retry_test
 printf 'Agent installer tests passed\n'

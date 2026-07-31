@@ -24,7 +24,8 @@ class AgentUpgradeServiceTests {
         assertEquals("manual", service.upgradeMode("2.7.0"));
         assertEquals("terminal", service.upgradeMode("2.8.0"));
         assertEquals("terminal", service.upgradeMode("2.12.9"));
-        assertEquals("self", service.upgradeMode("2.13.0"));
+        assertEquals("terminal", service.upgradeMode("2.40.0"));
+        assertEquals("self", service.upgradeMode("2.41.0"));
     }
 
     @Test
@@ -32,10 +33,13 @@ class AgentUpgradeServiceTests {
         String taskId = "12345678-1234-1234-1234-123456789012";
         String command = service.bootstrapCommand(taskId);
 
-        assertTrue(command.contains("NorwayXZ/flux-panel/2.40.0/install.sh"));
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.41.0/install.sh"));
+        assertTrue(command.contains("ghfast.top"));
+        assertTrue(command.contains("--retry 3"));
         assertTrue(command.contains("systemd-run"));
         assertTrue(command.contains("setsid"));
         assertTrue(command.contains(" -U"));
+        assertTrue(command.contains("FLUX_AGENT_UPDATE_TASK_ID="));
         assertTrue(command.contains("FLUX_UPGRADE_STARTED"));
         assertTrue(command.contains("FLUX_UPGRADE_FAILED"));
         assertTrue(command.contains("flux-agent-update-12345678-123.log"));
@@ -54,7 +58,7 @@ class AgentUpgradeServiceTests {
     void manualCommandUsesUpdateModeWithoutNodeSecret() {
         String command = service.manualCommand();
 
-        assertTrue(command.contains("NorwayXZ/flux-panel/2.40.0/install.sh"));
+        assertTrue(command.contains("NorwayXZ/flux-panel/2.41.0/install.sh"));
         assertTrue(command.contains("ghfast.top"));
         assertTrue(command.contains("--retry 3"));
         assertTrue(command.contains(" -U"));

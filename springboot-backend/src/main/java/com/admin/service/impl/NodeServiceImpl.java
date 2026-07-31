@@ -90,7 +90,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.40.0/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.41.0/install.sh";
 
     // ========== 依赖注入 ==========
     

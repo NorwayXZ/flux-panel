@@ -26,14 +26,14 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.40.0";
-    public static final String SELF_UPDATE_MIN_VERSION = "2.13.0";
+    public static final String TARGET_VERSION = "2.41.0";
+    public static final String SELF_UPDATE_MIN_VERSION = "2.41.0";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;
     private static final String RELEASE_SCRIPT = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/"
             + TARGET_VERSION + "/install.sh";
     private static final List<String> ACTIVE_STATES = List.of(
-            "queued", "bootstrapping", "accepted", "downloading", "verified", "restarting", "installing");
+            "queued", "bootstrapping", "accepted", "preflight", "downloading", "verified", "restarting", "installing");
 
     private final NodeService nodeService;
     private final JdbcTemplate jdbcTemplate;
@@ -64,11 +64,17 @@ public class AgentUpgradeService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("targetVersion", TARGET_VERSION);
         result.put("items", items);
+        result.put("batch", latestBatch());
         return result;
     }
 
     public R start(Long nodeId) {
         Node node = requireNode(nodeId);
+        return start(node, null, null, JwtUtil.getUserIdFromToken());
+    }
+
+    private R start(Node node, String batchId, Integer sequenceNo, Integer requestedBy) {
+        Long nodeId = node.getId();
         if (!WebSocketServer.isNodeOnline(nodeId)) {
             return R.err(409, "节点离线，无法远程升级");
         }
@@ -87,10 +93,10 @@ public class AgentUpgradeService {
         String taskId = UUID.randomUUID().toString();
         long now = System.currentTimeMillis();
         jdbcTemplate.update("INSERT INTO agent_upgrade_task "
-                        + "(task_id,node_id,node_name,from_version,target_version,state,message,requested_by,requested_at,updated_at) "
-                        + "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                taskId, node.getId(), node.getName(), node.getVersion(), TARGET_VERSION, "queued",
-                "等待节点接收升级任务", JwtUtil.getUserIdFromToken(), now, now);
+                        + "(task_id,batch_id,sequence_no,node_id,node_name,from_version,target_version,state,message,requested_by,requested_at,updated_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                taskId, batchId, sequenceNo, node.getId(), node.getName(), node.getVersion(), TARGET_VERSION, "queued",
+                batchId == null ? "等待节点接收升级任务" : "分阶段批量升级：等待节点接收任务", requestedBy, now, now);
 
         if ("terminal".equals(mode)) {
             return startTerminalBootstrap(node, taskId);
@@ -107,28 +113,33 @@ public class AgentUpgradeService {
         return R.ok(statusForNode(nodeId));
     }
 
-    public R startBatch() {
-        List<Map<String, Object>> results = new ArrayList<>();
-        int submitted = 0;
+    public synchronized R startBatch() {
+        Integer running = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_upgrade_batch WHERE state='running'", Integer.class);
+        if (running != null && running > 0) {
+            return R.err(409, "已有分阶段批量升级正在执行");
+        }
+        List<Node> eligible = new ArrayList<>();
         for (Node node : nodeService.list()) {
-            if (submitted >= 20 || !WebSocketServer.isNodeOnline(node.getId())
+            if (eligible.size() >= 100 || !WebSocketServer.isNodeOnline(node.getId())
                     || AgentVersionUtil.isAtLeast(node.getVersion(), TARGET_VERSION)
                     || "manual".equals(upgradeMode(node.getVersion())) || hasActiveTask(node.getId())) {
                 continue;
             }
-            R result = start(node.getId());
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("nodeId", node.getId());
-            item.put("nodeName", node.getName());
-            item.put("accepted", result.getCode() == 0);
-            item.put("message", result.getMsg());
-            results.add(item);
-            if (result.getCode() == 0) submitted++;
+            eligible.add(node);
         }
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("submitted", submitted);
-        response.put("results", results);
-        return R.ok(response);
+        if (eligible.isEmpty()) return R.err("没有可远程升级的在线节点");
+
+        String batchId = UUID.randomUUID().toString();
+        String nodeIds = eligible.stream().map(node -> node.getId().toString()).collect(java.util.stream.Collectors.joining(","));
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("INSERT INTO agent_upgrade_batch "
+                        + "(batch_id,target_version,state,node_ids,total_nodes,completed_nodes,message,requested_by,started_at,updated_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                batchId, TARGET_VERSION, "running", nodeIds, eligible.size(), 0,
+                "正在升级首台试运行节点", JwtUtil.getUserIdFromToken(), now, now);
+        dispatchNextBatchNode(batchId);
+        return R.ok(latestBatch());
     }
 
     public R manualCommand(Long nodeId) {
@@ -189,7 +200,11 @@ public class AgentUpgradeService {
             input.put("data", Base64.getEncoder().encodeToString(
                     (bootstrapCommand(bootstrap.taskId()) + "\n").getBytes(StandardCharsets.UTF_8)));
             updateTask(bootstrap.taskId(), "bootstrapping", "正在启动独立升级助手", null);
-            WebSocketServer.sendNodeEvent(nodeId, "TerminalInput", input);
+            if (WebSocketServer.sendNodeEvent(nodeId, "TerminalInput", input)) {
+                updateTask(bootstrap.taskId(), "restarting", "升级命令已提交，等待新版 Agent 重新连接或旧版自动恢复", null);
+            } else {
+                updateTask(bootstrap.taskId(), "failed", "无法向节点终端提交升级命令", System.currentTimeMillis());
+            }
         } else if ("TerminalOutput".equals(type)) {
             String output = bootstrapOutput.merge(sessionId, decodeTerminalOutput(data.getString("data")),
                     (previous, current) -> {
@@ -231,9 +246,9 @@ public class AgentUpgradeService {
         long cutoff = System.currentTimeMillis() - TASK_TIMEOUT_MS;
         List<Map<String, Object>> expired = jdbcTemplate.queryForList(
                 "SELECT task_id AS taskId,node_id AS nodeId "
-                        + "FROM agent_upgrade_task WHERE state IN (?,?,?,?,?,?,?) AND updated_at<?",
+                        + "FROM agent_upgrade_task WHERE state IN (?,?,?,?,?,?,?,?) AND updated_at<?",
                 ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2), ACTIVE_STATES.get(3),
-                ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), cutoff);
+                ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), ACTIVE_STATES.get(7), cutoff);
         long now = System.currentTimeMillis();
         for (Map<String, Object> task : expired) {
             Long nodeId = ((Number) task.get("nodeId")).longValue();
@@ -246,6 +261,42 @@ public class AgentUpgradeService {
                 message = "等待 Agent 重新上线超时；请检查节点服务和 /var/log/flux-agent-update-*.log";
             }
             updateTask(Objects.toString(task.get("taskId"), ""), "timeout", message, now);
+        }
+    }
+
+    @Scheduled(fixedDelay = 5_000L)
+    public void advanceBatchUpgrades() {
+        try {
+            List<Map<String, Object>> batches = jdbcTemplate.queryForList(
+                    "SELECT batch_id AS batchId,current_node_id AS currentNodeId FROM agent_upgrade_batch WHERE state='running' ORDER BY id");
+            for (Map<String, Object> batch : batches) {
+                String batchId = Objects.toString(batch.get("batchId"), "");
+                Object currentNode = batch.get("currentNodeId");
+                if (currentNode == null) {
+                    dispatchNextBatchNode(batchId);
+                    continue;
+                }
+                List<Map<String, Object>> tasks = jdbcTemplate.queryForList(
+                        "SELECT state,message,node_name AS nodeName FROM agent_upgrade_task WHERE batch_id=? AND node_id=? ORDER BY id DESC LIMIT 1",
+                        batchId, ((Number) currentNode).longValue());
+                if (tasks.isEmpty()) {
+                    pauseBatch(batchId, "当前节点缺少升级任务记录，批量升级已暂停");
+                    continue;
+                }
+                String state = Objects.toString(tasks.get(0).get("state"), "");
+                if (ACTIVE_STATES.contains(state)) continue;
+                if (!"success".equals(state)) {
+                    pauseBatch(batchId, Objects.toString(tasks.get(0).get("nodeName"), "节点")
+                            + " 升级未通过（" + Objects.toString(tasks.get(0).get("message"), state) + "），后续节点未执行");
+                    continue;
+                }
+                jdbcTemplate.update("UPDATE agent_upgrade_batch SET completed_nodes=completed_nodes+1,current_node_id=NULL,current_node_name=NULL,"
+                        + "message='上一节点已确认重新上线，准备下一台',updated_at=? WHERE batch_id=? AND state='running'",
+                        System.currentTimeMillis(), batchId);
+                dispatchNextBatchNode(batchId);
+            }
+        } catch (Exception e) {
+            log.warn("Advance staged Agent upgrades failed: {}", e.getMessage());
         }
     }
 
@@ -274,11 +325,14 @@ public class AgentUpgradeService {
         String unit = "flux-agent-bootstrap-" + prefix;
         String log = "/var/log/flux-agent-update-" + prefix + ".log";
         String result = "/tmp/flux-agent-update-" + prefix + ".result";
-        String run = "/bin/sh " + shellQuote(script) + " -U >>" + shellQuote(log)
+        String mirror = "https://ghfast.top/" + RELEASE_SCRIPT;
+        String run = "FLUX_AGENT_UPDATE_TASK_ID=" + shellQuote(taskId) + " /bin/sh " + shellQuote(script) + " -U >>" + shellQuote(log)
                 + " 2>&1; code=$?; printf '%s\\n' \"$code\" >" + shellQuote(result) + "; exit \"$code\"";
         return "SCRIPT=" + shellQuote(script) + "; RESULT=" + shellQuote(result) + "; LOG=" + shellQuote(log) + "; "
                 + "rm -f \"$RESULT\"; "
-                + "if curl -fsSL --connect-timeout 15 '" + RELEASE_SCRIPT + "' -o \"$SCRIPT\" && chmod 700 \"$SCRIPT\"; then "
+                + "if (curl -fL --retry 3 --connect-timeout 15 " + shellQuote(RELEASE_SCRIPT) + " -o \"$SCRIPT\" "
+                + "|| curl -fL --retry 3 --connect-timeout 15 " + shellQuote(mirror) + " -o \"$SCRIPT\") "
+                + "&& chmod 700 \"$SCRIPT\"; then "
                 + "if command -v systemd-run >/dev/null 2>&1 && [ -d /run/systemd/system ]; then "
                 + "systemd-run --unit=" + unit + " --collect --property=Type=oneshot /bin/sh -c "
                 + shellQuote(run) + " >/dev/null 2>&1; started=$?; "
@@ -328,9 +382,9 @@ public class AgentUpgradeService {
     }
 
     private boolean hasActiveTask(Long nodeId) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agent_upgrade_task WHERE node_id=? AND state IN (?,?,?,?,?,?,?)",
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM agent_upgrade_task WHERE node_id=? AND state IN (?,?,?,?,?,?,?,?)",
                 Integer.class, nodeId, ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2),
-                ACTIVE_STATES.get(3), ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6));
+                ACTIVE_STATES.get(3), ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), ACTIVE_STATES.get(7));
         return count != null && count > 0;
     }
 
@@ -374,15 +428,72 @@ public class AgentUpgradeService {
     private Map<String, Object> latestActiveTask(Long nodeId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT task_id AS taskId,target_version AS targetVersion,state FROM agent_upgrade_task "
-                        + "WHERE node_id=? AND state IN (?,?,?,?,?,?,?) ORDER BY id DESC LIMIT 1",
+                        + "WHERE node_id=? AND state IN (?,?,?,?,?,?,?,?) ORDER BY id DESC LIMIT 1",
                 nodeId, ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2),
-                ACTIVE_STATES.get(3), ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6));
+                ACTIVE_STATES.get(3), ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), ACTIVE_STATES.get(7));
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private Map<String, Object> latestBatch() {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT batch_id AS batchId,target_version AS targetVersion,state,total_nodes AS totalNodes,"
+                        + "completed_nodes AS completedNodes,current_node_id AS currentNodeId,current_node_name AS currentNodeName,"
+                        + "message,started_at AS startedAt,updated_at AS updatedAt,finished_at AS finishedAt "
+                        + "FROM agent_upgrade_batch ORDER BY id DESC LIMIT 1");
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private synchronized void dispatchNextBatchNode(String batchId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT node_ids AS nodeIds,total_nodes AS totalNodes,completed_nodes AS completedNodes,requested_by AS requestedBy "
+                        + "FROM agent_upgrade_batch WHERE batch_id=? AND state='running' LIMIT 1", batchId);
+        if (rows.isEmpty()) return;
+        Map<String, Object> batch = rows.get(0);
+        List<Long> nodeIds = new ArrayList<>();
+        for (String value : Objects.toString(batch.get("nodeIds"), "").split(",")) {
+            try { nodeIds.add(Long.parseLong(value.trim())); } catch (NumberFormatException ignored) { }
+        }
+        List<Long> completedOrStarted = jdbcTemplate.query(
+                "SELECT node_id FROM agent_upgrade_task WHERE batch_id=? ORDER BY sequence_no",
+                (rs, rowNum) -> rs.getLong(1), batchId);
+        Long nextNodeId = nodeIds.stream().filter(id -> !completedOrStarted.contains(id)).findFirst().orElse(null);
+        if (nextNodeId == null) {
+            long now = System.currentTimeMillis();
+            jdbcTemplate.update("UPDATE agent_upgrade_batch SET state='success',completed_nodes=total_nodes,current_node_id=NULL,current_node_name=NULL,"
+                    + "message='全部节点已逐台升级并确认重新上线',updated_at=?,finished_at=? WHERE batch_id=? AND state='running'",
+                    now, now, batchId);
+            return;
+        }
+        Node node = nodeService.getById(nextNodeId);
+        if (node == null || !WebSocketServer.isNodeOnline(nextNodeId)) {
+            pauseBatch(batchId, (node == null ? "节点 " + nextNodeId : node.getName()) + " 当前离线，后续节点未执行");
+            return;
+        }
+        int sequence = completedOrStarted.size() + 1;
+        String stage = sequence == 1 ? "试运行" : "第 " + sequence + " 台";
+        jdbcTemplate.update("UPDATE agent_upgrade_batch SET current_node_id=?,current_node_name=?,message=?,updated_at=? "
+                        + "WHERE batch_id=? AND state='running'",
+                node.getId(), node.getName(), "正在升级" + stage + "节点 " + node.getName(), System.currentTimeMillis(), batchId);
+        R result = start(node, batchId, sequence, ((Number) batch.get("requestedBy")).intValue());
+        if (result.getCode() != 0) {
+            pauseBatch(batchId, node.getName() + " 无法开始升级：" + result.getMsg());
+        }
+    }
+
+    private void pauseBatch(String batchId, String message) {
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("UPDATE agent_upgrade_batch SET state='paused',message=?,updated_at=?,finished_at=? "
+                + "WHERE batch_id=? AND state='running'", abbreviateLong(message), now, now, batchId);
     }
 
     private String abbreviate(String value) {
         if (value == null) return null;
         return value.length() <= 255 ? value : value.substring(0, 255);
+    }
+
+    private String abbreviateLong(String value) {
+        if (value == null) return null;
+        return value.length() <= 500 ? value : value.substring(0, 500);
     }
 
     private record BootstrapSession(String sessionId, String taskId, Long nodeId, String logPath) {

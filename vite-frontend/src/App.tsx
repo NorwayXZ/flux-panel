@@ -28,6 +28,7 @@ import DynamicDnsPage from "@/pages/dynamic-dns";
 import HomeAccessPage from "@/pages/home-access";
 import HomeDevicesPage from "@/pages/home-devices";
 import GuidePage from "@/pages/guide";
+import SystemSelfCheckPage from "@/pages/system-self-check";
 import { SettingsPage } from "@/pages/settings";
 
 import AdminLayout from "@/layouts/admin";
@@ -199,6 +200,7 @@ function App() {
         element={<ProtectedRoute><CrossEntryFailoverPage /></ProtectedRoute>}
       />
       <Route path="/topology" element={<ProtectedRoute><TopologyPage /></ProtectedRoute>} />
+      <Route path="/system-self-check" element={<ProtectedRoute><SystemSelfCheckPage /></ProtectedRoute>} />
       <Route
         path="/dns-settings"
         element={<ProtectedRoute useSimpleLayout={true}><DnsSettingsPage /></ProtectedRoute>}

@@ -82,6 +82,7 @@ func (w *WebSocketReporter) runAgentUpgrade(request agentUpgradeRequest) {
 	}()
 
 	time.Sleep(750 * time.Millisecond)
+	w.sendAgentUpgradeEvent("AgentUpgradeProgress", request, "preflight", "Checking Agent configuration and rollback prerequisites")
 	w.sendAgentUpgradeEvent("AgentUpgradeProgress", request, "downloading", "Downloading release metadata")
 	executable, err := os.Executable()
 	if err != nil {
@@ -94,6 +95,10 @@ func (w *WebSocketReporter) runAgentUpgrade(request agentUpgradeRequest) {
 		return
 	}
 	installDirectory := filepath.Dir(executable)
+	if err := agentUpgradePreflight(executable, installDirectory); err != nil {
+		w.sendAgentUpgradeFailure(request, err)
+		return
+	}
 	binaryName, err := agentReleaseBinaryName(runtime.GOARCH)
 	if err != nil {
 		w.sendAgentUpgradeFailure(request, err)
@@ -170,6 +175,11 @@ func (w *WebSocketReporter) reportPendingAgentUpgrade() {
 		if json.Unmarshal(content, &status) != nil || !validAgentUpdateToken(status.TaskID, 16, 64) {
 			return
 		}
+		if status.State == "awaiting_reconnect" && compareAgentVersions(w.version, status.TargetVersion) >= 0 {
+			ackPath := filepath.Join(filepath.Dir(executable), ".agent-update-connected-"+status.TaskID)
+			_ = os.WriteFile(ackPath, []byte(w.version+"\n"), 0600)
+			return
+		}
 		if status.State != "success" && status.State != "rolled_back" {
 			continue
 		}
@@ -182,6 +192,44 @@ func (w *WebSocketReporter) reportPendingAgentUpgrade() {
 		_ = os.Remove(statusPath)
 		return
 	}
+}
+
+func agentUpgradePreflight(executable, installDirectory string) error {
+	info, err := os.Stat(executable)
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("current Agent binary is unavailable")
+	}
+	configPath := filepath.Join(installDirectory, "config.json")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read Agent connection config: %w", err)
+	}
+	var config struct {
+		Addr   string `json:"addr"`
+		Secret string `json:"secret"`
+		Role   string `json:"role"`
+	}
+	if err := json.Unmarshal(content, &config); err != nil || strings.TrimSpace(config.Addr) == "" || strings.TrimSpace(config.Secret) == "" {
+		return errors.New("Agent connection config is incomplete")
+	}
+	if config.Role != "" && config.Role != "node" {
+		return errors.New("self-update is only available for node Agents")
+	}
+	probe, err := os.CreateTemp(installDirectory, ".agent-update-write-test-")
+	if err != nil {
+		return fmt.Errorf("Agent directory is not writable: %w", err)
+	}
+	probePath := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probePath)
+	_, systemdDirectoryError := os.Stat("/run/systemd/system")
+	_, systemctlError := exec.LookPath("systemctl")
+	if systemdDirectoryError != nil || systemctlError != nil {
+		if _, openRCErr := exec.LookPath("rc-service"); openRCErr != nil {
+			return errors.New("no active systemd or OpenRC service manager was found")
+		}
+	}
+	return nil
 }
 
 func agentReleaseBinaryName(architecture string) (string, error) {
@@ -316,6 +364,7 @@ func compareAgentVersions(left, right string) int {
 
 func renderAgentUpdateHelper(request agentUpgradeRequest, executable, newBinary, statusPath, helperPath string) string {
 	previous := executable + ".previous"
+	ackPath := filepath.Join(filepath.Dir(executable), ".agent-update-connected-"+request.TaskID)
 	return fmt.Sprintf(`#!/bin/sh
 set -u
 EXECUTABLE=%s
@@ -323,6 +372,7 @@ NEW_BINARY=%s
 PREVIOUS=%s
 STATUS=%s
 HELPER=%s
+ACK=%s
 TASK_ID=%s
 TARGET_VERSION=%s
 
@@ -339,23 +389,31 @@ service_active() {
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then systemctl is-active --quiet gost; else rc-service gost status >/dev/null 2>&1; fi
 }
 
+rm -f "$ACK"
 write_status installing
 cp -f "$EXECUTABLE" "$PREVIOUS" || { write_status rolled_back; exit 1; }
 stop_service
 mv -f "$NEW_BINARY" "$EXECUTABLE" && chmod 755 "$EXECUTABLE"
-if start_service; then sleep 3; fi
-if service_active; then
-  write_status success
-  rm -f "$PREVIOUS" "$HELPER"
-  exit 0
-fi
+write_status awaiting_reconnect
+start_service || true
+i=0
+while [ "$i" -lt 45 ]; do
+  if [ -s "$ACK" ] && service_active; then
+    write_status success
+    rm -f "$PREVIOUS" "$NEW_BINARY" "$ACK" "$STATUS" "$HELPER"
+    exit 0
+  fi
+  if [ "$i" -ge 3 ] && ! service_active; then break; fi
+  i=$((i+1))
+  sleep 1
+done
 stop_service
 if [ -f "$PREVIOUS" ]; then mv -f "$PREVIOUS" "$EXECUTABLE"; chmod 755 "$EXECUTABLE"; fi
-start_service || true
 write_status rolled_back
-rm -f "$NEW_BINARY" "$HELPER"
+start_service || true
+rm -f "$NEW_BINARY" "$ACK" "$HELPER"
 exit 1
-`, shellQuote(executable), shellQuote(newBinary), shellQuote(previous), shellQuote(statusPath), shellQuote(helperPath), shellQuote(request.TaskID), shellQuote(request.TargetVersion))
+`, shellQuote(executable), shellQuote(newBinary), shellQuote(previous), shellQuote(statusPath), shellQuote(helperPath), shellQuote(ackPath), shellQuote(request.TaskID), shellQuote(request.TargetVersion))
 }
 
 func shellQuote(value string) string {

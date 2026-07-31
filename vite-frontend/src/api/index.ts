@@ -72,6 +72,13 @@ export interface AgentUpgradeStatusItem {
 export interface AgentUpgradeStatus {
   targetVersion: string;
   items: AgentUpgradeStatusItem[];
+  batch?: AgentUpgradeBatch | null;
+}
+
+export interface AgentUpgradeBatch {
+  batchId: string; targetVersion: string; state: 'running' | 'paused' | 'success'; totalNodes: number;
+  completedNodes: number; currentNodeId?: number; currentNodeName?: string; message?: string;
+  startedAt: number; updatedAt: number; finishedAt?: number;
 }
 
 export const getAgentUpgradeStatus = (nodeId?: number) =>
@@ -79,11 +86,31 @@ export const getAgentUpgradeStatus = (nodeId?: number) =>
 export const startAgentUpgrade = (nodeId: number) =>
   Network.post<AgentUpgradeStatusItem>("/node/upgrade/start", { nodeId });
 export const startBatchAgentUpgrade = () =>
-  Network.post<{ submitted: number; results: Array<{ nodeId: number; nodeName: string; accepted: boolean; message: string }> }>("/node/upgrade/batch");
+  Network.post<AgentUpgradeBatch>("/node/upgrade/batch");
 export const getManualAgentUpgradeCommand = (nodeId: number) =>
   Network.post<string>("/node/upgrade/manual-command", { nodeId });
 export const getAgentUpgradeHistory = (nodeId?: number) =>
   Network.post<AgentUpgradeTask[]>("/node/upgrade/history", nodeId ? { nodeId } : {});
+
+export type SelfCheckStatus = 'healthy' | 'warning' | 'failed' | 'skipped';
+export interface SystemSelfCheckRun {
+  id: number; status: 'running' | 'completed' | 'failed'; scopeNodeId?: number; totalChecks: number;
+  healthyCount: number; warningCount: number; failedCount: number; skippedCount: number;
+  message?: string; startedAt: number; finishedAt?: number;
+}
+export interface SystemSelfCheckFinding {
+  id: number; category: string; resourceType: string; resourceId?: number; resourceName?: string;
+  status: SelfCheckStatus; faultSegment: string; summary: string; evidence?: string; impact?: string;
+  remediation?: string; sortOrder: number; createdAt: number;
+}
+export interface SystemSelfCheckNode { id: number; name: string; serverIp?: string; ip?: string; status: number; version?: string }
+export interface SystemSelfCheckOverview {
+  minimumAgentVersion: string; nodes: SystemSelfCheckNode[]; run?: SystemSelfCheckRun | null;
+  findings: SystemSelfCheckFinding[]; history: SystemSelfCheckRun[];
+}
+export const getSystemSelfCheckOverview = () => Network.post<SystemSelfCheckOverview>("/system-self-check/overview");
+export const runSystemSelfCheck = (nodeId?: number) => Network.post<SystemSelfCheckOverview>("/system-self-check/run", nodeId ? { nodeId } : {});
+export const resetAgentIdentityBaseline = (nodeId: number) => Network.post<string>("/system-self-check/identity/reset", { nodeId });
 
 export interface ServerAsset {
   id: number; nodeId?: number; nodeName?: string; nodeStatus?: number; name: string; provider?: string; region?: string;

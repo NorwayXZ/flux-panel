@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, BookOpen, Boxes, FlaskConical, Home, LockKeyhole, Network, RadioTower, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { BellRing, BookOpen, Boxes, FlaskConical, Home, LockKeyhole, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -161,6 +161,12 @@ export default function AdminLayout({
       adminOnly: true
     },
     {
+      path: '/system-self-check',
+      label: '全系统自检',
+      icon: <SearchCheck className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/user',
       label: '用户管理',
       icon: (
@@ -201,7 +207,7 @@ export default function AdminLayout({
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab'] },
-    { label: '系统管理', paths: ['/topology', '/monitoring', '/limit', '/server-assets', '/user', '/config'] },
+    { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/limit', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }
   ];

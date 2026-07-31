@@ -32,6 +32,7 @@ import {
   discoverNodeServices,
   type NodeDiscoveredService,
   type NodeServiceDiscoveryResult,
+  type AgentUpgradeBatch,
   type AgentUpgradeStatusItem,
 } from "@/api";
 
@@ -98,11 +99,12 @@ const getNodeOwnerBadge = (node: Node) => {
   return { label: `归属 · ${ownerName}`, title: `资源所有者：${ownerName}`, color: 'default' as const };
 };
 
-const activeUpgradeStates = new Set(['queued', 'bootstrapping', 'accepted', 'downloading', 'verified', 'restarting', 'installing']);
+const activeUpgradeStates = new Set(['queued', 'bootstrapping', 'accepted', 'preflight', 'downloading', 'verified', 'restarting', 'installing']);
 const upgradeStateLabels: Record<string, string> = {
   queued: '等待接收',
   bootstrapping: '启动助手',
   accepted: '准备升级',
+  preflight: '升级预检',
   downloading: '下载中',
   verified: '校验完成',
   restarting: '重启中',
@@ -139,6 +141,7 @@ export default function NodePage() {
   const [upgradeItems, setUpgradeItems] = useState<Record<number, AgentUpgradeStatusItem>>({});
   const upgradeItemsRef = useRef<Record<number, AgentUpgradeStatusItem>>({});
   const [upgradeTargetVersion, setUpgradeTargetVersion] = useState('');
+  const [upgradeBatchStatus, setUpgradeBatchStatus] = useState<AgentUpgradeBatch | null>(null);
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
   const [upgradeBatch, setUpgradeBatch] = useState(false);
@@ -227,6 +230,7 @@ export default function NodePage() {
       const result = await getAgentUpgradeStatus();
       if (result.code !== 0) return;
       setUpgradeTargetVersion(result.data.targetVersion);
+      setUpgradeBatchStatus(result.data.batch || null);
       const nextItems = Object.fromEntries((result.data.items || []).map(item => [item.nodeId, item]));
       (result.data.items || []).forEach(item => {
         const previousState = upgradeItemsRef.current[item.nodeId]?.task?.state;
@@ -639,7 +643,7 @@ export default function NodePage() {
           toast.error(result.msg || '批量升级提交失败');
           return;
         }
-        toast.success(`已提交 ${result.data.submitted} 个节点升级任务`);
+        toast.success(`已启动 ${result.data.totalNodes} 台节点的分阶段升级，先试运行 1 台`);
       } else if (upgradeNode) {
         const result = await startAgentUpgrade(upgradeNode.id);
         if (result.code !== 0) {
@@ -1169,7 +1173,7 @@ export default function NodePage() {
               variant="flat"
               color="warning"
               onPress={openBatchUpgrade}
-              isDisabled={batchEligibleCount === 0}
+              isDisabled={batchEligibleCount === 0 || upgradeBatchStatus?.state === 'running'}
               startContent={<RefreshCw size={15} />}
             >
               批量升级{batchEligibleCount > 0 ? ` ${batchEligibleCount}` : ''}
@@ -1195,6 +1199,11 @@ export default function NodePage() {
         </div>
      
         </div>
+
+        {adminMode && upgradeBatchStatus && ['running', 'paused'].includes(upgradeBatchStatus.state) && <div className={`mb-5 flex flex-col gap-3 border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${upgradeBatchStatus.state === 'paused' ? 'border-danger/30 bg-danger/10' : 'border-warning/30 bg-warning/10'}`}>
+          <div><p className="font-medium">{upgradeBatchStatus.state === 'paused' ? '批量升级已暂停' : '分阶段批量升级进行中'}</p><p className="mt-1 text-xs text-default-600">{upgradeBatchStatus.message || '等待节点确认'} · 已完成 {upgradeBatchStatus.completedNodes}/{upgradeBatchStatus.totalNodes}{upgradeBatchStatus.currentNodeName ? ` · 当前 ${upgradeBatchStatus.currentNodeName}` : ''}</p></div>
+          <Chip size="sm" variant="flat" color={upgradeBatchStatus.state === 'paused' ? 'danger' : 'warning'}>{upgradeBatchStatus.state === 'paused' ? '后续未执行' : '逐台确认'}</Chip>
+        </div>}
 
         {/* 节点列表 */}
         {loading ? (
@@ -1541,8 +1550,10 @@ export default function NodePage() {
                   <Alert
                     color="warning"
                     variant="flat"
-                    title="升级期间连接会短暂中断"
-                    description="Agent 将校验新版本、备份旧版本并重启服务。该节点上的现有 TCP 连接可能断开；启动失败时会自动恢复旧版本。"
+                    title={upgradeBatch ? '先试运行一台，再逐台升级' : '升级期间连接会短暂中断'}
+                    description={upgradeBatch
+                      ? '系统先对一台节点执行预检、校验、重启和重新连接确认。只有确认成功才继续下一台；任一节点失败会自动回退并暂停后续任务。'
+                      : 'Agent 会先完成预检和版本校验，再原子替换二进制。新版必须在 45 秒内重新连接面板，否则自动恢复旧版本并重新上线。'}
                   />
                 </ModalBody>
                 <ModalFooter>

@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.40.0}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.41.0}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -17,6 +17,7 @@ AGENT_ROLE="${AGENT_ROLE:-node}"
 SERVICE_MANAGER=""
 UNINSTALL_ONLY=0
 UPDATE_ONLY=0
+REPLACE_IDENTITY=0
 DOWNLOAD_URL=""
 CHECKSUM_URL=""
 BINARY_NAME=""
@@ -349,6 +350,26 @@ EOF
   chmod 600 "$INSTALL_DIR/config.json" "$INSTALL_DIR/gost.json"
 }
 
+read_config_value() {
+  key="$1"
+  file="$2"
+  sed -n "s/^[[:space:]]*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
+}
+
+protect_existing_identity() {
+  config_file="$INSTALL_DIR/config.json"
+  [ -f "$config_file" ] || return 0
+  old_addr="$(read_config_value addr "$config_file")"
+  old_secret="$(read_config_value secret "$config_file")"
+  old_role="$(read_config_value role "$config_file")"
+  [ -n "$old_role" ] || old_role="node"
+  if [ "$old_addr" = "$SERVER_ADDR" ] && [ "$old_secret" = "$SECRET" ] && [ "$old_role" = "$AGENT_ROLE" ]; then
+    return 0
+  fi
+  [ "$REPLACE_IDENTITY" = "1" ] || fail "检测到现有 Agent 身份与本次安装不同。为防止节点密钥被覆盖，请核对安装命令；确认替换时追加 -R"
+  log "已确认替换现有 Agent 身份"
+}
+
 get_config_params() {
   if [ -z "$SERVER_ADDR" ]; then
     printf '服务器地址: '
@@ -368,6 +389,7 @@ get_config_params() {
 install_gost() {
   log "开始安装 GOST Agent..."
   get_config_params
+  protect_existing_identity
   detect_service_manager
   detect_download_url
   check_and_install_tcpkill
@@ -409,6 +431,11 @@ update_gost() {
   log "下载最新 GOST Agent..."
   download_binary "$INSTALL_DIR/gost.new"
   cp -f "$INSTALL_DIR/gost" "$INSTALL_DIR/gost.previous"
+
+  update_task="${FLUX_AGENT_UPDATE_TASK_ID:-manual-$(date +%s)-$$}"
+  update_status="$INSTALL_DIR/.agent-update-status.json"
+  update_ack="$INSTALL_DIR/.agent-update-connected-$update_task"
+  rm -f "$update_ack"
   stop_service
   stop_orphaned_processes
   mv -f "$INSTALL_DIR/gost.new" "$INSTALL_DIR/gost"
@@ -420,16 +447,32 @@ update_gost() {
     fail "更新失败，旧版本已恢复"
   fi
 
-  if start_service && sleep 2 && service_is_active; then
-    rm -f "$INSTALL_DIR/gost.previous"
-    log "更新完成，GOST 服务已重新启动"
-    return 0
-  fi
-
-  log "新版本启动失败，正在恢复旧版本"
-  mv -f "$INSTALL_DIR/gost.previous" "$INSTALL_DIR/gost"
+  printf '{"taskId":"%s","targetVersion":"%s","state":"awaiting_reconnect"}\n' \
+    "$update_task" "$AGENT_RELEASE" > "$update_status"
   start_service || true
-  fail "更新失败，旧版本已恢复"
+  attempts=0
+  while [ "$attempts" -lt 45 ]; do
+    if [ -s "$update_ack" ] && service_is_active; then
+      rm -f "$INSTALL_DIR/gost.previous" "$update_ack" "$update_status"
+      log "更新完成，新 Agent 已连接面板并通过确认"
+      return 0
+    fi
+    if [ "$attempts" -ge 3 ] && ! service_is_active; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+
+  log "新版本未能在 45 秒内连接面板，正在恢复旧版本"
+  stop_service
+  stop_orphaned_processes
+  mv -f "$INSTALL_DIR/gost.previous" "$INSTALL_DIR/gost"
+  printf '{"taskId":"%s","targetVersion":"%s","state":"rolled_back"}\n' \
+    "$update_task" "$AGENT_RELEASE" > "$update_status"
+  start_service || true
+  rm -f "$update_ack"
+  fail "更新失败，旧版本已恢复并重新启动"
 }
 
 uninstall_gost() {
@@ -471,7 +514,7 @@ EOF
 }
 
 usage() {
-  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector]，$0 -U 更新，或 $0 -r connector -u 卸载"
+  log "用法: $0 -a 面板地址 -s 密钥 [-r node|connector] [-R 确认替换现有身份]，$0 -U 更新，或 $0 -r connector -u 卸载"
 }
 
 main() {
@@ -480,13 +523,14 @@ main() {
   require_command sed
   require_command awk
 
-  while getopts "a:s:r:uUh" opt; do
+  while getopts "a:s:r:uURh" opt; do
     case "$opt" in
       a) SERVER_ADDR="$OPTARG" ;;
       s) SECRET="$OPTARG" ;;
       r) AGENT_ROLE="$OPTARG" ;;
       u) UNINSTALL_ONLY=1 ;;
       U) UPDATE_ONLY=1 ;;
+      R) REPLACE_IDENTITY=1 ;;
       h) usage; exit 0 ;;
       *) usage; exit 1 ;;
     esac
