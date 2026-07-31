@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Accordion, AccordionItem } from '@heroui/accordion';
 import { Button } from '@heroui/button';
 import { Chip } from '@heroui/chip';
 import { Input, Textarea } from '@heroui/input';
@@ -7,7 +8,7 @@ import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Tab, Tabs } from '@heroui/tabs';
-import { Clock3, Copy, Globe2, KeyRound, Pause, Play, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Clock3, Copy, Globe2, KeyRound, Pause, Play, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -111,6 +112,25 @@ export default function PrivateProxyPage() {
     attention: items.filter(item => ['error', 'delete_pending'].includes(item.state)).length,
   }), [items]);
 
+  const nodeGroups = useMemo(() => {
+    const groups = new Map<number, PrivateProxyItem[]>();
+    items.forEach(item => groups.set(item.nodeId, [...(groups.get(item.nodeId) || []), item]));
+    return Array.from(groups.entries()).map(([nodeId, proxies]) => {
+      const first = proxies[0];
+      const protocols = Array.from(new Set(proxies.map(item => protocolMeta[item.proxyType].label)));
+      return {
+        nodeId,
+        nodeName: first.nodeName,
+        publicHost: first.publicHost,
+        nodeOnline: first.nodeOnline,
+        proxies,
+        protocols,
+        activeCount: proxies.filter(item => item.state === 'active').length,
+        attentionCount: proxies.filter(item => ['error', 'delete_pending'].includes(item.state)).length,
+      };
+    });
+  }, [items]);
+
   const selectProtocol = (proxyType: PrivateProxyType) => {
     setForm(current => ({
       ...current,
@@ -195,27 +215,58 @@ export default function PrivateProxyPage() {
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : items.length === 0 ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><ShieldCheck size={30} /><span>暂无私人代理</span></div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-divider">
-          <div className="hidden grid-cols-[1.2fr_1fr_1fr_1.2fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid"><span>代理</span><span>节点</span><span>公网入口</span><span>访问控制</span><span>有效期</span><span>操作</span></div>
-          {items.map(item => {
-            const meta = stateMeta[item.state];
-            const protocol = protocolMeta[item.proxyType];
-            return <div key={item.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1fr_1.2fr_1fr_auto] lg:items-center">
-              <div><div className="flex flex-wrap items-center gap-2 font-medium"><span>{item.name}</span><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><div className="mt-1 text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 text-xs text-default-500">{isAdvancedRuntime(item.proxyType) ? '运行时流量统计暂未启用' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div></div>
-              <div><div className="text-sm">{item.nodeName}</div><div className={`mt-1 text-xs ${item.nodeOnline ? 'text-success' : 'text-danger'}`}>{item.nodeOnline ? '在线' : '离线'}</div></div>
-              <div className="font-mono text-sm break-all">{item.publicHost || '未设置'}:{item.listenPort}</div>
-              <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
-              <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
-              <div className="flex gap-1">
-                <Button isIconOnly size="sm" variant="light" aria-label="连接信息" title="连接信息" isLoading={configLoading} onPress={() => showClientConfig(item)}><KeyRound size={17} /></Button>
-                {item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label="暂停代理" title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}
-                {item.state === 'paused' && <Button isIconOnly size="sm" variant="light" color="success" aria-label="恢复代理" title="恢复代理" onPress={() => control(item, 'resume')}><Play size={17} /></Button>}
-                <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除代理" title="删除代理" onPress={() => control(item, 'delete')}><Trash2 size={17} /></Button>
+        <Accordion selectionMode="multiple" variant="bordered" className="px-0">
+          {nodeGroups.map(group => (
+            <AccordionItem
+              key={String(group.nodeId)}
+              aria-label={`${group.nodeName} 的私人代理`}
+              classNames={{
+                base: group.attentionCount ? 'border-danger-200' : 'border-divider',
+                trigger: 'gap-3 px-4 py-4 md:px-5',
+                content: 'pb-0',
+              }}
+              startContent={<span className={`flex h-10 w-10 flex-none items-center justify-center rounded-md ${group.nodeOnline ? 'bg-success-50 text-success dark:bg-success-500/10' : 'bg-danger-50 text-danger dark:bg-danger-500/10'}`}><Server size={19} /></span>}
+              title={
+                <div className="flex min-w-0 flex-1 flex-col gap-3 pr-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-semibold">{group.nodeName}</span>
+                      <Chip size="sm" variant="flat" color={group.nodeOnline ? 'success' : 'danger'}>{group.nodeOnline ? '在线' : '离线'}</Chip>
+                    </div>
+                    <p className="mt-1 truncate font-mono text-xs font-normal text-default-500">{group.publicHost || '未设置公网地址'}</p>
+                    <p className="mt-1 line-clamp-1 text-xs font-normal text-default-500">{group.protocols.join(' · ')}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    {group.attentionCount > 0 && <Chip size="sm" variant="flat" color="danger">{group.attentionCount} 个异常</Chip>}
+                    <Chip size="sm" variant="flat" color="success">运行 {group.activeCount}/{group.proxies.length}</Chip>
+                    <Chip size="sm" variant="flat" color="primary">{group.proxies.length} 个代理</Chip>
+                  </div>
+                </div>
+              }
+            >
+              <div className="overflow-hidden border-t border-divider">
+                <div className="hidden grid-cols-[1.3fr_1fr_1.1fr_1fr_auto] gap-4 bg-default-50 px-4 py-3 text-xs text-default-500 lg:grid"><span>代理</span><span>公网入口</span><span>访问控制</span><span>有效期</span><span>操作</span></div>
+                {group.proxies.map(item => {
+                  const meta = stateMeta[item.state];
+                  const protocol = protocolMeta[item.proxyType];
+                  return <div key={item.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1.1fr_1fr_auto] lg:items-center">
+                    <div><div className="flex flex-wrap items-center gap-2 font-medium"><span>{item.name}</span><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><div className="mt-1 text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 text-xs text-default-500">{isAdvancedRuntime(item.proxyType) ? '运行时流量统计暂未启用' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div></div>
+                    <div><div className="font-mono text-sm break-all">{item.publicHost || '未设置'}:{item.listenPort}</div><div className="mt-1 text-xs text-default-500">{['hysteria2', 'tuic', 'wireguard'].includes(item.proxyType) ? 'UDP' : 'TCP'}</div></div>
+                    <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
+                    <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
+                    <div className="flex gap-1">
+                      <Button isIconOnly size="sm" variant="light" aria-label={`查看 ${item.name} 连接信息`} title="连接信息" isLoading={configLoading} onPress={() => showClientConfig(item)}><KeyRound size={17} /></Button>
+                      {item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label={`暂停 ${item.name}`} title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}
+                      {item.state === 'paused' && <Button isIconOnly size="sm" variant="light" color="success" aria-label={`恢复 ${item.name}`} title="恢复代理" onPress={() => control(item, 'resume')}><Play size={17} /></Button>}
+                      <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`删除 ${item.name}`} title="删除代理" onPress={() => control(item, 'delete')}><Trash2 size={17} /></Button>
+                    </div>
+                    {item.lastError && <div className="text-xs text-danger lg:col-span-5">{item.lastError}</div>}
+                  </div>;
+                })}
               </div>
-              {item.lastError && <div className="text-xs text-danger lg:col-span-6">{item.lastError}</div>}
-            </div>;
-          })}
-        </div>
+            </AccordionItem>
+          ))}
+        </Accordion>
       )}
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl" scrollBehavior="inside">

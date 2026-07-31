@@ -505,3 +505,10 @@
 - New protocols require Linux Agent `2.38.0`; older Agents keep all existing forwarding and proxy services running normally. QUIC and WireGuard require the corresponding UDP port to be open in both the provider security group and node firewall.
 - Advanced-protocol instances do not yet support source-IP allowlists or GOST per-service traffic counters. The UI states this at creation time rather than silently accepting an ineffective setting.
 - Roll back safely by deleting the new advanced instances first and waiting for their cards to disappear, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Existing proxy types, nodes, tunnels, forwards, DNS, certificates, mappings, and user resources are not modified.
+
+## 2.38.1 Private proxies grouped by node
+
+- Groups all private proxies by their server node so operators can find a node first and expand only its protocols.
+- Each collapsed node row shows connectivity, public address, protocol summary, active count, attention count, and total proxy count.
+- Expanded rows retain connection export, pause, resume, delete, expiry, access control, and per-proxy error details.
+- This is a panel-only presentation change. Agent `2.38.0`, listeners, ports, tunnels, forwards, proxy runtimes, and existing test instances are not restarted or rewritten.
