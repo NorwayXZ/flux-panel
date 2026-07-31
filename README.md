@@ -113,12 +113,18 @@ Agent 只向面板返回检测到的公网 IPv4 或 IPv6，DNS 密钥不会下�
 
 `2.39.2` 将管理员配置的限速值和隧道限速预设从普通用户界面及普通用户套餐响应中隐藏。普通用户仍可查看续费所需的总流量、额度、已用/剩余流量、重置日、授权期限、到期时间和转发名额；管理员用户管理页中的限速配置与执行逻辑保持不变。
 
-升级会为现有 `private_proxy` 表增加可空/带默认值的授权、额度、重置与限速字段，并增加一个查询索引，不删除或改写现有代理、节点、隧道、转发及用户记录；手动维护数据库时可执行 [`migrations/20260731_private_proxy_grants.sql`](migrations/20260731_private_proxy_grants.sql)。Agent 保持 `2.38.0`，无需升级。旧面板会忽略新增字段；回退前建议先在新版删除新增的用户代理授权并等待离线节点完成清理，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`。
+`2.40.0` 完善“网站设置”，将浏览器面板入口、Agent 通信地址和品牌登录配置明确分开。管理员可以直接选择“域名管理”中已经登记的 Cloudflare Zone 和在线 HTTPS 入口节点，自动创建面板 DNS 记录、申请及续期 Let's Encrypt 证书，并在当前页查看入口节点、回源地址、证书有效期与失败原因；兼容的现有面板域名也会被自动识别，可设为首选访问地址。
+
+`2.40.0` 同时将普通用户私人代理授权扩展到全部八种协议。SOCKS5、HTTP、Shadowsocks、VLESS+REALITY 继续支持仅对被授权用户生效的 Mbps 限速；Trojan、Hysteria2、TUIC v5 和 WireGuard 不支持限速，但会真实执行双向流量额度、每月重置日、永久/到期时间以及额度耗尽或到期后的单实例停用。普通用户仍只看到续费需要的总额度、已用/剩余流量、重置日、剩余时间、到期时间和不可用原因，不显示管理员内部限速策略。
+
+升级本身不会创建或修改 DNS、证书、域名入口及任何现有业务。只有管理员主动提交“新增面板访问域名”或“新增代理授权”后才会增加对应资源；原始 `IP:端口` 会继续保留为救援地址，Agent 仍使用独立的通信地址。现有私人代理、节点、隧道、转发和内网映射不会由面板升级自动重建。
+
+升级会为现有 `private_proxy` 表补充带零默认值的高级运行时累计流量基线字段，不删除或改写已有记录；手动维护数据库时可执行 [`migrations/20260731_private_proxy_grants.sql`](migrations/20260731_private_proxy_grants.sql)。新建高级协议用户授权要求对应 Linux 节点 Agent `2.40.0`，现有独立高级代理仍兼容 Agent `2.38.0+`。需要回退时，先删除在新版创建的高级协议用户授权，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`；否则旧面板不会继续轮询并执行这些新授权的流量额度。
 
 - Trojan、Hysteria2、TUIC v5 由 Agent 按需下载并启动独立 Sing-box 运行时。每个实例拥有私有配置、私有 TLS 证书和独立进程；删除实例会停止进程并清理该实例的密钥、配置和日志。首次创建会额外下载约 20-35 MB 的运行时缓存，之后复用缓存。
 - 这三个协议默认使用 Agent 自动生成的自签名 TLS 证书，客户端导入链接已包含允许该证书的参数。连接仍会加密，但客户端不会验证服务器域名身份；需要严格证书校验的场景应继续使用“域名直达”的托管 HTTPS 或等待后续绑定托管证书能力。
 - WireGuard 使用 Agent 内置的 userspace WireGuard 运行时，不要求单独安装 `wireguard-tools`。它会创建一个专属 TUN 接口、开启 IPv4 转发，并只添加属于该实例的 NAT 与转发规则；暂停或删除实例会删除自己创建的规则和接口，不会清空服务器原有防火墙规则。Linux 节点仍需要 `/dev/net/tun`、`iproute2`、`sysctl` 和 `iptables` 可用，否则创建会给出明确失败原因。
-- QUIC 与 WireGuard 使用 UDP，除端口账本外，还必须在云厂商安全组和节点防火墙中放行相同 UDP 端口。Trojan 使用 TCP。高级协议当前不支持来源 IP 白名单，也不复用 GOST 的逐服务流量计量；卡片会保持运行状态、到期、暂停、恢复和端口占用管理。
+- QUIC 与 WireGuard 使用 UDP，除端口账本外，还必须在云厂商安全组和节点防火墙中放行相同 UDP 端口。Trojan 使用 TCP。高级协议当前不支持来源 IP 白名单，也不复用 GOST 限速器；高级协议用户授权由 Agent 独立累计流量并执行额度，高级协议管理员自有实例仍不计入用户额度。
 - 回退前请先删除新版创建的 Trojan、Hysteria2、TUIC 和 WireGuard 实例并等待对应卡片消失，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`。旧面板不认识这些 Agent 运行时；已有四种代理、节点、隧道、转发、域名、端口资源和用户数据不受影响。
 
 `2.20.0` 为私人代理新增 Shadowsocks 与 VLESS+REALITY。创建 Shadowsocks 时可选择 AES-128-GCM、AES-256-GCM 或 ChaCha20-IETF-Poly1305，并在同一公网端口同时提供 TCP 与 UDP；创建 VLESS+REALITY 时只需填写普通 HTTPS 伪装域名，Agent 会自动生成 UUID、X25519 密钥和 Short ID。连接信息采用按需读取，列表接口不会返回密码、私钥或客户端导入链接。

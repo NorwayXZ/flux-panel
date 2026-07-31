@@ -28,6 +28,8 @@ public class PrivateProxy implements Serializable {
     private String lastError;
     private Long inFlow;
     private Long outFlow;
+    private Long runtimeInFlow;
+    private Long runtimeOutFlow;
     private Integer grantedByUserId;
     private Long flowLimit;
     private Integer flowUnlimited;

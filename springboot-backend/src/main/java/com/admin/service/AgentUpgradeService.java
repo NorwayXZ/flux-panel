@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.38.0";
+    public static final String TARGET_VERSION = "2.40.0";
     public static final String SELF_UPDATE_MIN_VERSION = "2.13.0";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;

@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class PrivateProxyServiceTests {
 
@@ -77,5 +78,12 @@ class PrivateProxyServiceTests {
 
         assertTrue(proxy.getSpeedLimitMbps() == 100);
         assertTrue(proxy.getSpeedLimitSupported());
+    }
+
+    @Test
+    void calculatesRuntimeTrafficDeltaAcrossProcessRestart() {
+        assertEquals(300L, PrivateProxyService.runtimeTrafficDelta(1_300L, 1_000L));
+        assertEquals(200L, PrivateProxyService.runtimeTrafficDelta(200L, 1_000L));
+        assertEquals(0L, PrivateProxyService.runtimeTrafficDelta(-1L, 500L));
     }
 }

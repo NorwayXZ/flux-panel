@@ -18,6 +18,20 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
+func (m *privateProxyRuntimeManager) wireGuardTraffic(name string) (privateProxyRuntimeTraffic, error) {
+	m.mu.Lock()
+	runtime := m.wireguards[name]
+	m.mu.Unlock()
+	if runtime == nil || runtime.device == nil {
+		return privateProxyRuntimeTraffic{}, errors.New("WireGuard runtime is not running")
+	}
+	status, err := runtime.device.IpcGet()
+	if err != nil {
+		return privateProxyRuntimeTraffic{}, fmt.Errorf("read WireGuard traffic: %w", err)
+	}
+	return parseWireGuardTraffic(status)
+}
+
 type wireGuardRuntime struct {
 	device        *device.Device
 	tun           tun.Device

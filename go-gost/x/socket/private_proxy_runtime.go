@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,11 @@ type privateProxyRuntimeResponse struct {
 	ServerName       string `json:"serverName,omitempty"`
 }
 
+type privateProxyRuntimeTraffic struct {
+	InFlow  int64 `json:"inFlow"`
+	OutFlow int64 `json:"outFlow"`
+}
+
 type privateProxyRuntimeState struct {
 	Name             string `json:"name"`
 	ProxyType        string `json:"proxyType"`
@@ -62,6 +68,7 @@ type privateProxyRuntimeState struct {
 	ServerPrivateKey string `json:"serverPrivateKey,omitempty"`
 	ServerPublicKey  string `json:"serverPublicKey,omitempty"`
 	ServerAddress    string `json:"serverAddress,omitempty"`
+	ControllerPort   int    `json:"controllerPort,omitempty"`
 	Version          string `json:"version"`
 }
 
@@ -140,6 +147,12 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 	if err != nil {
 		return privateProxyRuntimeResponse{}, err
 	}
+	if state.ProxyType != "wireguard" {
+		state.ControllerPort, err = m.availableControllerPort(state.Name)
+		if err != nil {
+			return privateProxyRuntimeResponse{}, err
+		}
+	}
 	if err := m.writeStateAndConfig(state); err != nil {
 		return privateProxyRuntimeResponse{}, err
 	}
@@ -193,6 +206,40 @@ func (m *privateProxyRuntimeManager) resume(name string) error {
 		return m.ensureWireGuardRunning(state)
 	}
 	return m.ensureRunning(state)
+}
+
+func (m *privateProxyRuntimeManager) traffic(name string) (privateProxyRuntimeTraffic, error) {
+	name = strings.TrimSpace(name)
+	if !runtimeNamePattern.MatchString(name) {
+		return privateProxyRuntimeTraffic{}, errors.New("invalid private proxy runtime name")
+	}
+	state, err := m.readState(name)
+	if err != nil {
+		return privateProxyRuntimeTraffic{}, fmt.Errorf("private proxy runtime not found: %w", err)
+	}
+	if state.ProxyType == "wireguard" {
+		return m.wireGuardTraffic(name)
+	}
+	if state.ControllerPort < 1 {
+		return privateProxyRuntimeTraffic{}, errors.New("private proxy runtime traffic endpoint is unavailable; restart the runtime after upgrading Agent")
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/connections", state.ControllerPort))
+	if err != nil {
+		return privateProxyRuntimeTraffic{}, fmt.Errorf("read private proxy runtime traffic: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return privateProxyRuntimeTraffic{}, fmt.Errorf("private proxy runtime traffic returned HTTP %d", response.StatusCode)
+	}
+	var counters struct {
+		UploadTotal   int64 `json:"uploadTotal"`
+		DownloadTotal int64 `json:"downloadTotal"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1024*1024)).Decode(&counters); err != nil {
+		return privateProxyRuntimeTraffic{}, fmt.Errorf("decode private proxy runtime traffic: %w", err)
+	}
+	return privateProxyRuntimeTraffic{InFlow: maxInt64(counters.UploadTotal), OutFlow: maxInt64(counters.DownloadTotal)}, nil
 }
 
 func (m *privateProxyRuntimeManager) restore() {
@@ -257,6 +304,16 @@ func (m *privateProxyRuntimeManager) ensureRunning(state privateProxyRuntimeStat
 		return nil
 	}
 	m.mu.Unlock()
+	if state.ControllerPort < 1 {
+		controllerPort, err := m.availableControllerPort(state.Name)
+		if err != nil {
+			return err
+		}
+		state.ControllerPort = controllerPort
+		if err := m.writeStateAndConfig(state); err != nil {
+			return fmt.Errorf("upgrade private proxy runtime traffic endpoint: %w", err)
+		}
+	}
 	if err := m.ensureBinary(); err != nil {
 		return err
 	}
@@ -422,11 +479,81 @@ func (m *privateProxyRuntimeManager) runtimeConfig(state privateProxyRuntimeStat
 		inbound["users"] = []interface{}{map[string]interface{}{"uuid": state.ClientID, "password": state.Password}}
 		inbound["congestion_control"] = "bbr"
 	}
-	return map[string]interface{}{
+	config := map[string]interface{}{
 		"log":       map[string]interface{}{"level": "warn"},
 		"inbounds":  []interface{}{inbound},
 		"outbounds": []interface{}{map[string]interface{}{"type": "direct", "tag": "direct"}},
 	}
+	if state.ControllerPort > 0 {
+		config["experimental"] = map[string]interface{}{
+			"clash_api": map[string]interface{}{"external_controller": fmt.Sprintf("127.0.0.1:%d", state.ControllerPort)},
+		}
+	}
+	return config
+}
+
+func (m *privateProxyRuntimeManager) availableControllerPort(name string) (int, error) {
+	used := make(map[int]bool)
+	entries, _ := os.ReadDir(m.directory)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".state.json") {
+			continue
+		}
+		stateName := strings.TrimSuffix(entry.Name(), ".state.json")
+		if stateName == name {
+			continue
+		}
+		if state, err := m.readState(stateName); err == nil && state.ControllerPort > 0 {
+			used[state.ControllerPort] = true
+		}
+	}
+	hash := sha256.Sum256([]byte(name))
+	start := 20000 + (int(hash[0]) << 4) + int(hash[1]&0x0f)
+	for offset := 0; offset < 10000; offset++ {
+		port := 20000 + (start-20000+offset)%10000
+		if used[port] {
+			continue
+		}
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		return port, nil
+	}
+	return 0, errors.New("no local port is available for private proxy traffic accounting")
+}
+
+func maxInt64(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func parseWireGuardTraffic(status string) (privateProxyRuntimeTraffic, error) {
+	var traffic privateProxyRuntimeTraffic
+	found := false
+	for _, line := range strings.Split(status, "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) != 2 || (parts[0] != "rx_bytes" && parts[0] != "tx_bytes") {
+			continue
+		}
+		value, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || value < 0 {
+			return privateProxyRuntimeTraffic{}, errors.New("invalid WireGuard traffic counters")
+		}
+		found = true
+		if parts[0] == "rx_bytes" {
+			traffic.InFlow += value
+		} else {
+			traffic.OutFlow += value
+		}
+	}
+	if !found {
+		return privateProxyRuntimeTraffic{}, errors.New("WireGuard traffic counters are unavailable")
+	}
+	return traffic, nil
 }
 
 func (m *privateProxyRuntimeManager) writeCertificate(state privateProxyRuntimeState) error {

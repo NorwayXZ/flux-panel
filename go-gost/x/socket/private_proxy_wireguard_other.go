@@ -6,6 +6,10 @@ import "errors"
 
 type wireGuardRuntime struct{}
 
+func (m *privateProxyRuntimeManager) wireGuardTraffic(name string) (privateProxyRuntimeTraffic, error) {
+	return privateProxyRuntimeTraffic{}, errors.New("WireGuard traffic accounting is supported only on Linux")
+}
+
 func (m *privateProxyRuntimeManager) addWireGuard(request privateProxyRuntimeRequest) (privateProxyRuntimeResponse, error) {
 	return privateProxyRuntimeResponse{}, errors.New("WireGuard private proxy is supported only on Linux nodes")
 }

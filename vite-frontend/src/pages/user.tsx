@@ -154,8 +154,15 @@ interface PortEditorState {
   endPort: number;
 }
 
-type GrantProxyType = Extract<PrivateProxyType, 'socks5' | 'http' | 'shadowsocks' | 'vless_reality'>;
+type GrantProxyType = PrivateProxyType;
 type GrantRealityPreset = 'www.cloudflare.com' | 'www.google.com' | 'custom';
+
+const grantProxyLabels: Record<GrantProxyType, string> = {
+  socks5: 'SOCKS5', http: 'HTTP', shadowsocks: 'Shadowsocks', vless_reality: 'VLESS + REALITY',
+  trojan: 'Trojan', hysteria2: 'Hysteria2', tuic: 'TUIC v5', wireguard: 'WireGuard',
+};
+const isAdvancedGrantProxy = (proxyType: GrantProxyType) => ['trojan', 'hysteria2', 'tuic', 'wireguard'].includes(proxyType);
+const supportsGrantSpeedLimit = (proxyType: GrantProxyType) => !isAdvancedGrantProxy(proxyType);
 
 interface ProxyGrantEditorState {
   id?: number;
@@ -919,7 +926,7 @@ export default function UserPage() {
     if (!proxyGrantEditor || !userForm.id) return;
     if (!proxyGrantEditor.permanent && !proxyGrantEditor.expiresAt) return toast.error('请选择代理到期时间');
     if (!proxyGrantEditor.flowUnlimited && proxyGrantEditor.flowLimit <= 0) return toast.error('流量额度必须大于 0');
-    if (!proxyGrantEditor.speedUnlimited && proxyGrantEditor.speedLimitMbps <= 0) return toast.error('限速值必须大于 0');
+    if (supportsGrantSpeedLimit(proxyGrantEditor.proxyType) && !proxyGrantEditor.speedUnlimited && proxyGrantEditor.speedLimitMbps <= 0) return toast.error('限速值必须大于 0');
     if (!proxyGrantEditor.id) {
       if (!proxyGrantEditor.name.trim() || !proxyGrantEditor.nodeId || proxyGrantEditor.listenPort < 1 || proxyGrantEditor.listenPort > 65535) {
         return toast.error('请填写代理名称、节点和有效端口');
@@ -930,6 +937,9 @@ export default function UserPage() {
       }
       if (proxyGrantEditor.proxyType === 'shadowsocks' && proxyGrantEditor.authPassword.length < 8) {
         return toast.error('Shadowsocks 密码至少 8 位');
+      }
+      if (isAdvancedGrantProxy(proxyGrantEditor.proxyType) && proxyGrantEditor.authPassword.length < 8) {
+        return toast.error(`${grantProxyLabels[proxyGrantEditor.proxyType]} 密钥至少 8 位`);
       }
       if (proxyGrantEditor.proxyType === 'vless_reality') {
         const serverName = proxyGrantEditor.realityServerName.trim();
@@ -948,7 +958,7 @@ export default function UserPage() {
             flowResetDay: proxyGrantEditor.flowResetDay,
             permanent: proxyGrantEditor.permanent,
             expiresAt: proxyGrantEditor.expiresAt?.getTime(),
-            speedLimitMbps: proxyGrantEditor.speedUnlimited ? undefined : proxyGrantEditor.speedLimitMbps,
+            speedLimitMbps: supportsGrantSpeedLimit(proxyGrantEditor.proxyType) && !proxyGrantEditor.speedUnlimited ? proxyGrantEditor.speedLimitMbps : undefined,
           })
         : await createPrivateProxyGrant({
             targetUserId: userForm.id,
@@ -965,7 +975,7 @@ export default function UserPage() {
             flowLimit: proxyGrantEditor.flowLimit,
             flowUnlimited: proxyGrantEditor.flowUnlimited,
             flowResetDay: proxyGrantEditor.flowResetDay,
-            speedLimitMbps: proxyGrantEditor.speedUnlimited ? undefined : proxyGrantEditor.speedLimitMbps,
+            speedLimitMbps: supportsGrantSpeedLimit(proxyGrantEditor.proxyType) && !proxyGrantEditor.speedUnlimited ? proxyGrantEditor.speedLimitMbps : undefined,
           });
       if (response.code !== 0) return toast.error(response.msg || '保存代理授权失败');
       toast.success(proxyGrantEditor.id ? '代理授权已更新' : '代理授权已创建');
@@ -1295,10 +1305,10 @@ export default function UserPage() {
                         const stateColor = proxy.available ? 'success' : proxy.state === 'paused' ? 'warning' : 'danger';
                         return <div key={proxy.id} className="rounded-md border border-divider px-3 py-3">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{proxy.name}</p><Chip size="sm" variant="flat" color={stateColor}>{proxy.available ? '可用' : proxy.unavailableReason || '不可用'}</Chip></div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxy.proxyType.toUpperCase()} · {proxy.publicHost}:{proxy.listenPort}</p></div>
+                            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{proxy.name}</p><Chip size="sm" variant="flat" color={stateColor}>{proxy.available ? '可用' : proxy.unavailableReason || '不可用'}</Chip></div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {grantProxyLabels[proxy.proxyType]} · {proxy.publicHost}:{proxy.listenPort}</p></div>
                             <div className="flex shrink-0 gap-1"><Button isIconOnly size="sm" variant="light" color="primary" aria-label="编辑代理授权" title="编辑代理授权" onPress={() => editProxyGrant(proxy)}><EditIcon className="h-4 w-4" /></Button><Button isIconOnly size="sm" variant="light" color="warning" aria-label="重置代理流量" title="重置代理流量" onPress={() => resetProxyGrantFlow(proxy)}><RotateCcw className="h-4 w-4" /></Button><Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除代理授权" title="删除代理授权" onPress={() => removeProxyGrant(proxy)}><DeleteIcon className="h-4 w-4" /></Button></div>
                           </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><div><p className="text-default-500">流量</p><p className="mt-1 font-medium">{proxy.flowUnlimited === 1 ? '无限制' : `${formatFlow(used)} / ${proxy.flowLimit || 0} GB`}</p></div><div><p className="text-default-500">限速</p><p className="mt-1 font-medium">{proxy.speedLimitMbps ? `${proxy.speedLimitMbps} Mbps` : '不限速'}</p></div><div><p className="text-default-500">重置</p><p className="mt-1 font-medium">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日` : '不重置'}</p></div><div><p className="text-default-500">到期</p><p className="mt-1 font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div></div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><div><p className="text-default-500">流量</p><p className="mt-1 font-medium">{proxy.flowUnlimited === 1 ? '无限制' : `${formatFlow(used)} / ${proxy.flowLimit || 0} GB`}</p></div><div><p className="text-default-500">限速</p><p className="mt-1 font-medium">{proxy.speedLimitSupported === false ? '协议不支持' : proxy.speedLimitMbps ? `${proxy.speedLimitMbps} Mbps` : '不限速'}</p></div><div><p className="text-default-500">重置</p><p className="mt-1 font-medium">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日` : '不重置'}</p></div><div><p className="text-default-500">到期</p><p className="mt-1 font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div></div>
                           {proxy.flowUnlimited !== 1 && <Progress className="mt-3" size="sm" value={quota > 0 ? Math.min(100, used / quota * 100) : 100} color={proxy.available ? 'primary' : 'danger'} />}
                         </div>;
                       })}
@@ -1419,14 +1429,22 @@ export default function UserPage() {
           <ModalHeader className="border-b border-divider">{proxyGrantEditor?.id ? '编辑私人代理授权' : '新增私人代理授权'}</ModalHeader>
           <ModalBody className="py-5">
             {proxyGrantEditor && <div className="space-y-5">
-              {proxyGrantEditor.id ? <div className="grid grid-cols-2 gap-3 rounded-md bg-default-100 px-4 py-3 text-sm sm:grid-cols-4"><div><p className="text-xs text-default-500">代理</p><p className="mt-1 truncate font-medium">{proxyGrantEditor.name}</p></div><div><p className="text-xs text-default-500">协议</p><p className="mt-1 font-medium">{proxyGrantEditor.proxyType.toUpperCase()}</p></div><div><p className="text-xs text-default-500">节点</p><p className="mt-1 truncate font-medium">{adminNodes.find(node => node.id === proxyGrantEditor.nodeId)?.name}</p></div><div><p className="text-xs text-default-500">端口</p><p className="mt-1 font-mono font-medium">{proxyGrantEditor.listenPort}</p></div></div> : <>
+              {proxyGrantEditor.id ? <div className="grid grid-cols-2 gap-3 rounded-md bg-default-100 px-4 py-3 text-sm sm:grid-cols-4"><div><p className="text-xs text-default-500">代理</p><p className="mt-1 truncate font-medium">{proxyGrantEditor.name}</p></div><div><p className="text-xs text-default-500">协议</p><p className="mt-1 font-medium">{grantProxyLabels[proxyGrantEditor.proxyType]}</p></div><div><p className="text-xs text-default-500">节点</p><p className="mt-1 truncate font-medium">{adminNodes.find(node => node.id === proxyGrantEditor.nodeId)?.name}</p></div><div><p className="text-xs text-default-500">端口</p><p className="mt-1 font-mono font-medium">{proxyGrantEditor.listenPort}</p></div></div> : <>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <Input label="授权代理名称" value={proxyGrantEditor.name} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, name: value } : prev)} />
                   <Select label="服务器节点" selectedKeys={proxyGrantEditor.nodeId ? [String(proxyGrantEditor.nodeId)] : []} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, nodeId: Number(Array.from(keys)[0]) || null } : prev)}>
-                    {adminNodes.filter(node => node.status === 1).map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · {node.serverIp || node.ip || '未设置地址'} · {node.portSta || 1}-{node.portEnd || 65535}</SelectItem>)}
+                    {adminNodes.filter(node => node.status === 1).map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · Agent {node.version || '未知'} · {node.serverIp || node.ip || '未设置地址'} · {node.portSta || 1}-{node.portEnd || 65535}</SelectItem>)}
                   </Select>
-                  <Select label="代理协议" selectedKeys={[proxyGrantEditor.proxyType]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, proxyType: String(Array.from(keys)[0]) as GrantProxyType } : prev)}>
-                    <SelectItem key="socks5">SOCKS5</SelectItem><SelectItem key="http">HTTP</SelectItem><SelectItem key="shadowsocks">Shadowsocks</SelectItem><SelectItem key="vless_reality">VLESS + REALITY</SelectItem>
+                  <Select label="代理协议" selectedKeys={[proxyGrantEditor.proxyType]} onSelectionChange={keys => {
+                    const proxyType = String(Array.from(keys)[0]) as GrantProxyType;
+                    setProxyGrantEditor(prev => prev ? {
+                      ...prev, proxyType,
+                      authUsername: proxyType === 'socks5' || proxyType === 'http' ? prev.authUsername : '',
+                      authPassword: proxyType === 'vless_reality' ? '' : randomProxySecret(),
+                      speedUnlimited: isAdvancedGrantProxy(proxyType) ? true : prev.speedUnlimited,
+                    } : prev);
+                  }}>
+                    {(Object.keys(grantProxyLabels) as GrantProxyType[]).map(proxyType => <SelectItem key={proxyType}>{grantProxyLabels[proxyType]}</SelectItem>)}
                   </Select>
                   <Input label="监听端口" type="number" min={1} max={65535} value={String(proxyGrantEditor.listenPort || '')} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, listenPort: Number(value) || 0 } : prev)} />
                   {(proxyGrantEditor.proxyType === 'socks5' || proxyGrantEditor.proxyType === 'http') && <><Input label="代理用户名" value={proxyGrantEditor.authUsername} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authUsername: value } : prev)} /><Input label="代理密码" type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成代理密码" title="生成代理密码" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} /></>}
@@ -1442,13 +1460,15 @@ export default function UserPage() {
                     </Select>
                     {proxyGrantEditor.realityPreset === 'custom' && <Input className="md:col-span-2" label="自定义伪装域名" placeholder="仅填写支持 TLS 1.3 的域名" value={proxyGrantEditor.realityServerName} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, realityServerName: value } : prev)} description="不要填写 https://、端口或路径；部分 HTTPS 站点不兼容 REALITY，创建后请验证连接。" />}
                   </>}
+                  {['trojan', 'hysteria2', 'tuic'].includes(proxyGrantEditor.proxyType) && <Input className="md:col-span-2" label={`${grantProxyLabels[proxyGrantEditor.proxyType]} 连接密钥`} type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成连接密钥" title="生成连接密钥" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} description={['hysteria2', 'tuic'].includes(proxyGrantEditor.proxyType) ? '该协议使用 UDP，请同时放行节点防火墙和云厂商安全组端口。' : '创建后由节点生成独立 TLS 运行时和客户端导入链接。'} />}
+                  {proxyGrantEditor.proxyType === 'wireguard' && <div className="md:col-span-2 border-y border-divider py-3 text-sm text-default-600">创建后自动生成独立 WireGuard 客户端配置。该协议使用 UDP，节点 Agent 需为 2.40.0 或更高版本。</div>}
                 </div>
               </>}
 
               <div className="grid grid-cols-1 gap-4 border-t border-divider pt-5 md:grid-cols-2">
                 <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.flowUnlimited} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, flowUnlimited: value } : prev)}>流量无限制</Switch><Input label="流量额度 (GB)" type="number" min={1} isDisabled={proxyGrantEditor.flowUnlimited} value={String(proxyGrantEditor.flowLimit)} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, flowLimit: Number(value) || 0 } : prev)} /></div>
                 <Select label="流量重置日期" selectedKeys={[String(proxyGrantEditor.flowResetDay)]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, flowResetDay: Number(Array.from(keys)[0]) || 0 } : prev)}>{FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}</Select>
-                <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.speedUnlimited} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedUnlimited: value } : prev)}>不限制速度</Switch><Input label="该用户限速 (Mbps)" type="number" min={1} isDisabled={proxyGrantEditor.speedUnlimited} value={String(proxyGrantEditor.speedLimitMbps)} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedLimitMbps: Number(value) || 0 } : prev)} /></div>
+                {supportsGrantSpeedLimit(proxyGrantEditor.proxyType) ? <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.speedUnlimited} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedUnlimited: value } : prev)}>不限制速度</Switch><Input label="该用户限速 (Mbps)" type="number" min={1} isDisabled={proxyGrantEditor.speedUnlimited} value={String(proxyGrantEditor.speedLimitMbps)} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedLimitMbps: Number(value) || 0 } : prev)} /></div> : <div className="border-y border-divider py-3 text-sm text-default-600"><p className="font-medium">该协议不支持限速</p><p className="mt-1 text-xs text-default-500">流量额度、重置日期和到期停用仍会正常执行；创建授权要求节点 Agent 2.40.0+。</p></div>}
                 <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.permanent} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, permanent: value, expiresAt: value ? null : new Date(Date.now() + 30 * 86400000) } : prev)}>永久有效</Switch>{!proxyGrantEditor.permanent && proxyGrantEditor.expiresAt && <DatePicker label="代理到期时间" value={parseDate(proxyGrantEditor.expiresAt.toISOString().split('T')[0]) as any} onChange={date => date && setProxyGrantEditor(prev => prev ? { ...prev, expiresAt: new Date(date.year, date.month - 1, date.day, 23, 59, 59) } : prev)} showMonthAndYearPickers />}</div>
               </div>
             </div>}

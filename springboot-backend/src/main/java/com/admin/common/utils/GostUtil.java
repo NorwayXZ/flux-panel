@@ -183,6 +183,12 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, data, "ResumePrivateProxyRuntime", 120);
     }
 
+    public static GostDto GetPrivateProxyRuntimeTraffic(Long nodeId, String runtimeName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        return WebSocketServer.send_msg(nodeId, data, "PrivateProxyRuntimeTraffic", 5);
+    }
+
     public static GostDto DeleteNamedService(Long nodeId, String serviceName) {
         return DeleteNamedServices(nodeId, List.of(serviceName));
     }

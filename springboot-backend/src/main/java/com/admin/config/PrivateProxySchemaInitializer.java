@@ -36,6 +36,8 @@ public class PrivateProxySchemaInitializer {
             ensureColumn("flow_reset_day", "tinyint NOT NULL DEFAULT 0 AFTER flow_unlimited");
             ensureColumn("last_flow_reset_at", "bigint DEFAULT NULL AFTER flow_reset_day");
             ensureColumn("speed_limit_mbps", "int DEFAULT NULL AFTER last_flow_reset_at");
+            ensureColumn("runtime_in_flow", "bigint NOT NULL DEFAULT 0 AFTER out_flow");
+            ensureColumn("runtime_out_flow", "bigint NOT NULL DEFAULT 0 AFTER runtime_in_flow");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

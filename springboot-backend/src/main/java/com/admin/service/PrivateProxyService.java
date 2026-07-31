@@ -26,6 +26,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetAddress;
 import java.net.URLEncoder;
@@ -51,6 +53,7 @@ public class PrivateProxyService {
     private static final String MIN_AGENT_VERSION = "2.19.0";
     private static final String MIN_REALITY_AGENT_VERSION = "2.20.0";
     private static final String MIN_ADVANCED_PROXY_AGENT_VERSION = "2.38.0";
+    private static final String MIN_ADVANCED_GRANT_AGENT_VERSION = "2.40.0";
     private final PrivateProxyMapper proxyMapper;
     private final NodeMapper nodeMapper;
     private final UserMapper userMapper;
@@ -58,10 +61,12 @@ public class PrivateProxyService {
     private final PortLedgerService portLedgerService;
     private final UserQuotaService userQuotaService;
     private final AESCrypto crypto;
+    private final TransactionTemplate transactionTemplate;
 
     public PrivateProxyService(PrivateProxyMapper proxyMapper, NodeMapper nodeMapper, UserMapper userMapper,
                                PortAllocationLockMapper allocationLockMapper, PortLedgerService portLedgerService,
-                               UserQuotaService userQuotaService, @Value("${jwt-secret}") String secret) {
+                               UserQuotaService userQuotaService, PlatformTransactionManager transactionManager,
+                               @Value("${jwt-secret}") String secret) {
         this.proxyMapper = proxyMapper;
         this.nodeMapper = nodeMapper;
         this.userMapper = userMapper;
@@ -69,6 +74,7 @@ public class PrivateProxyService {
         this.portLedgerService = portLedgerService;
         this.userQuotaService = userQuotaService;
         this.crypto = new AESCrypto(secret + ":private-proxy");
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -81,8 +87,8 @@ public class PrivateProxyService {
         if (!isAdmin()) return R.err("只有管理员可以授权代理");
         User target = userMapper.selectById(dto.getTargetUserId());
         if (target == null || Objects.equals(target.getRoleId(), 0)) return R.err("请选择普通用户");
-        if (!supportsGrantEnforcement(dto.getProxyType())) {
-            return R.err("该协议暂不支持独立流量统计与限速，请选择 SOCKS5、HTTP、Shadowsocks 或 VLESS+REALITY");
+        if (!supportsGrant(dto.getProxyType())) {
+            return R.err("该协议暂不支持用户授权");
         }
         if (!Boolean.TRUE.equals(dto.getFlowUnlimited()) && value(dto.getFlowLimit()) <= 0L) {
             return R.err("流量额度必须大于 0");
@@ -114,6 +120,11 @@ public class PrivateProxyService {
         if (isAdvancedRuntime(proxyType)
                 && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_ADVANCED_PROXY_AGENT_VERSION)) {
             return R.err(protocolLabel(proxyType) + " 需要节点 Agent " + MIN_ADVANCED_PROXY_AGENT_VERSION + " 或更高版本");
+        }
+        if (grant != null && isAdvancedRuntime(proxyType)
+                && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_ADVANCED_GRANT_AGENT_VERSION)) {
+            return R.err(protocolLabel(proxyType) + " 用户授权需要节点 Agent "
+                    + MIN_ADVANCED_GRANT_AGENT_VERSION + " 或更高版本，才能执行独立流量额度");
         }
         String username = StringUtils.trimToEmpty(dto.getAuthUsername());
         String password = StringUtils.defaultString(dto.getAuthPassword());
@@ -179,14 +190,14 @@ public class PrivateProxyService {
         proxy.setFlowUnlimited(grant == null || Boolean.TRUE.equals(grant.getFlowUnlimited()) ? 1 : 0);
         proxy.setFlowResetDay(grant == null ? 0 : grant.getFlowResetDay());
         proxy.setLastFlowResetAt(grant == null ? null : now);
-        proxy.setSpeedLimitMbps(grant == null ? null : grant.getSpeedLimitMbps());
+        proxy.setSpeedLimitMbps(grant != null && supportsGrantRateLimit(proxyType) ? grant.getSpeedLimitMbps() : null);
         assignRuntimeNames(proxy, !cidrs.isEmpty());
         proxy.setCreatedTime(now);
         proxy.setUpdatedTime(now);
         proxyMapper.insert(proxy);
 
         try {
-            String limiterName = grant != null ? limiterName(proxy) : null;
+            String limiterName = grant != null && supportsGrantRateLimit(proxyType) ? limiterName(proxy) : null;
             if (limiterName != null) {
                 requireGost(GostUtil.AddNamedLimiter(node.getId(), limiterName,
                         limiterSpeed(proxy.getSpeedLimitMbps())), "创建用户限速器失败");
@@ -302,19 +313,20 @@ public class PrivateProxyService {
         if (!Boolean.TRUE.equals(dto.getFlowUnlimited()) && value(dto.getFlowLimit()) <= 0L) {
             return R.err("流量额度必须大于 0");
         }
+        boolean rateLimitSupported = supportsGrantRateLimit(proxy.getProxyType());
         Integer previousSpeedLimit = proxy.getSpeedLimitMbps();
         proxy.setFlowLimit(dto.getFlowLimit());
         proxy.setFlowUnlimited(Boolean.TRUE.equals(dto.getFlowUnlimited()) ? 1 : 0);
         proxy.setFlowResetDay(dto.getFlowResetDay());
         proxy.setExpiresAt(Boolean.TRUE.equals(dto.getPermanent()) ? null : dto.getExpiresAt());
-        proxy.setSpeedLimitMbps(dto.getSpeedLimitMbps());
+        proxy.setSpeedLimitMbps(rateLimitSupported ? dto.getSpeedLimitMbps() : null);
         proxy.setUpdatedTime(System.currentTimeMillis());
         Node node = nodeMapper.selectById(proxy.getNodeId());
-        if (!Objects.equals(previousSpeedLimit, proxy.getSpeedLimitMbps())
+        if (rateLimitSupported && !Objects.equals(previousSpeedLimit, proxy.getSpeedLimitMbps())
                 && (node == null || !WebSocketServer.isNodeOnline(node.getId()))) {
             return R.err("节点离线，无法修改代理限速；流量和到期设置未保存");
         }
-        if (node != null && WebSocketServer.isNodeOnline(node.getId()) && supportsGrantEnforcement(proxy.getProxyType())) {
+        if (node != null && WebSocketServer.isNodeOnline(node.getId()) && rateLimitSupported) {
             GostDto limiter = GostUtil.UpdateNamedLimiter(node.getId(), limiterName(proxy), limiterSpeed(proxy.getSpeedLimitMbps()));
             if (!gostSuccess(limiter) && StringUtils.containsIgnoreCase(gostMessage(limiter), "not found")) {
                 limiter = GostUtil.AddNamedLimiter(node.getId(), limiterName(proxy), limiterSpeed(proxy.getSpeedLimitMbps()));
@@ -472,6 +484,7 @@ public class PrivateProxyService {
     @Scheduled(initialDelay = 30_000L, fixedDelay = 30_000L)
     public void reconcileExpiryAndCleanup() {
         long now = System.currentTimeMillis();
+        synchronizeAdvancedGrantTraffic();
         List<PrivateProxy> granted = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
                 .isNotNull("granted_by_user_id").notIn("state", "deleted", "delete_pending", "error"));
         for (PrivateProxy proxy : granted) reconcileGrantedProxy(proxy, now);
@@ -502,7 +515,7 @@ public class PrivateProxyService {
         long used = value(proxy.getInFlow()) + value(proxy.getOutFlow());
         boolean granted = proxy.getGrantedByUserId() != null;
         proxy.setGranted(granted);
-        proxy.setSpeedLimitSupported(supportsGrantEnforcement(proxy.getProxyType()));
+        proxy.setSpeedLimitSupported(supportsGrantRateLimit(proxy.getProxyType()));
         proxy.setRemainingFlow(!granted || Objects.equals(proxy.getFlowUnlimited(), 1) ? null
                 : Math.max(0L, value(proxy.getFlowLimit()) * BYTES_PER_GB - used));
         proxy.setRemainingTime(proxy.getExpiresAt() == null ? null
@@ -513,6 +526,8 @@ public class PrivateProxyService {
         hideInternalGrantPolicy(proxy, isAdmin());
         proxy.setAuthPassword(null);
         proxy.setClientConfig(null);
+        proxy.setRuntimeInFlow(null);
+        proxy.setRuntimeOutFlow(null);
         return proxy;
     }
 
@@ -545,7 +560,7 @@ public class PrivateProxyService {
         if (proxy.getAdmissionName() != null) {
             admissionClean = gostCleanupSuccess(GostUtil.DeleteAdmission(node.getId(), proxy.getAdmissionName()));
         }
-        boolean limiterClean = proxy.getGrantedByUserId() == null
+        boolean limiterClean = proxy.getGrantedByUserId() == null || !supportsGrantRateLimit(proxy.getProxyType())
                 || gostCleanupSuccess(GostUtil.DeleteNamedLimiter(node.getId(), limiterName(proxy)));
         return serviceClean && admissionClean && advancedRuntimeClean && limiterClean;
     }
@@ -791,9 +806,59 @@ public class PrivateProxyService {
         return isAdmin() || proxy.getGrantedByUserId() == null;
     }
 
-    private boolean supportsGrantEnforcement(String proxyType) {
+    private boolean supportsGrant(String proxyType) {
+        return supportsGrantRateLimit(proxyType) || isAdvancedRuntime(proxyType);
+    }
+
+    private boolean supportsGrantRateLimit(String proxyType) {
         return "socks5".equals(proxyType) || "http".equals(proxyType)
                 || "shadowsocks".equals(proxyType) || "vless_reality".equals(proxyType);
+    }
+
+    private void synchronizeAdvancedGrantTraffic() {
+        List<PrivateProxy> proxies = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .isNotNull("granted_by_user_id")
+                .eq("state", "active")
+                .in("proxy_type", "trojan", "hysteria2", "tuic", "wireguard"));
+        for (PrivateProxy proxy : proxies) {
+            Node node = nodeMapper.selectById(proxy.getNodeId());
+            if (node == null || !WebSocketServer.isNodeOnline(node.getId())
+                    || !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_ADVANCED_GRANT_AGENT_VERSION)) {
+                continue;
+            }
+            GostDto result = GostUtil.GetPrivateProxyRuntimeTraffic(node.getId(), advancedRuntimeName(proxy));
+            if (!gostSuccess(result) || result.getData() == null) continue;
+            JSONObject data = JSONObject.parseObject(JSONObject.toJSONString(result.getData()));
+            if (data == null || !data.containsKey("inFlow") || !data.containsKey("outFlow")) continue;
+            long currentIn = Math.max(0L, data.getLongValue("inFlow"));
+            long currentOut = Math.max(0L, data.getLongValue("outFlow"));
+            transactionTemplate.executeWithoutResult(status -> applyAdvancedRuntimeTraffic(proxy.getId(), currentIn, currentOut));
+        }
+    }
+
+    private void applyAdvancedRuntimeTraffic(Long proxyId, long currentIn, long currentOut) {
+        PrivateProxy latest = proxyMapper.selectOne(new QueryWrapper<PrivateProxy>()
+                .eq("id", proxyId).last("FOR UPDATE"));
+        if (latest == null || latest.getGrantedByUserId() == null || !"active".equals(latest.getState())
+                || !isAdvancedRuntime(latest.getProxyType())) return;
+        long deltaIn = runtimeTrafficDelta(currentIn, value(latest.getRuntimeInFlow()));
+        long deltaOut = runtimeTrafficDelta(currentOut, value(latest.getRuntimeOutFlow()));
+        proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", latest.getId())
+                .set("runtime_in_flow", currentIn)
+                .set("runtime_out_flow", currentOut)
+                .setSql("in_flow = in_flow + " + deltaIn)
+                .setSql("out_flow = out_flow + " + deltaOut)
+                .set("updated_time", System.currentTimeMillis()));
+        if (deltaIn == 0L && deltaOut == 0L) return;
+        userMapper.update(null, new UpdateWrapper<User>().eq("id", latest.getUserId())
+                .setSql("in_flow = in_flow + " + deltaIn)
+                .setSql("out_flow = out_flow + " + deltaOut));
+    }
+
+    static long runtimeTrafficDelta(long current, long previous) {
+        long safeCurrent = Math.max(0L, current);
+        long safePrevious = Math.max(0L, previous);
+        return safeCurrent >= safePrevious ? safeCurrent - safePrevious : safeCurrent;
     }
 
     private String limiterName(PrivateProxy proxy) {

@@ -740,6 +740,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		err = w.handleResumePrivateProxyRuntime(cmd.Data)
 		response.Type = "ResumePrivateProxyRuntimeResponse"
 
+	case "PrivateProxyRuntimeTraffic":
+		var result privateProxyRuntimeTraffic
+		result, err = w.handlePrivateProxyRuntimeTraffic(cmd.Data)
+		response.Type = "PrivateProxyRuntimeTrafficResponse"
+		response.Data = result
+
 	case "NatPrepare":
 		var request natPrepareRequest
 		err = decodeCommandData(cmd.Data, &request)
@@ -902,6 +908,19 @@ func (w *WebSocketReporter) handleResumePrivateProxyRuntime(data interface{}) er
 		return err
 	}
 	return w.proxyManager.resume(request.Name)
+}
+
+func (w *WebSocketReporter) handlePrivateProxyRuntimeTraffic(data interface{}) (privateProxyRuntimeTraffic, error) {
+	if w.proxyManager == nil {
+		return privateProxyRuntimeTraffic{}, errors.New("private proxy runtime manager is unavailable")
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return privateProxyRuntimeTraffic{}, err
+	}
+	return w.proxyManager.traffic(request.Name)
 }
 
 type managedCertificatePayload struct {

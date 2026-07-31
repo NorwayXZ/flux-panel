@@ -22,6 +22,14 @@ SET @speed_limit_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE
 SET @speed_limit_sql = IF(@speed_limit_exists=0, 'ALTER TABLE private_proxy ADD COLUMN speed_limit_mbps int DEFAULT NULL AFTER last_flow_reset_at', 'SELECT 1');
 PREPARE stmt FROM @speed_limit_sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
+SET @runtime_in_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='private_proxy' AND column_name='runtime_in_flow');
+SET @runtime_in_sql = IF(@runtime_in_exists=0, 'ALTER TABLE private_proxy ADD COLUMN runtime_in_flow bigint NOT NULL DEFAULT 0 AFTER out_flow', 'SELECT 1');
+PREPARE stmt FROM @runtime_in_sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @runtime_out_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='private_proxy' AND column_name='runtime_out_flow');
+SET @runtime_out_sql = IF(@runtime_out_exists=0, 'ALTER TABLE private_proxy ADD COLUMN runtime_out_flow bigint NOT NULL DEFAULT 0 AFTER runtime_in_flow', 'SELECT 1');
+PREPARE stmt FROM @runtime_out_sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
 SET @grant_index_exists = (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='private_proxy' AND index_name='idx_private_proxy_grant');
 SET @grant_index_sql = IF(@grant_index_exists=0, 'ALTER TABLE private_proxy ADD KEY idx_private_proxy_grant (granted_by_user_id,user_id,state)', 'SELECT 1');
 PREPARE stmt FROM @grant_index_sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

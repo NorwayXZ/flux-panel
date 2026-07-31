@@ -121,6 +121,11 @@ const EMPTY_ADMIN_OVERVIEW: MonitoringOverview = {
   resources: [],
 };
 
+const proxyProtocolLabel: Record<PrivateProxyItem['proxyType'], string> = {
+  socks5: 'SOCKS5', http: 'HTTP', shadowsocks: 'Shadowsocks', vless_reality: 'VLESS + REALITY',
+  trojan: 'Trojan', hysteria2: 'Hysteria2', tuic: 'TUIC v5', wireguard: 'WireGuard',
+};
+
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -909,8 +914,8 @@ export default function DashboardPage() {
                   const used = (proxy.inFlow || 0) + (proxy.outFlow || 0);
                   return <div className={`rounded-lg border p-3 lg:p-4 ${proxy.available ? 'border-gray-200 bg-content1 dark:border-default-100' : 'border-danger-200 bg-danger-50/40 dark:border-danger-500/30 dark:bg-danger-500/5'}`}>
                     <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.2fr)_repeat(4,minmax(120px,1fr))_auto] lg:items-center">
-                      <div className="flex min-w-0 items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${proxy.available ? 'bg-secondary-100 text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300' : 'bg-danger-100 text-danger'}`}><KeyRound className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{proxy.name}</h3><span className={`rounded-md px-2 py-0.5 text-xs ${proxy.available ? 'bg-success-100 text-success-700 dark:bg-success-500/15 dark:text-success-300' : 'bg-danger-100 text-danger-700 dark:bg-danger-500/15 dark:text-danger-300'}`}>{proxy.available ? '可用' : '不可用'}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxy.proxyType.toUpperCase()} · {proxy.publicHost}:{proxy.listenPort}</p>{!proxy.available && <p className="mt-1 text-xs text-danger">{proxy.unavailableReason}</p>}</div></div>
-                      <div><p className="text-xs text-default-500">剩余流量</p><p className="mt-1 text-sm font-medium">{proxy.flowUnlimited === 1 ? '无限制' : formatFlow(proxy.remainingFlow || 0)}</p><p className="mt-1 text-xs text-default-500">已用 {formatFlow(used)}</p></div>
+                      <div className="flex min-w-0 items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${proxy.available ? 'bg-secondary-100 text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300' : 'bg-danger-100 text-danger'}`}><KeyRound className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{proxy.name}</h3><span className={`rounded-md px-2 py-0.5 text-xs ${proxy.available ? 'bg-success-100 text-success-700 dark:bg-success-500/15 dark:text-success-300' : 'bg-danger-100 text-danger-700 dark:bg-danger-500/15 dark:text-danger-300'}`}>{proxy.available ? '可用' : '不可用'}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxyProtocolLabel[proxy.proxyType]} · {proxy.publicHost}:{proxy.listenPort}</p>{!proxy.available && <p className="mt-1 text-xs text-danger">{proxy.unavailableReason}</p>}</div></div>
+                      <div><p className="text-xs text-default-500">剩余流量</p><p className="mt-1 text-sm font-medium">{proxy.flowUnlimited === 1 ? '无限制' : formatFlow(proxy.remainingFlow || 0)}</p><p className="mt-1 text-xs text-default-500">{proxy.flowUnlimited === 1 ? `已用 ${formatFlow(used)}` : `总额度 ${proxy.flowLimit || 0} GB · 已用 ${formatFlow(used)}`}</p></div>
                       <div><p className="text-xs text-default-500">剩余时间</p><p className="mt-1 text-sm font-medium">{formatRemainingTime(proxy.remainingTime)}</p></div>
                       <div><p className="text-xs text-default-500">到期时间</p><p className="mt-1 text-sm font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div>
                       <div><p className="text-xs text-default-500">流量重置</p><p className="mt-1 text-sm font-medium">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日` : '不重置'}</p></div>

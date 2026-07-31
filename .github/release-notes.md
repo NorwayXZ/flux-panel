@@ -1,3 +1,15 @@
+## 2.40.0 Managed panel domains in Website Settings
+
+- Reorganizes **Website Settings** into three explicit areas: browser-facing panel access, Agent communication, and branding/login. The Agent `IP:port` endpoint remains independent from the browser domain so changing or adding a website address cannot silently disconnect nodes.
+- Connects Website Settings to existing Cloudflare zones, online nodes, managed HTTPS domain routes, and Let's Encrypt certificates. Administrators can select a registered zone and HTTPS ingress node to create a new `https://panel.example.com` address without re-entering DNS credentials.
+- Shows the current browser origin, preferred panel URL, managed ingress count, DNS/certificate/deployment state, ingress node, backend target, certificate expiry, and actionable failure detail on the same page. Existing compatible panel routes are detected and can be selected as the preferred address.
+- Creation is additive and explicit: upgrading alone does not create, delete, replace, or rebuild any DNS record, certificate, route, port, proxy, tunnel, forward, node, or mapping. The raw IP address remains available as a recovery path, and existing panel domains remain unchanged.
+- Extends administrator-created user grants to all eight private-proxy protocols: SOCKS5, HTTP, Shadowsocks, VLESS+REALITY, Trojan, Hysteria2, TUIC v5, and WireGuard. All grants enforce bidirectional traffic allowance, reset day, permanent/expiry time, and per-instance suspension when exhausted or expired.
+- Adds private cumulative traffic accounting for Trojan, Hysteria2, and TUIC through a loopback-only Sing-box controller, and for WireGuard through its runtime peer counters. Counter baselines survive panel restarts and prevent historical traffic from being counted again after a monthly or manual reset.
+- Advanced protocols intentionally do not expose or create a GOST rate limiter. Administrators see that Mbps limiting is unsupported for these protocols; ordinary users continue to see only renewal information such as allowance, used/remaining traffic, reset day, remaining time, expiry, and the reason a grant is unavailable.
+- Agent `2.40.0` is required only when creating a new advanced-protocol user grant. Existing standalone advanced proxies remain compatible with Agent `2.38.0+` and are not recreated by the panel upgrade. The migration only adds two zero-default cumulative-counter columns to `private_proxy`; it does not delete or rewrite existing rows.
+- Roll back the panel with `sudo /usr/local/sbin/flux-panel-manager rollback`. Managed domain routes remain compatible. Before rollback, delete any advanced-protocol user grants created on `2.40.0`, because an older panel does not poll or enforce their traffic allowance; existing unrelated proxies, ports, nodes, tunnels, and forwards are unaffected.
+
 ## 2.39.2 Hide internal limiter policy from ordinary users
 
 - Removes the administrator-configured Mbps value from ordinary-user proxy cards and private-proxy details while retaining traffic allowance, used and remaining traffic, reset day, grant duration, expiry, and forward quota information needed for renewal decisions.

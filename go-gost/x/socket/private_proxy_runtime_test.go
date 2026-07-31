@@ -3,7 +3,9 @@ package socket
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,9 @@ func TestAdvancedPrivateProxyRuntimeConfig(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if proxyType != "wireguard" {
+				state.ControllerPort = 23456
 			}
 			if err := manager.writeStateAndConfig(state); err != nil {
 				t.Fatal(err)
@@ -50,7 +55,77 @@ func TestAdvancedPrivateProxyRuntimeConfig(t *testing.T) {
 			if _, err := os.Stat(manager.keyPath(state.Name)); err != nil {
 				t.Fatalf("key is missing: %v", err)
 			}
+			experimental, ok := config["experimental"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("traffic controller is missing: %s", text)
+			}
+			clashAPI, ok := experimental["clash_api"].(map[string]interface{})
+			if !ok || clashAPI["external_controller"] != "127.0.0.1:23456" {
+				t.Fatalf("traffic controller must stay on loopback: %#v", experimental)
+			}
 		})
+	}
+}
+
+func TestPrivateProxyRuntimeReadsSingBoxTraffic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/connections" {
+			http.NotFound(response, request)
+			return
+		}
+		_, _ = response.Write([]byte(`{"uploadTotal":1234,"downloadTotal":5678}`))
+	}))
+	defer server.Close()
+
+	manager := &privateProxyRuntimeManager{directory: t.TempDir(), processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	state := privateProxyRuntimeState{Name: "traffic-test", ProxyType: "trojan", ControllerPort: port}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRuntimeFile(manager.statePath(state.Name), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	traffic, err := manager.traffic(state.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if traffic.InFlow != 1234 || traffic.OutFlow != 5678 {
+		t.Fatalf("unexpected traffic: %#v", traffic)
+	}
+}
+
+func TestWireGuardTrafficParser(t *testing.T) {
+	traffic, err := parseWireGuardTraffic("private_key=hidden\nrx_bytes=1024\ntx_bytes=2048\nrx_bytes=512\ntx_bytes=256\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if traffic.InFlow != 1536 || traffic.OutFlow != 2304 {
+		t.Fatalf("unexpected traffic: %#v", traffic)
+	}
+	if _, err := parseWireGuardTraffic("rx_bytes=invalid\n"); err == nil {
+		t.Fatal("invalid WireGuard counter must fail")
+	}
+}
+
+func TestControllerPortsStayUniqueWhenRuntimeIsPaused(t *testing.T) {
+	manager := &privateProxyRuntimeManager{directory: t.TempDir(), processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	firstPort, err := manager.availableControllerPort("first-runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := privateProxyRuntimeState{Name: "saved-runtime", ProxyType: "trojan", ControllerPort: firstPort}
+	data, _ := json.Marshal(state)
+	if err := writeRuntimeFile(manager.statePath(state.Name), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	secondPort, err := manager.availableControllerPort("first-runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPort == firstPort {
+		t.Fatalf("paused runtime controller port %d was reused", firstPort)
 	}
 }
 
@@ -110,6 +185,7 @@ func TestAdvancedPrivateProxyRuntimeSingBoxValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			state.ControllerPort = 23456
 			if err := manager.writeStateAndConfig(state); err != nil {
 				t.Fatal(err)
 			}
