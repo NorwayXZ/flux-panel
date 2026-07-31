@@ -1,3 +1,10 @@
+## 2.40.1 Restore forward traffic reporting
+
+- Restores traffic processing for ordinary forward services whose Agent runtime names include the current `_tcp` or `_udp` transport suffix. A strict parser introduced with service telemetry accepted only the older unsuffixed form, so valid reports were received but silently excluded from forward totals, user/resource quota accounting, and Smart Entry live activity.
+- Accepts only the legacy `<forward>_<user>_<grant>` form and the explicit `_tcp`/`_udp` variants. Published services, private proxies, and malformed runtime names remain excluded from ordinary forward accounting.
+- TCP reports update Smart Entry cumulative and current connection counters. UDP reports add traffic bytes without replacing the TCP connection baseline, preventing the two protocol runtimes from corrupting one shared connection count.
+- This is a backend-only compatibility fix. It does not modify the database, rebuild services, restart Agents, change ports, or alter existing nodes, tunnels, forwards, DNS, certificates, proxies, and quotas. Agent `2.40.0` remains current and does not need another upgrade. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.40.0 Managed panel domains in Website Settings
 
 - Reorganizes **Website Settings** into three explicit areas: browser-facing panel access, Agent communication, and branding/login. The Agent `IP:port` endpoint remains independent from the browser domain so changing or adding a website address cannot silently disconnect nodes.

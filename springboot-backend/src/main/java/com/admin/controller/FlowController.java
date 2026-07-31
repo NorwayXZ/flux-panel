@@ -28,6 +28,8 @@ import java.util.Date;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -60,6 +62,8 @@ public class FlowController extends BaseController {
     private static final String SUCCESS_RESPONSE = "ok";
     private static final String DEFAULT_USER_TUNNEL_ID = "0";
     private static final long BYTES_TO_GB = 1024L * 1024L * 1024L;
+    private static final Pattern FORWARD_SERVICE_PATTERN =
+            Pattern.compile("^(\\d+)_(\\d+)_(\\d+)(?:_(tcp|udp))?$");
 
     // 用于同步相同用户和隧道的流量更新操作
     private static final ConcurrentHashMap<String, Object> USER_LOCKS = new ConcurrentHashMap<>();
@@ -265,19 +269,18 @@ public class FlowController extends BaseController {
             privateProxyService.recordTraffic(serviceName, flowDataList.getD(), flowDataList.getU());
             return SUCCESS_RESPONSE;
         }
-        if (!serviceName.matches("^\\d+_\\d+_\\d+$")) {
-            return SUCCESS_RESPONSE;
-        }
-        String[] serviceIds = parseServiceName(serviceName);
-        if (serviceIds.length < 3) return SUCCESS_RESPONSE;
-        String forwardId = serviceIds[0];
-        String userId = serviceIds[1];
-        String userTunnelId = serviceIds[2];
+        ForwardServiceName forwardServiceName = parseForwardServiceName(serviceName);
+        if (forwardServiceName == null) return SUCCESS_RESPONSE;
+        String forwardId = forwardServiceName.forwardId();
+        String userId = forwardServiceName.userId();
+        String userTunnelId = forwardServiceName.userTunnelId();
 
         Forward forward = forwardService.getById(forwardId);
         if (forward == null) return SUCCESS_RESPONSE;
 
-        smartEntryService.recordActivity(forward.getId(), reportingNodeId, flowDataList.getT(), flowDataList.getC(),
+        boolean reportConnections = forwardServiceName.reportsConnections();
+        smartEntryService.recordActivity(forward.getId(), reportingNodeId,
+                reportConnections ? flowDataList.getT() : null, reportConnections ? flowDataList.getC() : null,
                 flowDataList.getD(), flowDataList.getU());
 
         // 获取流量计费类型
@@ -454,8 +457,17 @@ public class FlowController extends BaseController {
         return FORWARD_LOCKS.computeIfAbsent(forwardId, k -> new Object());
     }
 
-    private String[] parseServiceName(String serviceName) {
-        return serviceName.split("_");
+    static ForwardServiceName parseForwardServiceName(String serviceName) {
+        if (serviceName == null) return null;
+        Matcher matcher = FORWARD_SERVICE_PATTERN.matcher(serviceName);
+        if (!matcher.matches()) return null;
+        return new ForwardServiceName(matcher.group(1), matcher.group(2), matcher.group(3), matcher.group(4));
+    }
+
+    record ForwardServiceName(String forwardId, String userId, String userTunnelId, String transport) {
+        boolean reportsConnections() {
+            return !"udp".equals(transport);
+        }
     }
 
     private String buildServiceName(String forwardId, String userId, String userTunnelId) {
