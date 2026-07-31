@@ -44,6 +44,9 @@ mybatis-plus:
 jwt-secret: ${JWT_SECRET}
 log-dir: ${LOG_DIR}
 
+observability:
+  slow-api-threshold-ms: ${SLOW_API_THRESHOLD_MS:1000}
+
 
 captcha:
   init-default-resource: true

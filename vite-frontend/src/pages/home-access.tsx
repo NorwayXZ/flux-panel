@@ -107,6 +107,9 @@ const copy = async (value: string, label: string) => {
 export default function HomeAccessPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [formOptionsLoading, setFormOptionsLoading] = useState(false);
+  const [formOptionsLoaded, setFormOptionsLoaded] = useState(false);
+  const [formOptionsError, setFormOptionsError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [guideRoute, setGuideRoute] = useState<HomeProxyRoute | null>(null);
@@ -122,32 +125,56 @@ export default function HomeAccessPage() {
   const [dynamicDnsRules, setDynamicDnsRules] = useState<DynamicDnsRule[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
 
-  const load = async (showLoading = true) => {
+  const loadRoutes = async (showLoading = routes.length === 0) => {
     if (showLoading) setLoading(true);
-    const adminMode = isAdmin();
-    const [routeRes, connectorRes, poolRes, tunnelRes, nodeRes, dnsRes] = await Promise.all([
-      getHomeProxyRoutes(), getInternalConnectors(), getPublishingPortPools(), getTunnelList(), getNodeList(),
-      adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
-    ]);
-    if (routeRes.code === 0) setRoutes(routeRes.data || []); else toast.error(routeRes.msg || '加载家庭网络中转失败');
-    if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
-    if (poolRes.code === 0) setPools(poolRes.data || []);
-    if (tunnelRes.code === 0) setTunnels((tunnelRes.data || []) as TunnelOption[]);
-    if (nodeRes.code === 0) setNodes((nodeRes.data || []) as NodeOption[]);
-    if (dnsRes.code === 0) setDynamicDnsRules(dnsRes.data?.rules || []);
+    const response = await getHomeProxyRoutes();
+    if (response.code === 0) setRoutes(response.data || []);
+    else toast.error(response.msg || '加载家庭网络中转失败');
     if (showLoading) setLoading(false);
   };
 
-  const refreshRoutes = async () => {
-    const response = await getHomeProxyRoutes();
-    if (response.code === 0) setRoutes(response.data || []);
+  const loadFormOptions = async () => {
+    if (formOptionsLoading) return;
+    setFormOptionsLoading(true);
+    setFormOptionsError('');
+    const adminMode = isAdmin();
+    const results = await Promise.allSettled([
+      getInternalConnectors(), getPublishingPortPools(), getTunnelList(), getNodeList(),
+      adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
+    ]);
+    const errors: string[] = [];
+    const applyResult = <T,>(index: number, label: string, apply: (data: T) => void) => {
+      const result = results[index];
+      if (result.status === 'rejected') {
+        errors.push(label);
+        return;
+      }
+      if (result.value.code !== 0) {
+        errors.push(label);
+        return;
+      }
+      apply(result.value.data as T);
+    };
+    applyResult<InternalConnector[]>(0, '家庭设备', data => setConnectors(data || []));
+    applyResult<PublishingPortPool[]>(1, '端口资源', data => setPools(data || []));
+    applyResult<TunnelOption[]>(2, '隧道', data => setTunnels(data || []));
+    applyResult<NodeOption[]>(3, '节点', data => setNodes(data || []));
+    applyResult<{ rules: DynamicDnsRule[] }>(4, '动态 DNS', data => setDynamicDnsRules(data?.rules || []));
+    setFormOptionsLoaded(errors.length === 0);
+    setFormOptionsError(errors.length > 0 ? `${errors.join('、')}加载失败，可重试；其他选项仍可使用。` : '');
+    setFormOptionsLoading(false);
   };
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void refreshRoutes(), 10000);
+    void loadRoutes(true);
+    const timer = window.setInterval(() => void loadRoutes(false), 10000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const openCreateModal = () => {
+    setModalOpen(true);
+    if (!formOptionsLoaded) void loadFormOptions();
+  };
 
   const ingressPools = useMemo(() => pools.filter(pool => pool.availablePorts > 0), [pools]);
   const tunnelOptions = useMemo(() => tunnels.filter(tunnel => tunnel.type === 2 && tunnel.status === 1
@@ -209,7 +236,7 @@ export default function HomeAccessPage() {
     toast.success('家庭代理已创建');
     setModalOpen(false);
     setForm(emptyForm());
-    void load();
+    void loadRoutes(false);
   };
 
   const retryNat = async (id: number) => {
@@ -218,7 +245,7 @@ export default function HomeAccessPage() {
     setRefreshingId(null);
     if (response.code !== 0) return toast.error(response.msg || '重新探测失败');
     toast.success('已重新发起 STUN 和 UDP 直连探测');
-    window.setTimeout(() => void load(), 1500);
+    window.setTimeout(() => void loadRoutes(false), 1500);
   };
 
   const showNatEvents = async (route: HomeProxyRoute) => {
@@ -236,7 +263,7 @@ export default function HomeAccessPage() {
     setRefreshingId(null);
     if (response.code !== 0) return toast.error(response.msg || '公网地址检测失败');
     toast.success(`家庭 ${response.data.family === 'ipv4' ? 'IPv4' : 'IPv6'} 已更新：${response.data.address}`);
-    void load();
+    void loadRoutes(false);
   };
 
   const remove = async (id: number) => {
@@ -244,7 +271,7 @@ export default function HomeAccessPage() {
     const response = await deleteHomeProxyRoute(id);
     if (response.code !== 0) return toast.error(response.msg || '删除失败');
     toast.success('家庭代理已删除');
-    void load();
+    void loadRoutes(false);
   };
 
   return (
@@ -259,13 +286,13 @@ export default function HomeAccessPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="flat" startContent={<Laptop size={18} />} onPress={() => navigate('/home-devices')}>管理家庭设备</Button>
-          <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建中转</Button>
+          <Button color="primary" startContent={<Plus size={18} />} onPress={openCreateModal}>新建中转</Button>
         </div>
       </header>
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
         {[
-          ['运行中', activeCount], ['在线家庭设备', connectors.filter(item => item.online).length],
+          ['运行中', activeCount], ['在线中转设备', new Set(routes.filter(item => item.connectorOnline).map(item => item.connectorId)).size],
           ['中转链路', routes.length], ['智能直连', smartCount],
         ].map(([label, value]) => <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}
       </section>
@@ -347,6 +374,8 @@ export default function HomeAccessPage() {
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl" scrollBehavior="inside">
         <ModalContent><ModalHeader>新建家庭网络中转</ModalHeader><ModalBody className="min-w-0 space-y-4">
+          {formOptionsLoading && <div className="flex items-center gap-3 border-y border-divider px-1 py-3 text-sm text-default-500"><Spinner size="sm" /><span>正在加载可用设备、出口和端口资源</span></div>}
+          {formOptionsError && <div className="flex flex-wrap items-center justify-between gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200"><span>{formOptionsError}</span><Button size="sm" variant="flat" startContent={<RefreshCw size={15} />} isLoading={formOptionsLoading} onPress={() => void loadFormOptions()}>重试</Button></div>}
           <Input label="中转名称" placeholder="家庭联通出口" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
           <Select label="家庭设备" placeholder="选择已安装 Agent 的家庭电脑" selectedKeys={form.connectorId ? [form.connectorId] : []} onSelectionChange={keys => setForm({ ...form, connectorId: String(Array.from(keys)[0] || ''), dynamicDnsRuleId: '' })}>
             {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}</SelectItem>)}
@@ -431,7 +460,7 @@ export default function HomeAccessPage() {
           </Select>}
           <Switch isSelected={form.authEnabled} onValueChange={value => setForm({ ...form, authEnabled: value })}>启用代理用户名密码认证</Switch>
           {form.authEnabled && <div className="grid gap-4 md:grid-cols-2"><Input label="代理用户名" value={form.authUsername} onValueChange={value => setForm({ ...form, authUsername: value })} /><Input label="代理密码" type="password" value={form.authPassword} onValueChange={value => setForm({ ...form, authPassword: value })} /></div>}
-        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} onPress={submit}>创建中转</Button></ModalFooter></ModalContent>
+        </ModalBody><ModalFooter><Button variant="flat" onPress={() => setModalOpen(false)}>取消</Button><Button color="primary" isLoading={submitting} isDisabled={formOptionsLoading} onPress={submit}>创建中转</Button></ModalFooter></ModalContent>
       </Modal>
 
       <Modal isOpen={Boolean(eventRoute)} onOpenChange={open => !open && setEventRoute(null)} size="2xl" scrollBehavior="inside">

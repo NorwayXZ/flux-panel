@@ -1,3 +1,11 @@
+## 2.41.6 Faster page loading and API diagnostics
+
+- The Home Access page loads only its current routes on first paint. Node, tunnel, port pool, connector, and Dynamic DNS choices load when the create dialog opens; one failed option request no longer blocks the whole form.
+- Route refreshes keep the current content visible instead of replacing it with a full-page spinner. The summary uses the loaded route data and remains available while background refresh runs.
+- Home proxy list enrichment now batch-loads users, connectors, pools, tunnels, gateways, and nodes instead of issuing repeated per-route queries.
+- Adds API request IDs, duration and upstream status fields to application and Nginx logs. Slow API requests are warned at 1 second by default, and unhandled exceptions include a full stack trace for diagnosing 5xx responses.
+- This is a panel-only release. Agent and Connector remain `2.41.4`; existing nodes, tunnels, forwards, proxies, DNS records, certificates, and port resources are unchanged. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.5 Reliable online Agent upgrades and large self-check responses
 
 - Raises the Spring WebSocket session text and binary receive limits to 4 MiB. A new embedded-Tomcat integration test sends and receives a 3 MiB message so production-sized Connector self-check responses are covered before release, not only mocked in a unit test.

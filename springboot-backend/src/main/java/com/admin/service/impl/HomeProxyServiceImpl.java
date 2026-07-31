@@ -52,9 +52,13 @@ import java.net.InetAddress;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -647,9 +651,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 .notIn("state", List.of("deleted", "delete_pending")).orderByDesc("created_time");
         if (!isAdmin()) query.eq("user_id", currentUserId());
         List<HomeProxyRoute> routes = routeMapper.selectList(query);
-        List<HomeProxyRoute> result = new ArrayList<>();
-        for (HomeProxyRoute route : routes) result.add(enrich(route, true));
-        return R.ok(result);
+        return R.ok(enrichAll(routes, true));
     }
 
     @Override
@@ -1130,12 +1132,63 @@ public class HomeProxyServiceImpl implements HomeProxyService {
     }
 
     private HomeProxyRoute enrich(HomeProxyRoute route, boolean includeSecret) {
-        User owner = userMapper.selectById(route.getUserId());
-        InternalConnector connector = connectorMapper.selectById(route.getConnectorId());
-        InternalConnector sourceConnector = route.getSourceConnectorId() == null ? null : connectorMapper.selectById(route.getSourceConnectorId());
-        PortPool ingress = route.getIngressPoolId() == null ? null : poolMapper.selectById(route.getIngressPoolId());
-        PortPool egress = route.getEgressPoolId() == null ? null : poolMapper.selectById(route.getEgressPoolId());
-        Node egressNode = route.getEgressNodeId() == null ? null : nodeMapper.selectById(route.getEgressNodeId());
+        return enrichAll(List.of(route), includeSecret).get(0);
+    }
+
+    private List<HomeProxyRoute> enrichAll(List<HomeProxyRoute> routes, boolean includeSecret) {
+        if (routes.isEmpty()) return routes;
+
+        Set<Long> userIds = routes.stream().map(HomeProxyRoute::getUserId).filter(Objects::nonNull)
+                .map(Integer::longValue).collect(Collectors.toSet());
+        Set<Long> connectorIds = new HashSet<>();
+        Set<Long> poolIds = new HashSet<>();
+        Set<Long> tunnelIds = routes.stream().map(HomeProxyRoute::getEgressTunnelId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> routeIds = routes.stream().map(HomeProxyRoute::getId).filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> nodeIds = new HashSet<>();
+        for (HomeProxyRoute route : routes) {
+            addIfPresent(connectorIds, route.getConnectorId());
+            addIfPresent(connectorIds, route.getSourceConnectorId());
+            addIfPresent(poolIds, route.getIngressPoolId());
+            addIfPresent(poolIds, route.getEgressPoolId());
+            addIfPresent(nodeIds, route.getEgressNodeId());
+        }
+
+        Map<Long, User> users = indexById(userIds.isEmpty() ? List.of() : userMapper.selectBatchIds(userIds), User::getId);
+        Map<Long, InternalConnector> connectors = indexById(connectorIds.isEmpty() ? List.of()
+                : connectorMapper.selectBatchIds(connectorIds), InternalConnector::getId);
+        Map<Long, PortPool> pools = indexById(poolIds.isEmpty() ? List.of()
+                : poolMapper.selectBatchIds(poolIds), PortPool::getId);
+        Map<Long, Tunnel> tunnels = indexById(tunnelIds.isEmpty() ? List.of()
+                : tunnelMapper.selectBatchIds(tunnelIds), Tunnel::getId);
+        List<HomeProxyGateway> gateways = routeIds.isEmpty() ? List.of() : gatewayMapper.selectList(
+                new QueryWrapper<HomeProxyGateway>().in("route_id", routeIds).orderByAsc("sequence_no"));
+        Map<Long, List<HomeProxyGateway>> gatewaysByRoute = gateways.stream().collect(
+                Collectors.groupingBy(HomeProxyGateway::getRouteId, LinkedHashMap::new, Collectors.toList()));
+
+        for (HomeProxyRoute route : routes) {
+            Tunnel tunnel = tunnels.get(route.getEgressTunnelId());
+            List<Long> pathNodeIds = tunnel == null ? List.of() : TunnelRouteUtil.parseNodePath(tunnel);
+            if (pathNodeIds.isEmpty() && "tunnel".equals(route.getEgressMode())) {
+                pathNodeIds = gatewaysByRoute.getOrDefault(route.getId(), List.of()).stream()
+                        .map(HomeProxyGateway::getNodeId).filter(Objects::nonNull).collect(Collectors.toList());
+            }
+            nodeIds.addAll(pathNodeIds);
+        }
+        Map<Long, Node> nodes = indexById(nodeIds.isEmpty() ? List.of() : nodeMapper.selectBatchIds(nodeIds), Node::getId);
+        EnrichmentContext context = new EnrichmentContext(users, connectors, pools, tunnels, nodes, gatewaysByRoute);
+        for (HomeProxyRoute route : routes) enrich(route, includeSecret, context);
+        return routes;
+    }
+
+    private HomeProxyRoute enrich(HomeProxyRoute route, boolean includeSecret, EnrichmentContext context) {
+        User owner = route.getUserId() == null ? null : context.users().get(route.getUserId().longValue());
+        InternalConnector connector = context.connectors().get(route.getConnectorId());
+        InternalConnector sourceConnector = context.connectors().get(route.getSourceConnectorId());
+        PortPool ingress = context.pools().get(route.getIngressPoolId());
+        PortPool egress = context.pools().get(route.getEgressPoolId());
+        Node egressNode = context.nodes().get(route.getEgressNodeId());
         if (StringUtils.isBlank(route.getAccessMode())) route.setAccessMode("relay");
         if (StringUtils.isBlank(route.getEgressMode())) route.setEgressMode("single");
         if (StringUtils.isBlank(route.getTransportMode())) route.setTransportMode("standard_tcp");
@@ -1154,17 +1207,16 @@ public class HomeProxyServiceImpl implements HomeProxyService {
                 : egress == null ? "出口资源已删除" : egress.getName());
         route.setEgressNodeName(egressNode == null ? null : egressNode.getName());
         route.setEgressNodeOnline(egressNode != null && WebSocketServer.isNodeOnline(egressNode.getId()));
-        Tunnel egressTunnel = route.getEgressTunnelId() == null ? null : tunnelMapper.selectById(route.getEgressTunnelId());
+        Tunnel egressTunnel = context.tunnels().get(route.getEgressTunnelId());
         route.setEgressTunnelName(egressTunnel == null ? null : egressTunnel.getName());
         List<Long> pathNodeIds = egressTunnel == null ? List.of() : TunnelRouteUtil.parseNodePath(egressTunnel);
         if (pathNodeIds.isEmpty() && "tunnel".equals(route.getEgressMode())) {
-            pathNodeIds = gatewayMapper.selectList(new QueryWrapper<HomeProxyGateway>()
-                            .eq("route_id", route.getId()).orderByAsc("sequence_no"))
+            pathNodeIds = context.gatewaysByRoute().getOrDefault(route.getId(), List.of())
                     .stream().map(HomeProxyGateway::getNodeId).collect(Collectors.toList());
         }
         if (pathNodeIds.isEmpty() && egressNode != null) pathNodeIds = List.of(egressNode.getId());
         route.setEgressPathNodeDetails(pathNodeIds.stream().map(nodeId -> {
-            Node node = nodeMapper.selectById(nodeId);
+            Node node = context.nodes().get(nodeId);
             TunnelPathNodeDto detail = new TunnelPathNodeDto();
             detail.setNodeId(nodeId);
             detail.setName(node == null ? "节点已删除" : node.getName());
@@ -1181,6 +1233,22 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             route.setAuthPassword(decryptPassword(route.getAuthPassword()));
         }
         return route;
+    }
+
+    private static void addIfPresent(Set<Long> values, Long value) {
+        if (value != null) values.add(value);
+    }
+
+    private static <T> Map<Long, T> indexById(List<T> values, Function<T, Long> idProvider) {
+        return values.stream().collect(Collectors.toMap(idProvider, Function.identity(), (left, right) -> left));
+    }
+
+    private record EnrichmentContext(Map<Long, User> users,
+                                     Map<Long, InternalConnector> connectors,
+                                     Map<Long, PortPool> pools,
+                                     Map<Long, Tunnel> tunnels,
+                                     Map<Long, Node> nodes,
+                                     Map<Long, List<HomeProxyGateway>> gatewaysByRoute) {
     }
 
     private String normalizeAccessMode(String value) {

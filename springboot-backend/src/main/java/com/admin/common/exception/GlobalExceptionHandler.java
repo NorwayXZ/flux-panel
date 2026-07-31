@@ -34,7 +34,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(value = Exception.class)
     public R Exception(Exception e){
-        log.info("异常：----------------{}", e.getMessage());
+        if (e instanceof ClientAbortException) {
+            log.warn("客户端提前断开连接：{}", e.getMessage());
+        } else {
+            log.error("未处理的 API 异常", e);
+        }
         return R.err(-2, e.getMessage());
     }
 
