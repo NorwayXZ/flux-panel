@@ -510,9 +510,16 @@ public class PrivateProxyService {
         String unavailableReason = unavailableReason(proxy);
         proxy.setAvailable(unavailableReason == null);
         proxy.setUnavailableReason(unavailableReason);
+        hideInternalGrantPolicy(proxy, isAdmin());
         proxy.setAuthPassword(null);
         proxy.setClientConfig(null);
         return proxy;
+    }
+
+    static void hideInternalGrantPolicy(PrivateProxy proxy, boolean admin) {
+        if (admin) return;
+        proxy.setSpeedLimitMbps(null);
+        proxy.setSpeedLimitSupported(null);
     }
 
     private PrivateProxy owned(Long id) {

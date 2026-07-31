@@ -1,3 +1,9 @@
+## 2.39.2 Hide internal limiter policy from ordinary users
+
+- Removes the administrator-configured Mbps value from ordinary-user proxy cards and private-proxy details while retaining traffic allowance, used and remaining traffic, reset day, grant duration, expiry, and forward quota information needed for renewal decisions.
+- Removes tunnel limiter identifiers, preset names, and speeds from the ordinary-user package response, and masks proxy limiter fields in ordinary-user proxy API responses. Administrators retain the full policy fields and controls.
+- Includes the `2.39.1` custom REALITY camouflage-domain selector. This panel-only update does not change limiter enforcement, restart Agents, rebuild proxies, alter ports, or modify the database. Roll back with `sudo /usr/local/sbin/flux-panel-manager rollback` if needed.
+
 ## 2.39.1 Custom REALITY camouflage for user grants
 
 - Adds the missing **Custom domain** option to administrator-created VLESS+REALITY user grants, matching the standalone private-proxy form.

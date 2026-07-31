@@ -54,4 +54,28 @@ class PrivateProxyServiceTests {
         assertFalse(PrivateProxyService.shouldResetFlow(11, threshold, threshold + 60_000L));
         assertFalse(PrivateProxyService.shouldResetFlow(0, previousMonth, threshold));
     }
+
+    @Test
+    void hidesInternalLimiterPolicyFromOrdinaryUsers() {
+        PrivateProxy proxy = new PrivateProxy();
+        proxy.setSpeedLimitMbps(100);
+        proxy.setSpeedLimitSupported(true);
+
+        PrivateProxyService.hideInternalGrantPolicy(proxy, false);
+
+        assertNull(proxy.getSpeedLimitMbps());
+        assertNull(proxy.getSpeedLimitSupported());
+    }
+
+    @Test
+    void keepsInternalLimiterPolicyForAdministrators() {
+        PrivateProxy proxy = new PrivateProxy();
+        proxy.setSpeedLimitMbps(100);
+        proxy.setSpeedLimitSupported(true);
+
+        PrivateProxyService.hideInternalGrantPolicy(proxy, true);
+
+        assertTrue(proxy.getSpeedLimitMbps() == 100);
+        assertTrue(proxy.getSpeedLimitSupported());
+    }
 }

@@ -913,7 +913,7 @@ export default function DashboardPage() {
                       <div><p className="text-xs text-default-500">剩余流量</p><p className="mt-1 text-sm font-medium">{proxy.flowUnlimited === 1 ? '无限制' : formatFlow(proxy.remainingFlow || 0)}</p><p className="mt-1 text-xs text-default-500">已用 {formatFlow(used)}</p></div>
                       <div><p className="text-xs text-default-500">剩余时间</p><p className="mt-1 text-sm font-medium">{formatRemainingTime(proxy.remainingTime)}</p></div>
                       <div><p className="text-xs text-default-500">到期时间</p><p className="mt-1 text-sm font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div>
-                      <div><p className="text-xs text-default-500">速度限制</p><p className="mt-1 text-sm font-medium">{proxy.speedLimitMbps ? `${proxy.speedLimitMbps} Mbps` : '不限速'}</p><p className="mt-1 text-xs text-default-500">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日重置` : '流量不重置'}</p></div>
+                      <div><p className="text-xs text-default-500">流量重置</p><p className="mt-1 text-sm font-medium">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日` : '不重置'}</p></div>
                       <button type="button" className="shrink-0 text-sm font-medium text-primary" onClick={() => navigate('/private-proxy')}>查看</button>
                     </div>
                   </div>;

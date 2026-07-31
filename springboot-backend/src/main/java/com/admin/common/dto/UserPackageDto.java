@@ -72,9 +72,6 @@ public class UserPackageDto {
         private Integer forwardUnlimited;
         private Long flowResetTime;  // 流量重置时间
         private Long expTime;        // 隧道权限过期时间
-        private Integer speedId;
-        private String speedLimitName;
-        private Integer speed;
     }
     
     /**

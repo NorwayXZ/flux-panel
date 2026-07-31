@@ -2,7 +2,7 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.admin.mapper.UserMapper">
 
-    <!-- 查询用户隧道权限详情（连表查询隧道和限速规则信息） -->
+    <!-- 查询用户可见的隧道权限详情；管理员限速策略不进入用户套餐响应 -->
     <select id="getUserTunnelDetails" resultType="com.admin.common.dto.UserPackageDto$UserTunnelDetailDto">
         SELECT 
             ut.id,
@@ -17,13 +17,9 @@
             ut.num,
             ut.forward_unlimited as forwardUnlimited,
             ut.flow_reset_time as flowResetTime,
-            ut.exp_time as expTime,
-            ut.speed_id as speedId,
-            sl.name as speedLimitName,
-            sl.speed
+            ut.exp_time as expTime
         FROM user_tunnel ut
         LEFT JOIN tunnel t ON ut.tunnel_id = t.id
-        LEFT JOIN speed_limit sl ON ut.speed_id = sl.id
         WHERE ut.user_id = #{userId}
         ORDER BY ut.id
     </select>
@@ -61,10 +57,7 @@
             0 as outFlow,
             99999 as num,
             null as flowResetTime,
-            null as expTime,
-            null as speedId,
-            '无限制' as speedLimitName,
-            null as speed
+            null as expTime
         FROM tunnel t
         WHERE t.status = 1
         ORDER BY t.id
