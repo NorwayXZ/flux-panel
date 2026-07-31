@@ -506,7 +506,7 @@
 - Advanced-protocol instances do not yet support source-IP allowlists or GOST per-service traffic counters. The UI states this at creation time rather than silently accepting an ineffective setting.
 - Roll back safely by deleting the new advanced instances first and waiting for their cards to disappear, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Existing proxy types, nodes, tunnels, forwards, DNS, certificates, mappings, and user resources are not modified.
 
-## 2.38.1 Private proxies grouped by node
+## 2.38.2 Private proxies grouped by node
 
 - Groups all private proxies by their server node so operators can find a node first and expand only its protocols.
 - Each collapsed node row shows connectivity, public address, protocol summary, active count, attention count, and total proxy count.
