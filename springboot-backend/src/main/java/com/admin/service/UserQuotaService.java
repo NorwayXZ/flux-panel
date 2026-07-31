@@ -128,7 +128,7 @@ public class UserQuotaService {
     }
 
     public void recordPrivateProxyFlow(PrivateProxy proxy, long inFlow, long outFlow) {
-        if (proxy == null) return;
+        if (proxy == null || proxy.getGrantedByUserId() != null) return;
         Node node = nodeMapper.selectById(proxy.getNodeId());
         if (node == null) return;
         if (Objects.equals(node.getOwnerUserId(), proxy.getUserId())) {
@@ -185,6 +185,7 @@ public class UserQuotaService {
         if (excludeProxyId != null) {
             usedForwards -= privateProxyMapper.selectCount(new QueryWrapper<PrivateProxy>()
                     .eq("id", excludeProxyId).eq("user_id", permission.getUserId())
+                    .isNull("granted_by_user_id")
                     .eq("node_id", permission.getNodeId()).notIn("state", "deleted", "expired", "error"));
         }
         if (!isUnlimited(permission.getForwardUnlimited()) && usedForwards >= intValue(permission.getNum())) {
@@ -237,6 +238,7 @@ public class UserQuotaService {
         }
         for (PrivateProxy proxy : privateProxyMapper.selectList(new QueryWrapper<PrivateProxy>()
                 .eq("user_id", userId).in("node_id", requestedNodeIds)
+                .isNull("granted_by_user_id")
                 .notIn("state", "deleted", "expired", "error"))) {
             counts.merge(proxy.getNodeId().intValue(), 1, Integer::sum);
         }
@@ -299,7 +301,8 @@ public class UserQuotaService {
 
     private int countPrivateProxies(Integer userId, Integer nodeId, Long excludeProxyId) {
         QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>()
-                .eq("user_id", userId).notIn("state", "deleted", "expired", "error");
+                .eq("user_id", userId).isNull("granted_by_user_id")
+                .notIn("state", "deleted", "expired", "error");
         if (nodeId != null) query.eq("node_id", nodeId);
         if (excludeProxyId != null) query.ne("id", excludeProxyId);
         Integer count = privateProxyMapper.selectCount(query);

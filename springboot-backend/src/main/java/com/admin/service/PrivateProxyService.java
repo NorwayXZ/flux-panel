@@ -2,6 +2,8 @@ package com.admin.service;
 
 import com.admin.common.dto.GostDto;
 import com.admin.common.dto.PrivateProxyCreateDto;
+import com.admin.common.dto.PrivateProxyGrantDto;
+import com.admin.common.dto.PrivateProxyGrantUpdateDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.AgentPortCheckUtil;
@@ -28,10 +30,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.net.InetAddress;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -39,6 +45,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class PrivateProxyService {
+    private static final long BYTES_PER_GB = 1024L * 1024L * 1024L;
+    private static final int UNLIMITED_LIMITER_MBPS = 1_000_000;
     private static final String DEFAULT_REALITY_SERVER_NAME = "www.cloudflare.com";
     private static final String MIN_AGENT_VERSION = "2.19.0";
     private static final String MIN_REALITY_AGENT_VERSION = "2.20.0";
@@ -65,11 +73,34 @@ public class PrivateProxyService {
 
     @Transactional(rollbackFor = Exception.class)
     public R create(PrivateProxyCreateDto dto) {
+        return createInternal(dto, JwtUtil.getUserIdFromToken(), null, null);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public R grant(PrivateProxyGrantDto dto) {
+        if (!isAdmin()) return R.err("只有管理员可以授权代理");
+        User target = userMapper.selectById(dto.getTargetUserId());
+        if (target == null || Objects.equals(target.getRoleId(), 0)) return R.err("请选择普通用户");
+        if (!supportsGrantEnforcement(dto.getProxyType())) {
+            return R.err("该协议暂不支持独立流量统计与限速，请选择 SOCKS5、HTTP、Shadowsocks 或 VLESS+REALITY");
+        }
+        if (!Boolean.TRUE.equals(dto.getFlowUnlimited()) && value(dto.getFlowLimit()) <= 0L) {
+            return R.err("流量额度必须大于 0");
+        }
+        if (!Boolean.TRUE.equals(dto.getPermanent())
+                && (dto.getExpiresAt() == null || dto.getExpiresAt() <= System.currentTimeMillis())) {
+            return R.err("请选择未来的到期时间");
+        }
+        return createInternal(dto, dto.getTargetUserId(), JwtUtil.getUserIdFromToken(), dto);
+    }
+
+    private R createInternal(PrivateProxyCreateDto dto, Integer ownerUserId, Integer grantedByUserId,
+                             PrivateProxyGrantDto grant) {
         allocationLockMapper.lockForUpdate();
-        Integer userId = JwtUtil.getUserIdFromToken();
+        Integer userId = ownerUserId;
         Node node = nodeMapper.selectById(dto.getNodeId());
         if (node == null) return R.err("节点不存在");
-        R quota = isAdmin() ? R.ok() : userQuotaService.checkNodeQuota(userId, node, null);
+        R quota = grantedByUserId != null || isAdmin() ? R.ok() : userQuotaService.checkNodeQuota(userId, node, null);
         if (quota.getCode() != 0) return quota;
         if (!WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法创建代理");
         if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_AGENT_VERSION)) {
@@ -114,7 +145,7 @@ public class PrivateProxyService {
         if (isAdvancedRuntime(proxyType) && !cidrs.isEmpty()) {
             return R.err(protocolLabel(proxyType) + " 暂不支持来源 IP 白名单，请先留空创建");
         }
-        if (Boolean.FALSE.equals(dto.getPermanent()) && (dto.getLeaseHours() == null || dto.getLeaseHours() < 1)) {
+        if (grant == null && Boolean.FALSE.equals(dto.getPermanent()) && (dto.getLeaseHours() == null || dto.getLeaseHours() < 1)) {
             return R.err("定时代理必须填写有效期");
         }
         if (Boolean.TRUE.equals(portLedgerService.diagnose(node.getId(), dto.getListenPort()).get("occupied"))) {
@@ -132,6 +163,7 @@ public class PrivateProxyService {
         long now = System.currentTimeMillis();
         PrivateProxy proxy = new PrivateProxy();
         proxy.setUserId(userId);
+        proxy.setGrantedByUserId(grantedByUserId);
         proxy.setName(dto.getName().trim());
         proxy.setNodeId(node.getId());
         proxy.setProxyType(proxyType);
@@ -141,20 +173,31 @@ public class PrivateProxyService {
         proxy.setAuthPassword(crypto.encrypt("vless_reality".equals(proxyType) ? UUID.randomUUID().toString() : password));
         proxy.setAllowedCidrs(String.join(",", cidrs));
         proxy.setState("provisioning");
-        proxy.setExpiresAt(Boolean.TRUE.equals(dto.getPermanent()) ? null : now + dto.getLeaseHours() * 3_600_000L);
+        proxy.setExpiresAt(Boolean.TRUE.equals(dto.getPermanent()) ? null
+                : grant != null ? grant.getExpiresAt() : now + dto.getLeaseHours() * 3_600_000L);
+        proxy.setFlowLimit(grant == null ? 0L : grant.getFlowLimit());
+        proxy.setFlowUnlimited(grant == null || Boolean.TRUE.equals(grant.getFlowUnlimited()) ? 1 : 0);
+        proxy.setFlowResetDay(grant == null ? 0 : grant.getFlowResetDay());
+        proxy.setLastFlowResetAt(grant == null ? null : now);
+        proxy.setSpeedLimitMbps(grant == null ? null : grant.getSpeedLimitMbps());
         assignRuntimeNames(proxy, !cidrs.isEmpty());
         proxy.setCreatedTime(now);
         proxy.setUpdatedTime(now);
         proxyMapper.insert(proxy);
 
         try {
+            String limiterName = grant != null ? limiterName(proxy) : null;
+            if (limiterName != null) {
+                requireGost(GostUtil.AddNamedLimiter(node.getId(), limiterName,
+                        limiterSpeed(proxy.getSpeedLimitMbps())), "创建用户限速器失败");
+            }
             if (proxy.getAdmissionName() != null) {
                 requireGost(GostUtil.AddAdmission(node.getId(), proxy.getAdmissionName(), cidrs), "创建 IP 白名单失败");
             }
             Map<String, Object> clientConfig;
             if ("shadowsocks".equals(proxyType)) {
                 requireGost(GostUtil.AddShadowsocksProxy(node.getId(), proxy.getServiceName(), bindIp,
-                        proxy.getListenPort(), cipher, password, proxy.getAdmissionName()), "创建 Shadowsocks 失败");
+                        proxy.getListenPort(), cipher, password, proxy.getAdmissionName(), limiterName), "创建 Shadowsocks 失败");
                 clientConfig = new LinkedHashMap<>();
                 clientConfig.put("cipher", cipher);
                 clientConfig.put("password", password);
@@ -172,7 +215,7 @@ public class PrivateProxyService {
                 proxy.setAuthUsername(clientId);
                 proxy.setAuthPassword(crypto.encrypt(clientId));
                 requireGost(GostUtil.AddRealityFrontend(node.getId(), proxy.getServiceName(), bindIp,
-                        proxy.getListenPort(), runtimePort, proxy.getAdmissionName()), "创建 REALITY 公网入口失败");
+                        proxy.getListenPort(), runtimePort, proxy.getAdmissionName(), limiterName), "创建 REALITY 公网入口失败");
                 clientConfig = new LinkedHashMap<>();
                 clientConfig.put("clientId", clientId);
                 clientConfig.put("publicKey", publicKey);
@@ -210,7 +253,7 @@ public class PrivateProxyService {
                 }
             } else {
                 requireGost(GostUtil.AddPrivateProxy(node.getId(), proxy.getServiceName(), proxyType, bindIp,
-                        proxy.getListenPort(), username, password, proxy.getAdmissionName()), "创建代理失败");
+                        proxy.getListenPort(), username, password, proxy.getAdmissionName(), limiterName), "创建代理失败");
                 clientConfig = new LinkedHashMap<>();
                 clientConfig.put("username", username);
                 clientConfig.put("password", password);
@@ -235,6 +278,63 @@ public class PrivateProxyService {
         QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>().ne("state", "deleted").orderByDesc("created_time");
         if (!isAdmin()) query.eq("user_id", JwtUtil.getUserIdFromToken());
         return R.ok(proxyMapper.selectList(query).stream().map(this::view).collect(Collectors.toList()));
+    }
+
+    public R grants(Integer userId) {
+        if (!isAdmin()) return R.err("只有管理员可以查看用户代理授权");
+        QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>()
+                .isNotNull("granted_by_user_id").ne("state", "deleted").orderByDesc("created_time");
+        if (userId != null) query.eq("user_id", userId);
+        return R.ok(proxyMapper.selectList(query).stream().map(this::view).collect(Collectors.toList()));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public R updateGrant(PrivateProxyGrantUpdateDto dto) {
+        if (!isAdmin()) return R.err("只有管理员可以修改代理授权");
+        PrivateProxy proxy = proxyMapper.selectById(dto.getId());
+        if (proxy == null || proxy.getGrantedByUserId() == null || "deleted".equals(proxy.getState())) {
+            return R.err("代理授权不存在");
+        }
+        if (!Boolean.TRUE.equals(dto.getPermanent())
+                && (dto.getExpiresAt() == null || dto.getExpiresAt() <= System.currentTimeMillis())) {
+            return R.err("请选择未来的到期时间");
+        }
+        if (!Boolean.TRUE.equals(dto.getFlowUnlimited()) && value(dto.getFlowLimit()) <= 0L) {
+            return R.err("流量额度必须大于 0");
+        }
+        Integer previousSpeedLimit = proxy.getSpeedLimitMbps();
+        proxy.setFlowLimit(dto.getFlowLimit());
+        proxy.setFlowUnlimited(Boolean.TRUE.equals(dto.getFlowUnlimited()) ? 1 : 0);
+        proxy.setFlowResetDay(dto.getFlowResetDay());
+        proxy.setExpiresAt(Boolean.TRUE.equals(dto.getPermanent()) ? null : dto.getExpiresAt());
+        proxy.setSpeedLimitMbps(dto.getSpeedLimitMbps());
+        proxy.setUpdatedTime(System.currentTimeMillis());
+        Node node = nodeMapper.selectById(proxy.getNodeId());
+        if (!Objects.equals(previousSpeedLimit, proxy.getSpeedLimitMbps())
+                && (node == null || !WebSocketServer.isNodeOnline(node.getId()))) {
+            return R.err("节点离线，无法修改代理限速；流量和到期设置未保存");
+        }
+        if (node != null && WebSocketServer.isNodeOnline(node.getId()) && supportsGrantEnforcement(proxy.getProxyType())) {
+            GostDto limiter = GostUtil.UpdateNamedLimiter(node.getId(), limiterName(proxy), limiterSpeed(proxy.getSpeedLimitMbps()));
+            if (!gostSuccess(limiter) && StringUtils.containsIgnoreCase(gostMessage(limiter), "not found")) {
+                limiter = GostUtil.AddNamedLimiter(node.getId(), limiterName(proxy), limiterSpeed(proxy.getSpeedLimitMbps()));
+            }
+            if (!gostSuccess(limiter)) return R.err("更新用户限速失败：" + gostMessage(limiter));
+        }
+        proxyMapper.updateById(proxy);
+        reconcileGrantedProxy(proxy, System.currentTimeMillis());
+        return R.ok(view(proxyMapper.selectById(proxy.getId())));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public R resetGrantFlow(Long id) {
+        if (!isAdmin()) return R.err("只有管理员可以重置代理流量");
+        PrivateProxy proxy = proxyMapper.selectById(id);
+        if (proxy == null || proxy.getGrantedByUserId() == null || "deleted".equals(proxy.getState())) {
+            return R.err("代理授权不存在");
+        }
+        resetFlow(proxy, System.currentTimeMillis());
+        return R.ok(view(proxyMapper.selectById(id)));
     }
 
     public R clientConfig(Long id) {
@@ -287,6 +387,16 @@ public class PrivateProxyService {
         userMapper.update(null, new UpdateWrapper<User>().eq("id", proxy.getUserId())
                 .setSql("in_flow = in_flow + " + inbound)
                 .setSql("out_flow = out_flow + " + outbound));
+        if (proxy.getGrantedByUserId() != null) {
+            long used = value(proxy.getInFlow()) + value(proxy.getOutFlow()) + inbound + outbound;
+            if (!Objects.equals(proxy.getFlowUnlimited(), 1)
+                    && used >= value(proxy.getFlowLimit()) * BYTES_PER_GB) {
+                GostDto paused = pauseRuntime(proxy);
+                if (gostSuccess(paused)) updateState(proxy, "quota_exhausted", "代理流量额度已用尽");
+                else updateState(proxy, proxy.getState(), "代理流量额度已用尽；自动暂停失败：" + gostMessage(paused));
+            }
+            return;
+        }
         userQuotaService.recordPrivateProxyFlow(proxy, inbound, outbound);
 
         if (isAdminUser(proxy.getUserId())) return;
@@ -306,6 +416,7 @@ public class PrivateProxyService {
     public R pause(Long id) {
         PrivateProxy proxy = owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
+        if (!canManage(proxy)) return R.err("该代理由管理员授权，请联系管理员调整");
         if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以暂停");
         GostDto result = pauseRuntime(proxy);
         if (!gostSuccess(result)) return R.err(gostMessage(result));
@@ -316,6 +427,7 @@ public class PrivateProxyService {
     public R resume(Long id) {
         PrivateProxy proxy = owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
+        if (!canManage(proxy)) return R.err("该代理由管理员授权，请联系管理员调整");
         if (!"paused".equals(proxy.getState())) return R.err("只有暂停的代理可以恢复");
         if (proxy.getExpiresAt() != null && proxy.getExpiresAt() <= System.currentTimeMillis()) return R.err("代理已到期");
         Node node = nodeMapper.selectById(proxy.getNodeId());
@@ -330,6 +442,7 @@ public class PrivateProxyService {
     public R delete(Long id) {
         PrivateProxy proxy = owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
+        if (!canManage(proxy)) return R.err("该代理由管理员授权，请联系管理员调整");
         Node node = nodeMapper.selectById(proxy.getNodeId());
         if (node == null || !WebSocketServer.isNodeOnline(proxy.getNodeId())) {
             updateState(proxy, "delete_pending", "节点离线，待上线后自动清理");
@@ -343,19 +456,38 @@ public class PrivateProxyService {
         return R.ok();
     }
 
+    public void deleteForUser(Integer userId) {
+        List<PrivateProxy> proxies = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .eq("user_id", userId).ne("state", "deleted"));
+        for (PrivateProxy proxy : proxies) {
+            Node node = nodeMapper.selectById(proxy.getNodeId());
+            if (node != null && WebSocketServer.isNodeOnline(node.getId()) && cleanupRuntime(proxy, node)) {
+                updateState(proxy, "deleted", null);
+            } else {
+                updateState(proxy, "delete_pending", "用户已删除，等待节点上线清理");
+            }
+        }
+    }
+
     @Scheduled(initialDelay = 30_000L, fixedDelay = 30_000L)
     public void reconcileExpiryAndCleanup() {
         long now = System.currentTimeMillis();
+        List<PrivateProxy> granted = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .isNotNull("granted_by_user_id").notIn("state", "deleted", "delete_pending", "error"));
+        for (PrivateProxy proxy : granted) reconcileGrantedProxy(proxy, now);
+
         List<PrivateProxy> pending = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
                 .and(q -> q.eq("state", "delete_pending")
-                        .or(n -> n.in("state", "active", "paused").isNotNull("expires_at").le("expires_at", now))));
+                        .or(n -> n.isNull("granted_by_user_id").in("state", "active", "paused")
+                                .isNotNull("expires_at").le("expires_at", now))));
         for (PrivateProxy proxy : pending) {
+            boolean explicitDelete = "delete_pending".equals(proxy.getState());
             Node node = nodeMapper.selectById(proxy.getNodeId());
             if (node == null || !WebSocketServer.isNodeOnline(proxy.getNodeId())) {
                 if (!"delete_pending".equals(proxy.getState())) updateState(proxy, "delete_pending", "代理已到期，等待节点上线清理");
                 continue;
             }
-            if (cleanupRuntime(proxy, node)) updateState(proxy, proxy.getExpiresAt() != null && proxy.getExpiresAt() <= now ? "expired" : "deleted", null);
+            if (cleanupRuntime(proxy, node)) updateState(proxy, explicitDelete ? "deleted" : "expired", null);
         }
     }
 
@@ -367,6 +499,17 @@ public class PrivateProxyService {
         proxy.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         proxy.setNodeOnline(node != null && WebSocketServer.isNodeOnline(node.getId()));
         proxy.setPasswordConfigured(StringUtils.isNotBlank(proxy.getAuthPassword()));
+        long used = value(proxy.getInFlow()) + value(proxy.getOutFlow());
+        boolean granted = proxy.getGrantedByUserId() != null;
+        proxy.setGranted(granted);
+        proxy.setSpeedLimitSupported(supportsGrantEnforcement(proxy.getProxyType()));
+        proxy.setRemainingFlow(!granted || Objects.equals(proxy.getFlowUnlimited(), 1) ? null
+                : Math.max(0L, value(proxy.getFlowLimit()) * BYTES_PER_GB - used));
+        proxy.setRemainingTime(proxy.getExpiresAt() == null ? null
+                : Math.max(0L, proxy.getExpiresAt() - System.currentTimeMillis()));
+        String unavailableReason = unavailableReason(proxy);
+        proxy.setAvailable(unavailableReason == null);
+        proxy.setUnavailableReason(unavailableReason);
         proxy.setAuthPassword(null);
         proxy.setClientConfig(null);
         return proxy;
@@ -395,7 +538,9 @@ public class PrivateProxyService {
         if (proxy.getAdmissionName() != null) {
             admissionClean = gostCleanupSuccess(GostUtil.DeleteAdmission(node.getId(), proxy.getAdmissionName()));
         }
-        return serviceClean && admissionClean && advancedRuntimeClean;
+        boolean limiterClean = proxy.getGrantedByUserId() == null
+                || gostCleanupSuccess(GostUtil.DeleteNamedLimiter(node.getId(), limiterName(proxy)));
+        return serviceClean && admissionClean && advancedRuntimeClean && limiterClean;
     }
 
     static void assignRuntimeNames(PrivateProxy proxy, boolean withAdmission) {
@@ -543,5 +688,117 @@ public class PrivateProxyService {
     }
     private void updateState(PrivateProxy proxy, String state, String error) {
         proxy.setState(state); proxy.setLastError(error); proxy.setUpdatedTime(System.currentTimeMillis()); proxyMapper.updateById(proxy);
+    }
+
+    private void reconcileGrantedProxy(PrivateProxy proxy, long now) {
+        if (proxy == null || proxy.getGrantedByUserId() == null) return;
+        if (shouldResetFlow(proxy.getFlowResetDay(), proxy.getLastFlowResetAt(), now)) {
+            resetFlow(proxy, now);
+        }
+        boolean expired = proxy.getExpiresAt() != null && proxy.getExpiresAt() <= now;
+        boolean quotaExhausted = !Objects.equals(proxy.getFlowUnlimited(), 1)
+                && value(proxy.getInFlow()) + value(proxy.getOutFlow()) >= value(proxy.getFlowLimit()) * BYTES_PER_GB;
+        Node node = nodeMapper.selectById(proxy.getNodeId());
+        boolean online = node != null && WebSocketServer.isNodeOnline(node.getId());
+
+        if (expired) {
+            enforceGrantPause(proxy, online, "expired", "代理授权已到期");
+            return;
+        }
+        if (quotaExhausted) {
+            enforceGrantPause(proxy, online, "quota_exhausted", "代理流量额度已用尽");
+            return;
+        }
+        if (online && ("expired".equals(proxy.getState()) || "quota_exhausted".equals(proxy.getState()))) {
+            GostDto resumed = resumeRuntime(proxy);
+            if (gostSuccess(resumed)) updateState(proxy, "active", null);
+            else updateState(proxy, proxy.getState(), "恢复代理失败：" + gostMessage(resumed));
+        }
+    }
+
+    private void enforceGrantPause(PrivateProxy proxy, boolean online, String targetState, String reason) {
+        boolean runtimeMayBeActive = "active".equals(proxy.getState())
+                || (targetState.equals(proxy.getState()) && !reason.equals(proxy.getLastError()));
+        if (runtimeMayBeActive && !online) {
+            String waiting = reason + "，等待节点上线暂停";
+            if (!targetState.equals(proxy.getState()) || !waiting.equals(proxy.getLastError())) {
+                updateState(proxy, targetState, waiting);
+            }
+            return;
+        }
+        if (runtimeMayBeActive) {
+            GostDto paused = pauseRuntime(proxy);
+            if (!gostSuccess(paused)) {
+                updateState(proxy, targetState, reason + "；自动暂停失败：" + gostMessage(paused));
+                return;
+            }
+        }
+        if (!targetState.equals(proxy.getState()) || !reason.equals(proxy.getLastError())) {
+            updateState(proxy, targetState, reason);
+        }
+    }
+
+    private void resetFlow(PrivateProxy proxy, long now) {
+        proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
+                .set("in_flow", 0L).set("out_flow", 0L).set("last_flow_reset_at", now)
+                .set("updated_time", now));
+        proxy.setInFlow(0L);
+        proxy.setOutFlow(0L);
+        proxy.setLastFlowResetAt(now);
+        if ("quota_exhausted".equals(proxy.getState())
+                && (proxy.getExpiresAt() == null || proxy.getExpiresAt() > now)) {
+            Node node = nodeMapper.selectById(proxy.getNodeId());
+            if (node != null && WebSocketServer.isNodeOnline(node.getId())) {
+                GostDto resumed = resumeRuntime(proxy);
+                if (gostSuccess(resumed)) updateState(proxy, "active", null);
+            }
+        }
+    }
+
+    static boolean shouldResetFlow(Integer resetDay, Long lastResetAt, long now) {
+        if (resetDay == null || resetDay <= 0) return false;
+        ZoneId zone = ZoneId.systemDefault();
+        LocalDate today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
+        LocalDate thresholdDate = today.withDayOfMonth(Math.min(resetDay, today.lengthOfMonth()));
+        long threshold = thresholdDate.atStartOfDay(zone).toInstant().toEpochMilli();
+        if (now < threshold) {
+            LocalDate previousMonth = today.minusMonths(1);
+            thresholdDate = previousMonth.withDayOfMonth(Math.min(resetDay, previousMonth.lengthOfMonth()));
+            threshold = thresholdDate.atStartOfDay(zone).toInstant().toEpochMilli();
+        }
+        return lastResetAt == null || lastResetAt < threshold;
+    }
+
+    private String unavailableReason(PrivateProxy proxy) {
+        if (!Boolean.TRUE.equals(proxy.getNodeOnline())) return "代理节点离线";
+        if ("expired".equals(proxy.getState())) return "代理授权已到期";
+        if ("quota_exhausted".equals(proxy.getState())) return "代理流量额度已用尽";
+        if ("paused".equals(proxy.getState())) return "代理已暂停";
+        if ("error".equals(proxy.getState()) || "delete_pending".equals(proxy.getState())) {
+            return StringUtils.defaultIfBlank(proxy.getLastError(), "代理运行异常");
+        }
+        return "active".equals(proxy.getState()) ? null : StringUtils.defaultIfBlank(proxy.getLastError(), "代理暂不可用");
+    }
+
+    private boolean canManage(PrivateProxy proxy) {
+        return isAdmin() || proxy.getGrantedByUserId() == null;
+    }
+
+    private boolean supportsGrantEnforcement(String proxyType) {
+        return "socks5".equals(proxyType) || "http".equals(proxyType)
+                || "shadowsocks".equals(proxyType) || "vless_reality".equals(proxyType);
+    }
+
+    private String limiterName(PrivateProxy proxy) {
+        return "private-proxy-user-" + proxy.getId();
+    }
+
+    private String limiterSpeed(Integer speedMbps) {
+        int mbps = speedMbps == null ? UNLIMITED_LIMITER_MBPS : speedMbps;
+        return String.format(Locale.ROOT, "%.1f", mbps / 8.0d);
+    }
+
+    private long value(Long value) {
+        return value == null ? 0L : value;
     }
 }

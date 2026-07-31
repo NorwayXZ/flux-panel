@@ -3,6 +3,9 @@ package com.admin.service;
 import com.admin.entity.PrivateProxy;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -35,5 +38,20 @@ class PrivateProxyServiceTests {
 
         assertFalse(proxy.getServiceName().isBlank());
         assertNull(proxy.getAdmissionName());
+    }
+
+    @Test
+    void resetsGrantedProxyFlowOnlyAfterMonthlyThreshold() {
+        ZoneId zone = ZoneId.systemDefault();
+        long before = LocalDate.of(2026, 8, 10).atStartOfDay(zone).plusHours(23).toInstant().toEpochMilli();
+        long threshold = LocalDate.of(2026, 8, 11).atStartOfDay(zone).toInstant().toEpochMilli();
+        long previousMonth = LocalDate.of(2026, 7, 11).atStartOfDay(zone).toInstant().toEpochMilli();
+        long twoMonthsAgo = LocalDate.of(2026, 6, 11).atStartOfDay(zone).toInstant().toEpochMilli();
+
+        assertFalse(PrivateProxyService.shouldResetFlow(11, previousMonth, before));
+        assertTrue(PrivateProxyService.shouldResetFlow(11, twoMonthsAgo, before));
+        assertTrue(PrivateProxyService.shouldResetFlow(11, previousMonth, threshold));
+        assertFalse(PrivateProxyService.shouldResetFlow(11, threshold, threshold + 60_000L));
+        assertFalse(PrivateProxyService.shouldResetFlow(0, previousMonth, threshold));
     }
 }

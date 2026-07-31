@@ -4,6 +4,7 @@ import com.admin.common.dto.*;
 import com.admin.common.lang.R;
 import com.admin.common.utils.GostUtil;
 import com.admin.entity.*;
+import com.admin.mapper.PrivateProxyMapper;
 import com.admin.service.*;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,7 @@ import java.util.Objects;
 @Slf4j
 @Service
 public class CheckGostConfigAsync {
+    private static final String PRIVATE_PROXY_LIMITER_PREFIX = "private-proxy-user-";
 
     @Resource
     private NodeService nodeService;
@@ -34,6 +36,9 @@ public class CheckGostConfigAsync {
     @Resource
     @Lazy
     private TunnelService tunnelService;
+
+    @Resource
+    private PrivateProxyMapper privateProxyMapper;
 
 
 
@@ -144,6 +149,19 @@ public class CheckGostConfigAsync {
 
         for (ConfigItem limiter : gostConfig.getLimiters()) {
             safeExecute(() -> {
+                if (limiter.getName().startsWith(PRIVATE_PROXY_LIMITER_PREFIX)) {
+                    Long proxyId = Long.valueOf(limiter.getName().substring(PRIVATE_PROXY_LIMITER_PREFIX.length()));
+                    PrivateProxy proxy = privateProxyMapper.selectById(proxyId);
+                    boolean valid = proxy != null && proxy.getGrantedByUserId() != null
+                            && Objects.equals(proxy.getNodeId(), node.getId())
+                            && !List.of("deleted", "delete_pending", "error").contains(proxy.getState());
+                    if (!valid) {
+                        log.info("删除孤立的用户代理限流器: {} (节点: {})", limiter.getName(), node.getId());
+                        GostUtil.DeleteNamedLimiter(node.getId(), limiter.getName());
+                    }
+                    return;
+                }
+                if (!limiter.getName().matches("\\d+")) return;
                 SpeedLimit speedLimit = speedLimitService.getById(limiter.getName());
                 if (speedLimit == null) {
                     log.info("删除孤立的限流器: {} (节点: {})", limiter.getName(), node.getId());
@@ -172,7 +190,9 @@ public class CheckGostConfigAsync {
                 List<Long>  speedLimits_ids = new ArrayList<>();
                 if (limiters != null){
                     for (ConfigItem limiter : limiters) {
-                        limiters_ids.add(Long.valueOf(limiter.getName()));
+                        if (limiter.getName().matches("\\d+")) {
+                            limiters_ids.add(Long.valueOf(limiter.getName()));
+                        }
                     }
                 }
                 for (SpeedLimit speedLimit : speedLimits) {

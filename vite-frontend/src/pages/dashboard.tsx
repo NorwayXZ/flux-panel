@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import toast from 'react-hot-toast';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Boxes, CircleCheck, Clock3, Gauge, Network, Route, Server, ShieldAlert, Users } from 'lucide-react';
+import { ArrowRight, Boxes, CircleCheck, Clock3, Gauge, KeyRound, Network, Route, Server, ShieldAlert, Users } from 'lucide-react';
 
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
@@ -16,11 +16,13 @@ import {
   getMonitoringOverview,
   getNodeList,
   getPublishingPortGrants,
+  getPrivateProxies,
   getUserPackageInfo,
   type MonitoringAlertItem,
   type MonitoringOverview,
   type MonitoringResource,
   type PublishingPortGrant,
+  type PrivateProxyItem,
 } from "@/api";
 import type { User } from '@/types';
 
@@ -126,6 +128,7 @@ export default function DashboardPage() {
   const [userTunnels, setUserTunnels] = useState<UserTunnel[]>([]);
   const [sharedNodes, setSharedNodes] = useState<SharedNode[]>([]);
   const [sharedPortGrants, setSharedPortGrants] = useState<PublishingPortGrant[]>([]);
+  const [proxyGrants, setProxyGrants] = useState<PrivateProxyItem[]>([]);
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -144,6 +147,8 @@ export default function DashboardPage() {
   const orderedUserTunnels = tunnelPermissionOrder.sortItems(userTunnels, tunnel => tunnel.id);
   const portPermissionOrder = useCardOrder('dashboard-port-permission-cards', sharedPortGrants.map(grant => grant.id));
   const orderedPortGrants = portPermissionOrder.sortItems(sharedPortGrants, grant => grant.id);
+  const proxyPermissionOrder = useCardOrder('dashboard-private-proxy-grant-cards', proxyGrants.map(proxy => proxy.id));
+  const orderedProxyGrants = proxyPermissionOrder.sortItems(proxyGrants, proxy => proxy.id);
 
   // 检查有效期通知
   const checkExpirationNotifications = (userInfo: UserInfo, tunnels: UserTunnel[]) => {
@@ -242,6 +247,7 @@ export default function DashboardPage() {
     setUserTunnels([]);
     setSharedNodes([]);
     setSharedPortGrants([]);
+    setProxyGrants([]);
     setForwardList([]);
     setStatisticsFlows([]);
     setAdminOverview(EMPTY_ADMIN_OVERVIEW);
@@ -262,10 +268,11 @@ export default function DashboardPage() {
     try {
       const admin = localStorage.getItem('admin') === 'true';
       const shouldLoadSharedNodes = !admin;
-      const [res, nodeRes, portGrantRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
+      const [res, nodeRes, portGrantRes, proxyGrantRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
         getUserPackageInfo(),
         shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null),
         !admin ? getPublishingPortGrants() : Promise.resolve(null),
+        !admin ? getPrivateProxies() : Promise.resolve(null),
         admin ? getMonitoringOverview('24h') : Promise.resolve(null),
         admin ? getMonitoringAlerts({ status: 'open', page: 1, size: 5 }) : Promise.resolve(null),
         admin ? getForwardList() : Promise.resolve(null),
@@ -303,6 +310,12 @@ export default function DashboardPage() {
         toast.error(portGrantRes.msg || '获取端口资源失败');
       }
 
+      if (proxyGrantRes?.code === 0) {
+        setProxyGrants((proxyGrantRes.data || []).filter((proxy: PrivateProxyItem) => proxy.granted));
+      } else if (proxyGrantRes) {
+        toast.error(proxyGrantRes.msg || '获取代理授权失败');
+      }
+
       if (monitoringRes?.code === 0) setAdminOverview(monitoringRes.data || EMPTY_ADMIN_OVERVIEW);
       if (alertsRes?.code === 0) setAdminAlerts(alertsRes.data?.items || []);
       if (forwardsRes?.code === 0) setAdminForwards((forwardsRes.data || []) as AdminForward[]);
@@ -338,6 +351,15 @@ export default function DashboardPage() {
       return '无限制';
     }
     return value.toString();
+  };
+
+  const formatRemainingTime = (milliseconds?: number): string => {
+    if (milliseconds === undefined || milliseconds === null) return '永久';
+    if (milliseconds <= 0) return '已到期';
+    const days = Math.floor(milliseconds / 86400000);
+    if (days > 0) return `${days} 天`;
+    const hours = Math.max(1, Math.ceil(milliseconds / 3600000));
+    return `${hours} 小时`;
   };
 
   // 处理24小时流量统计数据
@@ -869,6 +891,36 @@ export default function DashboardPage() {
                </Card>
              </div>
            </div>
+         )}
+
+         {!isAdmin && (
+          <Card className="mb-6 border border-gray-200 shadow-md dark:border-default-200 lg:mb-8">
+            <CardHeader className="flex items-center justify-between gap-3 pb-3">
+              <div className="flex min-w-0 items-center gap-2"><KeyRound className="h-5 w-5 shrink-0 text-secondary" /><h2 className="text-lg font-semibold text-foreground lg:text-xl">代理协议</h2><span className="rounded-md bg-default-100 px-2 py-1 text-xs text-default-600">{proxyGrants.length} 个</span></div>
+              <button type="button" className="text-sm font-medium text-primary" onClick={() => navigate('/private-proxy')}>连接信息</button>
+            </CardHeader>
+            <CardBody className="pt-0">
+              {proxyGrants.length === 0 ? <div className="py-10 text-center text-sm text-default-500">暂无代理协议授权</div> : <SortableCardGrid
+                items={orderedProxyGrants}
+                getId={proxy => proxy.id}
+                onMove={proxyPermissionOrder.moveCard}
+                className="space-y-3"
+                renderItem={(proxy, dragHandle) => {
+                  const used = (proxy.inFlow || 0) + (proxy.outFlow || 0);
+                  return <div className={`rounded-lg border p-3 lg:p-4 ${proxy.available ? 'border-gray-200 bg-content1 dark:border-default-100' : 'border-danger-200 bg-danger-50/40 dark:border-danger-500/30 dark:bg-danger-500/5'}`}>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.2fr)_repeat(4,minmax(120px,1fr))_auto] lg:items-center">
+                      <div className="flex min-w-0 items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${proxy.available ? 'bg-secondary-100 text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300' : 'bg-danger-100 text-danger'}`}><KeyRound className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{proxy.name}</h3><span className={`rounded-md px-2 py-0.5 text-xs ${proxy.available ? 'bg-success-100 text-success-700 dark:bg-success-500/15 dark:text-success-300' : 'bg-danger-100 text-danger-700 dark:bg-danger-500/15 dark:text-danger-300'}`}>{proxy.available ? '可用' : '不可用'}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxy.proxyType.toUpperCase()} · {proxy.publicHost}:{proxy.listenPort}</p>{!proxy.available && <p className="mt-1 text-xs text-danger">{proxy.unavailableReason}</p>}</div></div>
+                      <div><p className="text-xs text-default-500">剩余流量</p><p className="mt-1 text-sm font-medium">{proxy.flowUnlimited === 1 ? '无限制' : formatFlow(proxy.remainingFlow || 0)}</p><p className="mt-1 text-xs text-default-500">已用 {formatFlow(used)}</p></div>
+                      <div><p className="text-xs text-default-500">剩余时间</p><p className="mt-1 text-sm font-medium">{formatRemainingTime(proxy.remainingTime)}</p></div>
+                      <div><p className="text-xs text-default-500">到期时间</p><p className="mt-1 text-sm font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div>
+                      <div><p className="text-xs text-default-500">速度限制</p><p className="mt-1 text-sm font-medium">{proxy.speedLimitMbps ? `${proxy.speedLimitMbps} Mbps` : '不限速'}</p><p className="mt-1 text-xs text-default-500">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日重置` : '流量不重置'}</p></div>
+                      <button type="button" className="shrink-0 text-sm font-medium text-primary" onClick={() => navigate('/private-proxy')}>查看</button>
+                    </div>
+                  </div>;
+                }}
+              />}
+            </CardBody>
+          </Card>
          )}
 
          {!isAdmin && (

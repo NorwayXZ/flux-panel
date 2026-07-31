@@ -206,7 +206,8 @@ public class PortLedgerService {
 
     private void addPrivateProxies(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
         for (PrivateProxy proxy : privateProxyMapper.selectList(new QueryWrapper<PrivateProxy>()
-                .notIn("state", "deleted", "expired", "error"))) {
+                .notIn("state", "deleted", "error")
+                .and(q -> q.ne("state", "expired").or().isNotNull("granted_by_user_id")))) {
             User owner = users.get(proxy.getUserId());
             String protocol = switch (proxy.getProxyType()) {
                 case "http" -> "HTTP";

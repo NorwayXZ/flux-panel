@@ -225,9 +225,9 @@ const entries: GuideEntry[] = [
     notes: ['避免为所有类别设置高频重复通知，否则线路波动时消息会过多。', '告警恢复表示监控状态恢复，不代表旧连接一定自动续上。'],
   },
   {
-    id: 'limits', category: 'system', title: '限速管理', path: '/limit', icon: Gauge, adminOnly: true,
+    id: 'limits', category: 'system', title: '用户限速预设', path: '/limit', icon: Gauge, adminOnly: true,
     summary: '创建可复用的速度限制规则并分配给业务资源。',
-    purpose: '限速管理用于控制带宽占用，避免单个用户或业务持续占满节点线路。它与用户资源流量额度是两个维度：限速控制瞬时速度，额度控制累计用量。',
+    purpose: '为普通用户的共享隧道准备可复用限速值。预设只在用户获得该隧道授权并选中后生效，不限制管理员自己使用同一隧道。',
     prerequisites: ['明确需要限制的带宽和适用资源。'],
     steps: ['新建限速规则并填写上传、下载等参数。', '在支持的节点、隧道、转发或用户资源配置中选择该规则。', '观察业务速度和流量，必要时调整规则。'],
     result: '被绑定资源按规则控制可用带宽。',

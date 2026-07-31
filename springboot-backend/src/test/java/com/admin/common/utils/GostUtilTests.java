@@ -42,4 +42,12 @@ class GostUtilTests {
         assertEquals("socks5", connector.getString("type"));
         assertFalse(connector.containsKey("auth"));
     }
+
+    @Test
+    void buildsNamedLimiterForDedicatedUserProxy() {
+        JSONObject limiter = GostUtil.createLimiterData("private-proxy-user-42", "12.5");
+
+        assertEquals("private-proxy-user-42", limiter.getString("name"));
+        assertEquals("$ 12.5MB 12.5MB", limiter.getJSONArray("limits").getString(0));
+    }
 }

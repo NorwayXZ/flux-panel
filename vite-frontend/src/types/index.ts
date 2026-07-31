@@ -133,6 +133,7 @@ export interface SpeedLimit {
   tunnelId: number;
   uploadSpeed: number;
   downloadSpeed: number;
+  speed?: number;
 }
 
 export interface Pagination {

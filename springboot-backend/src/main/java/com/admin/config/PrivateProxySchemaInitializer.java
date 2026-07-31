@@ -30,9 +30,24 @@ public class PrivateProxySchemaInitializer {
                     + "KEY idx_private_proxy_user (user_id,state), KEY idx_private_proxy_node_port (node_id,listen_port,state), "
                     + "KEY idx_private_proxy_expiry (state,expires_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("client_config", "text DEFAULT NULL AFTER admission_name");
+            ensureColumn("granted_by_user_id", "int DEFAULT NULL AFTER user_id");
+            ensureColumn("flow_limit", "bigint NOT NULL DEFAULT 0 AFTER out_flow");
+            ensureColumn("flow_unlimited", "tinyint NOT NULL DEFAULT 1 AFTER flow_limit");
+            ensureColumn("flow_reset_day", "tinyint NOT NULL DEFAULT 0 AFTER flow_unlimited");
+            ensureColumn("last_flow_reset_at", "bigint DEFAULT NULL AFTER flow_reset_day");
+            ensureColumn("speed_limit_mbps", "int DEFAULT NULL AFTER last_flow_reset_at");
+            ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {
             log.error("Private proxy storage initialization failed", e);
+        }
+    }
+
+    private void ensureIndex(String index, String columns) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.STATISTICS "
+                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'private_proxy' AND INDEX_NAME = ?", Integer.class, index);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("ALTER TABLE private_proxy ADD KEY `" + index + "` (" + columns + ")");
         }
     }
 

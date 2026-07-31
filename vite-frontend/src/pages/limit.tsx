@@ -239,7 +239,7 @@ export default function LimitPage() {
               onPress={handleAdd}
              
             >
-              新增
+              新增预设
             </Button>
         </div>
 
@@ -254,7 +254,7 @@ export default function LimitPage() {
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start w-full">
                     <div>
-                      <h3 className="font-semibold text-foreground">{rule.name}</h3>
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-foreground">{rule.name}</h3><Chip size="sm" variant="flat" color="secondary">授权用户</Chip></div>
                     </div>
                     <div className="flex items-center gap-1.5">
                       {dragHandle}

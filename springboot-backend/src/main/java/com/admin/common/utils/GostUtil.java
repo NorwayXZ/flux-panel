@@ -32,10 +32,17 @@ public class GostUtil {
     public static GostDto AddPrivateProxy(Long nodeId, String serviceName, String proxyType,
                                           String bindIp, Integer port, String username,
                                           String password, String admissionName) {
+        return AddPrivateProxy(nodeId, serviceName, proxyType, bindIp, port, username, password, admissionName, null);
+    }
+
+    public static GostDto AddPrivateProxy(Long nodeId, String serviceName, String proxyType,
+                                          String bindIp, Integer port, String username,
+                                          String password, String admissionName, String limiterName) {
         JSONObject service = new JSONObject();
         service.put("name", serviceName);
         service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
         if (StringUtils.isNotBlank(admissionName)) service.put("admission", admissionName);
+        if (StringUtils.isNotBlank(limiterName)) service.put("limiter", limiterName);
 
         JSONObject auth = new JSONObject();
         auth.put("username", username);
@@ -55,20 +62,31 @@ public class GostUtil {
 
     public static GostDto AddShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
                                                String cipher, String password, String admissionName) {
+        return AddShadowsocksProxy(nodeId, serviceName, bindIp, port, cipher, password, admissionName, null);
+    }
+
+    public static GostDto AddShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
+                                               String cipher, String password, String admissionName, String limiterName) {
         JSONArray services = new JSONArray();
         services.add(createAuthenticatedService(serviceName + "-tcp", bindIp, port, "ss", "tcp",
-                cipher, password, admissionName));
+                cipher, password, admissionName, limiterName));
         services.add(createAuthenticatedService(serviceName + "-udp", bindIp, port, "ssu", "udp",
-                cipher, password, admissionName));
+                cipher, password, admissionName, limiterName));
         return WebSocketServer.send_msg(nodeId, services, "AddService");
     }
 
     public static GostDto AddRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,
                                               Integer runtimePort, String admissionName) {
+        return AddRealityFrontend(nodeId, serviceName, bindIp, port, runtimePort, admissionName, null);
+    }
+
+    public static GostDto AddRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,
+                                              Integer runtimePort, String admissionName, String limiterName) {
         JSONObject service = new JSONObject();
         service.put("name", serviceName);
         service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
         if (StringUtils.isNotBlank(admissionName)) service.put("admission", admissionName);
+        if (StringUtils.isNotBlank(limiterName)) service.put("limiter", limiterName);
         JSONObject handler = new JSONObject();
         handler.put("type", "tcp");
         service.put("handler", handler);
@@ -83,11 +101,13 @@ public class GostUtil {
 
     private static JSONObject createAuthenticatedService(String name, String bindIp, Integer port,
                                                            String handlerType, String listenerType,
-                                                           String username, String password, String admissionName) {
+                                                           String username, String password, String admissionName,
+                                                           String limiterName) {
         JSONObject service = new JSONObject();
         service.put("name", name);
         service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
         if (StringUtils.isNotBlank(admissionName)) service.put("admission", admissionName);
+        if (StringUtils.isNotBlank(limiterName)) service.put("limiter", limiterName);
         JSONObject auth = new JSONObject();
         auth.put("username", username);
         auth.put("password", password);
@@ -501,6 +521,23 @@ public class GostUtil {
         return WebSocketServer.send_msg(node_id, req, "DeleteLimiters");
     }
 
+    public static GostDto AddNamedLimiter(Long nodeId, String name, String speed) {
+        return WebSocketServer.send_msg(nodeId, createLimiterData(name, speed), "AddLimiters");
+    }
+
+    public static GostDto UpdateNamedLimiter(Long nodeId, String name, String speed) {
+        JSONObject req = new JSONObject();
+        req.put("limiter", name);
+        req.put("data", createLimiterData(name, speed));
+        return WebSocketServer.send_msg(nodeId, req, "UpdateLimiters");
+    }
+
+    public static GostDto DeleteNamedLimiter(Long nodeId, String name) {
+        JSONObject req = new JSONObject();
+        req.put("limiter", name);
+        return WebSocketServer.send_msg(nodeId, req, "DeleteLimiters");
+    }
+
     public static GostDto AddService(Long node_id, String name, Integer in_port, Integer limiter, String remoteAddr, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName) {
         return AddService(node_id, name, in_port, limiter, remoteAddr, fow_type, tunnel, strategy, interfaceName, "tcp_udp", name);
     }
@@ -770,8 +807,12 @@ public class GostUtil {
     }
 
     private static JSONObject createLimiterData(Long name, String speed) {
+        return createLimiterData(name.toString(), speed);
+    }
+
+    static JSONObject createLimiterData(String name, String speed) {
         JSONObject data = new JSONObject();
-        data.put("name", name.toString());
+        data.put("name", name);
         JSONArray limits = new JSONArray();
         limits.add("$ " + speed + "MB " + speed + "MB");
         data.put("limits", limits);

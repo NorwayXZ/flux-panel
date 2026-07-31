@@ -28,6 +28,12 @@ public class PrivateProxy implements Serializable {
     private String lastError;
     private Long inFlow;
     private Long outFlow;
+    private Integer grantedByUserId;
+    private Long flowLimit;
+    private Integer flowUnlimited;
+    private Integer flowResetDay;
+    private Long lastFlowResetAt;
+    private Integer speedLimitMbps;
     private Long createdTime;
     private Long updatedTime;
 
@@ -36,4 +42,10 @@ public class PrivateProxy implements Serializable {
     @TableField(exist = false) private String ownerUserName;
     @TableField(exist = false) private Boolean nodeOnline;
     @TableField(exist = false) private Boolean passwordConfigured;
+    @TableField(exist = false) private Boolean granted;
+    @TableField(exist = false) private Boolean available;
+    @TableField(exist = false) private String unavailableReason;
+    @TableField(exist = false) private Long remainingFlow;
+    @TableField(exist = false) private Long remainingTime;
+    @TableField(exist = false) private Boolean speedLimitSupported;
 }

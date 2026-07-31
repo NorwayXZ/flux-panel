@@ -102,6 +102,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Resource
     @Lazy
     private ForwardMapper forwardMapper;
+
+    @Resource
+    @Lazy
+    private ForwardService forwardService;
     
     @Resource
     private UserTunnelMapper userTunnelMapper;
@@ -114,6 +118,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Resource
     private PortPoolGrantService portPoolGrantService;
+
+    @Resource
+    @Lazy
+    private PrivateProxyService privateProxyService;
     
     @Resource
     @Lazy
@@ -608,9 +616,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                             .eq("user_id", userId)).stream()
                     .collect(Collectors.toMap(UserTunnel::getTunnelId, Function.identity()));
             Set<Integer> retained = new HashSet<>();
+            Set<Integer> speedChangedTunnelIds = new HashSet<>();
             for (UserTunnelProvisionDto dto : tunnelPermissions) {
                 retained.add(dto.getTunnelId());
                 UserTunnel permission = existing.getOrDefault(dto.getTunnelId(), new UserTunnel());
+                Integer previousSpeedId = permission.getSpeedId();
                 permission.setUserId(userId);
                 permission.setTunnelId(dto.getTunnelId());
                 permission.setFlow(valueOrZero(dto.getFlow()));
@@ -621,6 +631,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 permission.setExpTime(dto.getExpTime());
                 permission.setSpeedId(dto.getSpeedId());
                 permission.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
+                if (!Objects.equals(previousSpeedId, dto.getSpeedId())) {
+                    speedChangedTunnelIds.add(dto.getTunnelId());
+                }
                 if (permission.getId() == null) {
                     permission.setInFlow(0L);
                     permission.setOutFlow(0L);
@@ -631,6 +644,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             }
             existing.values().stream().filter(item -> !retained.contains(item.getTunnelId()))
                     .forEach(item -> userTunnelMapper.deleteById(item.getId()));
+            speedChangedTunnelIds.forEach(tunnelId -> refreshUserTunnelForwards(userId, tunnelId));
         }
 
         if (nodePermissions != null) {
@@ -661,6 +675,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             }
             existing.values().stream().filter(item -> !retained.contains(item.getNodeId()))
                     .forEach(item -> userNodeMapper.deleteById(item.getId()));
+        }
+    }
+
+    private void refreshUserTunnelForwards(Integer userId, Integer tunnelId) {
+        List<Forward> forwards = forwardService.list(new QueryWrapper<Forward>()
+                .eq("user_id", userId)
+                .eq("tunnel_id", tunnelId));
+        for (Forward forward : forwards) {
+            forwardService.updateForwardA(forward);
         }
     }
 
@@ -765,6 +788,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private void deleteUserRelatedData(Long userId) {
         // Active published services keep their grants reserved until explicitly removed.
         portPoolGrantService.syncPermissions(userId.intValue(), Collections.emptyList());
+        privateProxyService.deleteForUser(userId.intValue());
         // 1. 删除用户的所有转发和对应的Gost服务
         deleteUserForwardsAndGostServices(userId);
         

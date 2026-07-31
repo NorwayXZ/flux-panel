@@ -58,12 +58,20 @@ import {
   removeUserNode,
   getPublishingPortPools,
   getPublishingPortGrants,
+  createPrivateProxyGrant,
+  deletePrivateProxy,
+  getPrivateProxyGrants,
+  resetPrivateProxyGrantFlow,
+  updatePrivateProxyGrant,
+  type PrivateProxyItem,
+  type PrivateProxyType,
   type PublishingPortPool
 } from '@/api';
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from '@/components/icons';
 import { SortableCardGrid } from '@/components/sortable-card-grid';
 import { useCardOrder } from '@/hooks/use-card-order';
 import { parseDate } from "@internationalized/date";
+import { KeyRound, RotateCcw } from 'lucide-react';
 
 
 // 工具函数
@@ -146,6 +154,36 @@ interface PortEditorState {
   endPort: number;
 }
 
+type GrantProxyType = Extract<PrivateProxyType, 'socks5' | 'http' | 'shadowsocks' | 'vless_reality'>;
+
+interface ProxyGrantEditorState {
+  id?: number;
+  name: string;
+  nodeId: number | null;
+  proxyType: GrantProxyType;
+  listenPort: number;
+  authUsername: string;
+  authPassword: string;
+  cipher: 'aes-128-gcm' | 'aes-256-gcm' | 'chacha20-ietf-poly1305';
+  realityServerName: string;
+  flowLimit: number;
+  flowUnlimited: boolean;
+  flowResetDay: number;
+  permanent: boolean;
+  expiresAt: Date | null;
+  speedUnlimited: boolean;
+  speedLimitMbps: number;
+}
+
+const emptyProxyGrant = (): ProxyGrantEditorState => ({
+  name: '', nodeId: null, proxyType: 'socks5', listenPort: 0,
+  authUsername: '', authPassword: '', cipher: 'aes-256-gcm', realityServerName: 'www.cloudflare.com',
+  flowLimit: 100, flowUnlimited: false, flowResetDay: 0,
+  permanent: true, expiresAt: null, speedUnlimited: true, speedLimitMbps: 100,
+});
+
+const randomProxySecret = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), value => value.toString(16).padStart(2, '0')).join('');
+
 export default function UserPage() {
   // 状态管理
   const [users, setUsers] = useState<User[]>([]);
@@ -190,6 +228,9 @@ export default function UserPage() {
   const [pendingPortPoolId, setPendingPortPoolId] = useState<number | null>(null);
   const [resourceEditor, setResourceEditor] = useState<ResourceEditorState | null>(null);
   const [portEditor, setPortEditor] = useState<PortEditorState | null>(null);
+  const [proxyGrants, setProxyGrants] = useState<PrivateProxyItem[]>([]);
+  const [proxyGrantEditor, setProxyGrantEditor] = useState<ProxyGrantEditorState | null>(null);
+  const [proxyGrantSaving, setProxyGrantSaving] = useState(false);
 
   // 隧道权限管理相关状态
   const { isOpen: isTunnelModalOpen, onClose: onTunnelModalClose } = useDisclosure();
@@ -342,6 +383,8 @@ export default function UserPage() {
     setPendingPortPoolId(null);
     setResourceEditor(null);
     setPortEditor(null);
+    setProxyGrants([]);
+    setProxyGrantEditor(null);
     setUserForm({
       user: '',
       pwd: '',
@@ -370,18 +413,20 @@ export default function UserPage() {
     let tunnelResponse: any;
     let nodeResponse: any;
     let portResponse: any;
+    let proxyResponse: any;
     try {
-      [tunnelResponse, nodeResponse, portResponse] = await Promise.all([
+      [tunnelResponse, nodeResponse, portResponse, proxyResponse] = await Promise.all([
         getUserTunnelList({ userId: user.id }),
         getUserNodeList(user.id),
-        getPublishingPortGrants(user.id)
+        getPublishingPortGrants(user.id),
+        getPrivateProxyGrants(user.id)
       ]);
     } catch {
       toast.error('加载用户资源权限失败，请重试');
       return;
     }
-    if (tunnelResponse.code !== 0 || nodeResponse.code !== 0 || portResponse.code !== 0) {
-      toast.error(tunnelResponse.msg || nodeResponse.msg || portResponse.msg || '加载用户资源权限失败');
+    if (tunnelResponse.code !== 0 || nodeResponse.code !== 0 || portResponse.code !== 0 || proxyResponse.code !== 0) {
+      toast.error(tunnelResponse.msg || nodeResponse.msg || portResponse.msg || proxyResponse.msg || '加载用户资源权限失败');
       return;
     }
     const tunnelPermissions: UserTunnelProvision[] = (tunnelResponse.data || []).map((item: any) => ({
@@ -418,6 +463,7 @@ export default function UserPage() {
       usedPorts: item.usedPorts || 0,
       availablePorts: item.availablePorts || 0
     }));
+    setProxyGrants(proxyResponse.data || []);
     setUserForm({
       id: user.id,
       name: user.name,
@@ -837,6 +883,106 @@ export default function UserPage() {
       : { ...prev, nodePermissions: prev.nodePermissions.filter(item => item.nodeId !== resourceId) });
   };
 
+  const reloadProxyGrants = async () => {
+    if (!userForm.id) return;
+    const response = await getPrivateProxyGrants(userForm.id);
+    if (response.code === 0) setProxyGrants(response.data || []);
+    else toast.error(response.msg || '获取代理授权失败');
+  };
+
+  const editProxyGrant = (proxy: PrivateProxyItem) => {
+    setProxyGrantEditor({
+      id: proxy.id,
+      name: proxy.name,
+      nodeId: proxy.nodeId,
+      proxyType: proxy.proxyType as GrantProxyType,
+      listenPort: proxy.listenPort,
+      authUsername: '',
+      authPassword: '',
+      cipher: 'aes-256-gcm',
+      realityServerName: 'www.cloudflare.com',
+      flowLimit: proxy.flowLimit || 0,
+      flowUnlimited: proxy.flowUnlimited === 1,
+      flowResetDay: proxy.flowResetDay || 0,
+      permanent: !proxy.expiresAt,
+      expiresAt: proxy.expiresAt ? new Date(proxy.expiresAt) : null,
+      speedUnlimited: !proxy.speedLimitMbps,
+      speedLimitMbps: proxy.speedLimitMbps || 100,
+    });
+  };
+
+  const saveProxyGrant = async () => {
+    if (!proxyGrantEditor || !userForm.id) return;
+    if (!proxyGrantEditor.permanent && !proxyGrantEditor.expiresAt) return toast.error('请选择代理到期时间');
+    if (!proxyGrantEditor.flowUnlimited && proxyGrantEditor.flowLimit <= 0) return toast.error('流量额度必须大于 0');
+    if (!proxyGrantEditor.speedUnlimited && proxyGrantEditor.speedLimitMbps <= 0) return toast.error('限速值必须大于 0');
+    if (!proxyGrantEditor.id) {
+      if (!proxyGrantEditor.name.trim() || !proxyGrantEditor.nodeId || proxyGrantEditor.listenPort < 1 || proxyGrantEditor.listenPort > 65535) {
+        return toast.error('请填写代理名称、节点和有效端口');
+      }
+      if ((proxyGrantEditor.proxyType === 'socks5' || proxyGrantEditor.proxyType === 'http')
+          && (proxyGrantEditor.authUsername.trim().length < 3 || proxyGrantEditor.authPassword.length < 8)) {
+        return toast.error('用户名至少 3 位，密码至少 8 位');
+      }
+      if (proxyGrantEditor.proxyType === 'shadowsocks' && proxyGrantEditor.authPassword.length < 8) {
+        return toast.error('Shadowsocks 密码至少 8 位');
+      }
+    }
+    setProxyGrantSaving(true);
+    try {
+      const response = proxyGrantEditor.id
+        ? await updatePrivateProxyGrant({
+            id: proxyGrantEditor.id,
+            flowLimit: proxyGrantEditor.flowLimit,
+            flowUnlimited: proxyGrantEditor.flowUnlimited,
+            flowResetDay: proxyGrantEditor.flowResetDay,
+            permanent: proxyGrantEditor.permanent,
+            expiresAt: proxyGrantEditor.expiresAt?.getTime(),
+            speedLimitMbps: proxyGrantEditor.speedUnlimited ? undefined : proxyGrantEditor.speedLimitMbps,
+          })
+        : await createPrivateProxyGrant({
+            targetUserId: userForm.id,
+            name: proxyGrantEditor.name.trim(),
+            nodeId: proxyGrantEditor.nodeId!,
+            proxyType: proxyGrantEditor.proxyType,
+            listenPort: proxyGrantEditor.listenPort,
+            authUsername: proxyGrantEditor.authUsername.trim(),
+            authPassword: proxyGrantEditor.authPassword,
+            cipher: proxyGrantEditor.cipher,
+            realityServerName: proxyGrantEditor.realityServerName,
+            permanent: proxyGrantEditor.permanent,
+            expiresAt: proxyGrantEditor.expiresAt?.getTime(),
+            flowLimit: proxyGrantEditor.flowLimit,
+            flowUnlimited: proxyGrantEditor.flowUnlimited,
+            flowResetDay: proxyGrantEditor.flowResetDay,
+            speedLimitMbps: proxyGrantEditor.speedUnlimited ? undefined : proxyGrantEditor.speedLimitMbps,
+          });
+      if (response.code !== 0) return toast.error(response.msg || '保存代理授权失败');
+      toast.success(proxyGrantEditor.id ? '代理授权已更新' : '代理授权已创建');
+      setProxyGrantEditor(null);
+      await reloadProxyGrants();
+    } finally {
+      setProxyGrantSaving(false);
+    }
+  };
+
+  const removeProxyGrant = async (proxy: PrivateProxyItem) => {
+    if (!window.confirm(`确定删除代理授权“${proxy.name}”吗？`)) return;
+    const response = await deletePrivateProxy(proxy.id);
+    if (response.code === 0) {
+      toast.success(response.msg || '代理授权已删除');
+      await reloadProxyGrants();
+    } else toast.error(response.msg || '删除代理授权失败');
+  };
+
+  const resetProxyGrantFlow = async (proxy: PrivateProxyItem) => {
+    const response = await resetPrivateProxyGrantFlow(proxy.id);
+    if (response.code === 0) {
+      toast.success('代理流量已重置');
+      await reloadProxyGrants();
+    } else toast.error(response.msg || '重置代理流量失败');
+  };
+
   const resourceEditorName = resourceEditor?.kind === 'tunnel'
     ? adminTunnels.find(item => item.id === resourceEditor.resourceId)?.name
     : adminNodes.find(item => item.id === resourceEditor?.resourceId)?.name;
@@ -1057,12 +1203,13 @@ export default function UserPage() {
         <ModalContent>
           <ModalHeader className="flex flex-col gap-3 border-b border-divider">
             <span>{isEdit ? '编辑用户与资源额度' : '新增用户与资源额度'}</span>
-            <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-5">
+            <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-3 lg:grid-cols-6">
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总流量</span><p className="mt-0.5 font-semibold text-foreground">{totalQuotaUnlimited ? '无限制' : `${totalQuota} GB`}</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">汇总转发名额</span><p className="mt-0.5 font-semibold text-foreground">{totalForwardUnlimited ? '无限制' : `${totalForwardQuota} 个`}</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享隧道</span><p className="mt-0.5 font-semibold text-foreground">{userForm.tunnelPermissions.length} 条</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享节点</span><p className="mt-0.5 font-semibold text-foreground">{userForm.nodePermissions.length} 台</p></div>
               <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">共享端口</span><p className="mt-0.5 font-semibold text-foreground">{totalSharedPorts} 个</p></div>
+              <div className="rounded-md bg-default-100 px-3 py-2"><span className="text-default-500">代理授权</span><p className="mt-0.5 font-semibold text-foreground">{proxyGrants.length} 个</p></div>
             </div>
           </ModalHeader>
           <ModalBody className="py-4">
@@ -1112,6 +1259,7 @@ export default function UserPage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-2"><p className="truncate text-sm font-medium">{tunnel?.name || `隧道 ${permission.tunnelId}`}</p><Chip size="sm" variant="flat">{tunnel?.flow === 1 ? '单向' : '双向'}</Chip></div>
                               <p className="mt-1 text-xs text-default-500">{permission.flowUnlimited ? '流量不限' : `${permission.flow} GB`} · {permission.forwardUnlimited ? '转发不限' : `${permission.num} 个转发`} · {permission.flowResetTime ? `每月 ${permission.flowResetTime} 日重置` : '不重置'}</p>
+                              <p className="mt-1 text-xs text-default-500">该用户限速：{permission.speedId ? `${speedLimits.find(item => item.id === permission.speedId)?.name || '已配置'}` : '不限速'} · 不影响管理员使用</p>
                             </div>
                             <div className="flex shrink-0 gap-1">
                               <Button isIconOnly size="sm" variant="light" color="primary" title="配置隧道额度" aria-label="配置隧道额度" onPress={() => openResourceEditor('tunnel', permission.tunnelId)}><EditIcon className="h-4 w-4" /></Button>
@@ -1121,6 +1269,30 @@ export default function UserPage() {
                         })}
                       </div>
                     )}
+                  </section>
+
+                  <section className="space-y-3 border-t border-divider pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div><h3 className="text-sm font-semibold">私人代理授权</h3><p className="mt-1 text-xs text-default-500">{proxyGrants.length} 个独立代理实例</p></div>
+                      <Button size="sm" color="success" variant="flat" isDisabled={!isEdit || !userForm.id} onPress={() => setProxyGrantEditor(emptyProxyGrant())}>新增代理授权</Button>
+                    </div>
+                    {!isEdit && <div className="rounded-md border border-dashed border-divider px-4 py-5 text-center text-sm text-default-500">创建用户并保存后，可在编辑页面分配私人代理。</div>}
+                    {isEdit && proxyGrants.length === 0 && <div className="rounded-md border border-dashed border-divider px-4 py-5 text-center text-sm text-default-500">尚未授权私人代理</div>}
+                    {isEdit && proxyGrants.length > 0 && <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      {proxyGrants.map(proxy => {
+                        const used = (proxy.inFlow || 0) + (proxy.outFlow || 0);
+                        const quota = (proxy.flowLimit || 0) * 1024 * 1024 * 1024;
+                        const stateColor = proxy.available ? 'success' : proxy.state === 'paused' ? 'warning' : 'danger';
+                        return <div key={proxy.id} className="rounded-md border border-divider px-3 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{proxy.name}</p><Chip size="sm" variant="flat" color={stateColor}>{proxy.available ? '可用' : proxy.unavailableReason || '不可用'}</Chip></div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxy.proxyType.toUpperCase()} · {proxy.publicHost}:{proxy.listenPort}</p></div>
+                            <div className="flex shrink-0 gap-1"><Button isIconOnly size="sm" variant="light" color="primary" aria-label="编辑代理授权" title="编辑代理授权" onPress={() => editProxyGrant(proxy)}><EditIcon className="h-4 w-4" /></Button><Button isIconOnly size="sm" variant="light" color="warning" aria-label="重置代理流量" title="重置代理流量" onPress={() => resetProxyGrantFlow(proxy)}><RotateCcw className="h-4 w-4" /></Button><Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除代理授权" title="删除代理授权" onPress={() => removeProxyGrant(proxy)}><DeleteIcon className="h-4 w-4" /></Button></div>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"><div><p className="text-default-500">流量</p><p className="mt-1 font-medium">{proxy.flowUnlimited === 1 ? '无限制' : `${formatFlow(used)} / ${proxy.flowLimit || 0} GB`}</p></div><div><p className="text-default-500">限速</p><p className="mt-1 font-medium">{proxy.speedLimitMbps ? `${proxy.speedLimitMbps} Mbps` : '不限速'}</p></div><div><p className="text-default-500">重置</p><p className="mt-1 font-medium">{proxy.flowResetDay ? `每月 ${proxy.flowResetDay} 日` : '不重置'}</p></div><div><p className="text-default-500">到期</p><p className="mt-1 font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div></div>
+                          {proxy.flowUnlimited !== 1 && <Progress className="mt-3" size="sm" value={quota > 0 ? Math.min(100, used / quota * 100) : 100} color={proxy.available ? 'primary' : 'danger'} />}
+                        </div>;
+                      })}
+                    </div>}
                   </section>
 
                   <section className="space-y-3 border-t border-divider pt-4">
@@ -1232,6 +1404,39 @@ export default function UserPage() {
         </ModalContent>
       </Modal>
 
+      <Modal isOpen={proxyGrantEditor !== null} onClose={() => setProxyGrantEditor(null)} size="3xl" scrollBehavior="inside" backdrop="opaque" classNames={{ base: 'max-w-[94vw]' }}>
+        <ModalContent>
+          <ModalHeader className="border-b border-divider">{proxyGrantEditor?.id ? '编辑私人代理授权' : '新增私人代理授权'}</ModalHeader>
+          <ModalBody className="py-5">
+            {proxyGrantEditor && <div className="space-y-5">
+              {proxyGrantEditor.id ? <div className="grid grid-cols-2 gap-3 rounded-md bg-default-100 px-4 py-3 text-sm sm:grid-cols-4"><div><p className="text-xs text-default-500">代理</p><p className="mt-1 truncate font-medium">{proxyGrantEditor.name}</p></div><div><p className="text-xs text-default-500">协议</p><p className="mt-1 font-medium">{proxyGrantEditor.proxyType.toUpperCase()}</p></div><div><p className="text-xs text-default-500">节点</p><p className="mt-1 truncate font-medium">{adminNodes.find(node => node.id === proxyGrantEditor.nodeId)?.name}</p></div><div><p className="text-xs text-default-500">端口</p><p className="mt-1 font-mono font-medium">{proxyGrantEditor.listenPort}</p></div></div> : <>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Input label="授权代理名称" value={proxyGrantEditor.name} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, name: value } : prev)} />
+                  <Select label="服务器节点" selectedKeys={proxyGrantEditor.nodeId ? [String(proxyGrantEditor.nodeId)] : []} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, nodeId: Number(Array.from(keys)[0]) || null } : prev)}>
+                    {adminNodes.filter(node => node.status === 1).map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · {node.serverIp || node.ip || '未设置地址'} · {node.portSta || 1}-{node.portEnd || 65535}</SelectItem>)}
+                  </Select>
+                  <Select label="代理协议" selectedKeys={[proxyGrantEditor.proxyType]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, proxyType: String(Array.from(keys)[0]) as GrantProxyType } : prev)}>
+                    <SelectItem key="socks5">SOCKS5</SelectItem><SelectItem key="http">HTTP</SelectItem><SelectItem key="shadowsocks">Shadowsocks</SelectItem><SelectItem key="vless_reality">VLESS + REALITY</SelectItem>
+                  </Select>
+                  <Input label="监听端口" type="number" min={1} max={65535} value={String(proxyGrantEditor.listenPort || '')} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, listenPort: Number(value) || 0 } : prev)} />
+                  {(proxyGrantEditor.proxyType === 'socks5' || proxyGrantEditor.proxyType === 'http') && <><Input label="代理用户名" value={proxyGrantEditor.authUsername} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authUsername: value } : prev)} /><Input label="代理密码" type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成代理密码" title="生成代理密码" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} /></>}
+                  {proxyGrantEditor.proxyType === 'shadowsocks' && <><Select label="加密方式" selectedKeys={[proxyGrantEditor.cipher]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, cipher: String(Array.from(keys)[0]) as ProxyGrantEditorState['cipher'] } : prev)}><SelectItem key="aes-256-gcm">AES-256-GCM</SelectItem><SelectItem key="aes-128-gcm">AES-128-GCM</SelectItem><SelectItem key="chacha20-ietf-poly1305">ChaCha20-IETF-Poly1305</SelectItem></Select><Input label="连接密码" type="password" value={proxyGrantEditor.authPassword} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: value } : prev)} endContent={<Button isIconOnly size="sm" variant="light" aria-label="生成连接密码" title="生成连接密码" onPress={() => setProxyGrantEditor(prev => prev ? { ...prev, authPassword: randomProxySecret() } : prev)}><KeyRound className="h-4 w-4" /></Button>} /></>}
+                  {proxyGrantEditor.proxyType === 'vless_reality' && <Select className="md:col-span-2" label="REALITY 伪装站" selectedKeys={[proxyGrantEditor.realityServerName]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, realityServerName: String(Array.from(keys)[0]) } : prev)}><SelectItem key="www.cloudflare.com">Cloudflare</SelectItem><SelectItem key="www.google.com">Google</SelectItem></Select>}
+                </div>
+              </>}
+
+              <div className="grid grid-cols-1 gap-4 border-t border-divider pt-5 md:grid-cols-2">
+                <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.flowUnlimited} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, flowUnlimited: value } : prev)}>流量无限制</Switch><Input label="流量额度 (GB)" type="number" min={1} isDisabled={proxyGrantEditor.flowUnlimited} value={String(proxyGrantEditor.flowLimit)} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, flowLimit: Number(value) || 0 } : prev)} /></div>
+                <Select label="流量重置日期" selectedKeys={[String(proxyGrantEditor.flowResetDay)]} onSelectionChange={keys => setProxyGrantEditor(prev => prev ? { ...prev, flowResetDay: Number(Array.from(keys)[0]) || 0 } : prev)}>{FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}</Select>
+                <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.speedUnlimited} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedUnlimited: value } : prev)}>不限制速度</Switch><Input label="该用户限速 (Mbps)" type="number" min={1} isDisabled={proxyGrantEditor.speedUnlimited} value={String(proxyGrantEditor.speedLimitMbps)} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, speedLimitMbps: Number(value) || 0 } : prev)} /></div>
+                <div className="space-y-2"><Switch size="sm" isSelected={proxyGrantEditor.permanent} onValueChange={value => setProxyGrantEditor(prev => prev ? { ...prev, permanent: value, expiresAt: value ? null : new Date(Date.now() + 30 * 86400000) } : prev)}>永久有效</Switch>{!proxyGrantEditor.permanent && proxyGrantEditor.expiresAt && <DatePicker label="代理到期时间" value={parseDate(proxyGrantEditor.expiresAt.toISOString().split('T')[0]) as any} onChange={date => date && setProxyGrantEditor(prev => prev ? { ...prev, expiresAt: new Date(date.year, date.month - 1, date.day, 23, 59, 59) } : prev)} showMonthAndYearPickers />}</div>
+              </div>
+            </div>}
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setProxyGrantEditor(null)}>取消</Button><Button color="primary" isLoading={proxyGrantSaving} onPress={saveProxyGrant}>保存授权</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
       <Modal
         isOpen={resourceEditor !== null}
         onClose={() => setResourceEditor(null)}
@@ -1263,6 +1468,12 @@ export default function UserPage() {
                 <Select label="流量重置日期" selectedKeys={[String(resourceEditor.flowResetTime ?? 0)]} onSelectionChange={(keys) => setResourceEditor(prev => prev ? { ...prev, flowResetTime: Number(Array.from(keys)[0] ?? 0) } : prev)}>
                   {FLOW_RESET_OPTIONS.map(option => <SelectItem key={option.key} textValue={option.label}>{option.label}</SelectItem>)}
                 </Select>
+                {resourceEditor.kind === 'tunnel' && <Select label="该用户限速" selectedKeys={[resourceEditor.speedId ? String(resourceEditor.speedId) : 'none']} onSelectionChange={keys => setResourceEditor(prev => prev ? { ...prev, speedId: String(Array.from(keys)[0]) === 'none' ? null : Number(Array.from(keys)[0]) } : prev)}>
+                  {[
+                    <SelectItem key="none" textValue="不限速">不限速</SelectItem>,
+                    ...speedLimits.filter(item => item.tunnelId === resourceEditor.resourceId).map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name}{item.speed ? ` · ${item.speed} Mbps` : ''}</SelectItem>)
+                  ]}
+                </Select>}
                 <div className="space-y-2">
                   <Switch size="sm" isSelected={resourceEditor.expTime === null} onValueChange={(unlimited) => setResourceEditor(prev => prev ? { ...prev, expTime: unlimited ? null : new Date(Date.now() + 30 * 86400000) } : prev)}>权限永不过期</Switch>
                   {resourceEditor.expTime && <DatePicker label="权限到期时间" value={parseDate(resourceEditor.expTime.toISOString().split('T')[0]) as any} onChange={(date) => date && setResourceEditor(prev => prev ? { ...prev, expTime: new Date(date.year, date.month - 1, date.day, 23, 59, 59) } : prev)} showMonthAndYearPickers />}

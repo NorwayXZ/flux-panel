@@ -71,6 +71,7 @@ const stateMeta: Record<PrivateProxyItem['state'], { label: string; color: 'succ
   active: { label: '运行中', color: 'success' }, paused: { label: '已暂停', color: 'warning' },
   provisioning: { label: '配置中', color: 'default' }, error: { label: '配置失败', color: 'danger' },
   delete_pending: { label: '待清理', color: 'warning' }, expired: { label: '已到期', color: 'default' },
+  quota_exhausted: { label: '流量用尽', color: 'danger' },
 };
 
 const formatBytes = (value = 0) => {
@@ -87,6 +88,7 @@ const copyText = async (value: string, label: string) => {
 };
 
 export default function PrivateProxyPage() {
+  const isAdmin = localStorage.getItem('admin') === 'true';
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -250,17 +252,17 @@ export default function PrivateProxyPage() {
                   const meta = stateMeta[item.state];
                   const protocol = protocolMeta[item.proxyType];
                   return <div key={item.id} className="grid min-w-0 gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1.1fr_1fr_auto] lg:items-center">
-                    <div className="min-w-0"><div className="flex min-w-0 flex-wrap items-center gap-2 font-medium"><span className="min-w-0 break-all">{item.name}</span><Chip className="flex-none" size="sm" variant="flat" color={meta.color}>{meta.label}</Chip></div><div className="mt-1 break-words text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 break-words text-xs text-default-500">{isAdvancedRuntime(item.proxyType) ? '运行时流量统计暂未启用' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div></div>
+                    <div className="min-w-0"><div className="flex min-w-0 flex-wrap items-center gap-2 font-medium"><span className="min-w-0 break-all">{item.name}</span><Chip className="flex-none" size="sm" variant="flat" color={meta.color}>{meta.label}</Chip>{item.granted && <Chip className="flex-none" size="sm" variant="flat" color="secondary">管理员授权</Chip>}</div><div className="mt-1 break-words text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 break-words text-xs text-default-500">{isAdvancedRuntime(item.proxyType) ? '运行时流量统计暂未启用' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div>{item.granted && <div className="mt-1 break-words text-xs text-default-500">{item.flowUnlimited === 1 ? '流量不限' : `剩余 ${formatBytes(item.remainingFlow)}`} · {item.speedLimitMbps ? `${item.speedLimitMbps} Mbps` : '不限速'} · {item.flowResetDay ? `每月 ${item.flowResetDay} 日重置` : '不重置'}</div>}</div>
                     <div className="min-w-0"><div className="break-all font-mono text-sm">{item.publicHost || '未设置'}:{item.listenPort}</div><div className="mt-1 text-xs text-default-500">{['hysteria2', 'tuic', 'wireguard'].includes(item.proxyType) ? 'UDP' : 'TCP'}</div></div>
                     <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
                     <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
                     <div className="flex gap-1">
                       <Button isIconOnly size="sm" variant="light" aria-label={`查看 ${item.name} 连接信息`} title="连接信息" isLoading={configLoading} onPress={() => showClientConfig(item)}><KeyRound size={17} /></Button>
-                      {item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label={`暂停 ${item.name}`} title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}
-                      {item.state === 'paused' && <Button isIconOnly size="sm" variant="light" color="success" aria-label={`恢复 ${item.name}`} title="恢复代理" onPress={() => control(item, 'resume')}><Play size={17} /></Button>}
-                      <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`删除 ${item.name}`} title="删除代理" onPress={() => control(item, 'delete')}><Trash2 size={17} /></Button>
+                      {(isAdmin || !item.granted) && item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label={`暂停 ${item.name}`} title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}
+                      {(isAdmin || !item.granted) && item.state === 'paused' && <Button isIconOnly size="sm" variant="light" color="success" aria-label={`恢复 ${item.name}`} title="恢复代理" onPress={() => control(item, 'resume')}><Play size={17} /></Button>}
+                      {(isAdmin || !item.granted) && <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`删除 ${item.name}`} title="删除代理" onPress={() => control(item, 'delete')}><Trash2 size={17} /></Button>}
                     </div>
-                    {item.lastError && <div className="text-xs text-danger lg:col-span-5">{item.lastError}</div>}
+                    {(item.unavailableReason || item.lastError) && <div className="text-xs text-danger lg:col-span-5">{item.unavailableReason || item.lastError}</div>}
                   </div>;
                 })}
               </div>

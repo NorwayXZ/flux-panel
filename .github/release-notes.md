@@ -512,3 +512,19 @@
 - Each collapsed node row shows connectivity, public address, protocol summary, active count, attention count, and total proxy count.
 - Expanded rows retain connection export, pause, resume, delete, expiry, access control, and per-proxy error details.
 - This is a panel-only presentation change. Agent `2.38.0`, listeners, ports, tunnels, forwards, proxy runtimes, and existing test instances are not restarted or rewritten.
+
+## 2.39.0 Per-user tunnel limits and private proxy grants
+
+- Reframes the standalone limiter page as **User limiter presets** and exposes the matching preset directly in each shared-tunnel quota editor. A selected limiter applies only to that ordinary user's forwarding services; administrator traffic on the same tunnel remains unlimited by that grant.
+- Reloads only the affected user's existing forwards when an integrated user edit changes the tunnel limiter, so a saved limit takes effect immediately without rebuilding unrelated administrator or user services.
+- Adds administrator-created, dedicated SOCKS5, HTTP, Shadowsocks, and VLESS+REALITY proxy grants for ordinary users with independent bidirectional traffic quota, monthly reset day, permanent or fixed expiry, and Mbps rate limit.
+- Pauses only the granted proxy when its quota is exhausted or its authorization expires. Offline nodes retain the port and retry the required pause or deletion after reconnecting; extending the grant or resetting its flow resumes the same instance.
+- Adds ordinary-user dashboard cards for remaining and used traffic, remaining time, expiry, reset schedule, speed, and a concise unavailable reason. Granted users can read connection details but cannot pause or delete administrator-managed instances.
+- Keeps grant instances out of shared-node forward-slot and traffic-quota accounting because their dedicated grant is the governing quota. Deleting a user also removes their proxy instances or queues cleanup while a node is offline.
+
+### Upgrade and rollback impact
+
+- This is a panel-only release; Agent `2.38.0` remains current. Existing private proxies, test proxies, listeners, tunnels, forwards, users, and administrator traffic are not restarted or rewritten during upgrade.
+- Adds defaulted/nullable grant columns and one index to `private_proxy`. Startup migration is idempotent, and [`migrations/20260731_private_proxy_grants.sql`](../migrations/20260731_private_proxy_grants.sql) is available for manual maintenance.
+- Dedicated grants consume one real node port each. Traffic limiting is available only for GOST-metered SOCKS5, HTTP, Shadowsocks, and VLESS+REALITY; unsupported advanced protocols are rejected instead of receiving ineffective limits.
+- Before rollback, delete grants created in `2.39.0` and wait for offline-node cleanup when possible. Then run `sudo /usr/local/sbin/flux-panel-manager rollback`; the previous panel ignores the additive columns but cannot manage grant quotas or their dedicated limiter objects.

@@ -194,11 +194,23 @@ export interface PrivateProxyItem {
   authUsername: string;
   passwordConfigured: boolean;
   allowedCidrs?: string;
-  state: 'provisioning' | 'active' | 'paused' | 'error' | 'delete_pending' | 'expired';
+  state: 'provisioning' | 'active' | 'paused' | 'error' | 'delete_pending' | 'expired' | 'quota_exhausted';
   expiresAt?: number;
   lastError?: string;
   inFlow?: number;
   outFlow?: number;
+  grantedByUserId?: number;
+  granted?: boolean;
+  flowLimit?: number;
+  flowUnlimited?: number;
+  flowResetDay?: number;
+  lastFlowResetAt?: number;
+  speedLimitMbps?: number;
+  speedLimitSupported?: boolean;
+  remainingFlow?: number;
+  remainingTime?: number;
+  available?: boolean;
+  unavailableReason?: string;
   createdTime: number;
 }
 
@@ -238,12 +250,35 @@ export interface PrivateProxyClientConfig {
   clientAddress?: string;
 }
 
+export interface PrivateProxyGrantRequest extends PrivateProxyCreateRequest {
+  targetUserId: number;
+  flowLimit: number;
+  flowUnlimited: boolean;
+  flowResetDay: number;
+  expiresAt?: number;
+  speedLimitMbps?: number;
+}
+
+export interface PrivateProxyGrantUpdateRequest {
+  id: number;
+  flowLimit: number;
+  flowUnlimited: boolean;
+  flowResetDay: number;
+  permanent: boolean;
+  expiresAt?: number;
+  speedLimitMbps?: number;
+}
+
 export const getPrivateProxies = () => Network.post<PrivateProxyItem[]>("/private-proxy/list");
 export const createPrivateProxy = (data: PrivateProxyCreateRequest) => Network.post<PrivateProxyItem>("/private-proxy/create", data);
 export const getPrivateProxyClientConfig = (id: number) => Network.post<PrivateProxyClientConfig>("/private-proxy/client-config", { id });
 export const pausePrivateProxy = (id: number) => Network.post("/private-proxy/pause", { id });
 export const resumePrivateProxy = (id: number) => Network.post("/private-proxy/resume", { id });
 export const deletePrivateProxy = (id: number) => Network.post("/private-proxy/delete", { id });
+export const createPrivateProxyGrant = (data: PrivateProxyGrantRequest) => Network.post<PrivateProxyItem>("/private-proxy/grant", data);
+export const getPrivateProxyGrants = (userId?: number) => Network.post<PrivateProxyItem[]>("/private-proxy/grant-list", userId ? { userId } : {});
+export const updatePrivateProxyGrant = (data: PrivateProxyGrantUpdateRequest) => Network.post<PrivateProxyItem>("/private-proxy/grant-update", data);
+export const resetPrivateProxyGrantFlow = (id: number) => Network.post<PrivateProxyItem>("/private-proxy/grant-reset", { id });
 
 export interface NetworkDiagnosticResult {
   mode: 'ping' | 'tcp' | 'dns' | 'trace';
