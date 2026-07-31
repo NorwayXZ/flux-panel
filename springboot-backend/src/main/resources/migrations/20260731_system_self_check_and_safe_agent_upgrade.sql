@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_upgrade_batch (
   batch_id varchar(64) NOT NULL,
   target_version varchar(32) NOT NULL,
   state varchar(24) NOT NULL,
+  mode varchar(16) NOT NULL DEFAULT 'staged',
   node_ids text NOT NULL,
   total_nodes int NOT NULL,
   completed_nodes int NOT NULL DEFAULT 0,

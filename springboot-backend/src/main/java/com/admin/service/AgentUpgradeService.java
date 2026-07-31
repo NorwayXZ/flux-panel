@@ -27,8 +27,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class AgentUpgradeService {
     public static final String TARGET_VERSION = "2.41.4";
-    public static final String SELF_UPDATE_MIN_VERSION = "2.41.2";
+    public static final String SELF_UPDATE_MIN_VERSION = "2.42.0";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
+    private static final String BATCH_MODE_PARALLEL = "parallel";
+    private static final String BATCH_MODE_STAGED = "staged";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;
     private static final String RELEASE_SCRIPT = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/"
             + TARGET_VERSION + "/install.sh";
@@ -96,7 +98,7 @@ public class AgentUpgradeService {
                         + "(task_id,batch_id,sequence_no,node_id,node_name,from_version,target_version,state,message,requested_by,requested_at,updated_at) "
                         + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 taskId, batchId, sequenceNo, node.getId(), node.getName(), node.getVersion(), TARGET_VERSION, "queued",
-                batchId == null ? "等待节点接收升级任务" : "分阶段批量升级：等待节点接收任务", requestedBy, now, now);
+                batchId == null ? "等待节点接收升级任务" : "批量升级：等待节点接收任务", requestedBy, now, now);
 
         if ("terminal".equals(mode)) {
             return startTerminalBootstrap(node, taskId);
@@ -114,10 +116,16 @@ public class AgentUpgradeService {
     }
 
     public synchronized R startBatch() {
+        return startBatch(BATCH_MODE_PARALLEL);
+    }
+
+    public synchronized R startBatch(String requestedMode) {
+        String batchMode = BATCH_MODE_STAGED.equalsIgnoreCase(Objects.toString(requestedMode, ""))
+                ? BATCH_MODE_STAGED : BATCH_MODE_PARALLEL;
         Integer running = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM agent_upgrade_batch WHERE state='running'", Integer.class);
         if (running != null && running > 0) {
-            return R.err(409, "已有分阶段批量升级正在执行");
+            return R.err(409, "已有批量升级正在执行");
         }
         List<Node> eligible = new ArrayList<>();
         for (Node node : nodeService.list()) {
@@ -133,12 +141,18 @@ public class AgentUpgradeService {
         String batchId = UUID.randomUUID().toString();
         String nodeIds = eligible.stream().map(node -> node.getId().toString()).collect(java.util.stream.Collectors.joining(","));
         long now = System.currentTimeMillis();
+        int requestedBy = JwtUtil.getUserIdFromToken();
         jdbcTemplate.update("INSERT INTO agent_upgrade_batch "
-                        + "(batch_id,target_version,state,node_ids,total_nodes,completed_nodes,message,requested_by,started_at,updated_at) "
-                        + "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                batchId, TARGET_VERSION, "running", nodeIds, eligible.size(), 0,
-                "正在升级首台试运行节点", JwtUtil.getUserIdFromToken(), now, now);
-        dispatchNextBatchNode(batchId);
+                        + "(batch_id,target_version,state,mode,node_ids,total_nodes,completed_nodes,message,requested_by,started_at,updated_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                batchId, TARGET_VERSION, "running", batchMode, nodeIds, eligible.size(), 0,
+                BATCH_MODE_PARALLEL.equals(batchMode) ? "正在向全部在线节点分发升级任务" : "正在升级首台试运行节点",
+                requestedBy, now, now);
+        if (BATCH_MODE_PARALLEL.equals(batchMode)) {
+            dispatchParallelBatch(batchId, eligible, requestedBy);
+        } else {
+            dispatchNextBatchNode(batchId);
+        }
         return R.ok(latestBatch());
     }
 
@@ -255,10 +269,18 @@ public class AgentUpgradeService {
             Node node = nodeService.getById(nodeId);
             String message;
             if (node != null && WebSocketServer.isNodeOnline(nodeId)) {
+                String taskId = Objects.toString(task.get("taskId"), "");
+                String logPath = taskId.length() >= 12
+                        ? "/var/log/flux-agent-update-" + taskId.substring(0, 12) + ".log"
+                        : "/var/log/flux-agent-update-*.log";
                 message = "升级未生效，Agent 已在线但仍为 " + Objects.toString(node.getVersion(), "未知版本")
-                        + "；可重试升级，详细日志位于节点 /var/log/flux-agent-update-*.log";
+                        + "；可重试升级，任务日志 " + logPath;
             } else {
-                message = "等待 Agent 重新上线超时；请检查节点服务和 /var/log/flux-agent-update-*.log";
+                String taskId = Objects.toString(task.get("taskId"), "");
+                String logPath = taskId.length() >= 12
+                        ? "/var/log/flux-agent-update-" + taskId.substring(0, 12) + ".log"
+                        : "/var/log/flux-agent-update-*.log";
+                message = "等待 Agent 重新上线超时；请检查节点服务和任务日志 " + logPath;
             }
             updateTask(Objects.toString(task.get("taskId"), ""), "timeout", message, now);
         }
@@ -268,9 +290,13 @@ public class AgentUpgradeService {
     public void advanceBatchUpgrades() {
         try {
             List<Map<String, Object>> batches = jdbcTemplate.queryForList(
-                    "SELECT batch_id AS batchId,current_node_id AS currentNodeId FROM agent_upgrade_batch WHERE state='running' ORDER BY id");
+                    "SELECT batch_id AS batchId,mode,current_node_id AS currentNodeId FROM agent_upgrade_batch WHERE state='running' ORDER BY id");
             for (Map<String, Object> batch : batches) {
                 String batchId = Objects.toString(batch.get("batchId"), "");
+                if (BATCH_MODE_PARALLEL.equals(Objects.toString(batch.get("mode"), BATCH_MODE_STAGED))) {
+                    advanceParallelBatch(batchId);
+                    continue;
+                }
                 Object currentNode = batch.get("currentNodeId");
                 if (currentNode == null) {
                     dispatchNextBatchNode(batchId);
@@ -436,7 +462,7 @@ public class AgentUpgradeService {
 
     private Map<String, Object> latestBatch() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT batch_id AS batchId,target_version AS targetVersion,state,total_nodes AS totalNodes,"
+                "SELECT batch_id AS batchId,target_version AS targetVersion,state,mode,total_nodes AS totalNodes,"
                         + "completed_nodes AS completedNodes,current_node_id AS currentNodeId,current_node_name AS currentNodeName,"
                         + "message,started_at AS startedAt,updated_at AS updatedAt,finished_at AS finishedAt "
                         + "FROM agent_upgrade_batch ORDER BY id DESC LIMIT 1");
@@ -478,6 +504,65 @@ public class AgentUpgradeService {
         if (result.getCode() != 0) {
             pauseBatch(batchId, node.getName() + " 无法开始升级：" + result.getMsg());
         }
+    }
+
+    private void dispatchParallelBatch(String batchId, List<Node> nodes, int requestedBy) {
+        int sequence = 0;
+        for (Node node : nodes) {
+            sequence++;
+            try {
+                R result = start(node, batchId, sequence, requestedBy);
+                if (result.getCode() != 0) {
+                    recordBatchDispatchFailure(batchId, node, sequence, requestedBy, result.getMsg());
+                }
+            } catch (Exception e) {
+                recordBatchDispatchFailure(batchId, node, sequence, requestedBy, e.getMessage());
+            }
+        }
+        jdbcTemplate.update("UPDATE agent_upgrade_batch SET message=?,updated_at=? WHERE batch_id=? AND state='running'",
+                "已向 " + nodes.size() + " 台节点分发任务，正在等待各节点独立升级和回连", System.currentTimeMillis(), batchId);
+    }
+
+    private void recordBatchDispatchFailure(String batchId, Node node, int sequence, int requestedBy, String message) {
+        Integer existing = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=? AND node_id=?", Integer.class, batchId, node.getId());
+        if (existing != null && existing > 0) return;
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("INSERT INTO agent_upgrade_task "
+                        + "(task_id,batch_id,sequence_no,node_id,node_name,from_version,target_version,state,message,requested_by,requested_at,updated_at,finished_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                UUID.randomUUID().toString(), batchId, sequence, node.getId(), node.getName(), node.getVersion(), TARGET_VERSION,
+                "failed", abbreviate("任务分发失败：" + Objects.toString(message, "未知错误")), requestedBy, now, now, now);
+    }
+
+    private void advanceParallelBatch(String batchId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT total_nodes AS totalNodes FROM agent_upgrade_batch WHERE batch_id=? AND state='running' LIMIT 1", batchId);
+        if (rows.isEmpty()) return;
+        int total = ((Number) rows.get(0).get("totalNodes")).intValue();
+        Integer active = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=? AND state IN (?,?,?,?,?,?,?,?)", Integer.class,
+                batchId, ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2), ACTIVE_STATES.get(3),
+                ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), ACTIVE_STATES.get(7));
+        Integer taskCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=?", Integer.class, batchId);
+        Integer successes = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=? AND state='success'", Integer.class, batchId);
+        int completed = Math.max(0, Objects.requireNonNullElse(taskCount, 0) - Objects.requireNonNullElse(active, 0));
+        jdbcTemplate.update("UPDATE agent_upgrade_batch SET completed_nodes=?,message=?,updated_at=? WHERE batch_id=? AND state='running'",
+                completed, "并发升级进行中：已完成 " + completed + "/" + total + "，成功 "
+                        + Objects.requireNonNullElse(successes, 0), System.currentTimeMillis(), batchId);
+        if (Objects.requireNonNullElse(taskCount, 0) < total || Objects.requireNonNullElse(active, 0) > 0) return;
+
+        int successCount = Objects.requireNonNullElse(successes, 0);
+        int failureCount = total - successCount;
+        long now = System.currentTimeMillis();
+        String state = failureCount == 0 ? "success" : "completed_with_errors";
+        String message = failureCount == 0
+                ? "全部 " + total + " 台节点升级成功并重新上线"
+                : "批量升级已结束：成功 " + successCount + " 台，失败或回退 " + failureCount + " 台；可单独重试失败节点";
+        jdbcTemplate.update("UPDATE agent_upgrade_batch SET state=?,completed_nodes=?,message=?,updated_at=?,finished_at=? "
+                        + "WHERE batch_id=? AND state='running'", state, total, message, now, now, batchId);
     }
 
     private void pauseBatch(String batchId, String message) {

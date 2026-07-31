@@ -25,7 +25,9 @@ class AgentUpgradeServiceTests {
         assertEquals("terminal", service.upgradeMode("2.8.0"));
         assertEquals("terminal", service.upgradeMode("2.12.9"));
         assertEquals("terminal", service.upgradeMode("2.40.0"));
-        assertEquals("self", service.upgradeMode("2.41.2"));
+        assertEquals("terminal", service.upgradeMode("2.41.2"));
+        assertEquals("terminal", service.upgradeMode("2.41.4"));
+        assertEquals("self", service.upgradeMode("2.42.0"));
     }
 
     @Test

@@ -33,6 +33,8 @@ import java.util.UUID;
 @Slf4j
 public class WebSocketServer extends TextWebSocketHandler {
 
+    static final int WEBSOCKET_MESSAGE_SIZE_LIMIT = 4 * 1024 * 1024;
+
     @Resource
     NodeService nodeService;
 
@@ -267,6 +269,7 @@ public class WebSocketServer extends TextWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         try {
+            configureMessageLimits(session);
             String id = session.getAttributes().get("id").toString();
             String type = session.getAttributes().get("type").toString();
             
@@ -386,6 +389,11 @@ public class WebSocketServer extends TextWebSocketHandler {
                 log.info("清理异常会话时出错: {}", cleanupException.getMessage());
             }
         }
+    }
+
+    static void configureMessageLimits(WebSocketSession session) {
+        session.setTextMessageSizeLimit(WEBSOCKET_MESSAGE_SIZE_LIMIT);
+        session.setBinaryMessageSizeLimit(WEBSOCKET_MESSAGE_SIZE_LIMIT);
     }
 
     // 连接关闭后

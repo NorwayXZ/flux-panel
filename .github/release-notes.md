@@ -1,3 +1,12 @@
+## 2.41.5 Reliable online Agent upgrades and large self-check responses
+
+- Raises the Spring WebSocket session text and binary receive limits to 4 MiB. A new embedded-Tomcat integration test sends and receives a 3 MiB message so production-sized Connector self-check responses are covered before release, not only mocked in a unit test.
+- Routes existing Agent `2.8.0` through `2.41.4` upgrades through the rollback-protected remote terminal installer. This avoids the `2.41.2` self-updater path that could time out while reading GitHub release metadata even when an interactive `curl` later succeeded.
+- Keeps Agent and Connector target version `2.41.4`; this is a panel `2.41.5` release and does not require another Connector upgrade. Each Agent task retains atomic replacement, a 45-second reconnect acknowledgment, and automatic restoration of the previous binary.
+- Adds two administrator-selectable batch modes. **Parallel all** dispatches every eligible online node without stopping the remaining nodes when one fails; **Safe staged** keeps the previous one-at-a-time canary behavior. Both modes preserve per-node rollback and show per-node results. Failed batches remain visible for individual retry.
+- Associates timeout guidance with the exact task-specific `/var/log/flux-agent-update-<task>.log` instead of a wildcard that could point to an older successful installation log.
+- The schema change only adds a defaulted `mode` column to Agent batch-upgrade metadata. It does not rewrite nodes, secrets, ports, tunnels, forwards, DNS records, certificates, proxies, or active traffic. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.4 Connector self-check message size fix
 
 - Raises the Connector WebSocket incoming message limit to 4 MiB so large self-check requests containing many registered entry targets are processed instead of being closed with WebSocket code 1009.

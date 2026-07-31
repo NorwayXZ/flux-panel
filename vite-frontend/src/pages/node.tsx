@@ -145,6 +145,7 @@ export default function NodePage() {
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
   const [upgradeBatch, setUpgradeBatch] = useState(false);
+  const [batchUpgradeMode, setBatchUpgradeMode] = useState<'parallel' | 'staged'>('parallel');
   const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [discoveryNode, setDiscoveryNode] = useState<Node | null>(null);
@@ -631,6 +632,7 @@ export default function NodePage() {
   const openBatchUpgrade = () => {
     setUpgradeNode(null);
     setUpgradeBatch(true);
+    setBatchUpgradeMode('parallel');
     setUpgradeModalOpen(true);
   };
 
@@ -638,12 +640,14 @@ export default function NodePage() {
     setUpgradeSubmitting(true);
     try {
       if (upgradeBatch) {
-        const result = await startBatchAgentUpgrade();
+        const result = await startBatchAgentUpgrade(batchUpgradeMode);
         if (result.code !== 0) {
           toast.error(result.msg || '批量升级提交失败');
           return;
         }
-        toast.success(`已启动 ${result.data.totalNodes} 台节点的分阶段升级，先试运行 1 台`);
+        toast.success(batchUpgradeMode === 'parallel'
+          ? `已向 ${result.data.totalNodes} 台节点同时分发升级任务`
+          : `已启动 ${result.data.totalNodes} 台节点的安全逐台升级`);
       } else if (upgradeNode) {
         const result = await startAgentUpgrade(upgradeNode.id);
         if (result.code !== 0) {
@@ -1200,9 +1204,9 @@ export default function NodePage() {
      
         </div>
 
-        {adminMode && upgradeBatchStatus && ['running', 'paused'].includes(upgradeBatchStatus.state) && <div className={`mb-5 flex flex-col gap-3 border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${upgradeBatchStatus.state === 'paused' ? 'border-danger/30 bg-danger/10' : 'border-warning/30 bg-warning/10'}`}>
-          <div><p className="font-medium">{upgradeBatchStatus.state === 'paused' ? '批量升级已暂停' : '分阶段批量升级进行中'}</p><p className="mt-1 text-xs text-default-600">{upgradeBatchStatus.message || '等待节点确认'} · 已完成 {upgradeBatchStatus.completedNodes}/{upgradeBatchStatus.totalNodes}{upgradeBatchStatus.currentNodeName ? ` · 当前 ${upgradeBatchStatus.currentNodeName}` : ''}</p></div>
-          <Chip size="sm" variant="flat" color={upgradeBatchStatus.state === 'paused' ? 'danger' : 'warning'}>{upgradeBatchStatus.state === 'paused' ? '后续未执行' : '逐台确认'}</Chip>
+        {adminMode && upgradeBatchStatus && ['running', 'paused', 'completed_with_errors'].includes(upgradeBatchStatus.state) && <div className={`mb-5 flex flex-col gap-3 border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${upgradeBatchStatus.state === 'paused' || upgradeBatchStatus.state === 'completed_with_errors' ? 'border-danger/30 bg-danger/10' : 'border-warning/30 bg-warning/10'}`}>
+          <div><p className="font-medium">{upgradeBatchStatus.state === 'paused' ? '批量升级已暂停' : upgradeBatchStatus.state === 'completed_with_errors' ? '批量升级已结束，部分节点失败' : upgradeBatchStatus.mode === 'parallel' ? '并发批量升级进行中' : '安全逐台升级进行中'}</p><p className="mt-1 text-xs text-default-600">{upgradeBatchStatus.message || '等待节点确认'} · 已完成 {upgradeBatchStatus.completedNodes}/{upgradeBatchStatus.totalNodes}{upgradeBatchStatus.currentNodeName ? ` · 当前 ${upgradeBatchStatus.currentNodeName}` : ''}</p></div>
+          <Chip size="sm" variant="flat" color={upgradeBatchStatus.state === 'paused' || upgradeBatchStatus.state === 'completed_with_errors' ? 'danger' : 'warning'}>{upgradeBatchStatus.state === 'paused' ? '后续未执行' : upgradeBatchStatus.state === 'completed_with_errors' ? '可重试失败节点' : upgradeBatchStatus.mode === 'parallel' ? '同时执行' : '逐台确认'}</Chip>
         </div>}
 
         {/* 节点列表 */}
@@ -1547,12 +1551,36 @@ export default function NodePage() {
                       <div className="mt-1 font-medium">Agent {upgradeTargetVersion || '最新版本'}</div>
                     </div>
                   </div>
+                  {upgradeBatch && (
+                    <div className="grid grid-cols-2 gap-1 rounded-md bg-default-100 p-1" role="group" aria-label="批量升级方式">
+                      <Button
+                        size="sm"
+                        variant={batchUpgradeMode === 'parallel' ? 'solid' : 'light'}
+                        color={batchUpgradeMode === 'parallel' ? 'primary' : 'default'}
+                        onPress={() => setBatchUpgradeMode('parallel')}
+                      >
+                        并发全部
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={batchUpgradeMode === 'staged' ? 'solid' : 'light'}
+                        color={batchUpgradeMode === 'staged' ? 'primary' : 'default'}
+                        onPress={() => setBatchUpgradeMode('staged')}
+                      >
+                        安全逐台
+                      </Button>
+                    </div>
+                  )}
                   <Alert
                     color="warning"
                     variant="flat"
-                    title={upgradeBatch ? '先试运行一台，再逐台升级' : '升级期间连接会短暂中断'}
+                    title={upgradeBatch
+                      ? batchUpgradeMode === 'parallel' ? '所有在线节点同时升级' : '逐台确认后继续'
+                      : '升级期间连接会短暂中断'}
                     description={upgradeBatch
-                      ? '系统先对一台节点执行预检、校验、重启和重新连接确认。只有确认成功才继续下一台；任一节点失败会自动回退并暂停后续任务。'
+                      ? batchUpgradeMode === 'parallel'
+                        ? '系统同时启动全部任务。每台节点独立下载、校验、重启和回连；单台失败不会阻断其他节点，失败节点保留回退和单独重试。'
+                        : '系统每次只升级一台，确认新版重新上线后再继续；任一节点失败会自动回退并暂停后续任务。'
                       : 'Agent 会先完成预检和版本校验，再原子替换二进制。新版必须在 45 秒内重新连接面板，否则自动恢复旧版本并重新上线。'}
                   />
                 </ModalBody>

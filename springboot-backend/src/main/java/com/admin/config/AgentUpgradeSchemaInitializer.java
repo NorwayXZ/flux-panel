@@ -35,11 +35,12 @@ public class AgentUpgradeSchemaInitializer {
             ensureIndex("agent_upgrade_task", "idx_agent_upgrade_batch", "batch_id, sequence_no");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS agent_upgrade_batch ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,batch_id varchar(64) NOT NULL,target_version varchar(32) NOT NULL,"
-                    + "state varchar(24) NOT NULL,node_ids text NOT NULL,total_nodes int NOT NULL,completed_nodes int NOT NULL DEFAULT 0,"
+                    + "state varchar(24) NOT NULL,mode varchar(16) NOT NULL DEFAULT 'staged',node_ids text NOT NULL,total_nodes int NOT NULL,completed_nodes int NOT NULL DEFAULT 0,"
                     + "current_node_id bigint DEFAULT NULL,current_node_name varchar(160) DEFAULT NULL,message varchar(500) DEFAULT NULL,"
                     + "requested_by int NOT NULL,started_at bigint NOT NULL,updated_at bigint NOT NULL,finished_at bigint DEFAULT NULL,"
                     + "PRIMARY KEY(id),UNIQUE KEY uk_agent_upgrade_batch(batch_id),KEY idx_agent_upgrade_batch_state(state,updated_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureColumn("agent_upgrade_batch", "mode", "varchar(16) NOT NULL DEFAULT 'staged' AFTER state");
         } catch (DataAccessException e) {
             log.error("Agent upgrade storage initialization failed", e);
         }

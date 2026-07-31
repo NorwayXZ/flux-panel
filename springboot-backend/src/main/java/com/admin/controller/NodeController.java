@@ -12,6 +12,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * <p>
@@ -96,8 +97,9 @@ public class NodeController extends BaseController {
     @LogAnnotation
     @RequireRole
     @PostMapping("/upgrade/batch")
-    public R startBatchUpgrade() {
-        return agentUpgradeService.startBatch();
+    public R startBatchUpgrade(@RequestBody(required = false) Map<String, Object> params) {
+        String mode = params == null ? null : Objects.toString(params.get("mode"), null);
+        return agentUpgradeService.startBatch(mode);
     }
 
     @RequireRole

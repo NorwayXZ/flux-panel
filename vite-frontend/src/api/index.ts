@@ -76,7 +76,8 @@ export interface AgentUpgradeStatus {
 }
 
 export interface AgentUpgradeBatch {
-  batchId: string; targetVersion: string; state: 'running' | 'paused' | 'success'; totalNodes: number;
+  batchId: string; targetVersion: string; state: 'running' | 'paused' | 'success' | 'completed_with_errors';
+  mode: 'parallel' | 'staged'; totalNodes: number;
   completedNodes: number; currentNodeId?: number; currentNodeName?: string; message?: string;
   startedAt: number; updatedAt: number; finishedAt?: number;
 }
@@ -85,8 +86,8 @@ export const getAgentUpgradeStatus = (nodeId?: number) =>
   Network.post<AgentUpgradeStatus>("/node/upgrade/status", nodeId ? { nodeId } : {});
 export const startAgentUpgrade = (nodeId: number) =>
   Network.post<AgentUpgradeStatusItem>("/node/upgrade/start", { nodeId });
-export const startBatchAgentUpgrade = () =>
-  Network.post<AgentUpgradeBatch>("/node/upgrade/batch");
+export const startBatchAgentUpgrade = (mode: 'parallel' | 'staged' = 'parallel') =>
+  Network.post<AgentUpgradeBatch>("/node/upgrade/batch", { mode });
 export const getManualAgentUpgradeCommand = (nodeId: number) =>
   Network.post<string>("/node/upgrade/manual-command", { nodeId });
 export const getAgentUpgradeHistory = (nodeId?: number) =>
