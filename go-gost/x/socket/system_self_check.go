@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,7 @@ import (
 type systemSelfCheckRequest struct {
 	Domains []string                     `json:"domains"`
 	Ports   []systemSelfCheckPortRequest `json:"ports"`
+	Targets []systemSelfCheckTarget      `json:"targets"`
 }
 
 type systemSelfCheckPortRequest struct {
@@ -34,6 +37,23 @@ type systemSelfCheckPortResult struct {
 	Network   string `json:"network"`
 	Port      int    `json:"port"`
 	Listening bool   `json:"listening"`
+}
+
+type systemSelfCheckTarget struct {
+	Name    string `json:"name"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	Network string `json:"network"`
+}
+
+type systemSelfCheckTargetResult struct {
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Network    string `json:"network"`
+	Reachable  bool   `json:"reachable"`
+	DurationMs int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
 }
 
 type systemSelfCheckFamily struct {
@@ -54,20 +74,23 @@ type systemSelfCheckDNS struct {
 }
 
 type systemSelfCheckResponse struct {
-	Version             string                      `json:"version"`
-	Role                string                      `json:"role"`
-	OS                  string                      `json:"os"`
-	Arch                string                      `json:"arch"`
-	Hostname            string                      `json:"hostname"`
-	ConfiguredAddress   string                      `json:"configuredAddress"`
-	IdentityFingerprint string                      `json:"identityFingerprint"`
-	MachineFingerprint  string                      `json:"machineFingerprint"`
-	DNSResolvers        []string                    `json:"dnsResolvers"`
-	IPv4                systemSelfCheckFamily       `json:"ipv4"`
-	IPv6                systemSelfCheckFamily       `json:"ipv6"`
-	DNS                 []systemSelfCheckDNS        `json:"dns"`
-	Ports               []systemSelfCheckPortResult `json:"ports"`
-	CheckedAt           int64                       `json:"checkedAt"`
+	Version             string                        `json:"version"`
+	Role                string                        `json:"role"`
+	OS                  string                        `json:"os"`
+	Arch                string                        `json:"arch"`
+	Hostname            string                        `json:"hostname"`
+	ConfiguredAddress   string                        `json:"configuredAddress"`
+	IdentityFingerprint string                        `json:"identityFingerprint"`
+	MachineFingerprint  string                        `json:"machineFingerprint"`
+	DNSResolvers        []string                      `json:"dnsResolvers"`
+	IPv4                systemSelfCheckFamily         `json:"ipv4"`
+	IPv6                systemSelfCheckFamily         `json:"ipv6"`
+	DNS                 []systemSelfCheckDNS          `json:"dns"`
+	Ports               []systemSelfCheckPortResult   `json:"ports"`
+	DefaultRoutes       []string                      `json:"defaultRoutes"`
+	RouteError          string                        `json:"routeError,omitempty"`
+	Reachability        []systemSelfCheckTargetResult `json:"reachability"`
+	CheckedAt           int64                         `json:"checkedAt"`
 }
 
 func (w *WebSocketReporter) handleSystemSelfCheck(data interface{}) (systemSelfCheckResponse, error) {
@@ -86,6 +109,9 @@ func (w *WebSocketReporter) handleSystemSelfCheck(data interface{}) (systemSelfC
 	if len(request.Ports) > 300 {
 		return systemSelfCheckResponse{}, errors.New("self-check accepts at most 300 ports")
 	}
+	if len(request.Targets) > 300 {
+		return systemSelfCheckResponse{}, errors.New("self-check accepts at most 300 targets")
+	}
 
 	hostname, _ := os.Hostname()
 	response := systemSelfCheckResponse{
@@ -97,8 +123,151 @@ func (w *WebSocketReporter) handleSystemSelfCheck(data interface{}) (systemSelfC
 		IPv4:                inspectIPFamily(false), IPv6: inspectIPFamily(true),
 		Ports: inspectRequestedPorts(request.Ports), CheckedAt: time.Now().UnixMilli(),
 	}
+	response.DefaultRoutes, response.RouteError = inspectDefaultRoutes()
+	response.Reachability = inspectSelfCheckTargets(request.Targets, w.addr)
 	response.DNS = inspectDomains(request.Domains)
 	return response, nil
+}
+
+func inspectDefaultRoutes() ([]string, string) {
+	commands := [][]string{}
+	switch runtime.GOOS {
+	case "windows":
+		commands = append(commands, []string{"route", "print"})
+	default:
+		commands = append(commands, []string{"ip", "route", "show", "default"}, []string{"ip", "-6", "route", "show", "default"})
+		commands = append(commands, []string{"netstat", "-rn"})
+	}
+	var lastError error
+	for _, command := range commands {
+		output, err := execCommandOutput(command[0], command[1:]...)
+		if err != nil {
+			lastError = err
+			continue
+		}
+		routes := make([]string, 0, 2)
+		for _, line := range strings.Split(output, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || !isDefaultRouteLine(line) {
+				continue
+			}
+			routes = append(routes, line)
+		}
+		if len(routes) > 0 {
+			return uniqueSorted(routes), ""
+		}
+	}
+	if lastError != nil {
+		return []string{}, lastError.Error()
+	}
+	return []string{}, "未发现默认路由"
+}
+
+func isDefaultRouteLine(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	first := strings.ToLower(fields[0])
+	if first == "default" || first == "0.0.0.0" || first == "::/0" || first == "::" {
+		return true
+	}
+	return strings.HasPrefix(first, "default")
+}
+
+func execCommandOutput(name string, args ...string) (string, error) {
+	command := exec.Command(name, args...)
+	output, err := command.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func inspectSelfCheckTargets(requested []systemSelfCheckTarget, panelAddress string) []systemSelfCheckTargetResult {
+	targets := make([]systemSelfCheckTarget, 0, len(requested)+1)
+	if host, port, ok := splitSelfCheckEndpoint(panelAddress); ok {
+		targets = append(targets, systemSelfCheckTarget{Name: "CloudNest 面板", Host: host, Port: port, Network: "tcp"})
+	}
+	targets = append(targets, requested...)
+	validTargets := make([]systemSelfCheckTarget, 0, len(targets))
+	seen := make(map[string]struct{})
+	for _, target := range targets {
+		host := strings.TrimSpace(target.Host)
+		network := strings.ToLower(strings.TrimSpace(target.Network))
+		if network == "" {
+			network = "tcp"
+		}
+		if !isValidSelfCheckHost(host) || network != "tcp" || target.Port < 1 || target.Port > 65535 {
+			continue
+		}
+		key := host + ":" + strconv.Itoa(target.Port)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		target.Host = host
+		target.Network = network
+		validTargets = append(validTargets, target)
+	}
+	results := make([]systemSelfCheckTargetResult, len(validTargets))
+	jobs := make(chan int)
+	workers := 16
+	if len(validTargets) < workers {
+		workers = len(validTargets)
+	}
+	var wait sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for index := range jobs {
+				target := validTargets[index]
+				started := time.Now()
+				connection, err := net.DialTimeout("tcp", net.JoinHostPort(target.Host, strconv.Itoa(target.Port)), 3*time.Second)
+				item := systemSelfCheckTargetResult{Name: strings.TrimSpace(target.Name), Host: target.Host, Port: target.Port,
+					Network: target.Network, Reachable: err == nil, DurationMs: time.Since(started).Milliseconds()}
+				if item.Name == "" {
+					item.Name = target.Host + ":" + strconv.Itoa(target.Port)
+				}
+				if err != nil {
+					item.Error = err.Error()
+				} else {
+					_ = connection.Close()
+				}
+				results[index] = item
+			}
+		}()
+	}
+	for index := range validTargets {
+		jobs <- index
+	}
+	close(jobs)
+	wait.Wait()
+	return results
+}
+
+func splitSelfCheckEndpoint(address string) (string, int, bool) {
+	address = strings.TrimSpace(address)
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", 0, false
+	}
+	parsed, err := strconv.Atoi(port)
+	if err != nil || parsed < 1 || parsed > 65535 || !isValidSelfCheckHost(host) {
+		return "", 0, false
+	}
+	return host, parsed, true
+}
+
+func isValidSelfCheckHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, " /\\:@[]\t\r\n") {
+		return false
+	}
+	return isValidHostname(host)
 }
 
 func normalizeSelfCheckDomains(domains []string) []string {

@@ -25,6 +25,11 @@ const categoryLabels: Record<string, string> = {
   agent: 'Agent', network: '网络能力', dns: 'DNS', port: '端口', dependency: '依赖链', certificate: '证书', system: '系统',
 };
 
+const resourceLabels: Record<string, string> = {
+  node: '服务器节点', connector: '接入设备', domain: '域名', domain_route: '域名入口',
+  private_proxy: '私人代理', forward: '转发', tunnel: '隧道', certificate: '证书', panel: '面板',
+};
+
 export default function SystemSelfCheckPage() {
   const [data, setData] = useState<SystemSelfCheckOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,14 +57,15 @@ export default function SystemSelfCheckPage() {
 
   const start = async () => {
     setRunning(true);
-    const nodeId = scopeNodeId === 'all' ? undefined : Number(scopeNodeId);
-    const response = await runSystemSelfCheck(nodeId);
+    const nodeId = scopeNodeId.startsWith('node:') ? Number(scopeNodeId.slice(5)) : undefined;
+    const connectorId = scopeNodeId.startsWith('connector:') ? Number(scopeNodeId.slice(10)) : undefined;
+    const response = await runSystemSelfCheck(nodeId, connectorId);
     if (response.code !== 0) {
       setRunning(false);
       return toast.error(response.msg || '无法启动系统自检');
     }
     setData(response.data);
-    toast.success(nodeId ? '已开始检查指定节点' : '已开始检查全部资源');
+    toast.success(nodeId ? '已开始检查指定节点' : connectorId ? '已开始检查指定接入设备' : '已开始检查全部资源');
   };
 
   const resetBaseline = async (finding: SystemSelfCheckFinding) => {
@@ -79,9 +85,10 @@ export default function SystemSelfCheckPage() {
 
   const categories = useMemo(() => Array.from(new Set((data?.findings || []).map(item => item.category))), [data?.findings]);
   const scopeOptions = useMemo(() => [
-    { key: 'all', label: '全部节点与业务链路' },
-    ...(data?.nodes || []).map(node => ({ key: String(node.id), label: `${node.name} · ${node.status === 1 ? '在线' : '离线'} · Agent ${node.version || '未知'}` })),
-  ], [data?.nodes]);
+    { key: 'all', label: '全部节点、接入设备与业务链路' },
+    ...(data?.nodes || []).map(node => ({ key: `node:${node.id}`, label: `服务器 · ${node.name} · ${node.status === 1 ? '在线' : '离线'} · Agent ${node.version || '未知'}` })),
+    ...(data?.connectors || []).map(connector => ({ key: `connector:${connector.id}`, label: `接入设备 · ${connector.name} · ${connector.online ? '在线' : '离线'} · ${connector.platform} · Agent ${connector.version || '未知'}` })),
+  ], [data?.nodes, data?.connectors]);
   const categoryOptions = useMemo(() => [
     { key: 'all', label: '全部类别' },
     ...categories.map(category => ({ key: category, label: categoryLabels[category] || category })),
@@ -90,7 +97,7 @@ export default function SystemSelfCheckPage() {
 
   return <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
     <header className="flex flex-col gap-4 border-b border-divider pb-5 lg:flex-row lg:items-end lg:justify-between">
-      <div><p className="text-sm text-default-500">系统管理</p><h1 className="mt-1 text-2xl font-semibold">全系统自检中心</h1></div>
+      <div><p className="text-sm text-default-500">系统管理</p><h1 className="mt-1 text-2xl font-semibold">全系统自检中心</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">服务器节点由 Agent 检查自身配置；Windows、macOS、Linux 接入设备由 Connector 检查本机 DNS、IPv4/IPv6、默认路由，以及到面板和已登记入口端口的实际 TCP 可达性。所有检查均为只读。</p></div>
       <div className="grid w-full gap-3 sm:grid-cols-[260px_auto] lg:w-auto">
         <Select aria-label="自检范围" selectedKeys={[scopeNodeId]} onSelectionChange={keys => setScopeNodeId(String(Array.from(keys)[0] || 'all'))} isDisabled={running}>
           {scopeOptions.map(option => <SelectItem key={option.key}>{option.label}</SelectItem>)}
@@ -116,9 +123,9 @@ export default function SystemSelfCheckPage() {
     {run && <section className="flex flex-col gap-3 border-b border-divider pb-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         {run.status === 'running' ? <RefreshCw size={18} className="animate-spin text-primary" /> : run.failedCount > 0 ? <XCircle size={18} className="text-danger" /> : <CircleCheck size={18} className="text-success" />}
-        <div><p className="text-sm font-medium">{run.message || '等待自检'}</p><p className="mt-1 text-xs text-default-500">{new Date(run.startedAt).toLocaleString('zh-CN')} · {run.scopeNodeId ? '指定节点' : '全部资源'}</p></div>
+        <div><p className="text-sm font-medium">{run.message || '等待自检'}</p><p className="mt-1 text-xs text-default-500">{new Date(run.startedAt).toLocaleString('zh-CN')} · {run.scopeType === 'connector' ? '指定接入设备' : run.scopeType === 'node' || run.scopeNodeId ? '指定服务器节点' : '全部资源'}</p></div>
       </div>
-      <p className="text-xs text-default-500">完整 Agent 自检最低版本 {data?.minimumAgentVersion}</p>
+      <p className="text-xs text-default-500">服务器 Agent 自检最低版本 {data?.minimumAgentVersion} · Connector 本机自检最低版本 {data?.minimumConnectorVersion || '2.41.2'}</p>
     </section>}
 
     <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -140,7 +147,7 @@ export default function SystemSelfCheckPage() {
           <div className="min-w-0"><Chip size="sm" color={statusMeta[finding.status].color} variant="flat">{statusMeta[finding.status].label}</Chip><p className="mt-2 truncate text-sm font-medium" title={finding.resourceName}>{finding.resourceName || categoryLabels[finding.category] || finding.category}</p><p className="mt-1 text-xs text-default-500">{categoryLabels[finding.category] || finding.category}</p></div>
         </div>
         <div className="min-w-0"><p className="text-xs text-default-500">{finding.faultSegment}</p><h3 className="mt-1 font-medium">{finding.summary}</h3>{finding.evidence && <p className="mt-2 break-words text-sm leading-6 text-default-600">证据：{finding.evidence}</p>}{finding.impact && finding.impact !== '无' && <p className="mt-1 text-sm leading-6 text-default-500">影响：{finding.impact}</p>}</div>
-        <div className="border-l-0 border-divider lg:border-l lg:pl-4"><p className="text-xs text-default-500">处理建议</p><p className="mt-1 text-sm leading-6">{finding.remediation || '无需操作'}</p>{finding.category === 'agent' && finding.resourceType === 'node' && finding.status === 'warning' && finding.summary.includes('不同机器') && finding.resourceId && <Button className="mt-3" size="sm" variant="flat" startContent={<RotateCcw size={15} />} isLoading={resettingNode === finding.resourceId} onPress={() => void resetBaseline(finding)}>重置身份基线</Button>}</div>
+        <div className="border-l-0 border-divider lg:border-l lg:pl-4"><p className="text-xs text-default-500">处理建议 · {resourceLabels[finding.resourceType] || finding.resourceType}</p><p className="mt-1 text-sm leading-6">{finding.remediation || '无需操作'}</p>{finding.category === 'agent' && finding.resourceType === 'node' && finding.status === 'warning' && finding.summary.includes('不同机器') && finding.resourceId && <Button className="mt-3" size="sm" variant="flat" startContent={<RotateCcw size={15} />} isLoading={resettingNode === finding.resourceId} onPress={() => void resetBaseline(finding)}>重置身份基线</Button>}</div>
       </article>)}
       {!loading && findings.length === 0 && <div className="py-16 text-center text-default-400">当前筛选条件没有结果</div>}
     </section>

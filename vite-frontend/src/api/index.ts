@@ -96,7 +96,7 @@ export type SelfCheckStatus = 'healthy' | 'warning' | 'failed' | 'skipped';
 export interface SystemSelfCheckRun {
   id: number; status: 'running' | 'completed' | 'failed'; scopeNodeId?: number; totalChecks: number;
   healthyCount: number; warningCount: number; failedCount: number; skippedCount: number;
-  message?: string; startedAt: number; finishedAt?: number;
+  scopeType?: 'node' | 'connector'; scopeResourceId?: number; message?: string; startedAt: number; finishedAt?: number;
 }
 export interface SystemSelfCheckFinding {
   id: number; category: string; resourceType: string; resourceId?: number; resourceName?: string;
@@ -105,11 +105,12 @@ export interface SystemSelfCheckFinding {
 }
 export interface SystemSelfCheckNode { id: number; name: string; serverIp?: string; ip?: string; status: number; version?: string }
 export interface SystemSelfCheckOverview {
-  minimumAgentVersion: string; nodes: SystemSelfCheckNode[]; run?: SystemSelfCheckRun | null;
+  minimumAgentVersion: string; minimumConnectorVersion?: string; nodes: SystemSelfCheckNode[]; connectors?: InternalConnector[]; run?: SystemSelfCheckRun | null;
   findings: SystemSelfCheckFinding[]; history: SystemSelfCheckRun[];
 }
 export const getSystemSelfCheckOverview = () => Network.post<SystemSelfCheckOverview>("/system-self-check/overview");
-export const runSystemSelfCheck = (nodeId?: number) => Network.post<SystemSelfCheckOverview>("/system-self-check/run", nodeId ? { nodeId } : {});
+export const runSystemSelfCheck = (nodeId?: number, connectorId?: number) =>
+  Network.post<SystemSelfCheckOverview>("/system-self-check/run", nodeId ? { nodeId } : connectorId ? { connectorId } : {});
 export const resetAgentIdentityBaseline = (nodeId: number) => Network.post<string>("/system-self-check/identity/reset", { nodeId });
 
 export interface ServerAsset {

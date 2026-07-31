@@ -26,8 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.41.0";
-    public static final String SELF_UPDATE_MIN_VERSION = "2.41.0";
+    public static final String TARGET_VERSION = "2.41.2";
+    public static final String SELF_UPDATE_MIN_VERSION = "2.41.2";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;
     private static final String RELEASE_SCRIPT = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/"

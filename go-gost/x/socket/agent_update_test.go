@@ -20,7 +20,7 @@ func TestAgentUpdateValidation(t *testing.T) {
 }
 
 func TestRenderedAgentUpdateHelperIsValidShell(t *testing.T) {
-	request := agentUpgradeRequest{TaskID: "12345678-1234-1234-1234-123456789012", TargetVersion: "2.41.0"}
+	request := agentUpgradeRequest{TaskID: "12345678-1234-1234-1234-123456789012", TargetVersion: "2.41.2"}
 	script := renderAgentUpdateHelper(request, "/etc/gost/gost", "/etc/gost/.gost.update", "/etc/gost/status.json", "/etc/gost/helper.sh")
 	path := t.TempDir() + "/helper.sh"
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {

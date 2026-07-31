@@ -31,6 +31,7 @@ import java.util.concurrent.Executors;
 @Service
 public class SystemSelfCheckService {
     public static final String MIN_AGENT_VERSION = "2.41.0";
+    public static final String MIN_CONNECTOR_SELF_CHECK_VERSION = "2.41.2";
     private final JdbcTemplate jdbcTemplate;
     private final NodeService nodeService;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
@@ -47,10 +48,19 @@ public class SystemSelfCheckService {
     public R overview() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("minimumAgentVersion", MIN_AGENT_VERSION);
+        result.put("minimumConnectorVersion", MIN_CONNECTOR_SELF_CHECK_VERSION);
         result.put("nodes", jdbcTemplate.queryForList(
                 "SELECT id,name,server_ip AS serverIp,ip,status,version FROM node ORDER BY status DESC,id DESC"));
+        List<Map<String, Object>> connectors = jdbcTemplate.queryForList(
+                "SELECT id,name,platform,status,version,remote_ip AS remoteIp,last_seen AS lastSeen "
+                        + "FROM internal_connector WHERE status=1 ORDER BY last_seen DESC,id DESC");
+        for (Map<String, Object> connector : connectors) {
+            connector.put("online", WebSocketServer.isConnectorOnline(((Number) connector.get("id")).longValue()));
+        }
+        result.put("connectors", connectors);
         List<Map<String, Object>> runs = jdbcTemplate.queryForList(
-                "SELECT id,status,scope_node_id AS scopeNodeId,total_checks AS totalChecks,healthy_count AS healthyCount,"
+                "SELECT id,status,scope_node_id AS scopeNodeId,scope_type AS scopeType,scope_resource_id AS scopeResourceId,"
+                        + "total_checks AS totalChecks,healthy_count AS healthyCount,"
                         + "warning_count AS warningCount,failed_count AS failedCount,skipped_count AS skippedCount,message,"
                         + "started_at AS startedAt,finished_at AS finishedAt FROM system_self_check_run ORDER BY id DESC LIMIT 12");
         result.put("history", runs);
@@ -60,16 +70,21 @@ public class SystemSelfCheckService {
         return R.ok(result);
     }
 
-    public synchronized R start(Long nodeId) {
+    public synchronized R start(Long nodeId, Long connectorId) {
         Integer running = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM system_self_check_run WHERE status='running'", Integer.class);
         if (running != null && running > 0) return R.err(409, "已有系统自检正在运行");
         if (nodeId != null && nodeService.getById(nodeId) == null) return R.err("节点不存在");
+        if (connectorId != null && !connectorExists(connectorId)) return R.err("接入设备不存在");
+        if (nodeId != null && connectorId != null) return R.err("一次只能选择节点或接入设备");
         long now = System.currentTimeMillis();
-        jdbcTemplate.update("INSERT INTO system_self_check_run (status,scope_node_id,message,requested_by,started_at) VALUES ('running',?,?,?,?)",
-                nodeId, nodeId == null ? "正在检查全部资源" : "正在检查指定节点", JwtUtil.getUserIdFromToken(), now);
+        String scopeType = connectorId == null ? (nodeId == null ? null : "node") : "connector";
+        Long scopeResourceId = connectorId == null ? nodeId : connectorId;
+        String message = connectorId != null ? "正在检查指定接入设备" : (nodeId == null ? "正在检查全部资源" : "正在检查指定节点");
+        jdbcTemplate.update("INSERT INTO system_self_check_run (status,scope_node_id,scope_type,scope_resource_id,message,requested_by,started_at) VALUES ('running',?,?,?,?,?,?)",
+                nodeId, scopeType, scopeResourceId, message, JwtUtil.getUserIdFromToken(), now);
         Long runId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        executor.submit(() -> execute(runId, nodeId));
+        executor.submit(() -> execute(runId, nodeId, connectorId));
         return overview();
     }
 
@@ -85,13 +100,18 @@ public class SystemSelfCheckService {
         executor.shutdownNow();
     }
 
-    private void execute(long runId, Long scopeNodeId) {
+    private void execute(long runId, Long scopeNodeId, Long scopeConnectorId) {
         List<Finding> findings = new ArrayList<>();
         try {
             List<String> domains = loadDomains();
             Map<Long, List<ExpectedPort>> expectedPorts = loadExpectedPorts();
-            collectNodeFindings(findings, scopeNodeId, domains, expectedPorts);
-            if (scopeNodeId == null) collectConfigurationFindings(findings);
+            if (scopeNodeId != null || scopeConnectorId == null) {
+                collectNodeFindings(findings, scopeNodeId, domains, expectedPorts);
+            }
+            if (scopeConnectorId != null || (scopeNodeId == null && scopeConnectorId == null)) {
+                collectConnectorFindings(findings, scopeConnectorId, domains, expectedPorts);
+            }
+            if (scopeNodeId == null && scopeConnectorId == null) collectConfigurationFindings(findings);
             if (findings.isEmpty()) {
                 findings.add(new Finding("system", "panel", null, "CloudNest", "healthy", "面板配置",
                         "未发现需要处理的问题", "节点与资源检查均已完成", "无", "无需操作", 900));
@@ -106,6 +126,12 @@ public class SystemSelfCheckService {
             persist(runId, findings);
             finish(runId, "failed", findings, "自检执行失败");
         }
+    }
+
+    private boolean connectorExists(Long connectorId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1", Integer.class, connectorId);
+        return count != null && count > 0;
     }
 
     private void collectNodeFindings(List<Finding> findings, Long scopeNodeId, List<String> domains,
@@ -141,9 +167,131 @@ public class SystemSelfCheckService {
             }
             JSONObject payload = JSONObject.parseObject(JSON.toJSONString(response.getData()));
             inspectIdentity(findings, node, payload);
-            inspectFamilies(findings, node, payload);
-            inspectDNS(findings, node, payload.getJSONArray("dns"), payload.getJSONArray("dnsResolvers"));
+            inspectFamilies(findings, node.getName(), "node", node.getId(), payload);
+            inspectDNS(findings, node.getName(), "node", node.getId(), payload.getJSONArray("dns"), payload.getJSONArray("dnsResolvers"));
             inspectPorts(findings, node, payload.getJSONArray("ports"), expectedPorts.getOrDefault(node.getId(), List.of()));
+        }
+    }
+
+    private void collectConnectorFindings(List<Finding> findings, Long scopeConnectorId, List<String> domains,
+                                         Map<Long, List<ExpectedPort>> expectedPorts) {
+        String sql = "SELECT id,name,secret,platform,version,remote_ip AS remoteIp FROM internal_connector WHERE status=1 "
+                + (scopeConnectorId == null ? "" : "AND id=? ") + "ORDER BY id";
+        List<Map<String, Object>> connectors = scopeConnectorId == null
+                ? jdbcTemplate.queryForList(sql)
+                : jdbcTemplate.queryForList(sql, scopeConnectorId);
+        List<Map<String, Object>> targets = loadConnectorTargets(expectedPorts);
+        for (Map<String, Object> connector : connectors) {
+            long id = ((Number) connector.get("id")).longValue();
+            String name = Objects.toString(connector.get("name"), "接入设备 " + id);
+            String version = Objects.toString(connector.get("version"), null);
+            if (!WebSocketServer.isConnectorOnline(id)) {
+                findings.add(new Finding("agent", "connector", id, name, "failed", "面板 -> 接入设备",
+                        "Connector 当前离线", "平台记录版本 " + value(version) + "，平台无法建立有效 WebSocket 会话",
+                        "本机 DNS、IPv4/IPv6、默认路由和入口可达性无法从远程读取",
+                        "在该电脑检查 CloudNest Connector 服务；确认它能主动访问面板地址并查看安装日志", 110));
+                continue;
+            }
+            if (!AgentVersionUtil.isAtLeast(version, MIN_CONNECTOR_SELF_CHECK_VERSION)) {
+                findings.add(new Finding("agent", "connector", id, name, "warning", "接入设备 Agent 能力",
+                        "Connector 在线，但版本不支持完整本机自检", "当前 " + value(version) + "，完整自检最低需要 " + MIN_CONNECTOR_SELF_CHECK_VERSION,
+                        "本机默认路由和入口端口可达性只能跳过",
+                        "在家庭设备页按对应操作系统重新执行升级命令；升级失败会自动恢复旧版本", 112));
+                continue;
+            }
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("domains", domains);
+            request.put("ports", List.of());
+            request.put("targets", targets);
+            GostDto response = WebSocketServer.sendConnectorMsg(id, request, "SystemSelfCheck", 45);
+            if (response == null || !"OK".equals(response.getMsg()) || response.getData() == null) {
+                findings.add(new Finding("agent", "connector", id, name, "failed", "面板 -> 接入设备自检",
+                        "Connector 自检命令没有成功返回", response == null ? "Connector 无响应" : response.getMsg(),
+                        "无法确认本机 DNS、默认路由和到入口端口的真实可达性",
+                        "确认 Connector 版本已升级并在线，然后重试；本次检查不会修改本机网络配置", 114));
+                continue;
+            }
+            JSONObject payload = JSONObject.parseObject(JSON.toJSONString(response.getData()));
+            inspectConnectorIdentity(findings, connector, payload);
+            inspectFamilies(findings, name, "connector", id, payload);
+            inspectDNS(findings, name, "connector", id, payload.getJSONArray("dns"), payload.getJSONArray("dnsResolvers"));
+            inspectConnectorRoutes(findings, id, name, payload);
+            inspectConnectorReachability(findings, id, name, payload.getJSONArray("reachability"));
+        }
+    }
+
+    private List<Map<String, Object>> loadConnectorTargets(Map<Long, List<ExpectedPort>> expectedPorts) {
+        Map<Long, String> hosts = new HashMap<>();
+        for (Node node : nodeService.list()) {
+            String host = node.getServerIp();
+            if (host == null || host.isBlank()) host = node.getIp();
+            if (host != null && !host.isBlank()) hosts.put(node.getId(), host.trim());
+        }
+        List<Map<String, Object>> targets = new ArrayList<>();
+        for (Map.Entry<Long, List<ExpectedPort>> entry : expectedPorts.entrySet()) {
+            String host = hosts.get(entry.getKey());
+            if (host == null) continue;
+            for (ExpectedPort expected : entry.getValue()) {
+                Map<String, Object> target = new LinkedHashMap<>();
+                target.put("name", expected.resourceName() + " · " + host + ":" + expected.port());
+                target.put("host", host);
+                target.put("port", expected.port());
+                target.put("network", "tcp");
+                targets.add(target);
+                if (targets.size() >= 280) return targets;
+            }
+        }
+        return targets;
+    }
+
+    private void inspectConnectorIdentity(List<Finding> findings, Map<String, Object> connector, JSONObject payload) {
+        long id = ((Number) connector.get("id")).longValue();
+        String name = Objects.toString(connector.get("name"), "接入设备 " + id);
+        String expected = shortFingerprint(Objects.toString(connector.get("secret"), ""));
+        String actual = payload.getString("identityFingerprint");
+        if (!Objects.equals(expected, actual)) {
+            findings.add(new Finding("agent", "connector", id, name, "failed", "接入设备身份",
+                    "Connector 密钥指纹与设备记录不一致", "面板 " + expected + "，本机 " + value(actual),
+                    "可能把另一台接入设备的安装命令复制到了当前电脑",
+                    "在家庭设备页重新生成当前设备对应操作系统的安装命令，不要混用其他设备密钥", 116));
+            return;
+        }
+        findings.add(new Finding("agent", "connector", id, name, "healthy", "接入设备身份",
+                "Connector 身份已确认", value(payload.getString("hostname")) + " / " + value(payload.getString("os"))
+                        + " / " + value(payload.getString("arch")), "无", "无需操作", 117));
+    }
+
+    private void inspectConnectorRoutes(List<Finding> findings, long id, String name, JSONObject payload) {
+        JSONArray routes = payload.getJSONArray("defaultRoutes");
+        String routeText = routes == null ? "[]" : routes.toJSONString();
+        if (routes == null || routes.isEmpty()) {
+            findings.add(new Finding("network", "connector", id, name, "warning", "本机 -> 默认路由",
+                    "本机未读取到默认路由", routeText + "；" + value(payload.getString("routeError")),
+                    "没有默认路由时，依赖公网入口的连接可能只能通过静态路由或完全失败",
+                    "检查电脑网络连接、系统路由和 VPN；这项检查不会修改路由", 130));
+        } else {
+            findings.add(new Finding("network", "connector", id, name, "healthy", "本机 -> 默认路由",
+                    "本机默认路由存在", routeText, "无", "无需操作", 131));
+        }
+    }
+
+    private void inspectConnectorReachability(List<Finding> findings, long id, String name, JSONArray results) {
+        if (results == null || results.isEmpty()) {
+            findings.add(new Finding("network", "connector", id, name, "skipped", "本机 -> 入口端口",
+                    "没有可测试的面板或入口端口", "当前没有登记可供本机测试的 TCP 目标", "无法判断本机到入口的 TCP 路径",
+                    "先登记一个节点服务、转发、代理或域名入口后重试", 140));
+            return;
+        }
+        for (int i = 0; i < results.size(); i++) {
+            JSONObject item = results.getJSONObject(i);
+            boolean reachable = item.getBooleanValue("reachable");
+            String target = value(item.getString("name"));
+            String evidence = item.getString("host") + ":" + item.getIntValue("port") + "，耗时 "
+                    + item.getLongValue("durationMs") + " ms" + (item.getString("error") == null ? "" : "；" + item.getString("error"));
+            findings.add(new Finding("network", "connector", id, name, reachable ? "healthy" : "failed",
+                    "本机 -> 入口端口", reachable ? target + " 可达" : target + " 不可达", evidence,
+                    reachable ? "无" : "可能是本机防火墙、本地路由、运营商路径或入口服务器端口未监听；单次失败不能单独证明是哪一方",
+                    reachable ? "无需操作" : "先用同一台电脑测试其他入口；再从面板检查入口端口监听状态和服务器防火墙。若只有该网络失败，再对比另一运营商网络", 140 + i));
         }
     }
 
@@ -181,32 +329,32 @@ public class SystemSelfCheckService {
         }
     }
 
-    private void inspectFamilies(List<Finding> findings, Node node, JSONObject payload) {
+    private void inspectFamilies(List<Finding> findings, String resourceName, String resourceType, Long resourceId, JSONObject payload) {
         JSONObject ipv4 = payload.getJSONObject("ipv4");
         JSONObject ipv6 = payload.getJSONObject("ipv6");
-        inspectFamily(findings, node, "IPv4", ipv4, 30);
-        inspectFamily(findings, node, "IPv6", ipv6, 31);
+        inspectFamily(findings, resourceName, resourceType, resourceId, "IPv4", ipv4, 30);
+        inspectFamily(findings, resourceName, resourceType, resourceId, "IPv6", ipv6, 31);
     }
 
-    private void inspectFamily(List<Finding> findings, Node node, String label, JSONObject family, int order) {
+    private void inspectFamily(List<Finding> findings, String resourceName, String resourceType, Long resourceId, String label, JSONObject family, int order) {
         boolean available = family != null && family.getBooleanValue("available");
         boolean outbound = family != null && family.getBooleanValue("outbound");
         String addresses = family == null ? "[]" : String.valueOf(family.getJSONArray("addresses"));
         if (!available) {
-            findings.add(new Finding("network", "node", node.getId(), node.getName(), "skipped", label + " 能力",
+            findings.add(new Finding("network", resourceType, resourceId, resourceName, "skipped", label + " 能力",
                     "节点未检测到可用的 " + label, "接口地址 " + addresses, "不影响另一协议族正常使用",
                     label.equals("IPv6") ? "如果运营商或服务器没有提供 IPv6，可保持现状" : "确认节点至少有一种协议族可访问面板", order));
         } else if (!outbound) {
-            findings.add(new Finding("network", "node", node.getId(), node.getName(), "failed", label + " 出站",
+            findings.add(new Finding("network", resourceType, resourceId, resourceName, "failed", label + " 出站",
                     label + " 有地址但没有可用出站路由", "接口地址 " + addresses + "；错误 " + value(family.getString("error")),
                     "该协议族的域名、DDNS 或转发连接会失败", "检查网关、路由和上游防火墙；这不是特定路由器型号的判断", order));
         } else {
-            findings.add(new Finding("network", "node", node.getId(), node.getName(), "healthy", label + " 出站",
+            findings.add(new Finding("network", resourceType, resourceId, resourceName, "healthy", label + " 出站",
                     label + " 地址与出站路由正常", "接口地址 " + addresses, "无", "无需操作", order));
         }
     }
 
-    private void inspectDNS(List<Finding> findings, Node node, JSONArray dnsResults, JSONArray resolvers) {
+    private void inspectDNS(List<Finding> findings, String resourceName, String resourceType, Long resourceId, JSONArray dnsResults, JSONArray resolvers) {
         if (dnsResults == null || dnsResults.isEmpty()) return;
         for (int i = 0; i < dnsResults.size(); i++) {
             JSONObject dns = dnsResults.getJSONObject(i);
@@ -216,26 +364,26 @@ public class SystemSelfCheckService {
             Set<String> systemAAAA = strings(dns.getJSONArray("systemAAAA"));
             Set<String> publicAAAA = strings(dns.getJSONArray("publicAAAA"));
             if (publicA.isEmpty() && publicAAAA.isEmpty() && dns.getString("publicError") != null) {
-                findings.add(new Finding("dns", "domain", null, domain, "warning", node.getName() + " -> 公网 DoH",
+                findings.add(new Finding("dns", "domain", null, domain, "warning", resourceName + " -> 公网 DoH",
                         "公网 DNS 对照查询不可用", value(dns.getString("publicError")),
                         "本轮无法判断系统 DNS 与公网记录是否一致，但不代表域名记录不存在",
                         "确认节点可以访问 1.1.1.1:443 后重试；受限网络可暂时忽略此项", 39));
             } else if (publicA.isEmpty() && publicAAAA.isEmpty()) {
-                findings.add(new Finding("dns", "domain", null, domain, "failed", node.getName() + " -> 公网 DNS",
+                findings.add(new Finding("dns", "domain", null, domain, "failed", resourceName + " -> 公网 DNS",
                         "公网 DNS 没有返回 A 或 AAAA", "DoH A=" + publicA + "，AAAA=" + publicAAAA + "；" + value(dns.getString("publicError")),
                         "域名无法稳定访问", "检查域名记录状态、服务商同步错误与生效时间", 40));
             } else if (!publicAAAA.isEmpty() && systemAAAA.isEmpty()) {
-                findings.add(new Finding("dns", "domain", null, domain, "warning", node.getName() + " -> 本地 DNS",
+                findings.add(new Finding("dns", resourceType, resourceId, resourceName, "warning", resourceName + " -> 本地 DNS",
                         "公网已有 AAAA，但该节点的系统 DNS 没有返回", "公网 AAAA=" + publicAAAA + "，系统 AAAA=[]；解析器 "
                                 + strings(resolvers),
                         "使用该 DNS 的设备可能无法通过域名连接 IPv6，直接填写 IPv6 仍可能成功",
                         "检查当前网络 DNS 是否过滤 AAAA；无需假定使用 OpenWrt，小米、华为和运营商路由同样适用", 41));
             } else if ((!publicA.isEmpty() && !systemA.equals(publicA)) || (!publicAAAA.isEmpty() && !systemAAAA.equals(publicAAAA))) {
-                findings.add(new Finding("dns", "domain", null, domain, "warning", node.getName() + " -> DNS 一致性",
+                findings.add(new Finding("dns", resourceType, resourceId, resourceName, "warning", resourceName + " -> DNS 一致性",
                         "系统 DNS 与公网 DoH 结果不一致", "系统 A=" + systemA + " AAAA=" + systemAAAA + "；公网 A=" + publicA + " AAAA=" + publicAAAA,
                         "可能命中旧缓存、分线路解析或本地 DNS 改写", "等待 TTL 后复查；如持续不一致，检查本地 DNS 和运营商线路解析策略", 42));
             } else {
-                findings.add(new Finding("dns", "domain", null, domain, "healthy", node.getName() + " -> DNS",
+                findings.add(new Finding("dns", resourceType, resourceId, resourceName, "healthy", resourceName + " -> DNS",
                         "系统 DNS 与公网记录一致", "A=" + publicA + "，AAAA=" + publicAAAA, "无", "无需操作", 43));
             }
         }

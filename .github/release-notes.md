@@ -1,3 +1,9 @@
+## 2.41.2 Local device and Connector self-check
+
+- Adds a separate self-check scope for registered Windows, macOS, and Linux Connectors. The Connector reports local interfaces, IPv4/IPv6 outbound capability, system DNS, default routes, and TCP reachability to the panel and the panel's registered entry ports.
+- Findings identify the observed segment (local machine, route, network path, or entry listener) and do not claim a specific router brand or carrier from a single timeout. Missing IPv6 is skipped. Checks are read-only and do not scan LANs, change firewall or routes, or rebuild existing resources.
+- Connector `2.41.2` is required for the full local check. Older Connectors remain compatible with existing services but show an upgrade warning. The schema only adds nullable run-scope fields; panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.1 Terminal bootstrap marker fix
 
 - Fixes online upgrades from Agent `2.8.0` through `2.40.x` being marked failed before the detached helper started. Interactive terminals echo the submitted bootstrap command, and the old command contained the literal failure marker; the backend could mistake that echo for an executed failure result and close the session early.

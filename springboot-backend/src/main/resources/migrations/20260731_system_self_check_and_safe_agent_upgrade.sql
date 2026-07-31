@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS system_self_check_run (
   id bigint unsigned NOT NULL AUTO_INCREMENT,
   status varchar(24) NOT NULL,
   scope_node_id bigint DEFAULT NULL,
+  scope_type varchar(24) DEFAULT NULL,
+  scope_resource_id bigint DEFAULT NULL,
   total_checks int NOT NULL DEFAULT 0,
   healthy_count int NOT NULL DEFAULT 0,
   warning_count int NOT NULL DEFAULT 0,

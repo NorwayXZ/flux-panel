@@ -36,3 +36,22 @@ func TestSystemSelfCheckRejectsTooManyDomains(t *testing.T) {
 		t.Fatal("oversized domain request was accepted")
 	}
 }
+
+func TestSystemSelfCheckChecksPanelAndRequestedTargets(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	reporter := &WebSocketReporter{addr: listener.Addr().String()}
+	response, err := reporter.handleSystemSelfCheck(map[string]interface{}{
+		"targets": []map[string]interface{}{{"name": "本地测试", "host": "127.0.0.1", "port": port, "network": "tcp"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Reachability) != 1 || !response.Reachability[0].Reachable {
+		t.Fatalf("expected panel endpoint to be reachable, got %#v", response.Reachability)
+	}
+}

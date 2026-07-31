@@ -32,7 +32,9 @@ public class SystemSelfCheckController {
     public R run(@RequestBody(required = false) Map<String, Object> params) {
         Long nodeId = params != null && params.get("nodeId") != null
                 ? Long.valueOf(params.get("nodeId").toString()) : null;
-        return service.start(nodeId);
+        Long connectorId = params != null && params.get("connectorId") != null
+                ? Long.valueOf(params.get("connectorId").toString()) : null;
+        return service.start(nodeId, connectorId);
     }
 
     @RequireRole
