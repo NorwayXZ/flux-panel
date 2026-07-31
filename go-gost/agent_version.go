@@ -1,3 +1,3 @@
 package main
 
-const agentVersion = "2.41.3"
+const agentVersion = "2.41.4"

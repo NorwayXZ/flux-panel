@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 @Service
 public class SystemSelfCheckService {
     public static final String MIN_AGENT_VERSION = "2.41.0";
-    public static final String MIN_CONNECTOR_SELF_CHECK_VERSION = "2.41.3";
+    public static final String MIN_CONNECTOR_SELF_CHECK_VERSION = "2.41.4";
     private final JdbcTemplate jdbcTemplate;
     private final NodeService nodeService;
     private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
@@ -228,10 +228,12 @@ public class SystemSelfCheckService {
             if (host != null && !host.isBlank()) hosts.put(node.getId(), host.trim());
         }
         List<Map<String, Object>> targets = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
         for (Map.Entry<Long, List<ExpectedPort>> entry : expectedPorts.entrySet()) {
             String host = hosts.get(entry.getKey());
             if (host == null) continue;
             for (ExpectedPort expected : entry.getValue()) {
+                if (!seen.add(host + ":" + expected.port())) continue;
                 Map<String, Object> target = new LinkedHashMap<>();
                 target.put("name", expected.resourceName() + " · " + host + ":" + expected.port());
                 target.put("host", host);

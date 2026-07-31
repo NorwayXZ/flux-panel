@@ -1,3 +1,9 @@
+## 2.41.4 Connector self-check message size fix
+
+- Raises the Connector WebSocket incoming message limit to 4 MiB so large self-check requests containing many registered entry targets are processed instead of being closed with WebSocket code 1009.
+- Deduplicates Connector reachability targets by host and port before sending the self-check command, so the same endpoint is tested once even when several resources share it.
+- The check remains read-only. Existing resources and the `2.41.3` release remain available for rollback.
+
 ## 2.41.3 macOS Connector self-check timeout fix
 
 - Skips the expensive system-wide socket enumeration when a Connector self-check does not request local listener inspection. This prevents some macOS Connectors from exceeding the panel's 45-second response deadline before DNS, IPv4/IPv6, default-route, and entry-port results can be returned.

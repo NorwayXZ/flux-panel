@@ -125,7 +125,7 @@ export default function SystemSelfCheckPage() {
         {run.status === 'running' ? <RefreshCw size={18} className="animate-spin text-primary" /> : run.failedCount > 0 ? <XCircle size={18} className="text-danger" /> : <CircleCheck size={18} className="text-success" />}
         <div><p className="text-sm font-medium">{run.message || '等待自检'}</p><p className="mt-1 text-xs text-default-500">{new Date(run.startedAt).toLocaleString('zh-CN')} · {run.scopeType === 'connector' ? '指定接入设备' : run.scopeType === 'node' || run.scopeNodeId ? '指定服务器节点' : '全部资源'}</p></div>
       </div>
-      <p className="text-xs text-default-500">服务器 Agent 自检最低版本 {data?.minimumAgentVersion} · Connector 本机自检最低版本 {data?.minimumConnectorVersion || '2.41.3'}</p>
+      <p className="text-xs text-default-500">服务器 Agent 自检最低版本 {data?.minimumAgentVersion} · Connector 本机自检最低版本 {data?.minimumConnectorVersion || '2.41.4'}</p>
     </section>}
 
     <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

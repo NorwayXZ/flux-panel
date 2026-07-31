@@ -140,6 +140,8 @@ type WebSocketReporter struct {
 	natManager      *natRuntimeManager
 }
 
+const maxIncomingWebSocketMessage = 4 * 1024 * 1024
+
 // NewWebSocketReporter 创建一个新的WebSocket报告器
 func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -325,6 +327,7 @@ func (w *WebSocketReporter) connect() error {
 	}
 
 	w.conn = conn
+	conn.SetReadLimit(maxIncomingWebSocketMessage)
 	w.connected = true
 	go w.reportPendingAgentUpgrade()
 
