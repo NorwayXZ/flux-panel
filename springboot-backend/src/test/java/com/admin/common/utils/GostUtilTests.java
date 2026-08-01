@@ -50,4 +50,15 @@ class GostUtilTests {
         assertEquals("private-proxy-user-42", limiter.getString("name"));
         assertEquals("$ 12.5MB 12.5MB", limiter.getJSONArray("limits").getString(0));
     }
+
+    @Test
+    void buildsRawTcpChainForSourceIpEntry() {
+        JSONObject chain = GostUtil.createSourceIpChainData("source_ip_7_route_2", "198.51.100.20:23888");
+        JSONObject node = chain.getJSONArray("hops").getJSONObject(0).getJSONArray("nodes").getJSONObject(0);
+
+        assertEquals("source_ip_7_route_2_chains", chain.getString("name"));
+        assertEquals("198.51.100.20:23888", node.getString("addr"));
+        assertEquals("tcp", node.getJSONObject("dialer").getString("type"));
+        assertEquals("tcp", node.getJSONObject("connector").getString("type"));
+    }
 }

@@ -31,7 +31,9 @@ import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserMapper;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import org.springframework.dao.DataAccessException;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
@@ -47,6 +49,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class PortLedgerService {
+    @Resource private JdbcTemplate jdbcTemplate;
     @Resource private NodeMapper nodeMapper;
     @Resource private TunnelMapper tunnelMapper;
     @Resource private ForwardMapper forwardMapper;
@@ -80,6 +83,7 @@ public class PortLedgerService {
         addDomainIngresses(entries, nodeMap, userMap);
         addPrivateProxies(entries, nodeMap, userMap);
         addHomeProxyRoutes(entries, nodeMap, userMap);
+        addSourceIpEntries(entries, nodeMap, userMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -262,6 +266,32 @@ public class PortLedgerService {
                             "家庭代理 VPS 出口网关", route.getCreatedTime(), null));
                 }
             }
+        }
+    }
+
+    private void addSourceIpEntries(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
+        if (jdbcTemplate == null) return;
+        List<Map<String, Object>> sourceEntries;
+        try {
+            sourceEntries = jdbcTemplate.queryForList(
+                    "SELECT id,name,user_id AS userId,ingress_node_id AS nodeId,listen_port AS port,state,created_time AS createdTime "
+                            + "FROM source_ip_entry_group WHERE state<>'deleted'");
+        } catch (DataAccessException ignored) {
+            // Keep the legacy ledger usable while an older installation is creating the new table.
+            return;
+        }
+        for (Map<String, Object> item : sourceEntries) {
+            Node node = nodes.get(item.get("nodeId") == null ? 0L : ((Number) item.get("nodeId")).longValue());
+            if (node == null || item.get("port") == null) continue;
+            Integer userId = item.get("userId") == null ? null : ((Number) item.get("userId")).intValue();
+            User owner = userId == null ? null : users.get(userId);
+            String state = "active".equals(item.get("state")) ? "occupied" : "error";
+            add(entries, nodeEntry("source_ip_entry", state, node,
+                    ((Number) item.get("port")).intValue(), ((Number) item.get("port")).intValue(), "tcp",
+                    userId, owner == null ? "未知用户" : owner.getUser(),
+                    ((Number) item.get("id")).longValue(), Objects.toString(item.get("name"), "来源 IP 分流"),
+                    "入口层按客户端来源 IP 分流 · " + item.get("state"),
+                    item.get("createdTime") == null ? null : ((Number) item.get("createdTime")).longValue(), null));
         }
     }
 

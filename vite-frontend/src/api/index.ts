@@ -474,6 +474,91 @@ export const checkCrossEntryGroup = (id: number) =>
   Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/check", { id });
 export const getCrossEntryEvents = (id: number) => Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
 
+export interface SourceIpEntryRoute {
+  id?: number;
+  carrier: 'default' | 'telecom' | 'unicom' | 'mobile' | 'custom';
+  backendForwardId: number;
+  backendForwardName?: string;
+  backendNodeId?: number;
+  backendNodeName?: string;
+  backendHost?: string;
+  backendPort?: number;
+  protocolMode?: string;
+  cidrs?: string;
+  cidrCount?: number;
+  enabled: boolean | number;
+  chainName?: string;
+}
+
+export interface SourceIpEntryGroup {
+  id: number;
+  name: string;
+  ingressNodeId: number;
+  ingressNodeName?: string;
+  agentVersion?: string;
+  listenHost?: string;
+  listenPort: number;
+  defaultRouteId?: number;
+  enabled: boolean | number;
+  state: 'provisioning' | 'active' | 'disabled' | 'error' | 'deleted';
+  lastError?: string;
+  lastSyncedAt?: number;
+  createdTime?: number;
+  routes: SourceIpEntryRoute[];
+  serviceName?: string;
+}
+
+export interface SourceIpEntryNode {
+  id: number;
+  name: string;
+  serverIp?: string;
+  ip?: string;
+  version?: string;
+  status: number;
+  online: boolean;
+  compatible: boolean;
+  available: boolean;
+}
+
+export interface SourceIpBackendForward {
+  id: number;
+  name: string;
+  inPort: number;
+  protocolMode?: string;
+  inNodeId: number;
+  entryHost?: string;
+  tunnelName?: string;
+  nodeName?: string;
+  nodeStatus?: number;
+}
+
+export interface SourceIpCarrierDatabase {
+  carrier: 'telecom' | 'unicom' | 'mobile';
+  label: string;
+  state: 'pending' | 'ready' | 'error';
+  ipv4Count: number;
+  ipv6Count: number;
+  cidrCount: number;
+  sourceUrls?: string;
+  updatedTime?: number;
+  lastError?: string;
+}
+
+export interface SourceIpEntryOverview {
+  groups: SourceIpEntryGroup[];
+  ingressNodes: SourceIpEntryNode[];
+  backendForwards: SourceIpBackendForward[];
+  carriers: SourceIpCarrierDatabase[];
+  minimumAgentVersion: string;
+  summary: { total: number; enabled: number; healthy: number; errors: number };
+}
+
+export const getSourceIpEntryOverview = () => Network.post<SourceIpEntryOverview>('/source-ip-entry/overview');
+export const saveSourceIpEntry = (data: any) => Network.post<{ id: number; state: string }>('/source-ip-entry/save', data);
+export const checkSourceIpEntry = (id: number) => Network.post('/source-ip-entry/check', { id });
+export const deleteSourceIpEntry = (id: number) => Network.post('/source-ip-entry/delete', { id });
+export const refreshSourceIpCarriers = () => Network.post('/source-ip-entry/carriers/refresh');
+
 export interface SmartEntryRoute {
   id: number;
   carrier: 'default' | 'telecom' | 'unicom' | 'mobile';
@@ -1057,7 +1142,7 @@ export interface ManagedCertificate {
   updatedTime: number;
 }
 
-export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy';
+export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy' | 'source_ip_entry';
 
 export interface PortLedgerEntry {
   key: string;

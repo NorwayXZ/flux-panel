@@ -21,6 +21,7 @@ const ServicePublishingPage = lazy(() => import("@/pages/service-publishing"));
 const TopologyPage = lazy(() => import("@/pages/topology"));
 const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
 const CrossEntryFailoverPage = lazy(() => import("@/pages/cross-entry-failover"));
+const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
@@ -210,6 +211,10 @@ function App() {
       <Route
         path="/cross-entry-failover"
         element={<ProtectedRoute><CrossEntryFailoverPage /></ProtectedRoute>}
+      />
+      <Route
+        path="/source-ip-entry"
+        element={<ProtectedRoute><SourceIpEntryPage /></ProtectedRoute>}
       />
       <Route path="/topology" element={<ProtectedRoute><TopologyPage /></ProtectedRoute>} />
       <Route path="/system-self-check" element={<ProtectedRoute><SystemSelfCheckPage /></ProtectedRoute>} />

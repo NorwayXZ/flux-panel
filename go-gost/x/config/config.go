@@ -508,8 +508,19 @@ type ChainConfig struct {
 }
 
 type ChainGroupConfig struct {
-	Chains   []string        `yaml:",omitempty" json:"chains,omitempty"`
-	Selector *SelectorConfig `yaml:",omitempty" json:"selector,omitempty"`
+	Chains       []string             `yaml:",omitempty" json:"chains,omitempty"`
+	Selector     *SelectorConfig      `yaml:",omitempty" json:"selector,omitempty"`
+	Default      string               `yaml:",omitempty" json:"default,omitempty"`
+	SourceRoutes []*SourceRouteConfig `yaml:",omitempty" json:"sourceRoutes,omitempty"`
+}
+
+// SourceRouteConfig selects a chain when the accepted connection's source IP
+// belongs to one of the supplied CIDR ranges. It is intentionally part of the
+// Agent config rather than the protocol handler, so the original TCP stream is
+// still passed through untouched.
+type SourceRouteConfig struct {
+	Chain string   `yaml:"chain" json:"chain"`
+	CIDRs []string `yaml:"cidrs" json:"cidrs"`
 }
 
 type HopConfig struct {

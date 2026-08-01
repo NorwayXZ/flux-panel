@@ -752,7 +752,91 @@ public class GostUtil {
        return WebSocketServer.send_msg(node_id, req, "UpdateChains");
     }
 
+    /**
+     * Creates a direct TCP chain used by a source-IP entry. The backend address is
+     * an existing ordinary TCP forward listener, so the chain must preserve the
+     * stream and must not send a GOST relay handshake to that listener.
+     */
+    public static GostDto AddSourceIpChain(Long nodeId, String chainName, String backendAddress) {
+        return WebSocketServer.send_msg(nodeId, createSourceIpChainData(chainName, backendAddress), "AddChains");
+    }
+
+    public static GostDto UpdateSourceIpChain(Long nodeId, String chainName, String backendAddress) {
+        JSONObject data = createSourceIpChainData(chainName, backendAddress);
+        JSONObject request = new JSONObject();
+        request.put("chain", chainName + "_chains");
+        request.put("data", data);
+        return WebSocketServer.send_msg(nodeId, request, "UpdateChains");
+    }
+
+    public static GostDto ConfigureSourceIpEntry(Long nodeId, String serviceName, String bindIp, Integer port,
+                                                  List<SourceIpRoute> routes, String defaultChain,
+                                                  boolean update) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", listenAddress(bindIp, port));
+
+        JSONObject handler = new JSONObject();
+        handler.put("type", "tcp");
+        JSONObject chainGroup = new JSONObject();
+        JSONArray chains = new JSONArray();
+        JSONArray sourceRoutes = new JSONArray();
+        for (SourceIpRoute route : routes) {
+            if (route == null || StringUtils.isBlank(route.chainName())) continue;
+            String registeredChain = route.chainName() + "_chains";
+            chains.add(registeredChain);
+            if (route.cidrs() != null && !route.cidrs().isEmpty()) {
+                JSONObject sourceRoute = new JSONObject();
+                sourceRoute.put("chain", registeredChain);
+                sourceRoute.put("cidrs", route.cidrs());
+                sourceRoutes.add(sourceRoute);
+            }
+        }
+        chainGroup.put("chains", chains);
+        chainGroup.put("default", StringUtils.isBlank(defaultChain) ? "" : defaultChain + "_chains");
+        chainGroup.put("sourceRoutes", sourceRoutes);
+        JSONObject selector = new JSONObject();
+        selector.put("strategy", "round");
+        selector.put("maxFails", 1);
+        selector.put("failTimeout", "30s");
+        chainGroup.put("selector", selector);
+        handler.put("chainGroup", chainGroup);
+        service.put("handler", handler);
+
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, update ? "UpdateService" : "AddService");
+    }
+
+    public static GostDto DeleteSourceIpEntry(Long nodeId, String serviceName) {
+        JSONObject data = new JSONObject();
+        JSONArray services = new JSONArray();
+        services.add(serviceName);
+        data.put("services", services);
+        return WebSocketServer.send_msg(nodeId, data, "DeleteService");
+    }
+
+    public static GostDto DeleteSourceIpChain(Long nodeId, String chainName) {
+        return DeleteChains(nodeId, chainName);
+    }
+
+    public record SourceIpRoute(String chainName, List<String> cidrs) {
+    }
+
+    static JSONObject createSourceIpChainData(String name, String backendAddress) {
+        return createChainData(name, java.util.Collections.singletonList(backendAddress), "tcp", null, null, "tcp");
+    }
+
     private static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol, String interfaceName, Integer weight) {
+        return createChainData(name, remoteAddrs, protocol, interfaceName, weight, "relay");
+    }
+
+    private static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol,
+                                              String interfaceName, Integer weight, String connectorType) {
         JSONArray hops = new JSONArray();
         int index = 1;
         for (String remoteAddr : remoteAddrs) {
@@ -766,7 +850,7 @@ public class GostUtil {
             }
 
             JSONObject connector = new JSONObject();
-            connector.put("type", "relay");
+            connector.put("type", connectorType);
 
             JSONObject node = new JSONObject();
             node.put("name", "node-" + name + "-" + index);

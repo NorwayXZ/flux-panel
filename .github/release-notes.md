@@ -1,3 +1,9 @@
+## 2.42.2 Source-IP entry routing
+
+- Add a single TCP ingress that selects an existing backend forward by the real client source IP.
+- Support longest-prefix IPv4/IPv6 CIDR matching, carrier databases, custom CIDRs, and default/health fallback.
+- Require Agent 2.42.2 for the new ingress feature; existing resources are not changed by upgrade.
+
 ## 2.42.1 Carrier DNS convergence and diagnostics
 
 - Keeps single-domain carrier routing while stopping unchanged DNSPod and Aliyun line records from being rewritten on every five-second health check. DNS writes now occur only after a route or TTL change, a missing record, or a retryable synchronization failure, with a minimum 60-second failure backoff.

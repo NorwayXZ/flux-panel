@@ -73,6 +73,13 @@ export default function ProfilePage() {
       description: '管理跨入口自动切换'
     },
     {
+      path: '/source-ip-entry',
+      label: '来源 IP 分流',
+      icon: <RadioTower className="h-5 w-5" />,
+      color: 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400',
+      description: '按客户端真实来源 IP 选择入口线路'
+    },
+    {
       path: '/limit',
       label: '用户限速预设',
       icon: (

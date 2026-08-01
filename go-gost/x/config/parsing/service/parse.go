@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net"
 	"runtime"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ import (
 	mdutil "github.com/go-gost/x/metadata/util"
 	xstats "github.com/go-gost/x/observer/stats"
 	"github.com/go-gost/x/registry"
+	xselector "github.com/go-gost/x/selector"
 	xservice "github.com/go-gost/x/service"
 	"github.com/vishvananda/netns"
 )
@@ -449,6 +451,44 @@ func chainGroup(name string, group *config.ChainGroupConfig) chain.Chainer {
 	}
 	if len(chains) == 0 {
 		return nil
+	}
+
+	if group != nil && len(group.SourceRoutes) > 0 {
+		fallbackName := group.Default
+		if fallbackName == "" && len(group.Chains) > 0 {
+			fallbackName = group.Chains[0]
+		}
+		fallback := registry.ChainRegistry().Get(fallbackName)
+		if fallback == nil {
+			fallback = chains[0]
+		}
+		var sourceRoutes []xselector.SourceIPRoute[chain.Chainer]
+		for _, route := range group.SourceRoutes {
+			if route == nil || route.Chain == "" {
+				continue
+			}
+			target := registry.ChainRegistry().Get(route.Chain)
+			if target == nil {
+				continue
+			}
+			for _, cidr := range route.CIDRs {
+				_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+				if err != nil || network == nil {
+					continue
+				}
+				sourceRoutes = append(sourceRoutes, xselector.SourceIPRoute[chain.Chainer]{Network: network, Target: target})
+			}
+		}
+		if len(sourceRoutes) > 0 {
+			maxFails, failTimeout := 1, 30*time.Second
+			if group.Selector != nil {
+				maxFails = group.Selector.MaxFails
+				failTimeout = group.Selector.FailTimeout
+			}
+			return xchain.NewChainGroup(chains...).WithSelector(
+				xselector.NewSourceIPSelector(sourceRoutes, fallback, chains, maxFails, failTimeout),
+			)
+		}
 	}
 
 	if sel == nil {

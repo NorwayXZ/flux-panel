@@ -16,6 +16,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/topology': () => import('@/pages/topology'),
   '/port-resources': () => import('@/pages/port-resources'),
   '/cross-entry-failover': () => import('@/pages/cross-entry-failover'),
+  '/source-ip-entry': () => import('@/pages/source-ip-entry'),
   '/smart-entry': () => import('@/pages/smart-entry'),
   '/dns-settings': () => import('@/pages/dns-settings'),
   '/private-proxy': () => import('@/pages/private-proxy'),

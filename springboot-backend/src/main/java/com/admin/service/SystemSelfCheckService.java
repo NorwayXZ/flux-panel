@@ -619,6 +619,10 @@ public class SystemSelfCheckService {
             if (!"udp".equals(mode)) addExpected(result, row, "tcp", "forward");
             if (!"tcp".equals(mode)) addExpected(result, row, "udp", "forward");
         }
+        for (Map<String, Object> row : jdbcTemplate.queryForList(
+                "SELECT id,name,ingress_node_id AS nodeId,listen_port AS port FROM source_ip_entry_group WHERE state='active' AND enabled=1")) {
+            addExpected(result, row, "tcp", "source_ip_entry");
+        }
         return result;
     }
 

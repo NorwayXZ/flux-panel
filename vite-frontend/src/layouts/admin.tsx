@@ -83,6 +83,12 @@ export default function AdminLayout({
       adminOnly: true
     },
     {
+      path: '/source-ip-entry',
+      label: '来源 IP 分流',
+      icon: <RadioTower className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/cross-entry-failover',
       label: '入口容灾',
       icon: <ShieldCheck className="h-5 w-5" />,
@@ -205,7 +211,7 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/cross-entry-failover'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab'] },
     { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/limit', '/server-assets', '/user', '/config'] },
