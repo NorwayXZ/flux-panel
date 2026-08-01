@@ -1,3 +1,11 @@
+## 2.41.9 Faster route transitions and shared read caching
+
+- Keeps the existing navigation shell visible while a lazy page chunk is loading, so a slow first download no longer replaces the whole page with a blank loading screen.
+- Prefetches the selected business page when an administrator hovers or focuses its menu item, and does the same for the mobile tab bar.
+- De-duplicates concurrent site configuration and unread-alert requests across layout mounts. Alert refresh events still invalidate the short-lived cache immediately.
+- Adds short-lived caching for forward and monitoring read lists. Forward mutations, monitoring read actions, and reorder operations invalidate the related cache immediately.
+- Frontend-only performance release. Agent and Connector remain `2.41.4`; existing nodes, tunnels, forwards, proxies, DNS records, certificates, and port resources are unchanged. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.8 Slow API ranking and progressive page loading
 
 - Adds an administrator-only **接口性能** view under the monitoring center. Recent API samples are kept in a bounded 15-minute in-memory window and ranked by P95 latency, with request count, HTTP errors, slow requests, average/P50/P95/max latency, last status, timestamp, and request ID.

@@ -5,6 +5,7 @@ import { Logo } from '@/components/icons';
 import { siteConfig } from '@/config/site';
 import { Bell } from 'lucide-react';
 import { useAlertUnreadCount } from '@/hooks/use-alert-unread-count';
+import { preloadRoute } from '@/utils/route-preload';
 
 interface TabItem {
   path: string;
@@ -125,6 +126,8 @@ export default function H5Layout({
             aria-label="打开告警中心"
             title="告警中心"
             onClick={() => navigate('/monitoring')}
+            onMouseEnter={() => preloadRoute('/monitoring')}
+            onFocus={() => preloadRoute('/monitoring')}
             className={`relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
               location.pathname === '/monitoring'
                 ? 'bg-primary-100 text-primary-600 dark:bg-primary-500/15 dark:text-primary-300'
@@ -157,6 +160,8 @@ export default function H5Layout({
             <button
               key={item.path}
               onClick={() => handleTabClick(item.path)}
+              onMouseEnter={() => preloadRoute(item.path)}
+              onFocus={() => preloadRoute(item.path)}
               className={`
                 flex flex-col items-center justify-center flex-1 h-full
                 transition-colors duration-200 min-h-[44px]

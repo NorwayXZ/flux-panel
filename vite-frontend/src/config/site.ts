@@ -4,9 +4,11 @@ export type SiteConfig = typeof siteConfig;
 
 // 缓存相关常量
 const CACHE_PREFIX = 'vite_config_v2_';
-const VERSION = "2.41.8";
+const VERSION = "2.41.9";
 const APP_VERSION = "1.0.4";
 const UPDATE_REPOSITORY = "NorwayXZ/flux-panel";
+const configRequests = new Map<string, Promise<string | null>>();
+let allConfigsRequest: Promise<Record<string, string>> | null = null;
 
 const getInitialConfig = () => {
   if (typeof window === 'undefined') {
@@ -76,14 +78,23 @@ export const getCachedConfig = async (key: string): Promise<string | null> => {
     return cachedValue;
   }
 
-  const response = await getConfigByName(key);
-  if (response.code === 0 && response.data?.value) {
-    const value = response.data.value;
-    configCache.set(key, value);
-    return value;
-  }
+  const existingRequest = configRequests.get(key);
+  if (existingRequest) return existingRequest;
 
-  return null;
+  const request = getConfigByName(key)
+    .then(response => {
+      if (response.code === 0 && response.data?.value) {
+        const value = response.data.value;
+        configCache.set(key, value);
+        return value;
+      }
+      return null;
+    })
+    .finally(() => {
+      configRequests.delete(key);
+    });
+  configRequests.set(key, request);
+  return request;
 };
 
 // 获取所有配置（优先从缓存）
@@ -103,25 +114,26 @@ export const getCachedConfigs = async (): Promise<Record<string, string>> => {
 
 
 
-  // 从API获取最新配置
-  try {
-    const response = await getConfigs();
-    if (response.code === 0 && response.data) {
-      const configs = response.data;
-      // 将所有配置存入缓存
-      Object.entries(configs).forEach(([key, value]) => {
-        configCache.set(key, value as string);
+  // 从API获取最新配置；多个设置入口同时打开时共享同一个请求。
+  if (!allConfigsRequest) {
+    allConfigsRequest = getConfigs()
+      .then(response => {
+        if (response.code !== 0 || !response.data) return {};
+        const configs = response.data as Record<string, string>;
+        Object.entries(configs).forEach(([key, value]) => {
+          configCache.set(key, value);
+        });
+        return configs;
+      })
+      .catch(() => ({}))
+      .finally(() => {
+        allConfigsRequest = null;
       });
-      return configs;
-    }
-  } catch (error) {
-    // API失败时返回缓存的数据
-    if (hasCachedData) {
-      return cachedConfigs;
-    }
   }
 
-  return {};
+  const configs = await allConfigsRequest;
+  if (Object.keys(configs).length > 0) return configs;
+  return hasCachedData ? cachedConfigs : {};
 };
 
 // 动态更新网站配置

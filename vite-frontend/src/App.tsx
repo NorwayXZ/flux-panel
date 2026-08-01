@@ -102,9 +102,11 @@ const ProtectedRoute = ({ children, useSimpleLayout = false, skipLayout = false 
     );
   }
 
+  const content = <Suspense fallback={<PageLoading />}>{children}</Suspense>;
+
   // 如果跳过布局，直接返回子组件
   if (skipLayout) {
-    return <>{children}</>;
+    return content;
   }
 
   // 根据模式和页面类型选择布局
@@ -117,7 +119,7 @@ const ProtectedRoute = ({ children, useSimpleLayout = false, skipLayout = false 
     Layout = AdminLayout;
   }
   
-  return <Layout>{children}</Layout>;
+  return <Layout>{content}</Layout>;
 };
 
 

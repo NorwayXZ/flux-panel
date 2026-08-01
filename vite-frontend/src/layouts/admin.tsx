@@ -12,6 +12,7 @@ import { updatePassword } from '@/api';
 import { safeLogout } from '@/utils/logout';
 import { siteConfig } from '@/config/site';
 import { useAlertUnreadCount } from '@/hooks/use-alert-unread-count';
+import { preloadRoute } from '@/utils/route-preload';
 
 interface MenuItem {
   path: string;
@@ -389,8 +390,10 @@ export default function AdminLayout({
                     const isActive = (item.activePaths || [item.path]).includes(location.pathname);
                     return (
                       <li key={item.path}>
-                                     <button
+                     <button
                        onClick={() => handleMenuClick(item.path)}
+                       onMouseEnter={() => preloadRoute(item.path)}
+                       onFocus={() => preloadRoute(item.path)}
                      className={`
                        w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left
                        transition-colors duration-200 min-h-[44px]

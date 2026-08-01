@@ -200,11 +200,11 @@ export const updateUserTunnel = (data: any) => Network.post("/tunnel/user/update
 export const userTunnel = () => Network.post("/tunnel/user/tunnel");
 
 // 转发CRUD操作 - 全部使用POST请求
-export const createForward = (data: any) => Network.post("/forward/create", data);
-export const getForwardList = () => Network.post("/forward/list");
-export const updateForward = (data: any) => Network.post("/forward/update", data);
-export const deleteForward = (id: number) => Network.post("/forward/delete", { id });
-export const forceDeleteForward = (id: number) => Network.post("/forward/force-delete", { id });
+export const createForward = (data: any) => Network.mutate("/forward/create", data, ["/forward/list"]);
+export const getForwardList = () => Network.postCached("/forward/list", {}, 5000);
+export const updateForward = (data: any) => Network.mutate("/forward/update", data, ["/forward/list"]);
+export const deleteForward = (id: number) => Network.mutate("/forward/delete", { id }, ["/forward/list"]);
+export const forceDeleteForward = (id: number) => Network.mutate("/forward/force-delete", { id }, ["/forward/list"]);
 
 export type PrivateProxyType = 'socks5' | 'http' | 'shadowsocks' | 'vless_reality' | 'trojan' | 'hysteria2' | 'tuic' | 'wireguard';
 
@@ -374,8 +374,8 @@ export const getQualityLabDetail = (id: number, range: '24h' | '7d' | '30d') => 
 export const getQualityLabReport = (id: number, range: '24h' | '7d' | '30d') => Network.post<{ filename: string; content: string; generatedAt: number }>('/quality-lab/report', { id, range });
 
 // 转发服务控制操作 - 通过Java后端接口
-export const pauseForwardService = (forwardId: number) => Network.post("/forward/pause", { id: forwardId });
-export const resumeForwardService = (forwardId: number) => Network.post("/forward/resume", { id: forwardId });
+export const pauseForwardService = (forwardId: number) => Network.mutate("/forward/pause", { id: forwardId }, ["/forward/list"]);
+export const resumeForwardService = (forwardId: number) => Network.mutate("/forward/resume", { id: forwardId }, ["/forward/list"]);
 
 // 转发诊断操作
 export const diagnoseForward = (forwardId: number) => Network.post("/forward/diagnose", { forwardId });
@@ -656,7 +656,7 @@ export interface TopologyGraph {
 export const getTopologyGraph = () => Network.post<TopologyGraph>("/topology/graph");
 
 // 转发排序操作
-export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.post("/forward/update-order", data);
+export const updateForwardOrder = (data: { forwards: Array<{ id: number; inx: number }> }) => Network.mutate("/forward/update-order", data, ["/forward/list"]);
 
 // 用户级卡片布局
 export const getLayoutOrder = (scope: string) => Network.post<string[]>("/layout/order", { scope });
@@ -743,13 +743,13 @@ export interface MonitoringAlertQuery {
 }
 
 export const getMonitoringOverview = (range: MonitoringRange = '24h') =>
-  Network.post<MonitoringOverview>("/monitoring/overview", { range });
+  Network.postCached<MonitoringOverview>("/monitoring/overview", { range }, 3000);
 export const getMonitoringAlerts = (query: MonitoringAlertQuery = {}) =>
-  Network.post<MonitoringAlertPage>("/monitoring/alerts", query);
+  Network.postCached<MonitoringAlertPage>("/monitoring/alerts", query, 3000);
 export const markMonitoringAlertsRead = (ids: number[]) =>
-  Network.post<number>("/monitoring/alerts/read", { ids });
+  Network.mutate<number>("/monitoring/alerts/read", { ids }, ["/monitoring/alerts"]);
 export const markAllMonitoringAlertsRead = () =>
-  Network.post<number>("/monitoring/alerts/read-all");
+  Network.mutate<number>("/monitoring/alerts/read-all", {}, ["/monitoring/alerts"]);
 export const getMonitoringUnreadCount = () =>
   Network.post<number>("/monitoring/alerts/unread-count");
 

@@ -28,8 +28,8 @@ export const Navbar = () => {
     const checkForUpdates = async () => {
       try {
         const cachedAppName = await getCachedConfig('app_name');
-        if (cachedAppName && cachedAppName !== appName) {
-          setAppName(cachedAppName);
+        if (cachedAppName) {
+          setAppName(currentName => cachedAppName === currentName ? currentName : cachedAppName);
           // 同步更新siteConfig
           siteConfig.name = cachedAppName;
         }
@@ -60,7 +60,7 @@ export const Navbar = () => {
       clearTimeout(timer);
       window.removeEventListener('configUpdated', handleConfigUpdate);
     };
-  }, [appName]);
+  }, []);
 
   return (
     <>
