@@ -6,17 +6,25 @@ NETWORK=flux-panel-runtime-test-net
 DATABASE=flux-panel-runtime-test-db
 BACKEND=flux-panel-runtime-test-backend
 IMAGE=flux-panel-runtime-test-backend:local
+BUILD_CONTEXT="$(mktemp -d)"
 
 cleanup() {
   docker rm -f "${BACKEND}" "${DATABASE}" >/dev/null 2>&1 || true
   docker network rm "${NETWORK}" >/dev/null 2>&1 || true
   docker image rm "${IMAGE}" >/dev/null 2>&1 || true
+  rm -rf "${BUILD_CONTEXT}"
 }
 trap cleanup EXIT
 cleanup
 
-docker build -f "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime" \
-  -t "${IMAGE}" "${PROJECT_DIR}/springboot-backend" >/dev/null
+cp "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime" "${BUILD_CONTEXT}/Dockerfile"
+cp "${PROJECT_DIR}/springboot-backend/healthcheck.sh" "${BUILD_CONTEXT}/healthcheck.sh"
+mkdir -p "${BUILD_CONTEXT}/target"
+cp "${PROJECT_DIR}"/springboot-backend/target/*.jar "${BUILD_CONTEXT}/target/app.jar"
+test -s "${BUILD_CONTEXT}/Dockerfile"
+test -s "${BUILD_CONTEXT}/healthcheck.sh"
+test -s "${BUILD_CONTEXT}/target/app.jar"
+docker build -t "${IMAGE}" "${BUILD_CONTEXT}" >/dev/null
 docker network create "${NETWORK}" >/dev/null
 docker run -d \
   --name "${DATABASE}" \
