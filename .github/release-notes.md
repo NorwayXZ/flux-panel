@@ -1,3 +1,9 @@
+## 2.42.3 Reliable Agent self-update fallback
+
+- Falls back to a detached helper when `systemd-run` is present but cannot create the transient unit.
+- Preserves the `systemd-run` failure detail and reports a combined error only when the detached fallback also fails.
+- Keeps the existing atomic replacement, reconnect acknowledgement, and automatic rollback flow unchanged.
+
 ## 2.42.2 Source-IP entry routing
 
 - Add a single TCP ingress that selects an existing backend forward by the real client source IP.

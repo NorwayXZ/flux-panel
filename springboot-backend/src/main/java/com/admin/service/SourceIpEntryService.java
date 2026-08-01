@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class SourceIpEntryService {
-    public static final String MIN_AGENT_VERSION = "2.42.2";
+    public static final String MIN_AGENT_VERSION = "2.42.3";
 
     private static final List<String> CARRIERS = List.of("default", "telecom", "unicom", "mobile", "custom");
     private static final Map<String, List<String>> CARRIER_URLS = Map.of(
