@@ -14,7 +14,6 @@ MANAGER_BIN="${FLUX_PANEL_MANAGER_BIN:-/usr/local/sbin/flux-panel-manager}"
 WORKER_BIN="${FLUX_PANEL_WORKER_BIN:-/usr/local/sbin/flux-panel-update-worker}"
 UPDATER_SERVICE="flux-panel-updater.service"
 UPDATER_PATH="flux-panel-updater.path"
-INSTALL_PROFILE="${FLUX_PANEL_PROFILE:-}"
 
 log() {
   printf '[flux-panel] %s\n' "$*"
@@ -117,71 +116,17 @@ ensure_env_default() {
   grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null || printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
 }
 
-validate_profile() {
-  case "$1" in
-    low|standard|high) ;;
-    *) fail "invalid resource profile: $1; choose low, standard, or high" ;;
-  esac
-}
-
-ensure_profile_defaults() {
-  local profile="$1"
-  validate_profile "${profile}"
-  ensure_env_default FLUX_PANEL_PROFILE "${profile}"
-
-  case "${profile}" in
-    low)
-      ensure_env_default JAVA_OPTS '"-Xms32m -Xmx256m -XX:+UseSerialGC -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"'
-      ensure_env_default DB_POOL_MIN_IDLE 1
-      ensure_env_default DB_POOL_MAX_SIZE 5
-      ensure_env_default TOMCAT_MIN_SPARE_THREADS 1
-      ensure_env_default TOMCAT_MAX_THREADS 40
-      ensure_env_default TOMCAT_MAX_CONNECTIONS 128
-      ensure_env_default TOMCAT_ACCEPT_COUNT 50
-      ensure_env_default MYSQL_MAX_CONNECTIONS 60
-      ensure_env_default MYSQL_BUFFER_POOL_SIZE 64M
-      ensure_env_default MONITORING_SCAN_INTERVAL_MS 60000
-      ensure_env_default MONITORING_RETENTION_DAYS 30
-      ensure_env_default FORWARD_HEALTH_CHECK_INTERVAL_MS 120000
-      ;;
-    standard)
-      ensure_env_default JAVA_OPTS '"-Xms64m -Xmx256m -XX:+UseSerialGC -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"'
-      ensure_env_default DB_POOL_MIN_IDLE 1
-      ensure_env_default DB_POOL_MAX_SIZE 10
-      ensure_env_default TOMCAT_MIN_SPARE_THREADS 2
-      ensure_env_default TOMCAT_MAX_THREADS 100
-      ensure_env_default TOMCAT_MAX_CONNECTIONS 512
-      ensure_env_default TOMCAT_ACCEPT_COUNT 100
-      ensure_env_default MYSQL_MAX_CONNECTIONS 200
-      ensure_env_default MYSQL_BUFFER_POOL_SIZE 128M
-      ensure_env_default MONITORING_SCAN_INTERVAL_MS 30000
-      ensure_env_default MONITORING_RETENTION_DAYS 90
-      ensure_env_default FORWARD_HEALTH_CHECK_INTERVAL_MS 60000
-      ;;
-    high)
-      ensure_env_default JAVA_OPTS '"-Xms256m -Xmx1024m -XX:+UseG1GC -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"'
-      ensure_env_default DB_POOL_MIN_IDLE 2
-      ensure_env_default DB_POOL_MAX_SIZE 20
-      ensure_env_default TOMCAT_MIN_SPARE_THREADS 4
-      ensure_env_default TOMCAT_MAX_THREADS 200
-      ensure_env_default TOMCAT_MAX_CONNECTIONS 1024
-      ensure_env_default TOMCAT_ACCEPT_COUNT 200
-      ensure_env_default MYSQL_MAX_CONNECTIONS 400
-      ensure_env_default MYSQL_BUFFER_POOL_SIZE 512M
-      ensure_env_default MONITORING_SCAN_INTERVAL_MS 15000
-      ensure_env_default MONITORING_RETENTION_DAYS 180
-      ensure_env_default FORWARD_HEALTH_CHECK_INTERVAL_MS 30000
-      ;;
-  esac
-}
-
 ensure_runtime_defaults() {
-  local profile
-  profile="$(read_env_value FLUX_PANEL_PROFILE)"
-  [[ -n "${profile}" ]] || profile=standard
-
   ensure_env_default IMAGE_REGISTRY ghcr.io/norwayxz
-  ensure_profile_defaults "${profile}"
+  ensure_env_default DB_POOL_MIN_IDLE 1
+  ensure_env_default DB_POOL_MAX_SIZE 10
+  ensure_env_default TOMCAT_MIN_SPARE_THREADS 2
+  ensure_env_default TOMCAT_MAX_THREADS 100
+  ensure_env_default TOMCAT_MAX_CONNECTIONS 512
+  ensure_env_default TOMCAT_ACCEPT_COUNT 100
+  ensure_env_default MYSQL_MAX_CONNECTIONS 200
+  ensure_env_default MYSQL_BUFFER_POOL_SIZE 128M
+  ensure_env_default FORWARD_HEALTH_CHECK_INTERVAL_MS 60000
   ensure_env_default FORWARD_FAILURE_THRESHOLD 2
   ensure_env_default FORWARD_RECOVERY_THRESHOLD 2
   ensure_env_default FORWARD_SWITCH_COOLDOWN_MS 120000
@@ -213,7 +158,6 @@ ensure_environment() {
   local frontend_port="${FLUX_PANEL_FRONTEND_PORT:-6366}"
   local backend_port="${FLUX_PANEL_BACKEND_PORT:-6365}"
   local panel_version="$1"
-  local requested_profile="$2"
   local mysql_image
   mysql_image="$(default_mysql_image)"
 
@@ -229,12 +173,7 @@ ensure_environment() {
     fi
     ensure_runtime_defaults
     set_env_value PANEL_VERSION "${panel_version}"
-    local existing_profile
-    existing_profile="$(read_env_value FLUX_PANEL_PROFILE)"
     log "reusing existing configuration: ${ENV_FILE}"
-    if [[ "${existing_profile}" != "${requested_profile}" ]]; then
-      log "preserving existing resource profile: ${existing_profile}"
-    fi
     return
   fi
 
@@ -252,16 +191,23 @@ IMAGE_REGISTRY=ghcr.io/norwayxz
 PANEL_VERSION=${panel_version}
 FRONTEND_PORT=${frontend_port}
 BACKEND_PORT=${backend_port}
+DB_POOL_MIN_IDLE=1
+DB_POOL_MAX_SIZE=10
+TOMCAT_MIN_SPARE_THREADS=2
+TOMCAT_MAX_THREADS=100
+TOMCAT_MAX_CONNECTIONS=512
+TOMCAT_ACCEPT_COUNT=100
+MYSQL_MAX_CONNECTIONS=200
+MYSQL_BUFFER_POOL_SIZE=128M
+FORWARD_HEALTH_CHECK_INTERVAL_MS=60000
 FORWARD_FAILURE_THRESHOLD=2
 FORWARD_RECOVERY_THRESHOLD=2
 FORWARD_SWITCH_COOLDOWN_MS=120000
 FORWARD_FAILBACK_STABLE_MS=180000
 FORWARD_LATENCY_SWITCH_GAP_MS=15
 EOF
-  ensure_profile_defaults "${requested_profile}"
   chmod 600 "${ENV_FILE}"
   log "created protected configuration: ${ENV_FILE}"
-  log "selected resource profile: ${requested_profile}"
   log "selected database image for $(host_architecture): ${mysql_image}"
 }
 
@@ -406,7 +352,6 @@ installed_compose_file() {
 }
 
 install_panel() {
-  validate_profile "${INSTALL_PROFILE}"
   check_host
   if [[ -n "$(installed_compose_file)" ]]; then
     fail "Flux Panel is already installed in ${INSTALL_DIR}; use the update command"
@@ -420,7 +365,7 @@ install_panel() {
   trap 'rm -rf "${staging:-}"' EXIT
   download_source "${staging}"
   panel_version="$(project_version "${staging}")"
-  ensure_environment "${panel_version}" "${INSTALL_PROFILE}"
+  ensure_environment "${panel_version}"
 
   mkdir -p "$(dirname "${INSTALL_DIR}")"
   rm -rf "${INSTALL_DIR}"
@@ -569,11 +514,9 @@ show_status() {
 
 usage() {
   cat <<'EOF'
-Usage: flux-panel.sh install [--profile low|standard|high]
-       flux-panel.sh <update|rollback|uninstall|purge|status>
+Usage: flux-panel.sh <install|update|rollback|uninstall|purge|status>
 
 Environment variables:
-  FLUX_PANEL_PROFILE        Initial resource profile, default: standard
   FLUX_PANEL_FRONTEND_PORT  Public web port, default: 6366
   FLUX_PANEL_BACKEND_PORT   Agent/API port, default: 6365
   FLUX_PANEL_BRANCH         Git branch to install, default: main
@@ -584,56 +527,15 @@ Environment variables:
 EOF
 }
 
-parse_install_arguments() {
-  while (( $# > 0 )); do
-    case "$1" in
-      --profile)
-        (( $# >= 2 )) || fail "--profile requires low, standard, or high"
-        INSTALL_PROFILE="$2"
-        shift 2
-        ;;
-      --profile=*)
-        INSTALL_PROFILE="${1#*=}"
-        shift
-        ;;
-      *) fail "unknown install option: $1" ;;
-    esac
-  done
-
-  if [[ -z "${INSTALL_PROFILE}" ]]; then
-    if [[ -t 0 ]]; then
-      printf '\nSelect a Flux Panel resource profile (all profiles include every feature):\n' >&2
-      printf '  1) low       1 CPU / 1-2 GB RAM, small deployments\n' >&2
-      printf '  2) standard  2-4 CPU / 2-4 GB RAM, recommended\n' >&2
-      printf '  3) high      4+ CPU / 8+ GB RAM, high concurrency\n' >&2
-      printf 'Choose [1-3, default 2]: ' >&2
-      local selection
-      read -r selection || selection=""
-      case "${selection:-2}" in
-        1|low) INSTALL_PROFILE=low ;;
-        2|standard) INSTALL_PROFILE=standard ;;
-        3|high) INSTALL_PROFILE=high ;;
-        *) fail "invalid profile selection: ${selection}" ;;
-      esac
-    else
-      INSTALL_PROFILE=standard
-      log "no interactive terminal detected; using the standard resource profile"
-    fi
-  fi
-  validate_profile "${INSTALL_PROFILE}"
-}
-
 main() {
   require_root
-  local command="${1:-}"
-  (( $# > 0 )) && shift
-  case "${command}" in
-    install) parse_install_arguments "$@"; install_panel ;;
-    update) (( $# == 0 )) || fail "update does not accept additional arguments"; update_panel ;;
-    rollback) (( $# == 0 )) || fail "rollback does not accept additional arguments"; rollback_panel ;;
-    uninstall) (( $# == 0 )) || fail "uninstall does not accept additional arguments"; uninstall_panel ;;
-    purge) (( $# == 0 )) || fail "purge does not accept additional arguments"; purge_panel ;;
-    status) (( $# == 0 )) || fail "status does not accept additional arguments"; show_status ;;
+  case "${1:-}" in
+    install) install_panel ;;
+    update) update_panel ;;
+    rollback) rollback_panel ;;
+    uninstall) uninstall_panel ;;
+    purge) purge_panel ;;
+    status) show_status ;;
     *) usage; exit 1 ;;
   esac
 }

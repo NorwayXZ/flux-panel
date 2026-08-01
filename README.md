@@ -609,15 +609,15 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 
 从 `2.2.0` 开始，GitHub Actions 会为 `amd64` 和 `arm64` 构建经过测试的版本化镜像。一键安装与在线更新只在服务器上执行镜像拉取、容器启动和健康检查，不再安装 Maven/npm 依赖或编译源码。该变化不删除任何面板功能：MySQL、节点 WebSocket、主动健康检查、多级隧道、线路组、用户权限和在线更新仍完整保留。
 
-安装器提供三个资源档位。三个档位使用同一套面板、数据库结构和升级流程，功能完全相同，只调整内存、并发、检查频率和历史保留量：
+为适配低内存服务器，默认运行参数同时调整为：
 
-| 档位 | 建议配置 | Java 堆上限 | 数据库连接池 | MySQL Buffer Pool | 监控/健康检查 |
-| --- | --- | ---: | ---: | ---: | --- |
-| 低配版 `low` | 1 核、1-2 GB 内存、2 GB Swap | 256 MB | 5 | 64 MB | 60 秒 / 120 秒，保留 30 天 |
-| 标准版 `standard` | 2-4 核、2-4 GB 内存 | 256 MB | 10 | 128 MB | 30 秒 / 60 秒，保留 90 天 |
-| 高配版 `high` | 4 核以上、8 GB 以上内存 | 1 GB | 20 | 512 MB | 15 秒 / 30 秒，保留 180 天 |
+- Java 堆：`64M` 初始、`256M` 上限，并使用 Serial GC
+- 数据库连接池：最低 `1`、最高 `10`
+- Tomcat：最高 `100` 个工作线程、`512` 个连接
+- MySQL：最高 `200` 个连接、`128M` InnoDB Buffer Pool
+- 后端日志：单文件 `50 MB`、保留 `30` 天、压缩归档，总量不超过 `1 GB`
 
-所选档位和实际参数会写入 `/etc/flux-panel/flux-panel.env`。后续更新只补齐缺失参数，不会覆盖已有档位或管理员手动修改的数值。
+这些参数降低默认并发容量，不改变功能。可以在 `/etc/flux-panel/flux-panel.env` 中按服务器规模提高参数。
 
 一键安装脚本正式支持 `amd64` 和 `arm64`。新安装会按服务器架构选择数据库镜像：
 
@@ -678,26 +678,7 @@ docker compose version
 
 生产环境也可以按照 [Docker Engine 官方文档](https://docs.docker.com/engine/install/) 配置软件源安装。请不要同时混用发行版自带的旧版 `docker-compose` 和 Compose v2。
 
-确认环境正常后执行交互式一键安装，脚本会要求选择低配版、标准版或高配版：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh -o /tmp/flux-panel.sh && sudo bash /tmp/flux-panel.sh install
-```
-
-也可以直接指定档位，适合自动化安装：
-
-```bash
-# 低配版
-curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh -o /tmp/flux-panel.sh && sudo bash /tmp/flux-panel.sh install --profile low
-
-# 标准版
-curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh -o /tmp/flux-panel.sh && sudo bash /tmp/flux-panel.sh install --profile standard
-
-# 高配版
-curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh -o /tmp/flux-panel.sh && sudo bash /tmp/flux-panel.sh install --profile high
-```
-
-继续使用管道形式安装时无法读取终端选择，脚本会自动采用标准版：
+确认环境正常后安装 Flux Panel：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh | sudo bash -s -- install
@@ -707,7 +688,7 @@ curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/fl
 
 1. 检查操作系统、架构、Docker 和 Compose 环境。
 2. 下载本仓库 `main` 分支源码到 `/opt/flux-panel`。
-3. 在 `/etc/flux-panel/flux-panel.env` 生成数据库密码、JWT 密钥，并固定资源档位、数据库镜像和面板版本。
+3. 在 `/etc/flux-panel/flux-panel.env` 生成数据库密码、JWT 密钥，并固定数据库镜像和面板版本。
 4. 从 `ghcr.io/norwayxz` 拉取当前版本的 amd64/arm64 前端和后端镜像。
 5. 启动 MySQL、后端和前端，并等待健康检查通过。
 
@@ -734,12 +715,12 @@ http://服务器IP:6366
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh \
-  | sudo env FLUX_PANEL_FRONTEND_PORT=8080 FLUX_PANEL_BACKEND_PORT=8081 bash -s -- install --profile standard
+  | sudo env FLUX_PANEL_FRONTEND_PORT=8080 FLUX_PANEL_BACKEND_PORT=8081 bash -s -- install
 ```
 
 ### 调整运行内存与并发
 
-安装后仍可编辑 `/etc/flux-panel/flux-panel.env` 覆盖所选档位中的单项参数。例如提高后端内存和连接池：
+安装后可以编辑 `/etc/flux-panel/flux-panel.env`。例如在 2 GB 以上服务器提高后端内存和连接池：
 
 ```dotenv
 JAVA_OPTS="-Xms128m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"

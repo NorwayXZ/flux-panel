@@ -1,10 +1,3 @@
-## 2.42.0 Selectable installation resource profiles
-
-- Adds low, standard, and high resource profiles to the panel installer. Every profile includes the complete panel feature set and changes only JVM, database pool, Tomcat, MySQL, monitoring retention, and health-check settings.
-- Interactive installation now asks which profile to use. Automated installations can pass `--profile low`, `--profile standard`, or `--profile high`; non-interactive installations without an explicit profile use standard.
-- Persists the selected profile and its concrete values in `/etc/flux-panel/flux-panel.env`. Updates preserve the existing profile and administrator overrides, and only add settings that are missing.
-- Adds installer coverage for all three profiles, invalid profile rejection, and profile preservation during update. Agent and Connector remain `2.41.4`; existing nodes, tunnels, forwards, proxies, DNS, certificates, ports, and application data are unchanged.
-
 ## 2.41.9 Faster route transitions and shared read caching
 
 - Keeps the existing navigation shell visible while a lazy page chunk is loading, so a slow first download no longer replaces the whole page with a blank loading screen.
