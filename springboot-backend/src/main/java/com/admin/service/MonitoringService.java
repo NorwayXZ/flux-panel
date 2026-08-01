@@ -310,13 +310,18 @@ public class MonitoringService {
         for (Map<String, Object> row : rows) {
             long id = longValue(row.get("id"));
             boolean online = WebSocketServer.isNodeOnline(id);
+            WebSocketServer.NodeConnectionConflict conflict = WebSocketServer.getNodeConnectionConflict(id);
+            String status = !online ? OFFLINE : conflict == null ? HEALTHY : DEGRADED;
+            String detail = !online ? "Agent 连接已断开" : conflict == null ? "Agent 已连接"
+                    : "检测到节点密钥重复使用：当前 " + conflict.activeIp() + " / " + conflict.activeVersion()
+                    + "，已拒绝 " + conflict.rejectedIp() + " / " + conflict.rejectedVersion();
             states.put(id, new ResourceState(
                     "node",
                     id,
                     stringValue(row.get("name")),
                     intValue(row.get("owner_user_id")),
-                    online ? HEALTHY : OFFLINE,
-                    online ? "Agent 已连接" : "Agent 连接已断开"
+                    status,
+                    detail
             ));
         }
         return states;

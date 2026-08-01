@@ -1,3 +1,13 @@
+## 2.42.0 Production runtime safeguards
+
+- Sizes the backend JVM automatically from host memory and migrates the known-unsafe `256 MB + SerialGC` configuration during upgrades after creating a timestamped environment backup. New and migrated configurations use `ExitOnOutOfMemoryError` so Docker can recover a failed JVM instead of leaving an unresponsive container running.
+- Adds a database-aware `/health/ready` probe and sustained-failure recovery. A new JVM receives a 120-second startup grace period; after that, five consecutive failures terminate PID 1 so `restart: unless-stopped` can recover it. Failure state is bound to the current process and cannot create a restart loop across container restarts.
+- Refuses install, update, and rollback operations below 2 GB free disk and warns at 85% usage. Status and uninstall remain available during low-disk incidents. The full system self-check now reports panel disk pressure and JVM heap pressure with actionable guidance.
+- Rejects a simultaneous Agent connection when the same node secret is used by another machine. Agent `2.42.0` sends a stable machine fingerprint; the registered node address wins after a backend restart, reconnect races cannot mark a live replacement offline, and recent conflicts appear in monitoring and the full system self-check. Legacy Agents remain compatible but fall back to public-IP comparison until upgraded.
+- Stops writing Agent handshake query strings to Agent and Nginx access logs. Retires the unsupported `1.4.x` installer and its IPv4/IPv6 Compose files so all new installations use the tested installer, migration, readiness, and rollback path.
+- Adds release gates for unsafe JVM settings, shallow health probes, startup-grace behavior, sustained-failure recovery, installer disk handling, duplicate Agent identity, real MySQL readiness, container startup without restarts, Compose parsing, and runtime image contents. The backend passed 126 tests, the complete Go Agent suite, installer/rollback tests, and an isolated Linux ARM64 Docker smoke test with database failure and recovery.
+- The upgrade does not delete or rebuild nodes, tunnels, forwards, proxies, ports, DNS records, certificates, or database volumes. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`; Agent upgrades retain their existing binary backup and reconnect-confirmed rollback behavior.
+
 ## 2.41.9 Faster route transitions and shared read caching
 
 - Keeps the existing navigation shell visible while a lazy page chunk is loading, so a slow first download no longer replaces the whole page with a blank loading screen.

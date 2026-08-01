@@ -14,6 +14,7 @@ MANAGER_BIN="${FLUX_PANEL_MANAGER_BIN:-/usr/local/sbin/flux-panel-manager}"
 WORKER_BIN="${FLUX_PANEL_WORKER_BIN:-/usr/local/sbin/flux-panel-update-worker}"
 UPDATER_SERVICE="flux-panel-updater.service"
 UPDATER_PATH="flux-panel-updater.path"
+UPDATE_LOCK_FILE="${FLUX_PANEL_UPDATE_LOCK_FILE:-/run/flux-panel-update.lock}"
 
 log() {
   printf '[flux-panel] %s\n' "$*"
@@ -25,7 +26,8 @@ fail() {
 }
 
 require_root() {
-  [[ "${EUID}" -eq 0 ]] || fail "run this command as root or with sudo"
+  [[ "${EUID}" -eq 0 || "${FLUX_PANEL_TEST_MODE:-0}" == "1" ]] \
+    || fail "run this command as root or with sudo"
 }
 
 require_command() {
@@ -48,7 +50,8 @@ default_mysql_image() {
 }
 
 check_host() {
-  [[ "$(uname -s)" == "Linux" ]] || fail "only Linux panel hosts are supported"
+  [[ "$(uname -s)" == "Linux" || "${FLUX_PANEL_TEST_MODE:-0}" == "1" ]] \
+    || fail "only Linux panel hosts are supported"
   host_architecture >/dev/null
 
   require_command curl
@@ -116,8 +119,74 @@ ensure_env_default() {
   grep -q "^${key}=" "${ENV_FILE}" 2>/dev/null || printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
 }
 
+host_memory_mb() {
+  if [[ "${FLUX_PANEL_HOST_MEMORY_MB:-}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${FLUX_PANEL_HOST_MEMORY_MB}"
+    return
+  fi
+  awk '/^MemTotal:/ { printf "%d\n", $2 / 1024; found=1; exit } END { if (!found) print 2048 }' /proc/meminfo
+}
+
+recommended_java_opts() {
+  local memory_mb
+  memory_mb="$(host_memory_mb)"
+  if (( memory_mb < 2048 )); then
+    printf '"-Xms128m -Xmx384m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"\n'
+  elif (( memory_mb < 4096 )); then
+    printf '"-Xms192m -Xmx512m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"\n'
+  elif (( memory_mb < 8192 )); then
+    printf '"-Xms256m -Xmx768m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"\n'
+  else
+    printf '"-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"\n'
+  fi
+}
+
+ensure_safe_java_opts() {
+  local current recommended migrated
+  current="$(read_env_value JAVA_OPTS)"
+  recommended="$(recommended_java_opts)"
+  if [[ -z "${current}" ]]; then
+    set_env_value JAVA_OPTS "${recommended}"
+    log "configured backend JVM for $(host_memory_mb) MB host memory"
+    return
+  fi
+
+  migrated="${current}"
+  if [[ "${current}" == *"-Xmx256m"* && "${current}" == *"UseSerialGC"* ]]; then
+    migrated="${recommended}"
+  elif [[ "${current}" != *"ExitOnOutOfMemoryError"* ]]; then
+    if [[ "${current}" == \"*\" ]]; then
+      migrated="${current%\"} -XX:+ExitOnOutOfMemoryError\""
+    else
+      migrated="${current} -XX:+ExitOnOutOfMemoryError"
+    fi
+  fi
+
+  if [[ "${migrated}" != "${current}" ]]; then
+    local backup="${ENV_FILE}.before-jvm-migration-$(date +%Y%m%d-%H%M%S)"
+    cp -p "${ENV_FILE}" "${backup}"
+    set_env_value JAVA_OPTS "${migrated}"
+    log "migrated unsafe JVM settings; backup: ${backup}"
+  fi
+}
+
+check_disk_capacity() {
+  local available_mb usage_percent parent_dir
+  parent_dir="${INSTALL_DIR%/*}"
+  [[ -d "${parent_dir}" ]] || parent_dir=/
+  available_mb="${FLUX_PANEL_DISK_AVAILABLE_MB:-$(df -Pm "${parent_dir}" | awk 'NR==2 {print $4}')}"
+  usage_percent="${FLUX_PANEL_DISK_USAGE_PERCENT:-$(df -P "${parent_dir}" | awk 'NR==2 {gsub(/%/, "", $5); print $5}')}"
+  [[ "${available_mb}" =~ ^[0-9]+$ ]] || fail "could not determine available disk space"
+  [[ "${usage_percent}" =~ ^[0-9]+$ ]] || fail "could not determine filesystem usage"
+  (( available_mb >= 2048 )) || fail "at least 2 GB free disk space is required; available: ${available_mb} MB"
+  if (( usage_percent >= 85 )); then
+    log "WARNING: filesystem usage is ${usage_percent}%; inspect logs and Docker data before it reaches 100%"
+  fi
+}
+
 ensure_runtime_defaults() {
   ensure_env_default IMAGE_REGISTRY ghcr.io/norwayxz
+  ensure_safe_java_opts
   ensure_env_default DB_POOL_MIN_IDLE 1
   ensure_env_default DB_POOL_MAX_SIZE 10
   ensure_env_default TOMCAT_MIN_SPARE_THREADS 2
@@ -205,6 +274,7 @@ FORWARD_RECOVERY_THRESHOLD=2
 FORWARD_SWITCH_COOLDOWN_MS=120000
 FORWARD_FAILBACK_STABLE_MS=180000
 FORWARD_LATENCY_SWITCH_GAP_MS=15
+JAVA_OPTS=$(recommended_java_opts)
 EOF
   chmod 600 "${ENV_FILE}"
   log "created protected configuration: ${ENV_FILE}"
@@ -353,6 +423,7 @@ installed_compose_file() {
 
 install_panel() {
   check_host
+  check_disk_capacity
   if [[ -n "$(installed_compose_file)" ]]; then
     fail "Flux Panel is already installed in ${INSTALL_DIR}; use the update command"
   fi
@@ -386,13 +457,15 @@ install_panel() {
 
 update_panel() {
   check_host
+  check_disk_capacity
   require_command flock
   [[ -f "${ENV_FILE}" ]] || fail "configuration not found: ${ENV_FILE}"
   local previous_compose
   previous_compose="$(installed_compose_file)"
   [[ -n "${previous_compose}" ]] || fail "installation not found: ${INSTALL_DIR}"
 
-  exec 9>/run/flux-panel-update.lock
+  mkdir -p "$(dirname "${UPDATE_LOCK_FILE}")"
+  exec 9>"${UPDATE_LOCK_FILE}"
   flock -n 9 || fail "another Flux Panel update is already running"
 
   local staging backup target_version previous_version
@@ -442,12 +515,14 @@ update_panel() {
 
 rollback_panel() {
   check_host
+  check_disk_capacity
   require_command flock
   [[ -f "${ENV_FILE}" ]] || fail "configuration not found: ${ENV_FILE}"
   COMPOSE_FILE="$(installed_compose_file)"
   [[ -n "${COMPOSE_FILE}" ]] || fail "installation not found: ${INSTALL_DIR}"
 
-  exec 9>/run/flux-panel-update.lock
+  mkdir -p "$(dirname "${UPDATE_LOCK_FILE}")"
+  exec 9>"${UPDATE_LOCK_FILE}"
   flock -n 9 || fail "another Flux Panel update or rollback is already running"
 
   local current_version previous_version

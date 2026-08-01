@@ -107,13 +107,17 @@ run_manager() {
     FLUX_PANEL_UPDATER_STATE_DIR="${TEST_ROOT}/updater" \
     FLUX_PANEL_MANAGER_BIN="${TEST_ROOT}/sbin/flux-panel-manager" \
     FLUX_PANEL_WORKER_BIN="${TEST_ROOT}/sbin/flux-panel-update-worker" \
+    FLUX_PANEL_UPDATE_LOCK_FILE="${TEST_ROOT}/run/flux-panel-update.lock" \
     FLUX_PANEL_DISABLE_ONLINE_UPDATES=1 \
+    FLUX_PANEL_TEST_MODE=1 \
+    FLUX_PANEL_HOST_MEMORY_MB=8192 \
     bash "${PROJECT_DIR}/scripts/flux-panel.sh" "$@"
 }
 
 run_manager install >/dev/null
 grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'DB_POOL_MAX_SIZE=10' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'JAVA_OPTS="-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError' "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 if grep -Eq 'docker compose .* up .*--build' "${EVENT_LOG}"; then
@@ -121,12 +125,26 @@ if grep -Eq 'docker compose .* up .*--build' "${EVENT_LOG}"; then
   exit 1
 fi
 
+# Read-only status must remain available even when installation disk checks would fail.
+FLUX_PANEL_DISK_AVAILABLE_MB=0 run_manager status >/dev/null
+if FLUX_PANEL_DISK_AVAILABLE_MB=1024 run_manager update >/dev/null 2>&1; then
+  printf 'update unexpectedly ignored the free disk requirement\n' >&2
+  exit 1
+fi
+
 printf '%s\n' "${NEXT_VERSION}" > "${FIXTURE_DIR}/VERSION"
+awk '
+  /^JAVA_OPTS=/ { print "JAVA_OPTS=\"-Xms64m -Xmx256m -XX:+UseSerialGC -Dfile.encoding=UTF-8\""; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.unsafe"
+mv "${CONFIG_DIR}/flux-panel.env.unsafe" "${CONFIG_DIR}/flux-panel.env"
 : > "${EVENT_LOG}"
 run_manager update >/dev/null
 grep -Fq "PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "PREVIOUS_PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "${NEXT_VERSION}" "${INSTALL_DIR}/VERSION"
+grep -Fq 'JAVA_OPTS="-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError' "${CONFIG_DIR}/flux-panel.env"
+find "${CONFIG_DIR}" -maxdepth 1 -name 'flux-panel.env.before-jvm-migration-*' | grep -q .
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 

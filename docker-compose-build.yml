@@ -39,7 +39,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       LOG_DIR: /app/logs
-      JAVA_OPTS: ${JAVA_OPTS:--Xms64m -Xmx256m -XX:+UseSerialGC -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms192m -Xmx512m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai}
       DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-1}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
       TOMCAT_MIN_SPARE_THREADS: ${TOMCAT_MIN_SPARE_THREADS:-2}
@@ -65,7 +65,7 @@ services:
     networks:
       - gost-network
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:6365/flow/test || exit 1"]
+      test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
       timeout: 10s
       retries: 5

@@ -56,6 +56,10 @@ public class WebSocketServer extends TextWebSocketHandler {
     // 存储节点ID和对应的WebSocket session映射
     private static final ConcurrentHashMap<Long, WebSocketSession> nodeSessions = new ConcurrentHashMap<>();
 
+    private static final ConcurrentHashMap<Long, Object> nodeConnectionLocks = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, NodeConnectionConflict> nodeConnectionConflicts = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, Long> nodeConflictLogTimes = new ConcurrentHashMap<>();
+
     private static final ConcurrentHashMap<Long, WebSocketSession> connectorSessions = new ConcurrentHashMap<>();
     
     // 为每个session提供锁对象，防止并发发送消息
@@ -83,6 +87,10 @@ public class WebSocketServer extends TextWebSocketHandler {
         public Long getTimestamp() { return timestamp; }
         public void setTimestamp(Long timestamp) { this.timestamp = timestamp; }
     }
+
+    public record NodeConnectionConflict(long nodeId, String activeIp, String activeVersion,
+                                         String rejectedIp, String rejectedVersion,
+                                         String activeMachine, String rejectedMachine, long detectedAt) { }
 
     //接受客户端消息
     @Override
@@ -309,65 +317,68 @@ public class WebSocketServer extends TextWebSocketHandler {
                 
                 log.info("节点 {} 尝试连接，开始处理连接逻辑", nodeId);
                 
-                // 检查是否已有该节点的连接，如果有则记录日志但直接覆盖
-                WebSocketSession existingSession = nodeSessions.get(nodeId);
-                if (existingSession != null && existingSession.isOpen()) {
-                    log.info("节点 {} 已有连接存在: {}，新连接将覆盖旧连接", nodeId, existingSession.getId());
-                    // 清理旧连接的锁对象
-                    sessionLocks.remove(existingSession.getId());
+                WebSocketSession existingSession;
+                synchronized (nodeConnectionLocks.computeIfAbsent(nodeId, ignored -> new Object())) {
+                    existingSession = nodeSessions.get(nodeId);
+                    if (isConflictingIdentity(existingSession, session)) {
+                        NodeConnectionConflict conflict = recordConflict(nodeId, existingSession, session);
+                        long now = System.currentTimeMillis();
+                        Long lastLogged = nodeConflictLogTimes.put(nodeId, now);
+                        if (lastLogged == null || now - lastLogged >= TimeUnit.MINUTES.toMillis(1)) {
+                            log.warn("拒绝节点 {} 的重复身份连接：当前 {} / {}，冲突 {} / {}（重复日志每分钟最多一次）",
+                                    nodeId, conflict.activeIp(), conflict.activeVersion(),
+                                    conflict.rejectedIp(), conflict.rejectedVersion());
+                        }
+                        session.close(CloseStatus.POLICY_VIOLATION.withReason("duplicate node identity"));
+                        return;
+                    }
+                    nodeSessions.put(nodeId, session);
+                    // 更新节点状态为在线。与关闭回调共用节点锁，避免断线与上线交错写库。
+                    Node node = nodeService.getById(nodeId);
+                    if (node != null) {
+                        node.setStatus(1);
+                        if (version != null) {
+                            node.setVersion(version);
+                        }
+                        if (http != null) {
+                            node.setHttp(Integer.parseInt(http));
+                        }
+                        if (tls != null) {
+                            node.setTls(Integer.parseInt(tls));
+                        }
+                        if (socks != null) {
+                            node.setSocks(Integer.parseInt(socks));
+                        }
+
+                        boolean updateResult = nodeService.updateById(node);
+
+                        if (updateResult) {
+                            log.info("节点 {} 连接建立成功，状态更新为在线，版本: {}", nodeId, version);
+                            agentUpgradeService.handleNodeConnected(nodeId, version);
+
+                            JSONObject res = new JSONObject();
+                            res.put("id", id);
+                            res.put("type", "status");
+                            res.put("data", 1);
+                            broadcastMessage(res.toJSONString());
+                        } else {
+                            log.info("节点 {} 状态更新失败", nodeId);
+                        }
+                    } else {
+                        log.info("节点 {} 不存在，无法更新状态", nodeId);
+                        if (removeNodeSession(nodeId, session)) {
+                            terminalSessionManager.closeNodeSessions(nodeId, "节点连接已断开", false);
+                        }
+                    }
                 }
-                
-                // 直接覆盖会话映射（不主动关闭旧连接，让它自然断开）
-                nodeSessions.put(nodeId, session);
-                
-                // 如果有旧连接，在覆盖映射后主动关闭它
-                if (existingSession != null && existingSession.isOpen()) {
+
+                if (existingSession != null && existingSession.isOpen() && !existingSession.equals(session)) {
+                    sessionLocks.remove(existingSession.getId());
                     try {
-                        log.info("主动关闭节点 {} 的旧连接: {}", nodeId, existingSession.getId());
-                        existingSession.close();
+                        existingSession.close(CloseStatus.NORMAL.withReason("replaced by reconnect"));
                     } catch (Exception e) {
                         log.info("关闭节点 {} 旧连接失败: {}", nodeId, e.getMessage());
                     }
-                }
-                
-                // 更新节点状态为在线
-                Node node = nodeService.getById(nodeId);
-                if (node != null) {
-                    // 更新状态和版本信息
-                    node.setStatus(1);
-                    if (version != null) {
-                        node.setVersion(version);
-                    }
-                    if (http != null) {
-                        node.setHttp(Integer.parseInt(http));
-                    }
-                    if (tls != null) {
-                        node.setTls(Integer.parseInt(tls));
-                    }
-                    if (socks != null) {
-                        node.setSocks(Integer.parseInt(socks));
-                    }
-
-                    boolean updateResult = nodeService.updateById(node);
-                    
-                    if (updateResult) {
-                        log.info("节点 {} 连接建立成功，状态更新为在线，版本: {}", nodeId, version);
-                        agentUpgradeService.handleNodeConnected(nodeId, version);
-                        
-                        // 广播节点上线状态给所有管理员
-                        JSONObject res = new JSONObject();
-                        res.put("id", id);
-                        res.put("type", "status");
-                        res.put("data", 1);
-                        broadcastMessage(res.toJSONString());
-                    } else {
-                        log.info("节点 {} 状态更新失败", nodeId);
-                    }
-                } else {
-                    log.info("节点 {} 不存在，无法更新状态", nodeId);
-                    // 移除无效的会话
-                    nodeSessions.remove(nodeId);
-                    terminalSessionManager.closeNodeSessions(nodeId, "节点连接已断开", false);
                 }
             }
 
@@ -379,11 +390,12 @@ public class WebSocketServer extends TextWebSocketHandler {
                 String type = session.getAttributes().get("type").toString();
                 if (Objects.equals(type, "1")) {
                     Long nodeId = Long.valueOf(id);
-                    nodeSessions.remove(nodeId);
-                    terminalSessionManager.closeNodeSessions(nodeId, "节点连接异常", false);
-                    log.info("由于异常，移除节点 {} 的会话", nodeId);
+                    if (removeNodeSession(nodeId, session)) {
+                        terminalSessionManager.closeNodeSessions(nodeId, "节点连接异常", false);
+                        log.info("由于异常，移除节点 {} 的会话", nodeId);
+                    }
                 } else if (Objects.equals(type, "2")) {
-                    connectorSessions.remove(Long.valueOf(id));
+                    connectorSessions.remove(Long.valueOf(id), session);
                 }
             } catch (Exception cleanupException) {
                 log.info("清理异常会话时出错: {}", cleanupException.getMessage());
@@ -410,13 +422,14 @@ public class WebSocketServer extends TextWebSocketHandler {
                 Long connectorId = Long.valueOf(id);
                 WebSocketSession currentSession = connectorSessions.get(connectorId);
                 if (currentSession != null && currentSession.equals(session)) {
-                    connectorSessions.remove(connectorId);
-                    InternalConnector connector = internalConnectorMapper.selectById(connectorId);
-                    if (connector != null) {
-                        long now = System.currentTimeMillis();
-                        connector.setLastSeen(now);
-                        connector.setUpdatedTime(now);
-                        internalConnectorMapper.updateById(connector);
+                    if (connectorSessions.remove(connectorId, session)) {
+                        InternalConnector connector = internalConnectorMapper.selectById(connectorId);
+                        if (connector != null) {
+                            long now = System.currentTimeMillis();
+                            connector.setLastSeen(now);
+                            connector.setUpdatedTime(now);
+                            internalConnectorMapper.updateById(connector);
+                        }
                     }
                 }
                 log.info("内网接入端 {} 连接关闭", connectorId);
@@ -427,18 +440,15 @@ public class WebSocketServer extends TextWebSocketHandler {
             } else {
                 // 客户端节点连接关闭
                 Long nodeId = Long.valueOf(id);
-                
-                // 验证当前会话是否还是活跃会话（关键：这里会自动过滤掉被覆盖的旧连接）
-                WebSocketSession currentSession = nodeSessions.get(nodeId);
-                if (currentSession == null || !currentSession.equals(session)) {
-                    log.info("节点 {} 连接关闭，但已有新连接或会话不匹配，跳过状态更新", nodeId);
-                    sessionLocks.remove(sessionId);
-                    return;
-                }
-                
-                log.info("节点 {} 当前活跃连接关闭，开始验证并更新状态", nodeId);
-                
-                    nodeSessions.remove(nodeId);
+
+                synchronized (nodeConnectionLocks.computeIfAbsent(nodeId, ignored -> new Object())) {
+                    if (!removeNodeSession(nodeId, session)) {
+                        log.info("节点 {} 连接关闭，但已有新连接或会话不匹配，跳过状态更新", nodeId);
+                        sessionLocks.remove(sessionId);
+                        return;
+                    }
+
+                    log.info("节点 {} 当前活跃连接关闭，开始验证并更新状态", nodeId);
                     terminalSessionManager.closeNodeSessions(nodeId, "节点连接已断开", false);
                     
                     // 更新节点状态为离线
@@ -461,6 +471,7 @@ public class WebSocketServer extends TextWebSocketHandler {
                     } else {
                         log.info("节点 {} 不存在，无法更新离线状态", nodeId);
                     }
+                }
             }
             
             // 清理session锁对象
@@ -546,9 +557,65 @@ public class WebSocketServer extends TextWebSocketHandler {
         if (nodeSession.isOpen()) {
             return true;
         }
-        nodeSessions.remove(nodeId);
+        nodeSessions.remove(nodeId, nodeSession);
         sessionLocks.remove(nodeSession.getId());
         return false;
+    }
+
+    static boolean removeNodeSession(Long nodeId, WebSocketSession session) {
+        return session != null && nodeSessions.remove(nodeId, session);
+    }
+
+    static void putNodeSessionForTest(Long nodeId, WebSocketSession session) {
+        nodeSessions.put(nodeId, session);
+    }
+
+    static boolean isConflictingIdentity(WebSocketSession active, WebSocketSession candidate) {
+        if (active == null || !active.isOpen() || active.equals(candidate)) return false;
+        String expectedIp = attribute(candidate, "expectedIp");
+        boolean activeExpected = !expectedIp.isBlank() && Objects.equals(expectedIp, attribute(active, "remoteIp"));
+        boolean candidateExpected = !expectedIp.isBlank() && Objects.equals(expectedIp, attribute(candidate, "remoteIp"));
+        if (activeExpected != candidateExpected) return activeExpected;
+        String activeMachine = attribute(active, "machineFingerprint");
+        String candidateMachine = attribute(candidate, "machineFingerprint");
+        if (!activeMachine.isBlank() && !candidateMachine.isBlank()) {
+            return !Objects.equals(activeMachine, candidateMachine);
+        }
+        String activeIp = attribute(active, "remoteIp");
+        String candidateIp = attribute(candidate, "remoteIp");
+        return !activeIp.isBlank() && !candidateIp.isBlank() && !Objects.equals(activeIp, candidateIp);
+    }
+
+    private static NodeConnectionConflict recordConflict(Long nodeId, WebSocketSession active, WebSocketSession rejected) {
+        NodeConnectionConflict conflict = new NodeConnectionConflict(nodeId,
+                attribute(active, "remoteIp"), attribute(active, "nodeVersion"),
+                attribute(rejected, "remoteIp"), attribute(rejected, "nodeVersion"),
+                attribute(active, "machineFingerprint"), attribute(rejected, "machineFingerprint"),
+                System.currentTimeMillis());
+        nodeConnectionConflicts.put(nodeId, conflict);
+        return conflict;
+    }
+
+    private static String attribute(WebSocketSession session, String name) {
+        Object value = session == null ? null : session.getAttributes().get(name);
+        return value == null ? "" : value.toString().trim();
+    }
+
+    public static NodeConnectionConflict getNodeConnectionConflict(Long nodeId) {
+        NodeConnectionConflict conflict = nodeConnectionConflicts.get(nodeId);
+        if (conflict != null && System.currentTimeMillis() - conflict.detectedAt() > TimeUnit.MINUTES.toMillis(5)) {
+            nodeConnectionConflicts.remove(nodeId, conflict);
+            return null;
+        }
+        return conflict;
+    }
+
+    static void clearConnectionStateForTest() {
+        nodeSessions.clear();
+        nodeConnectionConflicts.clear();
+        nodeConnectionLocks.clear();
+        nodeConflictLogTimes.clear();
+        sessionLocks.clear();
     }
 
     public static boolean isConnectorOnline(Long connectorId) {
@@ -557,7 +624,7 @@ public class WebSocketServer extends TextWebSocketHandler {
             return true;
         }
         if (session != null) {
-            connectorSessions.remove(connectorId);
+            connectorSessions.remove(connectorId, session);
             sessionLocks.remove(session.getId());
         }
         return false;

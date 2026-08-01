@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileStore;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -112,6 +115,7 @@ public class SystemSelfCheckService {
                 collectConnectorFindings(findings, scopeConnectorId, domains, expectedPorts);
             }
             if (scopeNodeId == null && scopeConnectorId == null) collectConfigurationFindings(findings);
+            if (scopeNodeId == null && scopeConnectorId == null) collectPanelRuntimeFindings(findings);
             if (findings.isEmpty()) {
                 findings.add(new Finding("system", "panel", null, "CloudNest", "healthy", "面板配置",
                         "未发现需要处理的问题", "节点与资源检查均已完成", "无", "无需操作", 900));
@@ -134,6 +138,50 @@ public class SystemSelfCheckService {
         return count != null && count > 0;
     }
 
+    private void collectPanelRuntimeFindings(List<Finding> findings) {
+        try {
+            FileStore store = Files.getFileStore(Path.of("/"));
+            long total = store.getTotalSpace();
+            long usable = store.getUsableSpace();
+            int usedPercent = total <= 0 ? 0 : (int) Math.round((total - usable) * 100.0 / total);
+            String evidence = "已用 " + usedPercent + "% ，剩余 " + formatBytes(usable) + " / " + formatBytes(total);
+            if (usedPercent >= 90 || usable < 2L * 1024 * 1024 * 1024) {
+                findings.add(new Finding("system", "panel", null, "CloudNest", "failed", "面板宿主磁盘",
+                        "磁盘空间已进入危险区", evidence,
+                        "数据库、日志、容器更新和回滚都可能因空间耗尽失败",
+                        "先检查 Docker 数据、面板日志和其他业务目录；确认用途后再清理，不要直接删除数据库卷", 2));
+            } else if (usedPercent >= 85 || usable < 5L * 1024 * 1024 * 1024) {
+                findings.add(new Finding("system", "panel", null, "CloudNest", "warning", "面板宿主磁盘",
+                        "磁盘空间偏低", evidence,
+                        "继续增长会影响升级、备份和数据库写入",
+                        "检查大目录和日志增长趋势，在使用率达到 90% 前释放空间", 3));
+            } else {
+                findings.add(new Finding("system", "panel", null, "CloudNest", "healthy", "面板宿主磁盘",
+                        "磁盘空间充足", evidence, "无", "无需操作", 4));
+            }
+        } catch (Exception e) {
+            findings.add(new Finding("system", "panel", null, "CloudNest", "warning", "面板宿主磁盘",
+                    "无法读取磁盘容量", value(e.getMessage()), "无法提前发现磁盘写满风险",
+                    "在宿主机执行 df -h 检查根文件系统", 3));
+        }
+
+        Runtime runtime = Runtime.getRuntime();
+        long max = runtime.maxMemory();
+        long used = runtime.totalMemory() - runtime.freeMemory();
+        int usedPercent = max <= 0 ? 0 : (int) Math.round(used * 100.0 / max);
+        String evidence = "JVM 堆已用 " + usedPercent + "% ，" + formatBytes(used) + " / " + formatBytes(max);
+        String status = usedPercent >= 90 ? "failed" : usedPercent >= 80 ? "warning" : "healthy";
+        findings.add(new Finding("system", "panel", null, "CloudNest", status, "面板后端内存",
+                "healthy".equals(status) ? "JVM 堆使用正常" : "JVM 堆使用偏高", evidence,
+                "failed".equals(status) ? "持续增长可能导致接口停止响应；进程已配置 OOM 自动退出恢复" : "无",
+                "healthy".equals(status) ? "无需操作" : "查看慢接口、Agent 重连和流量上报是否异常", 5));
+    }
+
+    private String formatBytes(long bytes) {
+        double gib = bytes / 1024.0 / 1024.0 / 1024.0;
+        return String.format(java.util.Locale.ROOT, "%.1f GB", gib);
+    }
+
     private void collectNodeFindings(List<Finding> findings, Long scopeNodeId, List<String> domains,
                                      Map<Long, List<ExpectedPort>> expectedPorts) {
         List<Node> nodes = scopeNodeId == null ? nodeService.list() : List.of(nodeService.getById(scopeNodeId));
@@ -144,6 +192,15 @@ public class SystemSelfCheckService {
                         "该节点上的转发、隧道、代理和健康检查可能无法管理",
                         "先在服务器检查 gost 服务；如升级后离线，使用节点页的手动升级命令，脚本会失败自动回退", 10));
                 continue;
+            }
+            WebSocketServer.NodeConnectionConflict conflict = WebSocketServer.getNodeConnectionConflict(node.getId());
+            if (conflict != null) {
+                findings.add(new Finding("agent", "node", node.getId(), node.getName(), "failed", "Agent 身份冲突",
+                        "同一个节点密钥正在被另一台机器使用",
+                        "当前连接 " + conflict.activeIp() + " / " + conflict.activeVersion() + " / " + value(conflict.activeMachine())
+                                + "，已拒绝 " + conflict.rejectedIp() + " / " + conflict.rejectedVersion() + " / " + value(conflict.rejectedMachine()),
+                        "冲突连接已被拒绝，正常节点保持在线；错误机器会持续重连并产生额外负载",
+                        "在被拒绝的 IP 对应服务器停止旧 Agent，或使用该服务器自己的独立节点安装命令重新安装", 8));
             }
             if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_AGENT_VERSION)) {
                 findings.add(new Finding("agent", "node", node.getId(), node.getName(), "warning", "Agent 能力",

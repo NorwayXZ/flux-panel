@@ -38,7 +38,12 @@ jobs:
         run: |
           sh scripts/check-version-consistency.sh
           sh scripts/test-agent-installer.sh
+          bash scripts/test-runtime-healthcheck.sh
+          sh scripts/check-runtime-safety.sh
           sudo bash scripts/test-panel-manager.sh
+          test ! -e panel_install.sh
+          test ! -e docker-compose-v4.yml
+          test ! -e docker-compose-v6.yml
           docker compose --env-file .env.example -f docker-compose.yml config --quiet
           docker compose --env-file .env.example -f docker-compose-source.yml config --quiet
           docker compose --env-file .env.example -f docker-compose-build.yml config --quiet
@@ -60,6 +65,9 @@ jobs:
           DB_USER: test
           DB_PASSWORD: test
         run: mvn --batch-mode clean package
+
+      - name: Smoke test backend runtime
+        run: bash scripts/test-backend-runtime.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -156,7 +164,7 @@ jobs:
           docker pull "${BACKEND_IMAGE}:${VERSION}"
           docker pull "${FRONTEND_IMAGE}:${VERSION}"
           docker run --rm --entrypoint sh "${BACKEND_IMAGE}:${VERSION}" -c \
-            "grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar"
+            "test -x /app/healthcheck.sh && grep -aq 'RuntimeHealthController.class' /app/app.jar && grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar"
           docker run --rm --entrypoint sh "${FRONTEND_IMAGE}:${VERSION}" -c \
             "grep -Rqs '发现服务' /usr/share/nginx/html/assets && grep -Rqs '网络质量实验室' /usr/share/nginx/html/assets"
 

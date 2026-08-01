@@ -129,6 +129,10 @@ Agent 只向面板返回检测到的公网 IPv4 或 IPv6，DNS 密钥不会下�
 
 `2.41.4` 修复入口资源较多时 Connector 自检命令因 WebSocket 消息超过默认限制而以 `1009 message too big` 断开的问题。Connector 将接收上限设为 4 MiB，面板发送入口可达性目标前按主机和端口去重；自检仍为只读，不修改本机或服务器网络配置。
 
+`2.42.0` 将本次生产故障的修复同步落到新安装、旧版升级、运行时自恢复和发布测试。安装器按物理内存自动分配 JVM 堆，升级时备份并迁移已知不安全的 `256 MB + SerialGC` 配置；后端在 120 秒启动宽限后才根据连续五次 HTTP + 数据库就绪失败触发容器恢复。安装、升级和回退会检查磁盘余量，但磁盘紧张时仍允许查看状态和卸载。
+
+Agent `2.42.0` 会上报稳定机器指纹。同一节点密钥被另一台机器使用时，面板拒绝冲突连接、保持正常节点在线，并在监控和全系统自检显示两端 IP 与版本。旧 Agent 仍可连接，但在升级前只能按真实公网 IP 判断重复身份。Agent 握手的密钥参数不再写入 Agent 日志和 Nginx 访问日志。
+
 升级本身不会创建或修改 DNS、证书、域名入口及任何现有业务。只有管理员主动提交“新增面板访问域名”或“新增代理授权”后才会增加对应资源；原始 `IP:端口` 会继续保留为救援地址，Agent 仍使用独立的通信地址。现有私人代理、节点、隧道、转发和内网映射不会由面板升级自动重建。
 
 升级会为现有 `private_proxy` 表补充带零默认值的高级运行时累计流量基线字段，不删除或改写已有记录；手动维护数据库时可执行 [`migrations/20260731_private_proxy_grants.sql`](migrations/20260731_private_proxy_grants.sql)。新建高级协议用户授权要求对应 Linux 节点 Agent `2.40.0`，现有独立高级代理仍兼容 Agent `2.38.0+`。需要回退时，先删除在新版创建的高级协议用户授权，再执行 `sudo /usr/local/sbin/flux-panel-manager rollback`；否则旧面板不会继续轮询并执行这些新授权的流量额度。
@@ -718,12 +722,16 @@ curl -fsSL https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/fl
   | sudo env FLUX_PANEL_FRONTEND_PORT=8080 FLUX_PANEL_BACKEND_PORT=8081 bash -s -- install
 ```
 
-### 调整运行内存与并发
+### 运行内存与自恢复
 
-安装后可以编辑 `/etc/flux-panel/flux-panel.env`。例如在 2 GB 以上服务器提高后端内存和连接池：
+安装器会按服务器物理内存自动设置 JVM 堆：低于 `2 GB` 使用 `384 MB`，`2-4 GB` 使用 `512 MB`，`4-8 GB` 使用 `768 MB`，`8 GB` 及以上使用 `1 GB`。旧安装在升级时如果仍使用已知不安全的 `256 MB + SerialGC` 组合，脚本会先备份环境文件，再迁移到当前服务器对应的安全值。
+
+后端就绪检查同时验证 HTTP 和数据库。新 JVM 有 `120` 秒启动宽限，宽限期内未就绪不会终止进程；宽限期后连续五次检查失败才会触发容器自恢复，单次超时不会重启。每个新后端进程都会重置失败计数，避免重启循环。
+
+需要手动提高并发时，可以编辑 `/etc/flux-panel/flux-panel.env`：
 
 ```dotenv
-JAVA_OPTS="-Xms128m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
+JAVA_OPTS="-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
 DB_POOL_MIN_IDLE=2
 DB_POOL_MAX_SIZE=20
 TOMCAT_MAX_THREADS=200

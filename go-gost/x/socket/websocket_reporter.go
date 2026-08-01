@@ -304,8 +304,7 @@ func (w *WebSocketReporter) connect() error {
 	if w.role == "connector" || cfg.Role == "connector" {
 		connectionType = "2"
 	}
-	currentURL := "ws://" + w.addr + "/system-info?type=" + connectionType + "&secret=" + w.secret + "&version=" + w.version +
-		"&http=" + strconv.Itoa(cfg.Http) + "&tls=" + strconv.Itoa(cfg.Tls) + "&socks=" + strconv.Itoa(cfg.Socks)
+	currentURL := buildReporterURL(w.addr, w.secret, w.version, connectionType, cfg.Http, cfg.Tls, cfg.Socks)
 
 	u, err := url.Parse(currentURL)
 	if err != nil {
@@ -1549,9 +1548,9 @@ func StartWebSocketReporterWithConfig(addr string, secret string, http int, tls 
 	}
 
 	// 构建初始 WebSocket URL
-	fullURL := "ws://" + addr + "/system-info?type=" + connectionType + "&secret=" + secret + "&version=" + version + "&http=" + strconv.Itoa(http) + "&tls=" + strconv.Itoa(tls) + "&socks=" + strconv.Itoa(socks)
+	fullURL := buildReporterURL(addr, secret, version, connectionType, http, tls, socks)
 
-	fmt.Printf("🔗 WebSocket连接URL: %s\n", fullURL)
+	fmt.Printf("🔗 准备连接面板: %s (role=%s)\n", addr, role)
 
 	reporter := NewWebSocketReporter(fullURL, secret)
 	// 保存 addr, secret, version 供重连时使用
@@ -1562,6 +1561,19 @@ func StartWebSocketReporterWithConfig(addr string, secret string, http int, tls 
 	reporter.Start()
 	go repairStartupService(role)
 	return reporter
+}
+
+func buildReporterURL(addr, secret, version, connectionType string, httpPort, tlsPort, socksPort int) string {
+	hostname, _ := os.Hostname()
+	query := url.Values{}
+	query.Set("type", connectionType)
+	query.Set("secret", secret)
+	query.Set("version", version)
+	query.Set("http", strconv.Itoa(httpPort))
+	query.Set("tls", strconv.Itoa(tlsPort))
+	query.Set("socks", strconv.Itoa(socksPort))
+	query.Set("machine", machineFingerprint(hostname))
+	return "ws://" + addr + "/system-info?" + query.Encode()
 }
 
 // handleTcpPing 处理TCP ping诊断命令
