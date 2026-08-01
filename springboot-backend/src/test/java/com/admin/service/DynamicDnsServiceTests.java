@@ -71,4 +71,35 @@ class DynamicDnsServiceTests {
         assertEquals(List.of(), DynamicDnsService.extractDnsPodDomainNames(new JSONObject()));
         assertEquals(List.of(), DynamicDnsService.extractAliyunDomainNames(new JSONObject()));
     }
+
+    @Test
+    void mapsProviderLineNamesToStableCarrierKeys() {
+        assertEquals("default", DynamicDnsService.providerLineCarrier("dnspod", null, "默认"));
+        assertEquals("telecom", DynamicDnsService.providerLineCarrier("dnspod", null, "电信"));
+        assertEquals("unicom", DynamicDnsService.providerLineCarrier("aliyun", "unicom", "中国联通"));
+        assertEquals("mobile", DynamicDnsService.providerLineCarrier("aliyun", "mobile", "中国移动"));
+    }
+
+    @Test
+    void usesProviderMinimumTtlInsteadOfPretendingAliyunSupportsSixtySeconds() {
+        assertEquals(60, DynamicDnsService.lineRoutingMinimumTtl("dnspod"));
+        assertEquals(600, DynamicDnsService.lineRoutingMinimumTtl("aliyun"));
+    }
+
+    @Test
+    void parsesPublicDnsAnswersAndTheirRemainingTtl() {
+        DynamicDnsService.PublicDnsProbe probe = DynamicDnsService.parsePublicDnsProbe(
+                "mobile", "A", "{\"Status\":0,\"Answer\":[{\"type\":1,\"data\":\"8.218.90.244.\",\"TTL\":47}]}" );
+        assertEquals(List.of("8.218.90.244"), probe.answers());
+        assertEquals(47, probe.ttl());
+        assertEquals(true, probe.successful());
+    }
+
+    @Test
+    void treatsDnsPodNoRecordResponsesAsAnEmptyRecordSet() {
+        assertEquals(true, DynamicDnsService.isDnsPodNoRecordError(
+                "DNSPod [ResourceNotFound.NoDataOfRecord]: 暂无记录"));
+        assertEquals(false, DynamicDnsService.isDnsPodNoRecordError(
+                "DNSPod [AuthFailure.SignatureFailure]: 签名错误"));
+    }
 }

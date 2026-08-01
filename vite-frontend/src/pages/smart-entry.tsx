@@ -8,17 +8,19 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
-import { Activity, CheckCircle2, History, Pencil, Plus, RefreshCw, Route, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
+import { Activity, CheckCircle2, History, Pencil, Plus, RefreshCw, Route, ScanSearch, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
   checkSmartEntry,
+  diagnoseSmartEntryDns,
   deleteSmartEntry,
   getSmartEntryEvents,
   getSmartEntryDomains,
   getSmartEntryOptions,
   getSmartEntryOverview,
   saveSmartEntry,
+  type SmartEntryDnsDiagnosis,
   type SmartEntryEvent,
   type SmartEntryForwardOption,
   type SmartEntryGroup,
@@ -91,6 +93,10 @@ export default function SmartEntryPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyName, setHistoryName] = useState('');
   const [events, setEvents] = useState<SmartEntryEvent[]>([]);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [diagnosisName, setDiagnosisName] = useState('');
+  const [diagnosis, setDiagnosis] = useState<SmartEntryDnsDiagnosis | null>(null);
+  const [diagnosingId, setDiagnosingId] = useState<number>();
 
   const loadData = useCallback(async (quiet = false) => {
     const [overview, options] = await Promise.all([getSmartEntryOverview(), getSmartEntryOptions()]);
@@ -180,7 +186,9 @@ export default function SmartEntryPage() {
   };
 
   const selectProvider = (providerRefId: string) => {
-    setForm(current => ({ ...current, providerRefId, zoneName: '' }));
+    const provider = providers.find(item => String(item.id) === providerRefId);
+    const minimumTtl = provider?.provider === 'aliyun' ? '600' : '60';
+    setForm(current => ({ ...current, providerRefId, zoneName: '', ttl: Number(current.ttl) < Number(minimumTtl) ? minimumTtl : current.ttl }));
     setDomains([]);
     setDomainsError('');
     void loadDomains(providerRefId);
@@ -227,6 +235,16 @@ export default function SmartEntryPage() {
     setHistoryName(group.name);
     setEvents(response.data || []);
     setHistoryOpen(true);
+  };
+
+  const showDiagnosis = async (group: SmartEntryGroup) => {
+    setDiagnosingId(group.id);
+    const response = await diagnoseSmartEntryDns(group.id);
+    setDiagnosingId(undefined);
+    if (response.code !== 0 || !response.data) return toast.error(response.msg || 'DNS 线路诊断失败');
+    setDiagnosisName(group.name);
+    setDiagnosis(response.data);
+    setDiagnosisOpen(true);
   };
 
   if (loading) return <div className="flex min-h-[50vh] items-center justify-center"><Spinner label="加载三网优化" /></div>;
@@ -281,6 +299,7 @@ export default function SmartEntryPage() {
                     <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat">{providerLabel(group.provider)}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.publicPort}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="DNS 线路诊断" aria-label="DNS 线路诊断" isLoading={diagnosingId === group.id} onPress={() => void showDiagnosis(group)}><ScanSearch size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="入口活动记录" aria-label="入口活动记录" onPress={() => showHistory(group)}><History size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="编辑" aria-label="编辑" onPress={() => openEdit(group)}><Pencil size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" color="danger" title="删除" aria-label="删除" onPress={() => remove(group)}><Trash2 size={17} /></Button>
@@ -291,9 +310,10 @@ export default function SmartEntryPage() {
                       const activeOnOwnEntry = route.currentForwardId === route.forwardId;
                       return (
                         <div key={route.id} className={`min-h-24 border-l-2 px-3 py-2 ${route.status === 'unhealthy' ? 'border-warning bg-warning-50/60 dark:bg-warning-500/5' : 'border-divider'}`}>
-                          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">{carrierLabel(route.carrier)}</span><Chip size="sm" variant="flat" color={route.status === 'healthy' ? 'success' : route.status === 'unhealthy' ? 'warning' : 'default'}>{route.status === 'healthy' ? '可用' : route.status === 'unhealthy' ? '已回退' : '确认中'}</Chip></div>
+                          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">{carrierLabel(route.carrier)}</span><div className="flex flex-wrap justify-end gap-1"><Chip size="sm" variant="flat" color={route.status === 'healthy' ? 'success' : route.status === 'unhealthy' ? 'warning' : 'default'}>{route.status === 'healthy' ? '可用' : route.status === 'unhealthy' ? '已回退' : '确认中'}</Chip><Chip size="sm" variant="flat" color={route.dnsState === 'healthy' ? 'success' : route.dnsState === 'error' ? 'danger' : 'warning'}>{route.dnsState === 'healthy' ? `DNS 已核验 · ${route.appliedTtl || group.ttl}s` : route.dnsState === 'error' ? 'DNS 待处理' : 'DNS 同步中'}</Chip></div></div>
                           <p className="mt-2 truncate text-xs text-default-500">配置：{route.nodeName} · {route.entryAddress}</p>
                           <div className="mt-1 flex items-center justify-between gap-2 text-xs"><span className={activeOnOwnEntry ? 'text-default-500' : 'text-warning'}>{activeOnOwnEntry ? '当前使用本线路' : `当前回退到 ${route.currentAddress}`}</span><span>{route.latencyMs ? `${route.latencyMs} ms` : '-'}</span></div>
+                          {route.dnsError && <p className="mt-2 text-xs text-danger">{route.dnsError}</p>}
                         </div>
                       );
                     })}
@@ -343,7 +363,7 @@ export default function SmartEntryPage() {
               </div>
               <Input label="业务域名或主机记录" placeholder="例如 access 或 access.example.com" value={form.domain} onValueChange={domain => setForm({ ...form, domain })} />
               <Select label="记录类型" selectedKeys={[form.recordType]} onSelectionChange={keys => setForm({ ...form, recordType: String(Array.from(keys)[0]) as 'A' | 'AAAA' })}><SelectItem key="A">A（IPv4）</SelectItem><SelectItem key="AAAA">AAAA（IPv6）</SelectItem></Select>
-              <Input label="DNS TTL（秒）" type="number" min={60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} />
+              <Input label="DNS TTL（秒）" type="number" min={form.providerRefId && providers.find(item => String(item.id) === form.providerRefId)?.provider === 'aliyun' ? 600 : 60} max={86400} value={form.ttl} onValueChange={ttl => setForm({ ...form, ttl })} description={form.providerRefId && providers.find(item => String(item.id) === form.providerRefId)?.provider === 'aliyun' ? '阿里云线路解析实际最低 600 秒' : 'DNSPod 线路解析最低 60 秒'} />
             </section>
 
             {providers.length === 0 && <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between"><span>尚未保存 DNSPod 或阿里云 DNS 凭据。</span><Button size="sm" color="warning" variant="flat" onPress={() => { setFormOpen(false); navigate('/dns-settings?add=carrier'); }}>前往资源中心添加</Button></div>}
@@ -372,6 +392,35 @@ export default function SmartEntryPage() {
             <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">DNSPod 或阿里云 DNS 必须是该主域名当前实际使用的权威 DNS。运营商识别由 DNS 服务商完成，不读取或保存客户 IP。DNS 缓存可能延迟新连接切换，已有连接不会迁移；TTL 的实际下限由 DNS 套餐决定。</div>
           </ModalBody>
           <ModalFooter><Button variant="flat" onPress={() => setFormOpen(false)}>取消</Button><Button color="primary" isLoading={saving} onPress={submit}>保存并同步线路 DNS</Button></ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={diagnosisOpen} onOpenChange={setDiagnosisOpen} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>{diagnosisName} · DNS 线路诊断</ModalHeader>
+          <ModalBody className="gap-4">
+            {!diagnosis ? <div className="py-12 text-center text-sm text-default-500">暂无诊断结果</div> : <>
+              <div className="grid gap-3 border-y border-divider py-4 sm:grid-cols-4">
+                <div><p className="text-xs text-default-500">业务域名</p><p className="mt-1 break-all text-sm font-medium">{diagnosis.domain}</p></div>
+                <div><p className="text-xs text-default-500">记录类型</p><p className="mt-1 text-sm font-medium">{diagnosis.recordType}</p></div>
+                <div><p className="text-xs text-default-500">策略 TTL</p><p className="mt-1 text-sm font-medium">{diagnosis.ttl} 秒</p></div>
+                <div><p className="text-xs text-default-500">检查结果</p><p className={`mt-1 text-sm font-medium ${diagnosis.summary.healthy ? 'text-success' : 'text-warning'}`}>{diagnosis.summary.healthy ? '线路一致' : '存在差异'}</p></div>
+              </div>
+              <div className="divide-y divide-divider border-y border-divider">
+                {diagnosis.lines.map(line => <div key={line.carrier} className="grid gap-3 px-1 py-4 sm:grid-cols-[110px_minmax(0,1fr)_minmax(0,1fr)_90px] sm:items-center">
+                  <div className="flex items-center gap-2"><span className="text-sm font-medium">{carrierLabel(line.carrier)}</span>{line.inherited && <Chip size="sm" variant="flat">继承默认</Chip>}</div>
+                  <div className="min-w-0"><p className="text-xs text-default-500">预期入口</p><p className="mt-1 break-all font-mono text-xs">{line.expectedAddress}</p><p className="mt-2 text-xs text-default-500">服务商实际记录</p><p className="mt-1 break-all font-mono text-xs">{line.providerRecords.length ? line.providerRecords.map(record => `${record.value} / TTL ${record.ttl}s${record.enabled ? '' : ' / 已停用'}`).join('；') : '未找到'}</p><Chip className="mt-2" size="sm" variant="flat" color={line.providerMatch ? 'success' : 'danger'}>{line.providerMatch ? '服务商记录一致' : line.providerRecords.length > 1 ? '服务商存在重复记录' : '服务商记录不一致'}</Chip></div>
+                  <div className="min-w-0"><p className="text-xs text-default-500">公共 DNS 实际返回</p><p className="mt-1 truncate font-mono text-xs">{line.publicProbe.answers.length ? line.publicProbe.answers.join(', ') : line.publicProbe.error || '没有答案'}</p><p className="mt-1 text-xs text-default-500">TTL {line.publicProbe.ttl ?? '-'} 秒</p></div>
+                  <Chip size="sm" variant="flat" color={!line.publicProbe.successful ? 'danger' : line.publicMatch ? 'success' : 'warning'}>{!line.publicProbe.successful ? '查询失败' : line.publicMatch ? '公网一致' : '公网待收敛'}</Chip>
+                </div>)}
+              </div>
+              {diagnosis.summary.queryFailures > 0 && <div className="rounded-md border border-danger-200 bg-danger-50 px-3 py-3 text-xs leading-5 text-danger-800 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-200">有 {diagnosis.summary.queryFailures} 条公共 DNS 查询失败。该结果表示诊断请求未完成，不代表线路配置错误；稍后重新诊断即可。</div>}
+              {diagnosis.sibling.conflict && <div className="rounded-md border border-warning-200 bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">检测到同名 {diagnosis.sibling.recordType} 记录，但它没有由另一条三网优化策略接管。启用 IPv6 的设备可能优先使用这条记录，从而绕过当前线路选择。</div>}
+              {!diagnosis.sibling.conflict && diagnosis.sibling.visible && <div className="rounded-md border border-default-200 bg-default-50 px-3 py-3 text-xs leading-5 text-default-600 dark:border-default-700 dark:bg-default-900/30">同名 {diagnosis.sibling.recordType} 记录已被另一条三网优化策略接管，当前诊断不会把它判定为冲突。</div>}
+              <p className="text-xs text-default-500">公网 DNS 检查使用带运营商 ECS 的查询模拟线路来源；它能验证权威 DNS 和公共解析链路，但无法清除手机、Shadowrocket 或运营商本地已有缓存。</p>
+            </>}
+          </ModalBody>
+          <ModalFooter><Button variant="flat" onPress={() => setDiagnosisOpen(false)}>关闭</Button></ModalFooter>
         </ModalContent>
       </Modal>
 

@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -151,6 +152,38 @@ public class DynamicDnsService {
         return "dnspod".equals(access.provider)
                 ? updateDnsPodLine(access, zone, fqdn, type, value, ttl, knownRecordId, line)
                 : updateAliyunLine(access, zone, fqdn, type, value, ttl, knownRecordId, line);
+    }
+
+    public List<LineRoutingRecordState> inspectLineRoutingRecords(Long providerRefId, String zone, String fqdn, String type) {
+        ProviderAccess access = loadProvider("dynamic", providerRefId, null, null);
+        String normalizedType = StringUtils.defaultIfBlank(type, "A").toUpperCase(Locale.ROOT);
+        String normalizedFqdn = normalizeRecord(fqdn, zone);
+        return "dnspod".equals(access.provider)
+                ? inspectDnsPodLineRecords(access, zone, normalizedFqdn, normalizedType)
+                : inspectAliyunLineRecords(access, zone, normalizedFqdn, normalizedType);
+    }
+
+    public PublicDnsProbe queryPublicLineAnswer(String fqdn, String type, String carrier) {
+        String normalizedType = StringUtils.defaultIfBlank(type, "A").toUpperCase(Locale.ROOT);
+        try {
+            UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl("https://dns.google/resolve")
+                    .queryParam("name", fqdn)
+                    .queryParam("type", normalizedType)
+                    .queryParam("cd", "false");
+            String subnet = carrierProbeSubnet(carrier);
+            if (subnet != null) builder.queryParam("edns_client_subnet", subnet);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.valueOf("application/dns-json")));
+            ResponseEntity<String> response = restTemplate.exchange(
+                    builder.build().encode().toUri(), HttpMethod.GET, new HttpEntity<>(headers), String.class);
+            return parsePublicDnsProbe(carrier, normalizedType, response.getBody());
+        } catch (RuntimeException e) {
+            return new PublicDnsProbe(carrier, List.of(), null, false, "公共 DNS 查询失败");
+        }
+    }
+
+    public static int lineRoutingMinimumTtl(String provider) {
+        return "aliyun".equalsIgnoreCase(StringUtils.defaultString(provider)) ? 600 : 60;
     }
 
     public void deleteLineRoutingRecord(Long providerRefId, String zone, String recordId) {
@@ -467,6 +500,30 @@ public class DynamicDnsService {
         return recordId;
     }
 
+    private List<LineRoutingRecordState> inspectDnsPodLineRecords(ProviderAccess access, String zone,
+                                                                   String fqdn, String type) {
+        String sub = relativeName(fqdn, zone);
+        JSONObject result;
+        try {
+            result = dnsPod(access, "DescribeRecordList",
+                    Map.of("Domain", zone, "Subdomain", sub, "RecordType", type, "Limit", 3000));
+        } catch (IllegalStateException e) {
+            if (isDnsPodNoRecordError(e.getMessage())) return List.of();
+            throw e;
+        }
+        JSONArray records = result.getJSONObject("Response").getJSONArray("RecordList");
+        List<LineRoutingRecordState> states = new ArrayList<>();
+        if (records == null) return states;
+        for (int index = 0; index < records.size(); index++) {
+            JSONObject item = records.getJSONObject(index);
+            String carrier = providerLineCarrier("dnspod", null, item.getString("Line"));
+            if (carrier == null) continue;
+            states.add(new LineRoutingRecordState(carrier, item.getString("RecordId"), item.getString("Value"),
+                    item.getIntValue("TTL"), providerRecordEnabled(item.getString("Status")), item.getString("Line")));
+        }
+        return states;
+    }
+
     private LineRoutingRecord updateDnsPodLine(ProviderAccess access, String zone, String fqdn, String type,
                                                String value, int ttl, String knownRecordId, String line) {
         String sub = relativeName(fqdn, zone);
@@ -529,7 +586,9 @@ public class DynamicDnsService {
             String response = restTemplate.postForObject(DNSPOD_API, new HttpEntity<>(body, headers), String.class);
             JSONObject json = JSON.parseObject(response);
             JSONObject error = json == null ? null : json.getJSONObject("Response").getJSONObject("Error");
-            if (error != null) throw new IllegalStateException("DNSPod: " + error.getString("Message"));
+            if (error != null) {
+                throw new IllegalStateException("DNSPod [" + error.getString("Code") + "]: " + error.getString("Message"));
+            }
             return json;
         } catch (RestClientException e) { throw new IllegalStateException("DNSPod API 请求失败"); }
         catch (Exception e) { if (e instanceof IllegalStateException) throw (IllegalStateException) e; throw new IllegalStateException("DNSPod 请求签名失败"); }
@@ -619,6 +678,31 @@ public class DynamicDnsService {
         return new LineRoutingRecord(recordId, false, originalValue, originalTtl);
     }
 
+    private List<LineRoutingRecordState> inspectAliyunLineRecords(ProviderAccess access, String zone,
+                                                                  String fqdn, String type) {
+        String rr = relativeName(fqdn, zone);
+        Map<String, String> query = new LinkedHashMap<>();
+        query.put("DomainName", zone);
+        query.put("RRKeyWord", rr);
+        query.put("TypeKeyWord", type);
+        query.put("PageSize", "500");
+        JSONObject result = aliyun(access, "DescribeDomainRecords", query);
+        JSONObject container = result == null ? null : result.getJSONObject("DomainRecords");
+        JSONArray records = container == null ? null : container.getJSONArray("Record");
+        List<LineRoutingRecordState> states = new ArrayList<>();
+        if (records == null) return states;
+        for (int index = 0; index < records.size(); index++) {
+            JSONObject item = records.getJSONObject(index);
+            if (!rr.equalsIgnoreCase(item.getString("RR")) || !type.equalsIgnoreCase(item.getString("Type"))) continue;
+            String carrier = providerLineCarrier("aliyun", item.getString("LineCode"), item.getString("Line"));
+            if (carrier == null) continue;
+            states.add(new LineRoutingRecordState(carrier, item.getString("RecordId"), item.getString("Value"),
+                    item.getIntValue("TTL"), providerRecordEnabled(item.getString("Status")),
+                    StringUtils.defaultIfBlank(item.getString("LineCode"), item.getString("Line"))));
+        }
+        return states;
+    }
+
     private JSONObject findAliyunLineRecord(ProviderAccess access, String zone, String rr, String type, String line) {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("DomainName", zone);
@@ -648,6 +732,66 @@ public class DynamicDnsService {
         return record != null
                 && expectedValue.equals(record.getString("Value"))
                 && expectedTtl == record.getIntValue("TTL");
+    }
+
+    static String providerLineCarrier(String provider, String lineCode, String lineName) {
+        String value = StringUtils.defaultIfBlank(lineCode, lineName);
+        String normalized = StringUtils.defaultString(value).trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "default", "默认", "0" -> "default";
+            case "telecom", "电信", "中国电信" -> "telecom";
+            case "unicom", "联通", "中国联通" -> "unicom";
+            case "mobile", "移动", "中国移动" -> "mobile";
+            default -> null;
+        };
+    }
+
+    static boolean providerRecordEnabled(String status) {
+        String normalized = StringUtils.defaultString(status).trim().toUpperCase(Locale.ROOT);
+        return normalized.isEmpty() || List.of("ENABLE", "ENABLED", "NORMAL").contains(normalized);
+    }
+
+    static boolean isDnsPodNoRecordError(String message) {
+        String normalized = StringUtils.defaultString(message).toLowerCase(Locale.ROOT);
+        return normalized.contains("nodataofrecord") || normalized.contains("no data of record")
+                || normalized.contains("没有记录") || normalized.contains("暂无记录");
+    }
+
+    static PublicDnsProbe parsePublicDnsProbe(String carrier, String recordType, String responseBody) {
+        try {
+            JSONObject body = JSON.parseObject(responseBody);
+            if (body == null || body.getIntValue("Status") != 0) {
+                return new PublicDnsProbe(carrier, List.of(), null, false,
+                        "公共 DNS 返回状态 " + (body == null ? "未知" : body.getIntValue("Status")));
+            }
+            int expectedType = "AAAA".equalsIgnoreCase(recordType) ? 28 : 1;
+            JSONArray answers = body.getJSONArray("Answer");
+            List<String> values = new ArrayList<>();
+            Integer minimumTtl = null;
+            if (answers != null) {
+                for (int index = 0; index < answers.size(); index++) {
+                    JSONObject answer = answers.getJSONObject(index);
+                    if (answer.getIntValue("type") != expectedType) continue;
+                    String value = StringUtils.removeEnd(StringUtils.trimToEmpty(answer.getString("data")), ".");
+                    if (StringUtils.isBlank(value) || values.contains(value)) continue;
+                    values.add(value);
+                    int ttl = answer.getIntValue("TTL");
+                    minimumTtl = minimumTtl == null ? ttl : Math.min(minimumTtl, ttl);
+                }
+            }
+            return new PublicDnsProbe(carrier, values, minimumTtl, true, null);
+        } catch (RuntimeException e) {
+            return new PublicDnsProbe(carrier, List.of(), null, false, "公共 DNS 响应无法解析");
+        }
+    }
+
+    private String carrierProbeSubnet(String carrier) {
+        return switch (StringUtils.defaultIfBlank(carrier, "default").toLowerCase(Locale.ROOT)) {
+            case "telecom" -> "202.96.128.0/24";
+            case "unicom" -> "123.125.0.0/24";
+            case "mobile" -> "120.196.0.0/24";
+            default -> null;
+        };
     }
 
     private String normalizeCarrierLine(String provider, String carrier) {
@@ -838,6 +982,9 @@ public class DynamicDnsService {
     private boolean truth(Object value) { return value != null && ("1".equals(value.toString()) || Boolean.parseBoolean(value.toString())); }
 
     public record LineRoutingRecord(String recordId, boolean created, String originalValue, Integer originalTtl) { }
+    public record LineRoutingRecordState(String carrier, String recordId, String value, int ttl,
+                                         boolean enabled, String providerLine) { }
+    public record PublicDnsProbe(String carrier, List<String> answers, Integer ttl, boolean successful, String error) { }
 
     private static class ProviderAccess {
         final String provider;

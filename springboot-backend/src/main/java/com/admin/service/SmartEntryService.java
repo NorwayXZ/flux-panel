@@ -36,6 +36,8 @@ public class SmartEntryService {
     private static final List<String> CARRIERS = List.of("default", "telecom", "unicom", "mobile");
     private static final int MAX_GROUPS_PER_TICK = 30;
     private static final long ACTIVITY_RESUME_AFTER_MS = 30L * 60L * 1000L;
+    private static final long DNS_RETRY_INTERVAL_MS = 60_000L;
+    private static final long DNS_VERIFY_INTERVAL_MS = 10L * 60L * 1000L;
 
     private final JdbcTemplate jdbcTemplate;
     private final DynamicDnsService dynamicDnsService;
@@ -186,6 +188,100 @@ public class SmartEntryService {
             return overview();
         } catch (RuntimeException e) {
             return R.err(shorten(e.getMessage()));
+        }
+    }
+
+    public R diagnoseDns(Long id) {
+        Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
+        if (group == null) return R.err("三网优化策略不存在");
+        try {
+            List<Map<String, Object>> configuredRoutes = routes(id);
+            Map<String, Map<String, Object>> routeByCarrier = configuredRoutes.stream()
+                    .collect(Collectors.toMap(item -> Objects.toString(item.get("carrier")), item -> item));
+            Map<String, Object> defaultRoute = routeByCarrier.get("default");
+            if (defaultRoute == null) return R.err("默认入口不存在");
+            String zone = Objects.toString(group.get("zone_name"));
+            String domain = Objects.toString(group.get("domain"));
+            String recordType = Objects.toString(group.get("record_type"));
+            String siblingType = "A".equals(recordType) ? "AAAA" : "A";
+            long providerId = number(group.get("provider_ref_id"));
+
+            List<DynamicDnsService.LineRoutingRecordState> providerRecords =
+                    dynamicDnsService.inspectLineRoutingRecords(providerId, zone, domain, recordType);
+            List<DynamicDnsService.LineRoutingRecordState> siblingRecords =
+                    dynamicDnsService.inspectLineRoutingRecords(providerId, zone, domain, siblingType);
+            Map<String, List<DynamicDnsService.LineRoutingRecordState>> providerByCarrier = providerRecords.stream()
+                    .collect(Collectors.groupingBy(DynamicDnsService.LineRoutingRecordState::carrier));
+
+            Map<String, CompletableFuture<DynamicDnsService.PublicDnsProbe>> probes = new LinkedHashMap<>();
+            for (String carrier : CARRIERS) {
+                probes.put(recordType + ":" + carrier, CompletableFuture.supplyAsync(
+                        () -> dynamicDnsService.queryPublicLineAnswer(domain, recordType, carrier)));
+                probes.put(siblingType + ":" + carrier, CompletableFuture.supplyAsync(
+                        () -> dynamicDnsService.queryPublicLineAnswer(domain, siblingType, carrier)));
+            }
+
+            List<Map<String, Object>> lines = new ArrayList<>();
+            int providerMatches = 0;
+            int publicMatches = 0;
+            for (String carrier : CARRIERS) {
+                Map<String, Object> configured = routeByCarrier.get(carrier);
+                boolean inherited = configured == null;
+                Map<String, Object> expectedRoute = inherited ? defaultRoute : configured;
+                String expected = Objects.toString(expectedRoute.get("currentAddress"),
+                        Objects.toString(expectedRoute.get("entryAddress")));
+                List<DynamicDnsService.LineRoutingRecordState> direct = providerByCarrier.getOrDefault(carrier, List.of());
+                List<DynamicDnsService.LineRoutingRecordState> effective = inherited
+                        ? providerByCarrier.getOrDefault("default", List.of()) : direct;
+                DynamicDnsService.LineRoutingRecordState providerRecord = effective.size() == 1 ? effective.get(0) : null;
+                DynamicDnsService.PublicDnsProbe publicProbe = probes.get(recordType + ":" + carrier).join();
+                boolean providerMatch = providerRecord != null && providerRecord.enabled()
+                        && expected.equals(providerRecord.value()) && providerRecord.ttl() == intValue(group.get("ttl"));
+                boolean publicMatch = publicProbe.successful() && publicProbe.answers().contains(expected);
+                if (providerMatch) providerMatches++;
+                if (publicMatch) publicMatches++;
+                Map<String, Object> line = new LinkedHashMap<>();
+                line.put("carrier", carrier);
+                line.put("inherited", inherited);
+                line.put("expectedAddress", expected);
+                line.put("providerRecord", providerRecord);
+                line.put("providerRecords", effective);
+                line.put("providerMatch", providerMatch);
+                line.put("publicProbe", publicProbe);
+                line.put("publicMatch", publicMatch);
+                lines.add(line);
+            }
+
+            Integer siblingManagedCount = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=? AND id<>?",
+                    Integer.class, providerId, zone, domain, siblingType, id);
+            List<DynamicDnsService.PublicDnsProbe> siblingProbes = CARRIERS.stream()
+                    .map(carrier -> probes.get(siblingType + ":" + carrier).join()).toList();
+            boolean siblingVisible = !siblingRecords.isEmpty()
+                    || siblingProbes.stream().anyMatch(probe -> !probe.answers().isEmpty());
+            boolean siblingConflict = siblingVisible && (siblingManagedCount == null || siblingManagedCount == 0);
+
+            Map<String, Object> summary = new LinkedHashMap<>();
+            long queryFailures = lines.stream()
+                    .filter(line -> !((DynamicDnsService.PublicDnsProbe) line.get("publicProbe")).successful()).count();
+            summary.put("providerMatches", providerMatches);
+            summary.put("publicMatches", publicMatches);
+            summary.put("totalLines", CARRIERS.size());
+            summary.put("queryFailures", queryFailures);
+            summary.put("siblingConflict", siblingConflict);
+            summary.put("healthy", providerMatches == CARRIERS.size() && publicMatches == CARRIERS.size() && !siblingConflict);
+            Map<String, Object> sibling = new LinkedHashMap<>();
+            sibling.put("recordType", siblingType);
+            sibling.put("managed", siblingManagedCount != null && siblingManagedCount > 0);
+            sibling.put("providerRecords", siblingRecords);
+            sibling.put("publicProbes", siblingProbes);
+            sibling.put("visible", siblingVisible);
+            sibling.put("conflict", siblingConflict);
+            return R.ok(Map.of("groupId", id, "domain", domain, "recordType", recordType,
+                    "ttl", group.get("ttl"), "checkedAt", System.currentTimeMillis(), "lines", lines,
+                    "sibling", sibling, "summary", summary));
+        } catch (RuntimeException e) {
+            return R.err("DNS 线路诊断失败：" + shorten(e.getMessage()));
         }
     }
 
@@ -342,7 +438,7 @@ public class SmartEntryService {
                 }
             }
             jdbcTemplate.update("UPDATE smart_entry_group SET last_checked_at=?,updated_time=? WHERE id=?", now, now, id);
-            syncRecords(id, manual ? "手动检测" : "健康检测");
+            syncRecords(id, manual ? "手动检测" : "健康检测", manual);
         }
     }
 
@@ -362,36 +458,126 @@ public class SmartEntryService {
     }
 
     private void syncRecords(Long groupId, String reason) {
+        syncRecords(groupId, reason, false);
+    }
+
+    private void syncRecords(Long groupId, String reason, boolean forceVerify) {
         Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", groupId);
         if (group == null) return;
         List<Map<String, Object>> all = routes(groupId);
         if (all.isEmpty()) return;
         Map<String, Object> defaultRoute = all.stream().filter(item -> "default".equals(item.get("carrier"))).findFirst().orElse(all.get(0));
         List<Map<String, Object>> healthy = all.stream().filter(item -> !"unhealthy".equals(item.get("status"))).toList();
+        int ttl = intValue(group.get("ttl"));
+        long now = System.currentTimeMillis();
+        boolean recordsChanged = false;
+        Map<String, String> expectedAddresses = new LinkedHashMap<>();
         for (Map<String, Object> line : all) {
             Map<String, Object> desired = !"unhealthy".equals(line.get("status")) ? line
                     : (!"unhealthy".equals(defaultRoute.get("status")) ? defaultRoute : (healthy.isEmpty() ? line : healthy.get(0)));
             String desiredAddress = Objects.toString(desired.get("entryAddress"));
             long desiredForward = number(desired.get("forwardId"));
-            DynamicDnsService.LineRoutingRecord record = dynamicDnsService.ensureLineRoutingRecord(number(group.get("provider_ref_id")),
-                    Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")),
-                    Objects.toString(group.get("record_type")), Objects.toString(line.get("carrier")), desiredAddress,
-                    intValue(group.get("ttl")), Objects.toString(line.get("recordId"), null));
             boolean changed = !Objects.equals(desiredForward, nullableLong(line.get("currentForwardId")))
                     || !desiredAddress.equals(Objects.toString(line.get("currentAddress"), ""));
-            jdbcTemplate.update("UPDATE smart_entry_route SET managed_created=IF(record_id IS NULL,?,managed_created),"
-                            + "original_address=IF(record_id IS NULL,?,original_address),original_ttl=IF(record_id IS NULL,?,original_ttl),"
-                            + "record_id=?,current_forward_id=?,current_address=?,updated_time=? WHERE id=?",
-                    record.created(), record.originalValue(), record.originalTtl(), record.recordId(), desiredForward,
-                    desiredAddress, System.currentTimeMillis(), number(line.get("id")));
+            Long lastDnsVerification = nullableLong(line.get("dnsVerifiedAt"));
+            boolean needsWrite = shouldWriteDnsRecord(changed, truth(line.get("dnsDirty")), lastDnsVerification,
+                    StringUtils.isBlank(Objects.toString(line.get("recordId"), null)),
+                    intValue(line.get("appliedTtl")), ttl, now);
+            expectedAddresses.put(Objects.toString(line.get("carrier")), desiredAddress);
+            if (needsWrite) {
+                DynamicDnsService.LineRoutingRecord record;
+                try {
+                    record = dynamicDnsService.ensureLineRoutingRecord(number(group.get("provider_ref_id")),
+                            Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")),
+                            Objects.toString(group.get("record_type")), Objects.toString(line.get("carrier")), desiredAddress,
+                            ttl, Objects.toString(line.get("recordId"), null));
+                } catch (RuntimeException e) {
+                    String message = shorten(e.getMessage());
+                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE id=?",
+                            message, now, now, number(line.get("id")));
+                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_verified_at=?,updated_time=? WHERE group_id=? AND dns_dirty=1",
+                            now, now, groupId);
+                    jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
+                            message, now, number(group.get("id")));
+                    throw e;
+                }
+                jdbcTemplate.update("UPDATE smart_entry_route SET managed_created=IF(record_id IS NULL,?,managed_created),"
+                                + "original_address=IF(record_id IS NULL,?,original_address),original_ttl=IF(record_id IS NULL,?,original_ttl),"
+                                + "record_id=?,current_forward_id=?,current_address=?,applied_ttl=?,dns_dirty=1,dns_state='pending',"
+                                + "dns_error=NULL,updated_time=? WHERE id=?",
+                        record.created(), record.originalValue(), record.originalTtl(), record.recordId(), desiredForward,
+                        desiredAddress, ttl, now, number(line.get("id")));
+                recordsChanged = true;
+            }
             if (changed) {
                 event(groupId, Objects.toString(line.get("carrier")), "route_switch", "success",
                         reason + "：" + carrierLabel(Objects.toString(line.get("carrier"))) + "线路切换到 " + Objects.toString(desired.get("nodeName")));
             }
         }
+
+        long oldestVerification = all.stream().map(item -> nullableLong(item.get("dnsVerifiedAt")))
+                .filter(Objects::nonNull).min(Comparator.naturalOrder()).orElse(0L);
+        if (recordsChanged || forceVerify || oldestVerification == 0L || now - oldestVerification >= DNS_VERIFY_INTERVAL_MS) {
+            verifyProviderRecords(group, all, expectedAddresses, ttl, now);
+        }
+        Integer dnsFailures = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM smart_entry_route WHERE group_id=? AND (dns_dirty=1 OR dns_state='error')",
+                Integer.class, groupId);
+        if (dnsFailures != null && dnsFailures > 0) {
+            String dnsError = jdbcTemplate.query(
+                    "SELECT dns_error FROM smart_entry_route WHERE group_id=? AND dns_error IS NOT NULL ORDER BY updated_time DESC LIMIT 1",
+                    rs -> rs.next() ? rs.getString(1) : "DNS 线路等待重新同步", groupId);
+            jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
+                    shorten(dnsError), now, groupId);
+            return;
+        }
         long unhealthy = all.stream().filter(item -> "unhealthy".equals(item.get("status"))).count();
         String state = unhealthy == 0 ? "healthy" : (unhealthy == all.size() ? "offline" : "degraded");
-        jdbcTemplate.update("UPDATE smart_entry_group SET state=?,last_error=NULL,updated_time=? WHERE id=?", state, System.currentTimeMillis(), groupId);
+        jdbcTemplate.update("UPDATE smart_entry_group SET state=?,last_error=NULL,updated_time=? WHERE id=?", state, now, groupId);
+    }
+
+    private void verifyProviderRecords(Map<String, Object> group, List<Map<String, Object>> routes,
+                                       Map<String, String> expectedAddresses, int ttl, long now) {
+        List<DynamicDnsService.LineRoutingRecordState> states;
+        try {
+            states = dynamicDnsService.inspectLineRoutingRecords(number(group.get("provider_ref_id")),
+                    Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")),
+                    Objects.toString(group.get("record_type")));
+        } catch (RuntimeException e) {
+            jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE group_id=?",
+                    shorten(e.getMessage()), now, now, number(group.get("id")));
+            jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
+                    shorten(e.getMessage()), now, number(group.get("id")));
+            throw e;
+        }
+        Map<String, List<DynamicDnsService.LineRoutingRecordState>> byCarrier = states.stream()
+                .collect(Collectors.groupingBy(DynamicDnsService.LineRoutingRecordState::carrier));
+        List<String> failures = new ArrayList<>();
+        for (Map<String, Object> route : routes) {
+            String carrier = Objects.toString(route.get("carrier"));
+            String expected = expectedAddresses.get(carrier);
+            List<DynamicDnsService.LineRoutingRecordState> matches = byCarrier.getOrDefault(carrier, List.of());
+            DynamicDnsService.LineRoutingRecordState actual = matches.size() == 1 ? matches.get(0) : null;
+            String error = actual == null ? (matches.isEmpty() ? "服务商中缺少该线路记录" : "服务商中存在重复线路记录")
+                    : !actual.enabled() ? "服务商线路记录已停用"
+                    : !expected.equals(actual.value()) ? "服务商返回地址与目标入口不一致"
+                    : actual.ttl() != ttl ? "服务商实际 TTL 与面板不一致"
+                    : null;
+            if (error == null) {
+                jdbcTemplate.update("UPDATE smart_entry_route SET record_id=?,dns_dirty=0,dns_state='healthy',dns_error=NULL,dns_verified_at=?,updated_time=? WHERE id=?",
+                        actual.recordId(), now, now, number(route.get("id")));
+            } else {
+                failures.add(carrierLabel(carrier) + "：" + error);
+                jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE id=?",
+                        error, now, now, number(route.get("id")));
+            }
+        }
+        if (!failures.isEmpty()) {
+            String message = String.join("；", failures);
+            jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
+                    shorten(message), now, number(group.get("id")));
+            throw new IllegalStateException(message);
+        }
     }
 
     private Normalized normalize(SmartEntrySaveDto dto) {
@@ -432,8 +618,10 @@ public class SmartEntryService {
         }
         int port = routes.get(0).entryPort;
         if (routes.stream().anyMatch(route -> route.entryPort != port)) throw new IllegalArgumentException("所有入口转发必须使用相同公网端口");
-        return new Normalized(StringUtils.trim(dto.getName()), dto.getProviderRefId(), Objects.toString(provider.get("provider")), zone,
-                domain, type, clamp(dto.getTtl(), 60, 86400, 60), port,
+        String providerName = Objects.toString(provider.get("provider"));
+        int minimumTtl = DynamicDnsService.lineRoutingMinimumTtl(providerName);
+        return new Normalized(StringUtils.trim(dto.getName()), dto.getProviderRefId(), providerName, zone,
+                domain, type, clamp(dto.getTtl(), minimumTtl, 86400, minimumTtl), port,
                 clamp(dto.getProbeIntervalMs(), 2000, 60000, 5000), clamp(dto.getConnectTimeoutMs(), 300, 10000, 1500),
                 clamp(dto.getFailureThreshold(), 1, 10, 2), clamp(dto.getRecoveryThreshold(), 1, 10, 3),
                 !Boolean.FALSE.equals(dto.getEnabled()), routes);
@@ -455,7 +643,9 @@ public class SmartEntryService {
                 "SELECT id,group_id AS groupId,carrier,forward_id AS forwardId,entry_node_id AS entryNodeId,entry_host AS entryHost,"
                         + "entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,record_id AS recordId,"
                         + "managed_created AS managedCreated,original_address AS originalAddress,original_ttl AS originalTtl,"
-                        + "current_forward_id AS currentForwardId,current_address AS currentAddress,status,fail_count AS failCount,"
+                        + "current_forward_id AS currentForwardId,current_address AS currentAddress,dns_dirty AS dnsDirty,"
+                        + "applied_ttl AS appliedTtl,dns_state AS dnsState,dns_error AS dnsError,dns_verified_at AS dnsVerifiedAt,"
+                        + "status,fail_count AS failCount,"
                         + "success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,last_checked_at AS lastCheckedAt,"
                         + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
                         + "reported_total_connections AS reportedTotalConnections,pending_connections AS pendingConnections,"
@@ -494,6 +684,12 @@ public class SmartEntryService {
 
     static long businessConnectionDelta(long rawConnections, long probeConnections) {
         return Math.max(0L, rawConnections - Math.max(0L, probeConnections));
+    }
+
+    static boolean shouldWriteDnsRecord(boolean routeChanged, boolean dirty, Long lastAttemptAt,
+                                        boolean recordMissing, int appliedTtl, int expectedTtl, long now) {
+        boolean retryDue = dirty && (lastAttemptAt == null || now - lastAttemptAt >= DNS_RETRY_INTERVAL_MS);
+        return routeChanged || retryDue || recordMissing || appliedTtl != expectedTtl;
     }
 
     private String physicalRouteKey(Map<String, Object> route) {

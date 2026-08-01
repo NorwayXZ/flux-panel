@@ -61,6 +61,12 @@ public class SmartEntryController {
         return service.checkNow(Long.valueOf(body.get("id").toString()));
     }
 
+    @PostMapping("/diagnose-dns")
+    @RequireRole
+    public R diagnoseDns(@RequestBody Map<String, Object> body) {
+        return service.diagnoseDns(Long.valueOf(body.get("id").toString()));
+    }
+
     @PostMapping("/events")
     @RequireRole
     public R events(@RequestBody Map<String, Object> body) {

@@ -487,6 +487,11 @@ export interface SmartEntryRoute {
   recordId?: string;
   currentForwardId?: number;
   currentAddress?: string;
+  dnsDirty?: boolean | number;
+  appliedTtl?: number;
+  dnsState?: 'pending' | 'healthy' | 'error';
+  dnsError?: string;
+  dnsVerifiedAt?: number;
   status: 'unknown' | 'healthy' | 'unhealthy';
   failCount: number;
   successCount: number;
@@ -540,6 +545,22 @@ export interface SmartEntryForwardOption {
   nodeName: string; entryHost: string; tunnelName: string;
 }
 export interface SmartEntryEvent { id: number; carrier?: string; eventType: string; status: string; detail: string; createdTime: number; }
+export interface SmartEntryDnsRecordState {
+  carrier: string; recordId: string; value: string; ttl: number; enabled: boolean; providerLine: string;
+}
+export interface SmartEntryDnsProbe {
+  carrier: string; answers: string[]; ttl?: number; successful: boolean; error?: string;
+}
+export interface SmartEntryDnsDiagnosisLine {
+  carrier: string; inherited: boolean; expectedAddress: string; providerRecord?: SmartEntryDnsRecordState; providerRecords: SmartEntryDnsRecordState[];
+  providerMatch: boolean; publicProbe: SmartEntryDnsProbe; publicMatch: boolean;
+}
+export interface SmartEntryDnsDiagnosis {
+  groupId: number; domain: string; recordType: 'A' | 'AAAA'; ttl: number; checkedAt: number;
+  lines: SmartEntryDnsDiagnosisLine[];
+  sibling: { recordType: 'A' | 'AAAA'; managed: boolean; providerRecords: SmartEntryDnsRecordState[]; publicProbes: SmartEntryDnsProbe[]; visible: boolean; conflict: boolean };
+  summary: { providerMatches: number; publicMatches: number; totalLines: number; queryFailures: number; siblingConflict: boolean; healthy: boolean };
+}
 
 export const getSmartEntryOverview = () => Network.post<{
   groups: SmartEntryGroup[];
@@ -555,6 +576,7 @@ export const getSmartEntryDomains = (providerRefId: number) => Network.post<{
 }>("/smart-entry/domains", { providerRefId });
 export const saveSmartEntry = (data: any) => Network.post<{ id: number }>("/smart-entry/save", data);
 export const checkSmartEntry = (id: number) => Network.post("/smart-entry/check", { id });
+export const diagnoseSmartEntryDns = (id: number) => Network.post<SmartEntryDnsDiagnosis>("/smart-entry/diagnose-dns", { id });
 export const getSmartEntryEvents = (id: number) => Network.post<SmartEntryEvent[]>("/smart-entry/events", { id });
 export const deleteSmartEntry = (id: number) => Network.post("/smart-entry/delete", { id });
 

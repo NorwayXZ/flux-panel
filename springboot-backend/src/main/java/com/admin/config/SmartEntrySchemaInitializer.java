@@ -34,7 +34,9 @@ public class SmartEntrySchemaInitializer {
                     + "entry_node_id bigint NOT NULL,entry_host varchar(253) NOT NULL,entry_address varchar(128) NOT NULL,entry_port int NOT NULL,"
                     + "forward_name varchar(100) NOT NULL,node_name varchar(100) NOT NULL,record_id varchar(128) DEFAULT NULL,"
                     + "managed_created tinyint NOT NULL DEFAULT 1,original_address varchar(128) DEFAULT NULL,original_ttl int DEFAULT NULL,"
-                    + "current_forward_id bigint DEFAULT NULL,current_address varchar(128) DEFAULT NULL,status varchar(24) NOT NULL DEFAULT 'unknown',"
+                    + "current_forward_id bigint DEFAULT NULL,current_address varchar(128) DEFAULT NULL,dns_dirty tinyint NOT NULL DEFAULT 1,"
+                    + "applied_ttl int DEFAULT NULL,dns_state varchar(24) NOT NULL DEFAULT 'pending',dns_error varchar(500) DEFAULT NULL,"
+                    + "dns_verified_at bigint DEFAULT NULL,status varchar(24) NOT NULL DEFAULT 'unknown',"
                     + "fail_count int NOT NULL DEFAULT 0,success_count int NOT NULL DEFAULT 0,latency_ms int DEFAULT NULL,last_error varchar(500) DEFAULT NULL,"
                     + "telemetry_ready tinyint NOT NULL DEFAULT 0,total_connections bigint NOT NULL DEFAULT 0,current_connections bigint NOT NULL DEFAULT 0,"
                     + "reported_total_connections bigint NOT NULL DEFAULT 0,pending_connections bigint NOT NULL DEFAULT 0,"
@@ -58,6 +60,13 @@ public class SmartEntrySchemaInitializer {
             addColumn("smart_entry_route", "activity_out_flow", "bigint NOT NULL DEFAULT 0");
             addColumn("smart_entry_route", "last_activity_at", "bigint DEFAULT NULL");
             addColumn("smart_entry_route", "last_telemetry_at", "bigint DEFAULT NULL");
+            addColumn("smart_entry_route", "dns_dirty", "tinyint NOT NULL DEFAULT 1");
+            addColumn("smart_entry_route", "applied_ttl", "int DEFAULT NULL");
+            addColumn("smart_entry_route", "dns_state", "varchar(24) NOT NULL DEFAULT 'pending'");
+            addColumn("smart_entry_route", "dns_error", "varchar(500) DEFAULT NULL");
+            addColumn("smart_entry_route", "dns_verified_at", "bigint DEFAULT NULL");
+            jdbcTemplate.update("UPDATE smart_entry_group SET ttl=600,updated_time=? WHERE provider='aliyun' AND ttl<600",
+                    System.currentTimeMillis());
             boolean probeTrackingAdded = addColumn("smart_entry_route", "pending_probe_connections", "bigint NOT NULL DEFAULT 0");
             if (probeTrackingAdded) {
                 jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=0,total_connections=0,current_connections=0,"

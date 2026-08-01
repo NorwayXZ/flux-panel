@@ -1,3 +1,11 @@
+## 2.42.1 Carrier DNS convergence and diagnostics
+
+- Keeps single-domain carrier routing while stopping unchanged DNSPod and Aliyun line records from being rewritten on every five-second health check. DNS writes now occur only after a route or TTL change, a missing record, or a retryable synchronization failure, with a minimum 60-second failure backoff.
+- Reads every managed carrier record back from the DNS provider after a change and records its address, TTL, enabled state, duplicate/missing state, verification time, and failure detail. Aliyun carrier policies are normalized to its real 600-second minimum TTL instead of displaying an ineffective 60-second value.
+- Adds an administrator-triggered DNS diagnosis to Three-network Optimization. It compares the configured entry, provider record, and public DNS answer for default, China Telecom, China Unicom, and China Mobile using ECS probes, and distinguishes provider mismatch, public-cache convergence, and probe failure.
+- Detects an unmanaged same-name A or AAAA record that can cause IPv6-capable clients to bypass the intended carrier line. A missing sibling record is treated as normal, including DNSPod's no-record API response.
+- This is a panel-only release. Agent and Connector remain `2.42.0`; existing nodes, tunnels, forwards, proxies, ports, certificates, and DNS records are not deleted or rebuilt. The schema change only adds DNS synchronization state to Smart Entry routes. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.42.0 Production runtime safeguards
 
 - Sizes the backend JVM automatically from host memory and migrates the known-unsafe `256 MB + SerialGC` configuration during upgrades after creating a timestamped environment backup. New and migrated configurations use `ExitOnOutOfMemoryError` so Docker can recover a failed JVM instead of leaving an unresponsive container running.
