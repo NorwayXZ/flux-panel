@@ -102,8 +102,8 @@ run_manager() {
     PATH="${MOCK_DIR}:${PATH}" \
     PANEL_TEST_FIXTURE="${FIXTURE_DIR}" \
     PANEL_TEST_EVENT_LOG="${EVENT_LOG}" \
-    FLUX_PANEL_DIR="${INSTALL_DIR}" \
-    FLUX_PANEL_CONFIG_DIR="${CONFIG_DIR}" \
+    FLUX_PANEL_DIR="${PANEL_TEST_INSTALL_DIR:-${INSTALL_DIR}}" \
+    FLUX_PANEL_CONFIG_DIR="${PANEL_TEST_CONFIG_DIR:-${CONFIG_DIR}}" \
     FLUX_PANEL_UPDATER_STATE_DIR="${TEST_ROOT}/updater" \
     FLUX_PANEL_MANAGER_BIN="${TEST_ROOT}/sbin/flux-panel-manager" \
     FLUX_PANEL_WORKER_BIN="${TEST_ROOT}/sbin/flux-panel-update-worker" \
@@ -111,9 +111,38 @@ run_manager() {
     bash "${PROJECT_DIR}/scripts/flux-panel.sh" "$@"
 }
 
+assert_profile() {
+  local profile="$1"
+  local expected_pool="$2"
+  local expected_buffer="$3"
+  local expected_scan="$4"
+  local profile_root="${TEST_ROOT}/profiles/${profile}"
+  local profile_env="${profile_root}/etc/flux-panel/flux-panel.env"
+
+  PANEL_TEST_INSTALL_DIR="${profile_root}/opt/flux-panel" \
+    PANEL_TEST_CONFIG_DIR="${profile_root}/etc/flux-panel" \
+    run_manager install --profile "${profile}" >/dev/null
+  grep -Fq "FLUX_PANEL_PROFILE=${profile}" "${profile_env}"
+  grep -Fq "DB_POOL_MAX_SIZE=${expected_pool}" "${profile_env}"
+  grep -Fq "MYSQL_BUFFER_POOL_SIZE=${expected_buffer}" "${profile_env}"
+  grep -Fq "MONITORING_SCAN_INTERVAL_MS=${expected_scan}" "${profile_env}"
+}
+
+assert_profile low 5 64M 60000
+assert_profile high 20 512M 15000
+
+if PANEL_TEST_INSTALL_DIR="${TEST_ROOT}/invalid/opt/flux-panel" \
+   PANEL_TEST_CONFIG_DIR="${TEST_ROOT}/invalid/etc/flux-panel" \
+   run_manager install --profile oversized >/dev/null 2>&1; then
+  printf 'invalid resource profile unexpectedly succeeded\n' >&2
+  exit 1
+fi
+
 run_manager install >/dev/null
 grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'FLUX_PANEL_PROFILE=standard' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'DB_POOL_MAX_SIZE=10' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'MONITORING_RETENTION_DAYS=90' "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 if grep -Eq 'docker compose .* up .*--build' "${EVENT_LOG}"; then
@@ -121,11 +150,19 @@ if grep -Eq 'docker compose .* up .*--build' "${EVENT_LOG}"; then
   exit 1
 fi
 
+awk '
+  /^DB_POOL_MAX_SIZE=/ { print "DB_POOL_MAX_SIZE=17"; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.override"
+mv "${CONFIG_DIR}/flux-panel.env.override" "${CONFIG_DIR}/flux-panel.env"
+
 printf '%s\n' "${NEXT_VERSION}" > "${FIXTURE_DIR}/VERSION"
 : > "${EVENT_LOG}"
 run_manager update >/dev/null
 grep -Fq "PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "PREVIOUS_PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'FLUX_PANEL_PROFILE=standard' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'DB_POOL_MAX_SIZE=17' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "${NEXT_VERSION}" "${INSTALL_DIR}/VERSION"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
