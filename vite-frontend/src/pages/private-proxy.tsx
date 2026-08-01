@@ -100,11 +100,26 @@ export default function PrivateProxyPage() {
   const [protocolGroup, setProtocolGroup] = useState<ProxyGroup>('general');
 
   const load = async () => {
-    setLoading(true);
-    const [proxyRes, nodeRes] = await Promise.all([getPrivateProxies(), getNodeList()]);
-    if (proxyRes.code === 0) setItems(proxyRes.data || []); else toast.error(proxyRes.msg || '加载代理失败');
-    if (nodeRes.code === 0) setNodes(nodeRes.data || []);
+    setLoading(items.length === 0);
+    const proxyRequest = getPrivateProxies();
+    const nodeRequest = getNodeList();
+
+    try {
+      const proxyRes = await proxyRequest;
+      if (proxyRes.code === 0) setItems(proxyRes.data || []); else toast.error(proxyRes.msg || '加载代理失败');
+    } catch (error) {
+      console.error('加载代理列表失败:', error);
+      toast.error('加载代理列表失败');
+    }
     setLoading(false);
+
+    try {
+      const nodeRes = await nodeRequest;
+      if (nodeRes.code === 0) setNodes(nodeRes.data || []);
+      else console.warn('获取节点列表失败:', nodeRes.msg);
+    } catch (error) {
+      console.warn('获取节点列表失败:', error);
+    }
   };
   useEffect(() => { void load(); }, []);
 

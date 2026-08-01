@@ -753,6 +753,32 @@ export const markAllMonitoringAlertsRead = () =>
 export const getMonitoringUnreadCount = () =>
   Network.post<number>("/monitoring/alerts/unread-count");
 
+export interface ApiTimingRoute {
+  route: string;
+  requestCount: number;
+  errorCount: number;
+  slowCount: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  lastMs: number;
+  lastStatus: number;
+  lastAt: number;
+  lastRequestId?: string;
+}
+
+export interface ApiTimingOverview {
+  capturedAt: number;
+  windowMs: number;
+  thresholdMs: number;
+  summary: { routeCount: number; totalRequests: number; errorCount: number; slowCount: number };
+  routes: ApiTimingRoute[];
+}
+
+export const getApiTimingOverview = () =>
+  Network.post<ApiTimingOverview>("/monitoring/api-timing");
+
 export interface TelegramNotificationSettings {
   enabled: boolean;
   botToken: string;

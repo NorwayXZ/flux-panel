@@ -270,20 +270,10 @@ export default function DashboardPage() {
 
   const loadPackageData = async () => {
     setLoading(true);
-    try {
-      const admin = localStorage.getItem('admin') === 'true';
-      const shouldLoadSharedNodes = !admin;
-      const [res, nodeRes, portGrantRes, proxyGrantRes, monitoringRes, alertsRes, forwardsRes, usersRes] = await Promise.all([
-        getUserPackageInfo(),
-        shouldLoadSharedNodes ? getNodeList() : Promise.resolve(null),
-        !admin ? getPublishingPortGrants() : Promise.resolve(null),
-        !admin ? getPrivateProxies() : Promise.resolve(null),
-        admin ? getMonitoringOverview('24h') : Promise.resolve(null),
-        admin ? getMonitoringAlerts({ status: 'open', page: 1, size: 5 }) : Promise.resolve(null),
-        admin ? getForwardList() : Promise.resolve(null),
-        admin ? getAllUsers() : Promise.resolve(null),
-      ]);
+    const admin = localStorage.getItem('admin') === 'true';
 
+    try {
+      const res = await getUserPackageInfo();
       if (res.code === 0) {
         const data = res.data;
         setUserInfo(data.userInfo || {});
@@ -296,41 +286,102 @@ export default function DashboardPage() {
       } else {
         toast.error(res.msg || '获取套餐信息失败');
       }
-
-      if (nodeRes?.code === 0) {
-        const shared = (nodeRes.data || [])
-          .filter((node: SharedNode) => node.accessType === 'shared')
-          .sort((a: SharedNode, b: SharedNode) => {
-            const statusDifference = (b.status || 0) - (a.status || 0);
-            return statusDifference !== 0 ? statusDifference : b.id - a.id;
-          });
-        setSharedNodes(shared);
-      } else if (nodeRes) {
-        toast.error(nodeRes.msg || '获取节点权限失败');
-      }
-
-      if (portGrantRes?.code === 0) {
-        setSharedPortGrants(portGrantRes.data || []);
-      } else if (portGrantRes) {
-        toast.error(portGrantRes.msg || '获取端口资源失败');
-      }
-
-      if (proxyGrantRes?.code === 0) {
-        setProxyGrants((proxyGrantRes.data || []).filter((proxy: PrivateProxyItem) => proxy.granted));
-      } else if (proxyGrantRes) {
-        toast.error(proxyGrantRes.msg || '获取代理授权失败');
-      }
-
-      if (monitoringRes?.code === 0) setAdminOverview(monitoringRes.data || EMPTY_ADMIN_OVERVIEW);
-      if (alertsRes?.code === 0) setAdminAlerts(alertsRes.data?.items || []);
-      if (forwardsRes?.code === 0) setAdminForwards((forwardsRes.data || []) as AdminForward[]);
-      if (usersRes?.code === 0) setAdminUsers((usersRes.data || []) as User[]);
     } catch (error) {
       console.error('获取套餐信息失败:', error);
       toast.error('获取套餐信息失败');
     } finally {
+      // 套餐和当前用户的核心内容可以独立渲染，辅助数据继续后台补齐。
       setLoading(false);
     }
+
+    const loadAuxiliary = async () => {
+      const tasks: Promise<void>[] = [];
+
+      if (!admin) {
+        tasks.push((async () => {
+          try {
+            const response = await getNodeList();
+            if (response.code === 0) {
+              const shared = (response.data || [])
+                .filter((node: SharedNode) => node.accessType === 'shared')
+                .sort((a: SharedNode, b: SharedNode) => {
+                  const statusDifference = (b.status || 0) - (a.status || 0);
+                  return statusDifference !== 0 ? statusDifference : b.id - a.id;
+                });
+              setSharedNodes(shared);
+            } else {
+              console.warn('获取节点权限失败:', response.msg);
+            }
+          } catch (error) {
+            console.warn('获取节点权限失败:', error);
+          }
+        })());
+
+        tasks.push((async () => {
+          try {
+            const response = await getPublishingPortGrants();
+            if (response.code === 0) setSharedPortGrants(response.data || []);
+            else console.warn('获取端口资源失败:', response.msg);
+          } catch (error) {
+            console.warn('获取端口资源失败:', error);
+          }
+        })());
+
+        tasks.push((async () => {
+          try {
+            const response = await getPrivateProxies();
+            if (response.code === 0) setProxyGrants((response.data || []).filter((proxy: PrivateProxyItem) => proxy.granted));
+            else console.warn('获取代理授权失败:', response.msg);
+          } catch (error) {
+            console.warn('获取代理授权失败:', error);
+          }
+        })());
+      } else {
+        tasks.push((async () => {
+          try {
+            const response = await getMonitoringOverview('24h');
+            if (response.code === 0) setAdminOverview(response.data || EMPTY_ADMIN_OVERVIEW);
+            else console.warn('获取监控概览失败:', response.msg);
+          } catch (error) {
+            console.warn('获取监控概览失败:', error);
+          }
+        })());
+
+        tasks.push((async () => {
+          try {
+            const response = await getMonitoringAlerts({ status: 'open', page: 1, size: 5 });
+            if (response.code === 0) setAdminAlerts(response.data?.items || []);
+            else console.warn('获取告警列表失败:', response.msg);
+          } catch (error) {
+            console.warn('获取告警列表失败:', error);
+          }
+        })());
+
+        tasks.push((async () => {
+          try {
+            const response = await getForwardList();
+            if (response.code === 0) setAdminForwards((response.data || []) as AdminForward[]);
+            else console.warn('获取转发列表失败:', response.msg);
+          } catch (error) {
+            console.warn('获取转发列表失败:', error);
+          }
+        })());
+
+        tasks.push((async () => {
+          try {
+            const response = await getAllUsers();
+            if (response.code === 0) setAdminUsers((response.data || []) as User[]);
+            else console.warn('获取用户列表失败:', response.msg);
+          } catch (error) {
+            console.warn('获取用户列表失败:', error);
+          }
+        })());
+      }
+
+      await Promise.all(tasks);
+    };
+
+    void loadAuxiliary();
   };
 
   const formatFlow = (value: number, unit: string = 'bytes'): string => {

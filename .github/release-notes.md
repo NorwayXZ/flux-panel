@@ -1,3 +1,11 @@
+## 2.41.8 Slow API ranking and progressive page loading
+
+- Adds an administrator-only **接口性能** view under the monitoring center. Recent API samples are kept in a bounded 15-minute in-memory window and ranked by P95 latency, with request count, HTTP errors, slow requests, average/P50/P95/max latency, last status, timestamp, and request ID.
+- Loads Dashboard core package data first, then fills shared nodes, grants, monitoring, alerts, forwards, and users independently. A slow auxiliary endpoint no longer prevents the dashboard from rendering.
+- Loads forward, tunnel, and private proxy lists independently from their node or tunnel selectors, so the current list becomes visible without waiting for form options.
+- Splits Internal Service Publishing into independent service, domain route, certificate, connector, DNS, node, and port-pool loading states. Existing list content remains visible during refresh and forms disable only selectors whose options are still loading.
+- Adds two registry tests for percentile ranking and rolling-window expiry. Frontend production build and all 119 backend tests pass. This is a panel-only release; Agent and Connector remain `2.41.4`, and existing resources are unchanged. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.7 Route-level loading and shared request de-duplication
 
 - Loads each business page on demand. Terminal, topology, charts, user management, and other unrelated page code are no longer downloaded and parsed whenever a normal page opens.

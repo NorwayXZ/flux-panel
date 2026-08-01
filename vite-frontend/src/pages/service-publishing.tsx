@@ -175,6 +175,12 @@ const discoveredTemplate = (serviceType: string): ServiceTemplateId => {
 
 export default function ServicePublishingPage() {
   const [loading, setLoading] = useState(true);
+  const [domainRoutesLoading, setDomainRoutesLoading] = useState(true);
+  const [certificatesLoading, setCertificatesLoading] = useState(true);
+  const [connectorsLoading, setConnectorsLoading] = useState(true);
+  const [poolsLoading, setPoolsLoading] = useState(true);
+  const [dnsZonesLoading, setDnsZonesLoading] = useState(true);
+  const [entryNodesLoading, setEntryNodesLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [services, setServices] = useState<PublishedService[]>([]);
   const [domainRoutes, setDomainRoutes] = useState<DomainRoute[]>([]);
@@ -217,26 +223,109 @@ export default function ServicePublishingPage() {
   const [domainForm, setDomainForm] = useState(emptyDomainForm);
 
   const loadData = async () => {
-    setLoading(true);
+    setLoading(services.length === 0);
+    setDomainRoutesLoading(domainRoutes.length === 0);
+    setConnectorsLoading(connectors.length === 0);
+    setPoolsLoading(pools.length === 0);
+    if (isAdmin) {
+      setCertificatesLoading(certificates.length === 0);
+      setDnsZonesLoading(dnsZones.length === 0);
+      setEntryNodesLoading(entryNodes.length === 0);
+    }
+
+    const serviceRequest = getPublishedServices();
+    const connectorRequest = getInternalConnectors();
+    const poolRequest = getPublishingPortPools();
+    const domainRequest = getDomainRoutes();
+    const zoneRequest = isAdmin ? getDnsZoneOptions() : null;
+    const certificateRequest = isAdmin ? getManagedCertificates() : null;
+    const nodeRequest = isAdmin ? getNodeList() : null;
+
     try {
-      const [serviceRes, connectorRes, poolRes, domainRes] = await Promise.all([
-        getPublishedServices(), getInternalConnectors(), getPublishingPortPools(), getDomainRoutes(),
-      ]);
+      const serviceRes = await serviceRequest;
       if (serviceRes.code === 0) setServices(serviceRes.data || []);
-      if (connectorRes.code === 0) setConnectors(connectorRes.data || []);
-      if (poolRes.code === 0) setPools(poolRes.data || []);
-      if (domainRes.code === 0) setDomainRoutes(domainRes.data || []);
-      if (isAdmin) {
-        const [zoneRes, certificateRes, nodeRes] = await Promise.all([getDnsZoneOptions(), getManagedCertificates(), getNodeList()]);
-        if (zoneRes.code === 0) setDnsZones(zoneRes.data || []);
-        if (certificateRes.code === 0) setCertificates(certificateRes.data || []);
-        if (nodeRes.code === 0) setEntryNodes((nodeRes.data || []) as EntryNodeOption[]);
-      }
-      const failed = [serviceRes, connectorRes, poolRes, domainRes].find(item => item.code !== 0);
-      if (failed) toast.error(failed.msg || '加载内网映射数据失败');
+      else toast.error(serviceRes.msg || '加载内网映射列表失败');
+    } catch (error) {
+      console.error('加载内网映射列表失败:', error);
+      toast.error('加载内网映射列表失败');
     } finally {
       setLoading(false);
     }
+
+    const loadAuxiliary = async () => {
+      await Promise.all([
+        (async () => {
+          try {
+            const response = await connectorRequest;
+            if (response.code === 0) setConnectors(response.data || []);
+            else console.warn('获取内网接入端失败:', response.msg);
+          } catch (error) {
+            console.warn('获取内网接入端失败:', error);
+          } finally {
+            setConnectorsLoading(false);
+          }
+        })(),
+        (async () => {
+          try {
+            const response = await poolRequest;
+            if (response.code === 0) setPools(response.data || []);
+            else console.warn('获取端口资源失败:', response.msg);
+          } catch (error) {
+            console.warn('获取端口资源失败:', error);
+          } finally {
+            setPoolsLoading(false);
+          }
+        })(),
+        (async () => {
+          try {
+            const response = await domainRequest;
+            if (response.code === 0) setDomainRoutes(response.data || []);
+            else console.warn('获取域名直达规则失败:', response.msg);
+          } catch (error) {
+            console.warn('获取域名直达规则失败:', error);
+          } finally {
+            setDomainRoutesLoading(false);
+          }
+        })(),
+        ...(isAdmin ? [
+          (async () => {
+            try {
+              const response = await zoneRequest;
+              if (response?.code === 0) setDnsZones(response.data || []);
+              else console.warn('获取 DNS 域名配置失败:', response?.msg);
+            } catch (error) {
+              console.warn('获取 DNS 域名配置失败:', error);
+            } finally {
+              setDnsZonesLoading(false);
+            }
+          })(),
+          (async () => {
+            try {
+              const response = await certificateRequest;
+              if (response?.code === 0) setCertificates(response.data || []);
+              else console.warn('获取托管证书失败:', response?.msg);
+            } catch (error) {
+              console.warn('获取托管证书失败:', error);
+            } finally {
+              setCertificatesLoading(false);
+            }
+          })(),
+          (async () => {
+            try {
+              const response = await nodeRequest;
+              if (response?.code === 0) setEntryNodes((response.data || []) as EntryNodeOption[]);
+              else console.warn('获取入口节点失败:', response?.msg);
+            } catch (error) {
+              console.warn('获取入口节点失败:', error);
+            } finally {
+              setEntryNodesLoading(false);
+            }
+          })(),
+        ] : []),
+      ]);
+    };
+
+    void loadAuxiliary();
   };
 
   const loadTelemetry = async () => {
@@ -672,7 +761,7 @@ export default function ServicePublishingPage() {
           )}
         </Tab>
         <Tab key="domains" title={`域名直达 ${domainRoutes.length}`}>
-          {loading ? (
+          {domainRoutesLoading ? (
             <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
           ) : domainRoutes.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
@@ -805,7 +894,7 @@ export default function ServicePublishingPage() {
         </Tab>
         {isAdmin ? (
           <Tab key="certificates" title={`HTTPS 证书 ${certificates.length}`}>
-            {loading ? (
+            {certificatesLoading ? (
               <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
             ) : certificates.length === 0 ? (
               <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
@@ -841,28 +930,30 @@ export default function ServicePublishingPage() {
           </Tab>
         ) : null}
         <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
-          <div className="overflow-hidden rounded-lg border border-divider">
-            <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
-              <span>名称</span><span>连接状态</span><span>最近地址</span><span>操作</span>
-            </div>
-            {connectors.length === 0 ? <div className="py-16 text-center text-default-500">暂无内网接入端</div> : connectors.map(connector => (
-              <div key={connector.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center">
-                <div>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-medium">{connector.name}</span>
-                    <Chip size="sm" variant="flat">{platformMeta[connector.platform || 'linux'].label}</Chip>
-                  </div>
-                  <div className="mt-1 text-xs text-default-500">{connector.ownerUserName}</div>
-                </div>
-                <div className="flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${connector.online ? 'bg-success' : 'bg-default-400'}`} />{connector.online ? '在线' : '离线'}</div>
-                <div className="text-sm text-default-500">{connector.remoteIp || '尚未连接'}</div>
-                <div className="flex justify-end gap-1">
-                  <Button isIconOnly size="sm" variant="light" aria-label="安装命令" onPress={() => showInstall(connector.id, connector.platform || 'linux')}><ServerCog size={17} /></Button>
-                  <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除接入端" onPress={() => removeConnector(connector.id)}><Trash2 size={17} /></Button>
-                </div>
+          {connectorsLoading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : (
+            <div className="overflow-hidden rounded-lg border border-divider">
+              <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
+                <span>名称</span><span>连接状态</span><span>最近地址</span><span>操作</span>
               </div>
-            ))}
-          </div>
+              {connectors.length === 0 ? <div className="py-16 text-center text-default-500">暂无内网接入端</div> : connectors.map(connector => (
+                <div key={connector.id} className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center">
+                  <div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium">{connector.name}</span>
+                      <Chip size="sm" variant="flat">{platformMeta[connector.platform || 'linux'].label}</Chip>
+                    </div>
+                    <div className="mt-1 text-xs text-default-500">{connector.ownerUserName}</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${connector.online ? 'bg-success' : 'bg-default-400'}`} />{connector.online ? '在线' : '离线'}</div>
+                  <div className="text-sm text-default-500">{connector.remoteIp || '尚未连接'}</div>
+                  <div className="flex justify-end gap-1">
+                    <Button isIconOnly size="sm" variant="light" aria-label="安装命令" onPress={() => showInstall(connector.id, connector.platform || 'linux')}><ServerCog size={17} /></Button>
+                    <Button isIconOnly size="sm" variant="light" color="danger" aria-label="删除接入端" onPress={() => removeConnector(connector.id)}><Trash2 size={17} /></Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </Tab>
       </Tabs>
 
@@ -923,7 +1014,7 @@ export default function ServicePublishingPage() {
             <Input label="访问域名" placeholder="app.example.com" value={domainForm.domain} onValueChange={value => setDomainForm({ ...domainForm, domain: value })} />
             {domainForm.ingressMode === 'managed_https' && (
               <>
-                <Select className="sm:col-span-2" label="DNS 与域名配置" placeholder="选择 DNS 与证书所属域名" selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
+                <Select className="sm:col-span-2" label="DNS 与域名配置" placeholder={dnsZonesLoading ? '正在加载 DNS 域名配置' : '选择 DNS 与证书所属域名'} isDisabled={dnsZonesLoading} selectedKeys={domainForm.dnsZoneId ? [domainForm.dnsZoneId] : []} onSelectionChange={keys => setDomainForm({ ...domainForm, dnsZoneId: String(Array.from(keys)[0] || '') })}>
                   {dnsZones.map(zone => <SelectItem key={String(zone.id)} textValue={`${zone.zoneName} ${zone.accountName}`}>{zone.zoneName} · {zone.accountName}</SelectItem>)}
                 </Select>
                 <Input label="外部访问路径" placeholder="/" value={domainForm.pathPrefix} onValueChange={value => setDomainForm({ ...domainForm, pathPrefix: value })} description="浏览器访问的路径，例如 /。" startContent={<Route size={16} className="text-default-400" />} />
@@ -941,7 +1032,7 @@ export default function ServicePublishingPage() {
                   </SelectItem>
                 ))}
               </Select> : <>
-                <Select className="sm:col-span-2" label="服务所在节点" selectedKeys={selectedBackendNodeKeys} onSelectionChange={keys => { const value = String(Array.from(keys)[0] || ''); setDomainForm({ ...domainForm, backendNodeId: value, entryNodeId: value || 'mapping' }); }}>
+                <Select className="sm:col-span-2" label="服务所在节点" placeholder={entryNodesLoading ? '正在加载节点' : undefined} isDisabled={entryNodesLoading} selectedKeys={selectedBackendNodeKeys} onSelectionChange={keys => { const value = String(Array.from(keys)[0] || ''); setDomainForm({ ...domainForm, backendNodeId: value, entryNodeId: value || 'mapping' }); }}>
                   {entryNodes.map(node => <SelectItem key={String(node.id)} textValue={`${node.name} ${node.serverIp || node.ip || ''}`}>{node.name} · {node.serverIp || node.ip || '地址未知'} · {node.status === 1 ? '在线' : '离线'}</SelectItem>)}
                 </Select>
                 <Select label="后端协议" selectedKeys={[domainForm.backendScheme]} onSelectionChange={keys => setDomainForm({ ...domainForm, backendScheme: String(Array.from(keys)[0] || 'http') as 'http' | 'https' })}>
@@ -951,7 +1042,7 @@ export default function ServicePublishingPage() {
                 <Input className="sm:col-span-2" label="后端端口" type="number" min={1} max={65535} value={domainForm.backendPort} onValueChange={value => setDomainForm({ ...domainForm, backendPort: value })} />
               </>}
             {isAdmin && domainForm.ingressMode === 'managed_https' && (
-              <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" selectedKeys={selectedEntryNodeKeys} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
+              <Select className="sm:col-span-2" label="HTTPS 入口节点" description="入口节点负责监听 443；后端映射可以位于另一台服务器。入口端口被占用时请选择其他在线节点。" isDisabled={entryNodesLoading} selectedKeys={selectedEntryNodeKeys} onSelectionChange={keys => setDomainForm({ ...domainForm, entryNodeId: String(Array.from(keys)[0] || 'mapping') })}>
                 {[{ id: 'mapping', name: domainForm.backendType === 'direct' ? '跟随服务所在节点' : '跟随后端映射节点', address: '', online: true }, ...entryNodes.map(node => ({ id: String(node.id), name: node.name, address: node.serverIp || node.ip || '地址未知', online: node.status === 1 }))].map(node => (
                   <SelectItem key={node.id} textValue={`${node.name} ${node.address}`}>
                     {node.name}{node.address ? ` · ${node.address}` : ''} · {node.online ? '在线' : '离线'}
@@ -1057,10 +1148,10 @@ export default function ServicePublishingPage() {
 
             <div className="grid gap-4 border-t border-divider pt-5 sm:grid-cols-2">
               <Input label="映射名称" value={serviceForm.name} onValueChange={value => setServiceForm({ ...serviceForm, name: value })} />
-              <Select label="内网接入端" selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
+              <Select label="内网接入端" placeholder={connectorsLoading ? '正在加载接入端' : undefined} isDisabled={connectorsLoading} selectedKeys={serviceForm.connectorId ? [serviceForm.connectorId] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, connectorId: String(Array.from(keys)[0] || '') })}>
                 {connectors.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.online ? '在线' : '离线'}</SelectItem>)}
               </Select>
-              <Select className="sm:col-span-2" label="公网端口资源" selectedKeys={serviceForm.poolAccessKey ? [serviceForm.poolAccessKey] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolAccessKey: String(Array.from(keys)[0] || '') })}>
+              <Select className="sm:col-span-2" label="公网端口资源" placeholder={poolsLoading ? '正在加载端口资源' : undefined} isDisabled={poolsLoading} selectedKeys={serviceForm.poolAccessKey ? [serviceForm.poolAccessKey] : []} onSelectionChange={keys => setServiceForm({ ...serviceForm, poolAccessKey: String(Array.from(keys)[0] || '') })}>
                 {pools.map(item => {
                   const key = `${item.id}:${item.grantId || 'admin'}`;
                   const range = item.grantId ? `${item.grantStartPort}-${item.grantEndPort}` : `${item.startPort}-${item.endPort}`;

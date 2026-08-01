@@ -168,29 +168,34 @@ export default function TunnelPage() {
 
   // 加载所有数据
   const loadData = async () => {
-    setLoading(true);
-    try {
-      const [tunnelsRes, nodesRes] = await Promise.all([
-        getTunnelList(),
-        getNodeList()
-      ]);
+    const showBlockingLoading = tunnels.length === 0;
+    setLoading(showBlockingLoading);
+    const tunnelRequest = getTunnelList();
+    const nodeRequest = getNodeList();
 
+    try {
+      const tunnelsRes = await tunnelRequest;
       if (tunnelsRes.code === 0) {
         setTunnels(tunnelsRes.data || []);
       } else {
         toast.error(tunnelsRes.msg || '获取隧道列表失败');
       }
+    } catch (error) {
+      console.error('加载隧道列表失败:', error);
+      toast.error('加载隧道列表失败');
+    } finally {
+      setLoading(false);
+    }
 
+    try {
+      const nodesRes = await nodeRequest;
       if (nodesRes.code === 0) {
         setNodes(nodesRes.data || []);
       } else {
         console.warn('获取节点列表失败:', nodesRes.msg);
       }
     } catch (error) {
-      console.error('加载数据失败:', error);
-      toast.error('加载数据失败');
-    } finally {
-      setLoading(false);
+      console.warn('获取节点列表失败:', error);
     }
   };
 

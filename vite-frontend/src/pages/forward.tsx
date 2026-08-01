@@ -277,13 +277,13 @@ export default function ForwardPage() {
 
   // 加载所有数据
   const loadData = async (lod = true) => {
-    setLoading(lod);
-    try {
-      const [forwardsRes, tunnelsRes] = await Promise.all([
-        getForwardList(),
-        userTunnel()
-      ]);
+    const showBlockingLoading = lod && forwards.length === 0;
+    setLoading(showBlockingLoading);
+    const forwardRequest = getForwardList();
+    const tunnelRequest = userTunnel();
 
+    try {
+      const forwardsRes = await forwardRequest;
       if (forwardsRes.code === 0) {
         const forwardsData = forwardsRes.data?.map((forward: any) => ({
           ...forward,
@@ -293,17 +293,22 @@ export default function ForwardPage() {
       } else {
         toast.error(forwardsRes.msg || '获取转发列表失败');
       }
+    } catch (error) {
+      console.error('加载转发列表失败:', error);
+      toast.error('加载转发列表失败');
+    } finally {
+      setLoading(false);
+    }
 
+    try {
+      const tunnelsRes = await tunnelRequest;
       if (tunnelsRes.code === 0) {
         setTunnels(tunnelsRes.data || []);
       } else {
         console.warn('获取隧道列表失败:', tunnelsRes.msg);
       }
     } catch (error) {
-      console.error('加载数据失败:', error);
-      toast.error('加载数据失败');
-    } finally {
-      setLoading(false);
+      console.warn('获取隧道列表失败:', error);
     }
   };
 

@@ -46,6 +46,8 @@ log-dir: ${LOG_DIR}
 
 observability:
   slow-api-threshold-ms: ${SLOW_API_THRESHOLD_MS:1000}
+  api-stats-window-ms: ${API_STATS_WINDOW_MS:900000}
+  api-stats-max-samples: ${API_STATS_MAX_SAMPLES:256}
 
 
 captcha:

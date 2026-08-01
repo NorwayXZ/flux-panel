@@ -1,6 +1,7 @@
 package com.admin.common.interceptor;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
@@ -22,14 +23,24 @@ import java.util.regex.Pattern;
 public class ApiRequestTimingFilter extends OncePerRequestFilter {
     private static final Pattern SAFE_REQUEST_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
     private final long slowRequestThresholdMs;
+    private final ApiRequestTimingRegistry timingRegistry;
 
-    public ApiRequestTimingFilter(@Value("${observability.slow-api-threshold-ms:1000}") long slowRequestThresholdMs) {
+    @Autowired
+    public ApiRequestTimingFilter(
+            @Value("${observability.slow-api-threshold-ms:1000}") long slowRequestThresholdMs,
+            ApiRequestTimingRegistry timingRegistry
+    ) {
         this.slowRequestThresholdMs = slowRequestThresholdMs;
+        this.timingRegistry = timingRegistry;
+    }
+
+    public ApiRequestTimingFilter(long slowRequestThresholdMs) {
+        this(slowRequestThresholdMs, new ApiRequestTimingRegistry(slowRequestThresholdMs, 900_000, 256));
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !request.getRequestURI().startsWith("/api/") || "OPTIONS".equalsIgnoreCase(request.getMethod());
     }
 
     @Override
@@ -47,6 +58,8 @@ public class ApiRequestTimingFilter extends OncePerRequestFilter {
             throw error;
         } finally {
             long durationMs = (System.nanoTime() - startedAt) / 1_000_000L;
+            timingRegistry.record(request.getMethod(), request.getRequestURI(), response.getStatus(), durationMs,
+                    failure != null, requestId);
             String message = "API method={} path={} status={} durationMs={} requestId={}";
             if (failure != null) {
                 log.error(message, request.getMethod(), request.getRequestURI(), response.getStatus(), durationMs,

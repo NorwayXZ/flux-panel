@@ -33,6 +33,7 @@ import {
 
 import {
   getMonitoringAlerts,
+  getApiTimingOverview,
   getMonitoringOverview,
   getTelegramNotificationSettings,
   markAllMonitoringAlertsRead,
@@ -41,6 +42,8 @@ import {
   testTelegramNotification,
   type MonitoringAlertItem,
   type MonitoringAlertPage,
+  type ApiTimingOverview,
+  type ApiTimingRoute,
   type MonitoringOverview,
   type MonitoringRange,
   type MonitoringResource,
@@ -75,6 +78,14 @@ const EMPTY_ALERTS: MonitoringAlertPage = {
   page: 1,
   size: 20,
   unread: 0,
+};
+
+const EMPTY_API_TIMING: ApiTimingOverview = {
+  capturedAt: 0,
+  windowMs: 900000,
+  thresholdMs: 1000,
+  summary: { routeCount: 0, totalRequests: 0, errorCount: 0, slowCount: 0 },
+  routes: [],
 };
 
 const EMPTY_NOTIFICATION_SETTINGS: TelegramNotificationSettings = {
@@ -165,7 +176,7 @@ const formatDuration = (startedAt: number, endedAt?: number) => {
 
 export default function MonitoringPage() {
   const [range, setRange] = useState<MonitoringRange>('24h');
-  const [view, setView] = useState<'alerts' | 'resources' | 'notifications'>('alerts');
+  const [view, setView] = useState<'alerts' | 'resources' | 'notifications' | 'timing'>('alerts');
   const [overview, setOverview] = useState<MonitoringOverview>(EMPTY_OVERVIEW);
   const [alerts, setAlerts] = useState<MonitoringAlertPage>(EMPTY_ALERTS);
   const [loading, setLoading] = useState(true);
@@ -176,6 +187,8 @@ export default function MonitoringPage() {
   const [keyword, setKeyword] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [page, setPage] = useState(1);
+  const [apiTiming, setApiTiming] = useState<ApiTimingOverview>(EMPTY_API_TIMING);
+  const [apiTimingLoading, setApiTimingLoading] = useState(false);
   const isAdmin = localStorage.getItem('admin') === 'true';
 
   const loadOverview = useCallback(async (selectedRange: MonitoringRange, silent = false) => {
@@ -209,11 +222,28 @@ export default function MonitoringPage() {
     }
   }, [page, searchKeyword, severityFilter, statusFilter, typeFilter]);
 
+  const loadApiTiming = useCallback(async (silent = false) => {
+    if (!silent) setApiTimingLoading(true);
+    try {
+      const response = await getApiTimingOverview();
+      if (response.code !== 0) throw new Error(response.msg || '获取接口性能数据失败');
+      setApiTiming(response.data || EMPTY_API_TIMING);
+    } catch (error) {
+      if (!silent) toast.error(error instanceof Error ? error.message : '获取接口性能数据失败');
+    } finally {
+      if (!silent) setApiTimingLoading(false);
+    }
+  }, []);
+
   const refreshAll = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
-    await Promise.all([loadOverview(range, true), loadAlerts(true)]);
+    if (view === 'timing' && isAdmin) {
+      await loadApiTiming(silent);
+    } else {
+      await Promise.all([loadOverview(range, true), loadAlerts(true)]);
+    }
     if (!silent) setRefreshing(false);
-  }, [loadAlerts, loadOverview, range]);
+  }, [isAdmin, loadAlerts, loadApiTiming, loadOverview, range, view]);
 
   useEffect(() => {
     localStorage.setItem('e', '/monitoring');
@@ -223,6 +253,10 @@ export default function MonitoringPage() {
   useEffect(() => {
     loadAlerts();
   }, [loadAlerts]);
+
+  useEffect(() => {
+    if (view === 'timing' && isAdmin) void loadApiTiming();
+  }, [isAdmin, loadApiTiming, view]);
 
   useEffect(() => {
     const timer = window.setInterval(() => refreshAll(true), 30000);
@@ -426,6 +460,15 @@ export default function MonitoringPage() {
                   通知设置
                 </button>
               )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setView('timing')}
+                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === 'timing' ? 'bg-white shadow-sm dark:bg-gray-800' : 'text-default-500'}`}
+                >
+                  接口性能
+                </button>
+              )}
             </div>
             {view === 'alerts' && alerts.unread > 0 && (
               <Button size="sm" variant="flat" startContent={<CheckCheck className="h-4 w-4" />} onPress={handleMarkAllRead}>
@@ -434,7 +477,9 @@ export default function MonitoringPage() {
             )}
           </div>
 
-          {view === 'notifications' && isAdmin ? (
+          {view === 'timing' && isAdmin ? (
+            <ApiTimingPanel data={apiTiming} loading={apiTimingLoading} onRefresh={() => loadApiTiming()} />
+          ) : view === 'notifications' && isAdmin ? (
             <NotificationSettings />
           ) : view === 'alerts' ? (
             <AlertList
@@ -458,6 +503,103 @@ export default function MonitoringPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+const formatTimingMs = (value: number) => `${Math.round(value)} ms`;
+
+function ApiTimingPanel({
+  data,
+  loading,
+  onRefresh,
+}: {
+  data: ApiTimingOverview;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const windowMinutes = Math.max(1, Math.round(data.windowMs / 60000));
+  const summaryCards = [
+    ['接口数量', data.summary.routeCount, '最近窗口内有请求的接口'],
+    ['请求总数', data.summary.totalRequests, `最近 ${windowMinutes} 分钟`],
+    ['慢请求', data.summary.slowCount, `阈值 ${formatTimingMs(data.thresholdMs)}`],
+    ['HTTP 错误', data.summary.errorCount, '状态码 4xx / 5xx'],
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 border-y border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-950 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-semibold text-foreground">慢接口自动排名</h2>
+          <p className="mt-1 text-sm text-default-500">按最近 {windowMinutes} 分钟的 P95 耗时排序，数据保存在当前后端实例内存中。</p>
+        </div>
+        <Button size="sm" variant="flat" startContent={<RefreshCw className="h-4 w-4" />} onPress={onRefresh} isLoading={loading}>
+          刷新排名
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {summaryCards.map(([label, value, detail]) => (
+          <Card key={String(label)} radius="sm" shadow="sm" className="border border-gray-200 dark:border-gray-800 dark:bg-gray-950">
+            <CardBody className="p-4">
+              <div className="text-sm text-default-500">{label}</div>
+              <div className="mt-2 text-2xl font-semibold text-foreground">{loading ? '-' : String(value)}</div>
+              <div className="mt-1 text-xs text-default-500">{detail}</div>
+            </CardBody>
+          </Card>
+        ))}
+      </div>
+
+      {loading && data.routes.length === 0 ? (
+        <div className="flex min-h-48 items-center justify-center border-y border-divider bg-content1"><Spinner /></div>
+      ) : data.routes.length === 0 ? (
+        <div className="flex min-h-48 flex-col items-center justify-center gap-2 border-y border-divider bg-content1 text-default-500">
+          <Clock3 className="h-7 w-7" />
+          <span>当前窗口还没有接口请求样本</span>
+        </div>
+      ) : (
+        <div className="overflow-x-auto border-y border-divider bg-content1">
+          <table className="w-full min-w-[920px] text-sm">
+            <thead className="bg-default-100 text-left text-xs text-default-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">排名 / 接口</th>
+                <th className="px-4 py-3 font-medium">请求数</th>
+                <th className="px-4 py-3 font-medium">平均</th>
+                <th className="px-4 py-3 font-medium">P50</th>
+                <th className="px-4 py-3 font-medium">P95</th>
+                <th className="px-4 py-3 font-medium">最大</th>
+                <th className="px-4 py-3 font-medium">慢请求</th>
+                <th className="px-4 py-3 font-medium">最近一次</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-divider">
+              {data.routes.map((route, index) => <ApiTimingRow key={route.route} route={route} rank={index + 1} />)}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-xs text-default-500">最后采样时间：{data.capturedAt ? formatDateTime(data.capturedAt) : '暂无'}。重启后端后统计窗口会重新开始。</p>
+    </div>
+  );
+}
+
+function ApiTimingRow({ route, rank }: { route: ApiTimingRoute; rank: number }) {
+  const severe = route.p95Ms >= 3000 || route.errorCount > 0;
+  return (
+    <tr className={severe ? 'bg-danger-50/40 dark:bg-danger-500/5' : undefined}>
+      <td className="max-w-[360px] px-4 py-3 align-top">
+        <div className="flex items-start gap-3">
+          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-default-100 text-xs font-semibold">{rank}</span>
+          <code className="break-all text-xs text-foreground">{route.route}</code>
+        </div>
+      </td>
+      <td className="px-4 py-3 align-top">{route.requestCount}</td>
+      <td className="px-4 py-3 align-top">{formatTimingMs(route.avgMs)}</td>
+      <td className="px-4 py-3 align-top">{formatTimingMs(route.p50Ms)}</td>
+      <td className={`px-4 py-3 align-top font-semibold ${severe ? 'text-danger' : 'text-foreground'}`}>{formatTimingMs(route.p95Ms)}</td>
+      <td className="px-4 py-3 align-top">{formatTimingMs(route.maxMs)}</td>
+      <td className="px-4 py-3 align-top">{route.slowCount}</td>
+      <td className="px-4 py-3 align-top text-xs text-default-500">{formatTimingMs(route.lastMs)} · {formatDateTime(route.lastAt)}<br />HTTP {route.lastStatus}</td>
+    </tr>
   );
 }
 
