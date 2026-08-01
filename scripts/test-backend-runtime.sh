@@ -6,16 +6,17 @@ NETWORK=flux-panel-runtime-test-net
 DATABASE=flux-panel-runtime-test-db
 BACKEND=flux-panel-runtime-test-backend
 IMAGE=flux-panel-runtime-test-backend:local
-BUILD_CONTEXT="$(mktemp -d)"
+BUILD_CONTEXT=
 
 cleanup() {
   docker rm -f "${BACKEND}" "${DATABASE}" >/dev/null 2>&1 || true
   docker network rm "${NETWORK}" >/dev/null 2>&1 || true
   docker image rm "${IMAGE}" >/dev/null 2>&1 || true
-  rm -rf "${BUILD_CONTEXT}"
+  [[ -z "${BUILD_CONTEXT}" ]] || rm -rf "${BUILD_CONTEXT}"
 }
 trap cleanup EXIT
 cleanup
+BUILD_CONTEXT="$(mktemp -d)"
 
 cp "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime" "${BUILD_CONTEXT}/Dockerfile"
 cp "${PROJECT_DIR}/springboot-backend/healthcheck.sh" "${BUILD_CONTEXT}/healthcheck.sh"
