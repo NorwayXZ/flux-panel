@@ -18,14 +18,17 @@ trap cleanup EXIT
 cleanup
 BUILD_CONTEXT="$(mktemp -d)"
 
-cp "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime" "${BUILD_CONTEXT}/Dockerfile"
+cp "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime" "${BUILD_CONTEXT}/Dockerfile.runtime"
+cp "${PROJECT_DIR}/springboot-backend/Dockerfile.runtime.dockerignore" \
+  "${BUILD_CONTEXT}/Dockerfile.runtime.dockerignore"
 cp "${PROJECT_DIR}/springboot-backend/healthcheck.sh" "${BUILD_CONTEXT}/healthcheck.sh"
 mkdir -p "${BUILD_CONTEXT}/target"
 cp "${PROJECT_DIR}"/springboot-backend/target/*.jar "${BUILD_CONTEXT}/target/app.jar"
-test -s "${BUILD_CONTEXT}/Dockerfile"
+test -s "${BUILD_CONTEXT}/Dockerfile.runtime"
+test -s "${BUILD_CONTEXT}/Dockerfile.runtime.dockerignore"
 test -s "${BUILD_CONTEXT}/healthcheck.sh"
 test -s "${BUILD_CONTEXT}/target/app.jar"
-docker build -t "${IMAGE}" "${BUILD_CONTEXT}" >/dev/null
+docker build -f "${BUILD_CONTEXT}/Dockerfile.runtime" -t "${IMAGE}" "${BUILD_CONTEXT}" >/dev/null
 docker network create "${NETWORK}" >/dev/null
 docker run -d \
   --name "${DATABASE}" \
