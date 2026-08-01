@@ -1,3 +1,11 @@
+## 2.41.7 Route-level loading and shared request de-duplication
+
+- Loads each business page on demand. Terminal, topology, charts, user management, and other unrelated page code are no longer downloaded and parsed whenever a normal page opens.
+- Restores production tree-shaking and minification. The initial JavaScript entry drops from about 3.64 MB (775 KB gzip) to about 835 KB (258 KB gzip), while ordinary route chunks are generally 2-18 KB gzip.
+- De-duplicates concurrent reads and keeps an 8-second per-user cache for shared node, tunnel, Connector, port pool, proxy, service, domain route, and Dynamic DNS lists. DNS zone choices use a 30-second cache.
+- Successful create, update, delete, sync, pause, resume, refresh, and status-check operations invalidate their related cache immediately, so the faster page transitions do not leave stale edited data visible.
+- Frontend production build and all 117 backend tests pass. This is a panel-only release; Agent and Connector remain `2.41.4`, and existing resources are unchanged. Panel rollback remains `sudo /usr/local/sbin/flux-panel-manager rollback`.
+
 ## 2.41.6 Faster page loading and API diagnostics
 
 - The Home Access page loads only its current routes on first paint. Node, tunnel, port pool, connector, and Dynamic DNS choices load when the create dialog opens; one failed option request no longer blocks the whole form.

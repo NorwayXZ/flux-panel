@@ -24,10 +24,10 @@ export const deleteUser = (id: number) => Network.post("/user/delete", { id });
 export const getUserPackageInfo = () => Network.post("/user/package");
 
 // 节点CRUD操作 - 全部使用POST请求
-export const createNode = (data: any) => Network.post("/node/create", data);
-export const getNodeList = () => Network.post("/node/list");
-export const updateNode = (data: any) => Network.post("/node/update", data);
-export const deleteNode = (id: number) => Network.post("/node/delete", { id });
+export const createNode = (data: any) => Network.mutate("/node/create", data, ["/node/list"]);
+export const getNodeList = () => Network.postCached("/node/list", {}, 8000);
+export const updateNode = (data: any) => Network.mutate("/node/update", data, ["/node/list"]);
+export const deleteNode = (id: number) => Network.mutate("/node/delete", { id }, ["/node/list"]);
 export const getNodeInstallCommand = (id: number) => Network.post("/node/install", { id });
 export interface NodeDiscoveredService {
   host: string; probeHost: string; port: number; protocol: string; serviceName: string;
@@ -44,7 +44,7 @@ export const discoverNodeServices = (nodeId: number) =>
   Network.post<NodeServiceDiscoveryResult>("/node/discovery/scan", { nodeId });
 export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
-  return Network.post("/node/check-status", params);
+  return Network.mutate("/node/check-status", params, ["/node/list"]);
 };
 export interface AgentUpgradeTask {
   taskId: string;
@@ -149,13 +149,13 @@ export interface DynamicDnsOverview {
   summary: { rules: number; active: number; healthy: number; errors: number }; minimumAgentVersion: string;
 }
 export interface DynamicDnsHistoryItem { id: number; ruleId: number; oldIp?: string; newIp?: string; status: string; error?: string; createdTime: number }
-export const getDynamicDnsOverview = () => Network.post<DynamicDnsOverview>("/dynamic-dns/overview");
+export const getDynamicDnsOverview = () => Network.postCached<DynamicDnsOverview>("/dynamic-dns/overview", {}, 8000);
 export const getDynamicDnsHistory = (id: number) => Network.post<DynamicDnsHistoryItem[]>("/dynamic-dns/history", { id });
-export const saveDynamicDnsProvider = (data: any) => Network.post("/dynamic-dns/provider/save", data);
-export const deleteDynamicDnsProvider = (id: number) => Network.post("/dynamic-dns/provider/delete", { id });
-export const saveDynamicDnsRule = (data: any) => Network.post("/dynamic-dns/rule/save", data);
-export const deleteDynamicDnsRule = (id: number) => Network.post("/dynamic-dns/rule/delete", { id });
-export const runDynamicDnsRule = (id: number) => Network.post("/dynamic-dns/rule/run", { id });
+export const saveDynamicDnsProvider = (data: any) => Network.mutate("/dynamic-dns/provider/save", data, ["/dynamic-dns/overview"]);
+export const deleteDynamicDnsProvider = (id: number) => Network.mutate("/dynamic-dns/provider/delete", { id }, ["/dynamic-dns/overview"]);
+export const saveDynamicDnsRule = (data: any) => Network.mutate("/dynamic-dns/rule/save", data, ["/dynamic-dns/overview"]);
+export const deleteDynamicDnsRule = (id: number) => Network.mutate("/dynamic-dns/rule/delete", { id }, ["/dynamic-dns/overview"]);
+export const runDynamicDnsRule = (id: number) => Network.mutate("/dynamic-dns/rule/run", { id }, ["/dynamic-dns/overview"]);
 export interface TerminalTicket {
   ticket: string;
   expiresAt: number;
@@ -185,11 +185,11 @@ export const getUserNodeList = (userId: number) => Network.post("/node/user/list
 export const removeUserNode = (data: { userId: number; nodeId: number }) => Network.post("/node/user/remove", data);
 
 // 隧道CRUD操作 - 全部使用POST请求
-export const createTunnel = (data: any) => Network.post("/tunnel/create", data);
-export const getTunnelList = () => Network.post("/tunnel/list");
+export const createTunnel = (data: any) => Network.mutate("/tunnel/create", data, ["/tunnel/list"]);
+export const getTunnelList = () => Network.postCached("/tunnel/list", {}, 8000);
 export const getTunnelById = (id: number) => Network.post("/tunnel/get", { id });
-export const updateTunnel = (data: any) => Network.post("/tunnel/update", data);
-export const deleteTunnel = (id: number) => Network.post("/tunnel/delete", { id });
+export const updateTunnel = (data: any) => Network.mutate("/tunnel/update", data, ["/tunnel/list"]);
+export const deleteTunnel = (id: number) => Network.mutate("/tunnel/delete", { id }, ["/tunnel/list"]);
 export const diagnoseTunnel = (tunnelId: number) => Network.post("/tunnel/diagnose", { tunnelId });
 
 // 用户隧道权限管理操作 - 全部使用POST请求
@@ -298,16 +298,16 @@ export interface PrivateProxyGrantUpdateRequest {
   speedLimitMbps?: number;
 }
 
-export const getPrivateProxies = () => Network.post<PrivateProxyItem[]>("/private-proxy/list");
-export const createPrivateProxy = (data: PrivateProxyCreateRequest) => Network.post<PrivateProxyItem>("/private-proxy/create", data);
+export const getPrivateProxies = () => Network.postCached<PrivateProxyItem[]>("/private-proxy/list", {}, 8000);
+export const createPrivateProxy = (data: PrivateProxyCreateRequest) => Network.mutate<PrivateProxyItem>("/private-proxy/create", data, ["/private-proxy/list"]);
 export const getPrivateProxyClientConfig = (id: number) => Network.post<PrivateProxyClientConfig>("/private-proxy/client-config", { id });
-export const pausePrivateProxy = (id: number) => Network.post("/private-proxy/pause", { id });
-export const resumePrivateProxy = (id: number) => Network.post("/private-proxy/resume", { id });
-export const deletePrivateProxy = (id: number) => Network.post("/private-proxy/delete", { id });
-export const createPrivateProxyGrant = (data: PrivateProxyGrantRequest) => Network.post<PrivateProxyItem>("/private-proxy/grant", data);
+export const pausePrivateProxy = (id: number) => Network.mutate("/private-proxy/pause", { id }, ["/private-proxy/list"]);
+export const resumePrivateProxy = (id: number) => Network.mutate("/private-proxy/resume", { id }, ["/private-proxy/list"]);
+export const deletePrivateProxy = (id: number) => Network.mutate("/private-proxy/delete", { id }, ["/private-proxy/list"]);
+export const createPrivateProxyGrant = (data: PrivateProxyGrantRequest) => Network.mutate<PrivateProxyItem>("/private-proxy/grant", data, ["/private-proxy/list"]);
 export const getPrivateProxyGrants = (userId?: number) => Network.post<PrivateProxyItem[]>("/private-proxy/grant-list", userId ? { userId } : {});
-export const updatePrivateProxyGrant = (data: PrivateProxyGrantUpdateRequest) => Network.post<PrivateProxyItem>("/private-proxy/grant-update", data);
-export const resetPrivateProxyGrantFlow = (id: number) => Network.post<PrivateProxyItem>("/private-proxy/grant-reset", { id });
+export const updatePrivateProxyGrant = (data: PrivateProxyGrantUpdateRequest) => Network.mutate<PrivateProxyItem>("/private-proxy/grant-update", data, ["/private-proxy/list"]);
+export const resetPrivateProxyGrantFlow = (id: number) => Network.mutate<PrivateProxyItem>("/private-proxy/grant-reset", { id }, ["/private-proxy/list"]);
 
 export interface NetworkDiagnosticResult {
   mode: 'ping' | 'tcp' | 'dns' | 'trace';
@@ -620,12 +620,12 @@ export const getDnsProviderData = () => Network.post<{
   records: DnsManagedRecord[];
   summary: DnsProviderSummary;
 }>("/dns-provider/list");
-export const getDnsZoneOptions = () => Network.post<DnsZoneOption[]>("/dns-provider/zones");
+export const getDnsZoneOptions = () => Network.postCached<DnsZoneOption[]>("/dns-provider/zones", {}, 30000);
 export const saveDnsProviderAccount = (data: { id?: number; name: string; apiToken?: string; enabled: boolean }) =>
-  Network.post<{ id: number; zoneCount: number }>("/dns-provider/account/save", data);
+  Network.mutate<{ id: number; zoneCount: number }>("/dns-provider/account/save", data, ["/dns-provider/zones", "/dynamic-dns/overview"]);
 export const syncDnsProviderAccount = (id: number) =>
-  Network.post<{ zoneCount: number }>("/dns-provider/account/sync", { id });
-export const deleteDnsProviderAccount = (id: number) => Network.post("/dns-provider/account/delete", { id });
+  Network.mutate<{ zoneCount: number }>("/dns-provider/account/sync", { id }, ["/dns-provider/zones", "/dynamic-dns/overview"]);
+export const deleteDnsProviderAccount = (id: number) => Network.mutate("/dns-provider/account/delete", { id }, ["/dns-provider/zones", "/dynamic-dns/overview"]);
 
 export interface TopologyResourceNode {
   [key: string]: unknown;
@@ -1041,13 +1041,13 @@ export interface PortLedgerResult {
 }
 
 export const createInternalConnector = (data: { name: string; allowedCidrs?: string; platform: ConnectorPlatform }) =>
-  Network.post<{ connector: InternalConnector; installCommand: string }>("/service-publishing/connector/create", data);
+  Network.mutate<{ connector: InternalConnector; installCommand: string }>("/service-publishing/connector/create", data, ["/service-publishing/connector/list"]);
 export const getInternalConnectors = () =>
-  Network.post<InternalConnector[]>("/service-publishing/connector/list");
+  Network.postCached<InternalConnector[]>("/service-publishing/connector/list", {}, 8000);
 export const getInternalConnectorInstall = (id: number, platform: ConnectorPlatform, action: 'install' | 'uninstall' = 'install') =>
   Network.post<string>("/service-publishing/connector/install", { id, platform, action });
 export const deleteInternalConnector = (id: number) =>
-  Network.post("/service-publishing/connector/delete", { id });
+  Network.mutate("/service-publishing/connector/delete", { id }, ["/service-publishing/connector/list"]);
 export interface LanDiscoveredService {
   id: number;
   connectorId: number;
@@ -1083,39 +1083,39 @@ export const getLanDiscoveryResults = (id: number) =>
 export const clearLanDiscoveryResults = (id: number) =>
   Network.post("/service-publishing/connector/discovery/clear", { id });
 export const createPublishingPortPool = (data: any) =>
-  Network.post<PublishingPortPool>("/service-publishing/pool/create", data);
+  Network.mutate<PublishingPortPool>("/service-publishing/pool/create", data, ["/service-publishing/pool/list"]);
 export const getPublishingPortPools = () =>
-  Network.post<PublishingPortPool[]>("/service-publishing/pool/list");
+  Network.postCached<PublishingPortPool[]>("/service-publishing/pool/list", {}, 8000);
 export const getPublishingPortGrants = (userId?: number) =>
   Network.post<PublishingPortGrant[]>("/service-publishing/grant/list", userId ? { userId } : {});
 export const deletePublishingPortPool = (id: number) =>
-  Network.post("/service-publishing/pool/delete", { id });
+  Network.mutate("/service-publishing/pool/delete", { id }, ["/service-publishing/pool/list"]);
 export const getPortLedger = (data: { nodeId?: number; port?: number; type?: string; keyword?: string } = {}) =>
   Network.post<PortLedgerResult>("/service-publishing/ledger/list", data);
 export const diagnosePort = (nodeId: number, port: number) =>
   Network.post<PortLedgerResult>("/service-publishing/ledger/diagnose", { nodeId, port });
 export const createPublishedService = (data: any) =>
-  Network.post<PublishedService>("/service-publishing/service/create", data);
+  Network.mutate<PublishedService>("/service-publishing/service/create", data, ["/service-publishing/service/list"]);
 export const getPublishedServices = () =>
-  Network.post<PublishedService[]>("/service-publishing/service/list");
+  Network.postCached<PublishedService[]>("/service-publishing/service/list", {}, 8000);
 export const getServiceTelemetrySummary = () =>
   Network.post<ServiceTelemetry[]>("/service-publishing/telemetry/summary");
 export const getServiceTelemetryDetail = (resourceType: 'service' | 'domain', resourceId: number) =>
   Network.post<ServiceTelemetry>("/service-publishing/telemetry/detail", { resourceType, resourceId });
 export const renewPublishedService = (id: number, hours?: number, permanent = false) =>
-  Network.post<PublishedService>("/service-publishing/service/renew", { id, hours, permanent });
+  Network.mutate<PublishedService>("/service-publishing/service/renew", { id, hours, permanent }, ["/service-publishing/service/list"]);
 export const deletePublishedService = (id: number) =>
-  Network.post("/service-publishing/service/delete", { id });
+  Network.mutate("/service-publishing/service/delete", { id }, ["/service-publishing/service/list"]);
 export const createDomainRoute = (data: { name: string; domain: string; pathPrefix?: string; publishedServiceId?: number; backendType?: 'mapping' | 'direct'; backendNodeId?: number; backendHost?: string; backendPort?: number; backendScheme?: 'http' | 'https'; backendPath?: string; entryNodeId?: number; listenPort: number; ingressMode: 'passthrough' | 'managed_https'; dnsZoneId?: number }) =>
-  Network.post<DomainRoute>("/service-publishing/domain/create", data);
+  Network.mutate<DomainRoute>("/service-publishing/domain/create", data, ["/service-publishing/domain/list"]);
 export const updateDomainRouteBackend = (data: { id: number; backendHost: string; backendPort: number; backendScheme: 'http' | 'https'; backendPath: string }) =>
-  Network.post<DomainRoute>("/service-publishing/domain/backend/update", data);
+  Network.mutate<DomainRoute>("/service-publishing/domain/backend/update", data, ["/service-publishing/domain/list"]);
 export const updateDomainRoutePool = (data: { id: number; strategy: 'round' | 'rand' | 'weighted'; sessionAffinity: 'none' | 'ip_hash'; members: DomainRouteBackendMember[] }) =>
-  Network.post<DomainRoute>("/service-publishing/domain/pool/update", data);
+  Network.mutate<DomainRoute>("/service-publishing/domain/pool/update", data, ["/service-publishing/domain/list"]);
 export const getDomainRoutes = () =>
-  Network.post<DomainRoute[]>("/service-publishing/domain/list");
+  Network.postCached<DomainRoute[]>("/service-publishing/domain/list", {}, 8000);
 export const deleteDomainRoute = (id: number) =>
-  Network.post("/service-publishing/domain/delete", { id });
+  Network.mutate("/service-publishing/domain/delete", { id }, ["/service-publishing/domain/list"]);
 export const getManagedCertificates = () =>
   Network.post<ManagedCertificate[]>("/service-publishing/certificate/list");
 export const retryManagedCertificate = (id: number) =>

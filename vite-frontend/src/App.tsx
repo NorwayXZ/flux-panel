@@ -1,42 +1,47 @@
 import { Route, Routes, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import IndexPage from "@/pages/index";
-import ChangePasswordPage from "@/pages/change-password";
-import DashboardPage from "@/pages/dashboard";
-import ForwardPage from "@/pages/forward";
-import TunnelPage from "@/pages/tunnel";
-import NodePage from "@/pages/node";
-import NodeTerminalPage from "@/pages/node-terminal";
-import UserPage from "@/pages/user";
-import ProfilePage from "@/pages/profile";
-import LimitPage from "@/pages/limit";
-import ConfigPage from "@/pages/config";
-import UpdatePage from "@/pages/update";
-import MonitoringPage from "@/pages/monitoring";
-import ServicePublishingPage from "@/pages/service-publishing";
-import TopologyPage from "@/pages/topology";
-import PortResourcesPage from "@/pages/port-resources";
-import CrossEntryFailoverPage from "@/pages/cross-entry-failover";
-import SmartEntryPage from "@/pages/smart-entry";
-import DnsSettingsPage from "@/pages/dns-settings";
-import PrivateProxyPage from "@/pages/private-proxy";
-import NetworkToolsPage from "@/pages/network-tools";
-import QualityLabPage from "@/pages/quality-lab";
-import ServerAssetsPage from "@/pages/server-assets";
-import DynamicDnsPage from "@/pages/dynamic-dns";
-import HomeAccessPage from "@/pages/home-access";
-import HomeDevicesPage from "@/pages/home-devices";
-import GuidePage from "@/pages/guide";
-import SystemSelfCheckPage from "@/pages/system-self-check";
-import { SettingsPage } from "@/pages/settings";
+
+// Keep the login page in the initial bundle. Business pages load only when opened,
+// so a refresh no longer downloads terminals, charts, topology, and every admin view.
+const ChangePasswordPage = lazy(() => import("@/pages/change-password"));
+const DashboardPage = lazy(() => import("@/pages/dashboard"));
+const ForwardPage = lazy(() => import("@/pages/forward"));
+const TunnelPage = lazy(() => import("@/pages/tunnel"));
+const NodePage = lazy(() => import("@/pages/node"));
+const NodeTerminalPage = lazy(() => import("@/pages/node-terminal"));
+const UserPage = lazy(() => import("@/pages/user"));
+const ProfilePage = lazy(() => import("@/pages/profile"));
+const LimitPage = lazy(() => import("@/pages/limit"));
+const ConfigPage = lazy(() => import("@/pages/config"));
+const UpdatePage = lazy(() => import("@/pages/update"));
+const MonitoringPage = lazy(() => import("@/pages/monitoring"));
+const ServicePublishingPage = lazy(() => import("@/pages/service-publishing"));
+const TopologyPage = lazy(() => import("@/pages/topology"));
+const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
+const CrossEntryFailoverPage = lazy(() => import("@/pages/cross-entry-failover"));
+const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
+const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
+const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
+const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
+const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
+const ServerAssetsPage = lazy(() => import("@/pages/server-assets"));
+const DynamicDnsPage = lazy(() => import("@/pages/dynamic-dns"));
+const HomeAccessPage = lazy(() => import("@/pages/home-access"));
+const HomeDevicesPage = lazy(() => import("@/pages/home-devices"));
+const GuidePage = lazy(() => import("@/pages/guide"));
+const SystemSelfCheckPage = lazy(() => import("@/pages/system-self-check"));
+const SettingsPage = lazy(() =>
+  import("@/pages/settings").then(module => ({ default: module.SettingsPage }))
+);
 
 import AdminLayout from "@/layouts/admin";
 import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
 
 import { isLoggedIn } from "@/utils/auth";
-import { siteConfig } from "@/config/site";
+import { getCachedConfig, siteConfig } from "@/config/site";
 
 // 检测是否为H5模式
 const useH5Mode = () => {
@@ -139,6 +144,12 @@ const LoginRoute = () => {
   return <IndexPage />;
 };
 
+const PageLoading = () => (
+  <div className="flex min-h-[50vh] items-center justify-center text-sm text-default-500">
+    正在打开页面...
+  </div>
+);
+
 function App() {
   // 立即设置页面标题（使用已从缓存读取的配置）
   useEffect(() => {
@@ -147,8 +158,6 @@ function App() {
     // 异步检查是否有配置更新
     const checkTitleUpdate = async () => {
       try {
-        // 引入必要的函数
-        const { getCachedConfig } = await import('@/config/site');
         const cachedAppName = await getCachedConfig('app_name');
         if (cachedAppName && cachedAppName !== document.title) {
           document.title = cachedAppName;
@@ -165,7 +174,8 @@ function App() {
   }, []);
 
   return (
-    <Routes>
+    <Suspense fallback={<PageLoading />}>
+      <Routes>
       <Route path="/" element={<LoginRoute />} />
       <Route 
         path="/change-password" 
@@ -293,7 +303,8 @@ function App() {
         path="/settings" 
         element={<SettingsPage />}
       />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
 
