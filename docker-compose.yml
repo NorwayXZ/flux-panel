@@ -66,8 +66,8 @@ services:
       test: ["CMD", "/app/healthcheck.sh"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 90s
+      retries: ${BACKEND_HEALTH_RETRIES:-6}
+      start_period: ${BACKEND_HEALTH_START_PERIOD:-420s}
 
   frontend:
     image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:?PANEL_VERSION is required}

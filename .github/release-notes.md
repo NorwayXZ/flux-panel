@@ -1,3 +1,10 @@
+## 2.45.1 Load-tolerant panel upgrades
+
+- Keeps the complete private-network and proxy-egress feature set from `2.45.0`.
+- Lets the backend health startup window be configured and raises the default to seven minutes. A healthy backend still continues immediately, while CPU-congested hosts are no longer rolled back before Spring finishes booting.
+- Extends the manager's post-deployment wait window and reports backend/frontend states during long starts. Genuine startup failures still trigger the existing automatic rollback.
+- Agent `2.45.1` is functionally compatible with `2.45.0`; it is rebuilt so staged upgrades and release assets remain version-consistent.
+
 ## 2.45.0 Private network routing and proxy egress applications
 
 - Adds an administrator-only **Private Network and Egress** workspace. Agents can automatically establish a WireGuard network, while existing VPC, cloud-backbone, and dedicated private addresses can be registered and verified bidirectionally.

@@ -195,6 +195,8 @@ ensure_runtime_defaults() {
   ensure_env_default TOMCAT_ACCEPT_COUNT 100
   ensure_env_default MYSQL_MAX_CONNECTIONS 200
   ensure_env_default MYSQL_BUFFER_POOL_SIZE 128M
+  ensure_env_default BACKEND_HEALTH_START_PERIOD 420s
+  ensure_env_default BACKEND_HEALTH_RETRIES 6
   ensure_env_default FORWARD_HEALTH_CHECK_INTERVAL_MS 60000
   ensure_env_default FORWARD_FAILURE_THRESHOLD 2
   ensure_env_default FORWARD_RECOVERY_THRESHOLD 2
@@ -268,6 +270,8 @@ TOMCAT_MAX_CONNECTIONS=512
 TOMCAT_ACCEPT_COUNT=100
 MYSQL_MAX_CONNECTIONS=200
 MYSQL_BUFFER_POOL_SIZE=128M
+BACKEND_HEALTH_START_PERIOD=420s
+BACKEND_HEALTH_RETRIES=6
 FORWARD_HEALTH_CHECK_INTERVAL_MS=60000
 FORWARD_FAILURE_THRESHOLD=2
 FORWARD_RECOVERY_THRESHOLD=2
@@ -369,12 +373,18 @@ remove_update_service() {
 }
 
 wait_for_services() {
-  local attempt
-  for ((attempt = 1; attempt <= 90; attempt++)); do
-    if [[ "$(docker inspect -f '{{.State.Health.Status}}' springboot-backend 2>/dev/null || true)" == "healthy" ]] &&
-       [[ "$(docker inspect -f '{{.State.Status}}' vite-frontend 2>/dev/null || true)" == "running" ]]; then
+  local attempt max_attempts backend_status frontend_status
+  max_attempts="${FLUX_PANEL_SERVICE_WAIT_ATTEMPTS:-240}"
+  [[ "${max_attempts}" =~ ^[0-9]+$ ]] && ((max_attempts > 0)) || max_attempts=240
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    backend_status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' springboot-backend 2>/dev/null || true)"
+    frontend_status="$(docker inspect -f '{{.State.Status}}' vite-frontend 2>/dev/null || true)"
+    if [[ "${backend_status}" == "healthy" && "${frontend_status}" == "running" ]]; then
       log "all services are running"
       return 0
+    fi
+    if ((attempt == 1 || attempt % 15 == 0)); then
+      log "waiting for services (${attempt}/${max_attempts}): backend=${backend_status:-missing}, frontend=${frontend_status:-missing}"
     fi
     sleep 2
   done

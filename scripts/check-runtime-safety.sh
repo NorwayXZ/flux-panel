@@ -33,6 +33,10 @@ for file in docker-compose.yml docker-compose-source.yml docker-compose-build.ym
     printf 'Legacy shallow healthcheck detected: %s\n' "$file" >&2
     exit 1
   fi
+  grep -Fq 'BACKEND_HEALTH_START_PERIOD:-420s' "$file" || {
+    printf 'Load-tolerant backend startup window is missing: %s\n' "$file" >&2
+    exit 1
+  }
 done
 
 grep -Fq 'access_log off;' vite-frontend/nginx.conf || {

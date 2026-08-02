@@ -110,6 +110,7 @@ run_manager() {
     FLUX_PANEL_UPDATE_LOCK_FILE="${TEST_ROOT}/run/flux-panel-update.lock" \
     FLUX_PANEL_DISABLE_ONLINE_UPDATES=1 \
     FLUX_PANEL_TEST_MODE=1 \
+    FLUX_PANEL_SERVICE_WAIT_ATTEMPTS=2 \
     FLUX_PANEL_HOST_MEMORY_MB=8192 \
     bash "${PROJECT_DIR}/scripts/flux-panel.sh" "$@"
 }
@@ -117,6 +118,8 @@ run_manager() {
 run_manager install >/dev/null
 grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'DB_POOL_MAX_SIZE=10' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'BACKEND_HEALTH_START_PERIOD=420s' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'BACKEND_HEALTH_RETRIES=6' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'JAVA_OPTS="-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError' "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
