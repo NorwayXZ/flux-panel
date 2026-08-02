@@ -36,6 +36,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
@@ -90,7 +92,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.42.3/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.43.0/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -112,6 +114,9 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     @Resource
     @Lazy
     private SpeedLimitService speedLimitService;
+
+    @Resource
+    private JdbcTemplate jdbcTemplate;
 
     @Resource
     @Lazy
@@ -262,6 +267,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         }
 
         try {
+            long nftForwardCount = countNftForwardRules(id);
+            if (nftForwardCount > 0) {
+                return R.err("该节点还有 " + nftForwardCount + " 条 nftables 转发规则，请先在 nftables 转发页面删除并等待 Agent 确认");
+            }
             long relatedTunnelCount = countNodeTunnels(id);
             if (isNodeOnlineForDeletion(node) && relatedTunnelCount > 0) {
                 return R.err(String.format(ERROR_ONLINE_NODE_HAS_TUNNELS, relatedTunnelCount));
@@ -378,6 +387,16 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
 
     private long countNodeTunnels(Long nodeId) {
         return findTunnelsByNodePath(nodeId).size();
+    }
+
+    private long countNftForwardRules(Long nodeId) {
+        try {
+            Long count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM nft_forward_rule WHERE node_id=? AND state<>'deleted'", Long.class, nodeId);
+            return count == null ? 0L : count;
+        } catch (DataAccessException ignored) {
+            return 0L;
+        }
     }
 
     private Map<String, Object> cleanupNodeDependencies(Long nodeId) {

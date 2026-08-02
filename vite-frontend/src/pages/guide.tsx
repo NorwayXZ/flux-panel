@@ -5,6 +5,7 @@ import { Input } from '@heroui/input';
 import { Tab, Tabs } from '@heroui/tabs';
 import {
   Activity,
+  ArrowRightLeft,
   ArrowRight,
   BellRing,
   BookOpen,
@@ -103,6 +104,16 @@ const entries: GuideEntry[] = [
     steps: ['点击新增，填写名称并选择主线路。', '填写入口端口、目标地址、目标端口和 TCP/UDP 协议。', '按需要选择单线路、主备切换或低延迟选路，并添加候选线路。', '保存后检查卡片状态、总延迟、当前承载线路和切换记录。'],
     result: '用户连接“入口 IP:入口端口”后，流量会沿隧道到达目标服务。',
     notes: ['同一转发的候选线路必须使用同一个入口节点，才能在不改变访问地址的情况下切换。', '不同入口节点之间的切换应使用“入口容灾”。', 'IP 哈希适合让同一来源尽量固定到同一目标；主备适合故障切换，低延迟适合自动择优。'],
+  },
+  {
+    id: 'nft-forward', category: 'core', title: 'nftables 端口转发', path: '/nft-forward', icon: ArrowRightLeft, adminOnly: true,
+    summary: '直接使用 Linux 内核 DNAT/SNAT 转发端口，与 GOST 转发分开管理。',
+    purpose: 'nftables 转发适合不需要隧道、加密或应用层代理的普通 IPv4 端口映射。数据由 Linux 内核直接处理，路径短、开销低；GOST 仍负责跨节点隧道、加密协议和复杂转发，两者不会自动互相迁移。',
+    prerequisites: ['执行节点必须是 Linux，并安装 nftables。', 'Agent 版本达到页面显示的最低版本且在线。', '目标必须是固定 IPv4；入口端口不能被 GOST、其他面板资源、真实 socket 或外部 DNAT 占用。'],
+    steps: ['新建规则并选择执行节点、监听地址、入口端口及 TCP/UDP。', '填写目标 IPv4 和端口；通常选择“标准 NAT”。', '需要限制来源时填写 IPv4/CIDR 白名单。', '先运行环境预检，再保存并应用；创建后用“检查状态”刷新计数器和目标连通性。', '变更不合适时点击回退按钮恢复上次成功配置；暂停和删除会经过 Agent 对账。'],
+    result: '客户端连接“节点公网 IP:入口端口”后，由内核直接转发到目标 IPv4 和端口。',
+    notes: ['该功能只管理 table ip cloudnest_nat，绝不会执行 flush ruleset。', '标准 NAT 会隐藏客户端来源 IP；保留来源 IP 要求目标主机把回程流量交回执行节点。', 'Agent 离线时不会假装删除成功，规则和端口账本会保留，节点恢复后可重试。', '第一版不支持域名目标、IPv6、限速或多目标负载均衡。'],
+    keywords: 'nft DNAT SNAT MASQUERADE 内核转发 端口映射 回退',
   },
   {
     id: 'smart-entry', category: 'core', title: '三网优化', path: '/smart-entry', icon: Waypoints, adminOnly: true,

@@ -138,6 +138,7 @@ type WebSocketReporter struct {
 	realityManager  *realityRuntimeManager
 	proxyManager    *privateProxyRuntimeManager
 	natManager      *natRuntimeManager
+	nftManager      *nftForwardManager
 }
 
 const maxIncomingWebSocketMessage = 4 * 1024 * 1024
@@ -170,6 +171,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.realityManager = newRealityRuntimeManager()
 	reporter.proxyManager = newPrivateProxyRuntimeManager()
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
+	reporter.nftManager = newNFTForwardManager()
 	return reporter
 }
 
@@ -183,6 +185,9 @@ func (w *WebSocketReporter) Start() {
 	}
 	if w.natManager != nil {
 		go w.natManager.restore()
+	}
+	if w.nftManager != nil {
+		go w.nftManager.restore()
 	}
 	go w.run()
 }
@@ -789,6 +794,36 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 			w.natManager.stop(request.RouteID, true)
 		}
 		response.Type = "NatStopResponse"
+
+	case "NftForwardPreflight":
+		var request nftForwardPreflightRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result nftForwardPreflightResponse
+		if err == nil && w.nftManager != nil {
+			result, err = w.nftManager.preflight(request)
+		}
+		response.Type = "NftForwardPreflightResponse"
+		response.Data = result
+
+	case "NftForwardApply":
+		var request nftForwardApplyRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result nftForwardStatusResponse
+		if err == nil && w.nftManager != nil {
+			result, err = w.nftManager.apply(request)
+		}
+		response.Type = "NftForwardApplyResponse"
+		response.Data = result
+
+	case "NftForwardStatus":
+		var result nftForwardStatusResponse
+		if w.nftManager == nil {
+			err = errors.New("nftables forwarding manager is unavailable")
+		} else {
+			result, err = w.nftManager.status()
+		}
+		response.Type = "NftForwardStatusResponse"
+		response.Data = result
 
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)

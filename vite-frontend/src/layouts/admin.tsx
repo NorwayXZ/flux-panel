@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { BellRing, BookOpen, Boxes, FlaskConical, Home, LockKeyhole, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { ArrowRightLeft, BellRing, BookOpen, Boxes, FlaskConical, Home, LockKeyhole, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -70,6 +70,12 @@ export default function AdminLayout({
           <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
         </svg>
       )
+    },
+    {
+      path: '/nft-forward',
+      label: 'nftables 转发',
+      icon: <ArrowRightLeft className="h-5 w-5" />,
+      adminOnly: true
     },
     {
       path: '/monitoring',
@@ -201,7 +207,7 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab'] },
     { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },

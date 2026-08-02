@@ -1142,7 +1142,7 @@ export interface ManagedCertificate {
   updatedTime: number;
 }
 
-export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy' | 'source_ip_entry';
+export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy' | 'source_ip_entry' | 'nft_forward';
 
 export interface PortLedgerEntry {
   key: string;
@@ -1227,6 +1227,99 @@ export const getPortLedger = (data: { nodeId?: number; port?: number; type?: str
   Network.post<PortLedgerResult>("/service-publishing/ledger/list", data);
 export const diagnosePort = (nodeId: number, port: number) =>
   Network.post<PortLedgerResult>("/service-publishing/ledger/diagnose", { nodeId, port });
+
+export type NftForwardProtocol = 'tcp' | 'udp' | 'tcp_udp';
+export type NftForwardNatMode = 'masquerade' | 'preserve_source';
+
+export interface NftForwardRule {
+  id: number;
+  userId: number;
+  name: string;
+  nodeId: number;
+  nodeName: string;
+  publicHost?: string;
+  agentVersion?: string;
+  nodeOnline: boolean;
+  listenAddress: string;
+  listenPort: number;
+  protocol: NftForwardProtocol;
+  targetAddress: string;
+  targetPort: number;
+  natMode: NftForwardNatMode;
+  sourceCidrs?: string;
+  enabled: boolean;
+  state: 'provisioning' | 'active' | 'paused' | 'error' | 'delete_pending';
+  generation?: number;
+  packetCount: number;
+  byteCount: number;
+  lastError?: string;
+  lastWarning?: string;
+  lastSyncedAt?: number;
+  createdTime: number;
+  updatedTime: number;
+  rollbackAvailable: boolean;
+}
+
+export interface NftForwardNode {
+  id: number;
+  name: string;
+  serverIp?: string;
+  ip?: string;
+  status: number;
+  version?: string;
+  online: boolean;
+  compatible: boolean;
+}
+
+export interface NftForwardOverview {
+  rules: NftForwardRule[];
+  nodes: NftForwardNode[];
+  summary: { total: number; active: number; paused: number; errors: number; packets: number; bytes: number };
+  minimumAgentVersion: string;
+}
+
+export interface NftForwardForm {
+  id?: number;
+  name: string;
+  nodeId: number;
+  listenAddress: string;
+  listenPort: number;
+  protocol: NftForwardProtocol;
+  targetAddress: string;
+  targetPort: number;
+  natMode: NftForwardNatMode;
+  sourceCidrs?: string;
+  enabled: boolean;
+}
+
+export interface NftForwardPreflight {
+  supported: boolean;
+  available: boolean;
+  nftVersion?: string;
+  ipv4Forwarding: boolean;
+  firewallManager?: string;
+  warnings?: string[];
+  conflicts?: Array<{ protocol: string; port: number; table?: string; chain?: string; detail: string }>;
+}
+
+export interface NftForwardEvent {
+  id: number;
+  ruleId: number;
+  nodeId: number;
+  eventType: string;
+  status: string;
+  detail?: string;
+  createdTime: number;
+}
+
+export const getNftForwardOverview = () => Network.post<NftForwardOverview>('/nft-forward/overview');
+export const preflightNftForward = (data: NftForwardForm) => Network.post<NftForwardPreflight>('/nft-forward/preflight', data);
+export const saveNftForward = (data: NftForwardForm) => Network.post<{ id: number; state: string }>('/nft-forward/save', data);
+export const toggleNftForward = (id: number, enabled: boolean) => Network.post('/nft-forward/toggle', { id, enabled });
+export const checkNftForward = (id: number) => Network.post('/nft-forward/check', { id });
+export const rollbackNftForward = (id: number) => Network.post('/nft-forward/rollback', { id });
+export const deleteNftForward = (id: number) => Network.post('/nft-forward/delete', { id });
+export const getNftForwardEvents = (id: number) => Network.post<NftForwardEvent[]>('/nft-forward/events', { id });
 export const createPublishedService = (data: any) =>
   Network.mutate<PublishedService>("/service-publishing/service/create", data, ["/service-publishing/service/list"]);
 export const getPublishedServices = () =>

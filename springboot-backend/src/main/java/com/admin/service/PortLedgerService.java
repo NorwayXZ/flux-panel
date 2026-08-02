@@ -84,6 +84,7 @@ public class PortLedgerService {
         addPrivateProxies(entries, nodeMap, userMap);
         addHomeProxyRoutes(entries, nodeMap, userMap);
         addSourceIpEntries(entries, nodeMap, userMap);
+        addNftForwards(entries, nodeMap, userMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -295,6 +296,33 @@ public class PortLedgerService {
         }
     }
 
+    private void addNftForwards(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Integer, User> users) {
+        if (jdbcTemplate == null) return;
+        List<Map<String, Object>> rules;
+        try {
+            rules = jdbcTemplate.queryForList(
+                    "SELECT id,user_id AS userId,name,node_id AS nodeId,listen_port AS port,protocol,target_address AS targetAddress,"
+                            + "target_port AS targetPort,enabled,state,created_time AS createdTime FROM nft_forward_rule WHERE state<>'deleted'");
+        } catch (DataAccessException ignored) {
+            return;
+        }
+        for (Map<String, Object> item : rules) {
+            Node node = nodes.get(item.get("nodeId") == null ? 0L : ((Number) item.get("nodeId")).longValue());
+            if (node == null || item.get("port") == null) continue;
+            Integer userId = item.get("userId") == null ? null : ((Number) item.get("userId")).intValue();
+            User owner = userId == null ? null : users.get(userId);
+            String state = Objects.toString(item.get("state"), "unknown");
+            String status = "delete_pending".equals(state) ? "cooldown" : truth(item.get("enabled")) ? "occupied" : "reserved";
+            add(entries, nodeEntry("nft_forward", status, node,
+                    ((Number) item.get("port")).intValue(), ((Number) item.get("port")).intValue(),
+                    Objects.toString(item.get("protocol"), "tcp"), userId,
+                    owner == null ? "未知用户" : owner.getUser(), ((Number) item.get("id")).longValue(),
+                    Objects.toString(item.get("name"), "nftables 转发"),
+                    "nftables 内核转发 → " + item.get("targetAddress") + ":" + item.get("targetPort") + " · " + state,
+                    item.get("createdTime") == null ? null : ((Number) item.get("createdTime")).longValue(), null));
+        }
+    }
+
     private ForwardRouteDto fallbackRoute(Forward forward, Tunnel tunnel) {
         ForwardRouteDto route = new ForwardRouteDto();
         route.setTunnelId(forward.getTunnelId());
@@ -350,5 +378,11 @@ public class PortLedgerService {
                         StringUtils.defaultString(item.getOwnerUserName()), StringUtils.defaultString(item.getResourceName()),
                         StringUtils.defaultString(item.getDetail()))
                 .toLowerCase(Locale.ROOT).contains(needle);
+    }
+
+    private boolean truth(Object value) {
+        if (value instanceof Boolean bool) return bool;
+        if (value instanceof Number number) return number.intValue() != 0;
+        return value != null && ("true".equalsIgnoreCase(value.toString()) || "1".equals(value.toString()));
     }
 }

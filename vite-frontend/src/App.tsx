@@ -8,6 +8,7 @@ import IndexPage from "@/pages/index";
 const ChangePasswordPage = lazy(() => import("@/pages/change-password"));
 const DashboardPage = lazy(() => import("@/pages/dashboard"));
 const ForwardPage = lazy(() => import("@/pages/forward"));
+const NftForwardPage = lazy(() => import("@/pages/nft-forward"));
 const TunnelPage = lazy(() => import("@/pages/tunnel"));
 const NodePage = lazy(() => import("@/pages/node"));
 const NodeTerminalPage = lazy(() => import("@/pages/node-terminal"));
@@ -203,6 +204,7 @@ function App() {
           </ProtectedRoute>
         } 
       />
+      <Route path="/nft-forward" element={<ProtectedRoute><NftForwardPage /></ProtectedRoute>} />
       <Route
         path="/smart-entry"
         element={<ProtectedRoute><SmartEntryPage /></ProtectedRoute>}

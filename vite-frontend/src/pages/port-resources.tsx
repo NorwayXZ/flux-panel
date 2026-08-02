@@ -188,6 +188,7 @@ export default function PortResourcesPage() {
             <SelectItem key="pool_range">端口池范围</SelectItem>
             <SelectItem key="user_grant">用户授权</SelectItem>
             <SelectItem key="source_ip_entry">来源 IP 分流</SelectItem>
+            <SelectItem key="nft_forward">nftables 转发</SelectItem>
           </Select>
           <Input label="关键词" placeholder="名称、用户、地址" value={filters.keyword} onValueChange={value => setFilters({ ...filters, keyword: value })} />
           <Button className="h-14" color="primary" startContent={<Search size={17} />} isLoading={ledgerLoading} onPress={loadLedger}>查询</Button>
@@ -247,6 +248,7 @@ export default function PortResourcesPage() {
 const typeLabels: Record<string, string> = {
   forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '内网映射', home_proxy: '家庭代理',
   pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权', domain_ingress: '域名入口', source_ip_entry: '来源 IP 分流',
+  nft_forward: 'nftables 转发',
 };
 
 const statusColors: Record<string, 'danger' | 'primary' | 'secondary' | 'warning' | 'default'> = {

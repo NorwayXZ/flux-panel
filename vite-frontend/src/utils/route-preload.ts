@@ -4,6 +4,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/change-password': () => import('@/pages/change-password'),
   '/dashboard': () => import('@/pages/dashboard'),
   '/forward': () => import('@/pages/forward'),
+  '/nft-forward': () => import('@/pages/nft-forward'),
   '/tunnel': () => import('@/pages/tunnel'),
   '/node': () => import('@/pages/node'),
   '/user': () => import('@/pages/user'),
