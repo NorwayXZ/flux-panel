@@ -60,7 +60,7 @@ const emptyOverview: NftForwardOverview = {
   rules: [],
   nodes: [],
   summary: { total: 0, active: 0, paused: 0, errors: 0, packets: 0, bytes: 0 },
-  minimumAgentVersion: '2.43.0',
+  minimumAgentVersion: '2.43.1',
 };
 
 const emptyForm = (): RuleForm => ({

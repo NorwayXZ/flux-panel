@@ -1,4 +1,4 @@
-## 2.43.0 Isolated nftables port forwarding
+## 2.43.1 Isolated nftables port forwarding
 
 - Adds an administrator-only **nftables port forwarding** board for direct Linux kernel IPv4 DNAT/SNAT without replacing or restarting GOST forwards, tunnels, proxies, or listeners.
 - Supports TCP, UDP, and TCP+UDP; fixed IPv4 listeners and targets; source CIDR allowlists; standard masquerade mode; and source-preserving mode for targets with a correct return route.
@@ -6,14 +6,15 @@
 - Checks the global panel ledger, real TCP/UDP sockets, external nftables DNAT rules, Agent version, nftables availability, IPv4 forwarding, UFW, firewalld, and the host FORWARD policy before applying a rule.
 - Manages only `table ip cloudnest_nat`, never runs `flush ruleset`, validates every generated transaction with `nft --check`, and applies a complete node ruleset atomically. A failed transaction leaves the previous kernel rules active.
 - Persists the last Agent ruleset across Agent restarts. If state persistence fails after an apply, the Agent immediately restores the previous kernel rules. The panel retains the last genuinely successful per-rule configuration for one-click rollback and does not release a deleted rule's port until the Agent confirms removal.
-- Reconciles pending or drifted rules after an Agent reconnect, collects packet and byte counters, and keeps unsupported non-Linux Agents explicit. Existing features retain their previous Agent requirements; only nodes selected for nftables forwarding require Agent `2.43.0` and a locally installed `nft` command.
+- Reconciles pending or drifted rules after an Agent reconnect, collects packet and byte counters, and keeps unsupported non-Linux Agents explicit. Existing features retain their previous Agent requirements; only nodes selected for nftables forwarding require Agent `2.43.1` and a locally installed `nft` command.
+- Fixes first-time application on nodes where the managed `cloudnest_nat` table does not exist yet. The Agent now distinguishes that expected state from command execution failures without hiding nftables diagnostics.
 - Validation includes the full 136-test backend suite, the complete Go Agent suite, Linux amd64/arm64 test compilation, frontend production build, and an isolated Linux network-namespace test covering bidirectional TCP/UDP forwarding, counters, atomic target replacement, and deletion.
 
 ### Upgrade and rollback impact
 
-- The panel and Agent move to `2.43.0`. Existing nodes, tunnels, GOST forwards, private proxies, port pools, DNS records, certificates, and active services are not migrated, rebuilt, or restarted by the new feature.
+- The panel and Agent move to `2.43.1`. Existing nodes, tunnels, GOST forwards, private proxies, port pools, DNS records, certificates, and active services are not migrated, rebuilt, or restarted by the new feature.
 - The database change only adds `nft_forward_rule` and `nft_forward_event`. Older panel versions ignore these additive tables.
-- Stop only this feature by pausing or deleting its rules. Roll back an individual edited rule from its event row. Before rolling the complete panel back, delete nftables rules through the `2.43.0` page so the Agent confirms their removal; then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Agent self-update keeps its existing atomic binary backup, reconnect acknowledgement, and automatic binary rollback.
+- Stop only this feature by pausing or deleting its rules. Roll back an individual edited rule from its event row. Before rolling the complete panel back, delete nftables rules through the `2.43.1` page so the Agent confirms their removal; then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Agent self-update keeps its existing atomic binary backup, reconnect acknowledgement, and automatic binary rollback.
 
 ## 2.42.4 Port-grouped route selectors
 

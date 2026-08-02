@@ -2,7 +2,26 @@
 
 package socket
 
-import "testing"
+import (
+	"errors"
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+func TestRunNFTForwardCommandPreservesExitError(t *testing.T) {
+	_, err := runNFTForwardCommand(nil, "sh", "-c", "printf 'missing managed table' >&2; exit 1")
+	if err == nil {
+		t.Fatal("expected command failure")
+	}
+	var exitError *exec.ExitError
+	if !errors.As(err, &exitError) {
+		t.Fatalf("expected wrapped exec.ExitError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "missing managed table") {
+		t.Fatalf("command output was lost: %v", err)
+	}
+}
 
 func TestParseNFTForwardCounters(t *testing.T) {
 	content := []byte(`{"nftables":[{"rule":{"family":"ip","table":"cloudnest_nat","chain":"forward","expr":[{"counter":{"packets":12,"bytes":4096}},{"accept":null}],"comment":"cloudnest:nft-forward:8:tcp:traffic"}}]}`)

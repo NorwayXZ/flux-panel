@@ -112,7 +112,7 @@ func runNFTForwardCommand(input []byte, name string, arguments ...string) ([]byt
 		if detail == "" {
 			detail = err.Error()
 		}
-		return nil, errors.New(detail)
+		return nil, fmt.Errorf("%w: %s", err, detail)
 	}
 	return output, nil
 }
