@@ -145,16 +145,6 @@ export default function AdminLayout({
       ),
     },
     {
-      path: '/limit',
-      label: '用户限速预设',
-      icon: (
-        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-        </svg>
-      ),
-      adminOnly: true
-    },
-    {
       path: '/port-resources',
       label: '资源中心',
       icon: <Boxes className="h-5 w-5" />,
@@ -214,7 +204,7 @@ export default function AdminLayout({
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access'] },
     { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab'] },
-    { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/limit', '/server-assets', '/user', '/config'] },
+    { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }
   ];

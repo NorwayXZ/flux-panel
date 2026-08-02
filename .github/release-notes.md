@@ -666,3 +666,9 @@
 - Adds defaulted/nullable grant columns and one index to `private_proxy`. Startup migration is idempotent, and [`migrations/20260731_private_proxy_grants.sql`](../migrations/20260731_private_proxy_grants.sql) is available for manual maintenance.
 - Dedicated grants consume one real node port each. Traffic limiting is available only for GOST-metered SOCKS5, HTTP, Shadowsocks, and VLESS+REALITY; unsupported advanced protocols are rejected instead of receiving ineffective limits.
 - Before rollback, delete grants created in `2.39.0` and wait for offline-node cleanup when possible. Then run `sudo /usr/local/sbin/flux-panel-manager rollback`; the previous panel ignores the additive columns but cannot manage grant quotas or their dedicated limiter objects.
+## 2.42.5 Remove standalone user rate-limit presets
+
+- Removes the standalone administrator navigation entry and page for “用户限速预设”.
+- Keeps rate-limit configuration and authorization inside user management, so existing user entitlements and limits are unaffected.
+- Keeps `/limit` as a compatibility redirect to `/user` for old bookmarks.
+- Panel-only release. Agent and Connector remain `2.42.3`; existing nodes, tunnels, forwards, ports, DNS records, certificates, and proxy services are unchanged.

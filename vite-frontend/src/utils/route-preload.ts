@@ -8,7 +8,6 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/node': () => import('@/pages/node'),
   '/user': () => import('@/pages/user'),
   '/profile': () => import('@/pages/profile'),
-  '/limit': () => import('@/pages/limit'),
   '/config': () => import('@/pages/config'),
   '/update': () => import('@/pages/update'),
   '/monitoring': () => import('@/pages/monitoring'),

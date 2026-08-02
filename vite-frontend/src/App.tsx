@@ -1,4 +1,4 @@
-import { Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import IndexPage from "@/pages/index";
@@ -13,7 +13,6 @@ const NodePage = lazy(() => import("@/pages/node"));
 const NodeTerminalPage = lazy(() => import("@/pages/node-terminal"));
 const UserPage = lazy(() => import("@/pages/user"));
 const ProfilePage = lazy(() => import("@/pages/profile"));
-const LimitPage = lazy(() => import("@/pages/limit"));
 const ConfigPage = lazy(() => import("@/pages/config"));
 const UpdatePage = lazy(() => import("@/pages/update"));
 const MonitoringPage = lazy(() => import("@/pages/monitoring"));
@@ -260,14 +259,7 @@ function App() {
           </ProtectedRoute>
         } 
       />
-      <Route 
-        path="/limit" 
-        element={
-          <ProtectedRoute useSimpleLayout={true}>
-            <LimitPage />
-          </ProtectedRoute>
-        } 
-      />
+      <Route path="/limit" element={<ProtectedRoute useSimpleLayout={true}><Navigate to="/user" replace /></ProtectedRoute>} />
       <Route 
         path="/config" 
         element={
