@@ -29,8 +29,12 @@ var runtimeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,120}$`)
 var serverNamePattern = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 
 type realityRuntimeRequest struct {
-	Name       string `json:"name"`
-	ServerName string `json:"serverName"`
+	Name                  string `json:"name"`
+	ServerName            string `json:"serverName"`
+	OutboundProxyHost     string `json:"outboundProxyHost,omitempty"`
+	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
+	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
+	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
 }
 
 type realityClientRuntimeRequest struct {
@@ -53,17 +57,21 @@ type realityRuntimeResponse struct {
 }
 
 type realityRuntimeState struct {
-	Mode       string `json:"mode,omitempty"`
-	Name       string `json:"name"`
-	Port       int    `json:"port"`
-	ClientID   string `json:"clientId"`
-	PrivateKey string `json:"privateKey"`
-	PublicKey  string `json:"publicKey"`
-	ShortID    string `json:"shortId"`
-	ServerName string `json:"serverName"`
-	RemoteHost string `json:"remoteHost,omitempty"`
-	RemotePort int    `json:"remotePort,omitempty"`
-	Version    string `json:"version"`
+	Mode                  string `json:"mode,omitempty"`
+	Name                  string `json:"name"`
+	Port                  int    `json:"port"`
+	ClientID              string `json:"clientId"`
+	PrivateKey            string `json:"privateKey"`
+	PublicKey             string `json:"publicKey"`
+	ShortID               string `json:"shortId"`
+	ServerName            string `json:"serverName"`
+	RemoteHost            string `json:"remoteHost,omitempty"`
+	RemotePort            int    `json:"remotePort,omitempty"`
+	OutboundProxyHost     string `json:"outboundProxyHost,omitempty"`
+	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
+	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
+	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
+	Version               string `json:"version"`
 }
 
 type xrayConfig struct {
@@ -102,17 +110,34 @@ func newRealityRuntimeManager() *realityRuntimeManager {
 func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRuntimeResponse, error) {
 	request.Name = strings.TrimSpace(request.Name)
 	request.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(request.ServerName), "."))
+	request.OutboundProxyHost = strings.TrimSpace(strings.Trim(request.OutboundProxyHost, "[]"))
 	if !runtimeNamePattern.MatchString(request.Name) {
 		return realityRuntimeResponse{}, errors.New("invalid REALITY runtime name")
 	}
 	if !serverNamePattern.MatchString(request.ServerName) {
 		return realityRuntimeResponse{}, errors.New("invalid REALITY server name")
 	}
+	if request.OutboundProxyPort > 0 {
+		if request.OutboundProxyHost == "" {
+			request.OutboundProxyHost = "127.0.0.1"
+		}
+		proxyIP := net.ParseIP(request.OutboundProxyHost)
+		if proxyIP == nil || !proxyIP.IsLoopback() || request.OutboundProxyPort > 65535 ||
+			request.OutboundProxyUsername == "" || request.OutboundProxyPassword == "" {
+			return realityRuntimeResponse{}, errors.New("invalid REALITY outbound proxy")
+		}
+	} else {
+		request.OutboundProxyHost = ""
+		request.OutboundProxyUsername = ""
+		request.OutboundProxyPassword = ""
+	}
 	if err := os.MkdirAll(m.directory, 0700); err != nil {
 		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
 	}
 	if state, err := m.readState(request.Name); err == nil {
-		if state.Mode != "server" || state.ServerName != request.ServerName {
+		if state.Mode != "server" || state.ServerName != request.ServerName ||
+			state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
+			state.OutboundProxyUsername != request.OutboundProxyUsername || state.OutboundProxyPassword != request.OutboundProxyPassword {
 			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
 		}
 		if err := m.ensureRunning(state); err != nil {
@@ -377,7 +402,10 @@ func newRealityState(request realityRuntimeRequest) (realityRuntimeState, error)
 		Mode: "server", Name: request.Name, Port: port, ClientID: formatUUID(uuidBytes),
 		PrivateKey: base64.RawURLEncoding.EncodeToString(privateKey.Bytes()),
 		PublicKey:  base64.RawURLEncoding.EncodeToString(privateKey.PublicKey().Bytes()),
-		ShortID:    hex.EncodeToString(shortBytes), ServerName: request.ServerName, Version: xrayRuntimeVersion,
+		ShortID:    hex.EncodeToString(shortBytes), ServerName: request.ServerName,
+		OutboundProxyHost: request.OutboundProxyHost, OutboundProxyPort: request.OutboundProxyPort,
+		OutboundProxyUsername: request.OutboundProxyUsername, OutboundProxyPassword: request.OutboundProxyPassword,
+		Version: xrayRuntimeVersion,
 	}, nil
 }
 
@@ -426,6 +454,18 @@ func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayCon
 			}},
 		}
 	}
+	outbound := map[string]interface{}{"protocol": "freedom", "tag": "direct"}
+	if state.OutboundProxyPort > 0 {
+		outbound = map[string]interface{}{
+			"protocol": "socks", "tag": "routed",
+			"settings": map[string]interface{}{"servers": []interface{}{map[string]interface{}{
+				"address": state.OutboundProxyHost, "port": state.OutboundProxyPort,
+				"users": []interface{}{map[string]interface{}{
+					"user": state.OutboundProxyUsername, "pass": state.OutboundProxyPassword,
+				}},
+			}}},
+		}
+	}
 	return xrayConfig{
 		Log: map[string]interface{}{"loglevel": "warning"},
 		Inbounds: []interface{}{map[string]interface{}{
@@ -442,7 +482,7 @@ func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayCon
 				},
 			},
 		}},
-		Outbounds: []interface{}{map[string]interface{}{"protocol": "freedom", "tag": "direct"}},
+		Outbounds: []interface{}{outbound},
 	}
 }
 

@@ -57,6 +57,42 @@ func TestRealityRuntimeFilesArePrivate(t *testing.T) {
 	}
 }
 
+func TestRealityServerCanRouteThroughLocalAuthenticatedSocks(t *testing.T) {
+	directory := t.TempDir()
+	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	state, err := newRealityState(realityRuntimeRequest{
+		Name: "routed-reality", ServerName: "www.example.com",
+		OutboundProxyHost: "127.0.0.1", OutboundProxyPort: 21080,
+		OutboundProxyUsername: "route-user", OutboundProxyPassword: "route-password",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.writeStateAndConfig(state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(manager.configPath(state.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"protocol": "vless"`, `"protocol": "socks"`, `"address": "127.0.0.1"`, `"port": 21080`, `"user": "route-user"`, `"pass": "route-password"`} {
+		if !strings.Contains(string(data), expected) {
+			t.Fatalf("routed server config is missing %s: %s", expected, data)
+		}
+	}
+}
+
+func TestRealityServerRejectsNonLoopbackOutboundProxy(t *testing.T) {
+	manager := &realityRuntimeManager{directory: t.TempDir(), processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	_, err := manager.add(realityRuntimeRequest{
+		Name: "bad-route", ServerName: "www.example.com", OutboundProxyHost: "203.0.113.10",
+		OutboundProxyPort: 1080, OutboundProxyUsername: "user", OutboundProxyPassword: "password",
+	})
+	if err == nil || !strings.Contains(err.Error(), "outbound proxy") {
+		t.Fatalf("expected loopback validation error, got %v", err)
+	}
+}
+
 func TestRealityClientConfigUsesLocalSocksAndRealityOutbound(t *testing.T) {
 	directory := t.TempDir()
 	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}

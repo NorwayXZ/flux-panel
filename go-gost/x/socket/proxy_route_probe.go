@@ -87,31 +87,37 @@ func (w *WebSocketReporter) handleProxyRouteProbe(data interface{}) (proxyRouteP
 }
 
 func socks5Connect(connection net.Conn, request proxyRouteProbeRequest) error {
-	if _, err := connection.Write([]byte{5, 1, 2}); err != nil {
+	method := byte(2)
+	if request.Username == "" && request.Password == "" {
+		method = 0
+	}
+	if _, err := connection.Write([]byte{5, 1, method}); err != nil {
 		return err
 	}
 	response := make([]byte, 2)
 	if _, err := io.ReadFull(connection, response); err != nil {
 		return err
 	}
-	if response[0] != 5 || response[1] != 2 {
-		return errors.New("SOCKS5 proxy rejected username/password authentication")
+	if response[0] != 5 || response[1] != method {
+		return errors.New("SOCKS5 proxy rejected the requested authentication method")
 	}
-	if len(request.Username) > 255 || len(request.Password) > 255 {
-		return errors.New("SOCKS5 credentials are too long")
-	}
-	auth := []byte{1, byte(len(request.Username))}
-	auth = append(auth, []byte(request.Username)...)
-	auth = append(auth, byte(len(request.Password)))
-	auth = append(auth, []byte(request.Password)...)
-	if _, err := connection.Write(auth); err != nil {
-		return err
-	}
-	if _, err := io.ReadFull(connection, response); err != nil {
-		return err
-	}
-	if response[1] != 0 {
-		return errors.New("SOCKS5 authentication failed")
+	if method == 2 {
+		if len(request.Username) > 255 || len(request.Password) > 255 {
+			return errors.New("SOCKS5 credentials are too long")
+		}
+		auth := []byte{1, byte(len(request.Username))}
+		auth = append(auth, []byte(request.Username)...)
+		auth = append(auth, byte(len(request.Password)))
+		auth = append(auth, []byte(request.Password)...)
+		if _, err := connection.Write(auth); err != nil {
+			return err
+		}
+		if _, err := io.ReadFull(connection, response); err != nil {
+			return err
+		}
+		if response[1] != 0 {
+			return errors.New("SOCKS5 authentication failed")
+		}
 	}
 	host, portText, _ := net.SplitHostPort(request.Target)
 	port, _ := strconv.Atoi(portText)

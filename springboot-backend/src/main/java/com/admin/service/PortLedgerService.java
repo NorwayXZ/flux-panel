@@ -329,7 +329,8 @@ public class PortLedgerService {
         List<Map<String, Object>> applications;
         try {
             applications = jdbcTemplate.queryForList("SELECT id,name,tunnel_id AS tunnelId,entry_node_id AS entryNodeId,listen_port AS listenPort,"
-                    + "proxy_type AS proxyType,hop_ports AS hopPorts,state,created_time AS createdTime FROM network_route_application WHERE state<>'deleted'");
+                    + "runtime_port AS runtimePort,proxy_type AS proxyType,hop_ports AS hopPorts,state,created_time AS createdTime "
+                    + "FROM network_route_application WHERE state<>'deleted'");
         } catch (DataAccessException ignored) {
             return;
         }
@@ -341,6 +342,12 @@ public class PortLedgerService {
             add(entries, nodeEntry("network_route_application", status, nodes.get(entryId), listenPort, listenPort,
                     "tcp", 1, "admin", resourceId, Objects.toString(app.get("name")),
                     String.valueOf(app.get("proxyType")).toUpperCase(Locale.ROOT) + " 多跳出口入口", ((Number) app.get("createdTime")).longValue(), null));
+            if (app.get("runtimePort") instanceof Number) {
+                Integer runtimePort = ((Number) app.get("runtimePort")).intValue();
+                add(entries, nodeEntry("network_route_runtime", status, nodes.get(entryId), runtimePort, runtimePort,
+                        "tcp", 1, "admin", resourceId, Objects.toString(app.get("name")),
+                        "VLESS + REALITY 本机路由端口", ((Number) app.get("createdTime")).longValue(), null));
+            }
             Tunnel tunnel = tunnels.get(((Number) app.get("tunnelId")).longValue());
             if (tunnel == null) continue;
             List<Long> path = TunnelRouteUtil.parseNodePath(tunnel);

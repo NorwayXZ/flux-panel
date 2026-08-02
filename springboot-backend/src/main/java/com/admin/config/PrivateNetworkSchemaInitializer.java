@@ -42,12 +42,16 @@ public class PrivateNetworkSchemaInitializer {
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,name varchar(100) NOT NULL,tunnel_id bigint NOT NULL,entry_node_id bigint NOT NULL,"
                     + "exit_node_id bigint NOT NULL,proxy_type varchar(16) NOT NULL,bind_ip varchar(45) NOT NULL DEFAULT '',listen_port int NOT NULL,"
                     + "auth_username varchar(64) NOT NULL,auth_password text NOT NULL,service_name varchar(120) NOT NULL,chain_name varchar(120) NOT NULL,"
-                    + "hop_ports varchar(500) NOT NULL,managed_tunnel tinyint NOT NULL DEFAULT 0,state varchar(24) NOT NULL DEFAULT 'provisioning',last_error varchar(500) DEFAULT NULL,"
+                    + "hop_ports varchar(500) NOT NULL,runtime_port int DEFAULT NULL,reality_server_name varchar(253) DEFAULT NULL,client_config text DEFAULT NULL,"
+                    + "managed_tunnel tinyint NOT NULL DEFAULT 0,state varchar(24) NOT NULL DEFAULT 'provisioning',last_error varchar(500) DEFAULT NULL,"
                     + "last_test_at bigint DEFAULT NULL,last_test_latency_ms decimal(12,3) DEFAULT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"
                     + "PRIMARY KEY(id),KEY idx_route_app_tunnel(tunnel_id,state),KEY idx_route_app_entry(entry_node_id,listen_port,state)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("tunnel", "hop_config", "longtext DEFAULT NULL AFTER node_path");
             ensureColumn("network_route_application", "managed_tunnel", "tinyint NOT NULL DEFAULT 0 AFTER hop_ports");
+            ensureColumn("network_route_application", "runtime_port", "int DEFAULT NULL AFTER hop_ports");
+            ensureColumn("network_route_application", "reality_server_name", "varchar(253) DEFAULT NULL AFTER runtime_port");
+            ensureColumn("network_route_application", "client_config", "text DEFAULT NULL AFTER reality_server_name");
         } catch (DataAccessException e) {
             log.error("Private network storage initialization failed", e);
         }

@@ -137,10 +137,30 @@ public class GostUtil {
     }
 
     public static GostDto AddRealityRuntime(Long nodeId, String runtimeName, String serverName) {
+        return AddRealityRuntime(nodeId, runtimeName, serverName, null, null, null, null);
+    }
+
+    public static GostDto AddRealityRuntime(Long nodeId, String runtimeName, String serverName,
+                                            String outboundProxyHost, Integer outboundProxyPort,
+                                            String outboundProxyUsername, String outboundProxyPassword) {
+        JSONObject data = createRealityRuntimeData(runtimeName, serverName, outboundProxyHost,
+                outboundProxyPort, outboundProxyUsername, outboundProxyPassword);
+        return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
+    }
+
+    static JSONObject createRealityRuntimeData(String runtimeName, String serverName,
+                                               String outboundProxyHost, Integer outboundProxyPort,
+                                               String outboundProxyUsername, String outboundProxyPassword) {
         JSONObject data = new JSONObject();
         data.put("name", runtimeName);
         data.put("serverName", serverName);
-        return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
+        if (outboundProxyPort != null) {
+            data.put("outboundProxyHost", StringUtils.defaultIfBlank(outboundProxyHost, "127.0.0.1"));
+            data.put("outboundProxyPort", outboundProxyPort);
+            data.put("outboundProxyUsername", outboundProxyUsername);
+            data.put("outboundProxyPassword", outboundProxyPassword);
+        }
+        return data;
     }
 
     public static GostDto AddRealityClientRuntime(Long connectorId, String runtimeName, String remoteHost,
@@ -155,6 +175,20 @@ public class GostUtil {
         data.put("shortId", shortId);
         data.put("serverName", serverName);
         return WebSocketServer.sendConnectorMsg(connectorId, data, "AddRealityClientRuntime", 120);
+    }
+
+    public static GostDto AddNodeRealityClientRuntime(Long nodeId, String runtimeName, String remoteHost,
+                                                       Integer remotePort, String clientId, String publicKey,
+                                                       String shortId, String serverName) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        data.put("remoteHost", remoteHost);
+        data.put("remotePort", remotePort);
+        data.put("clientId", clientId);
+        data.put("publicKey", publicKey);
+        data.put("shortId", shortId);
+        data.put("serverName", serverName);
+        return WebSocketServer.send_msg(nodeId, data, "AddRealityClientRuntime", 120);
     }
 
     public static GostDto DeleteConnectorRealityRuntime(Long connectorId, String runtimeName) {

@@ -22,7 +22,7 @@ public class NetworkRouteApplicationCreateDto {
 
     private String tunnelProtocol;
 
-    @NotBlank @Pattern(regexp = "socks5|http", message = "入口协议只允许 SOCKS5 或 HTTP")
+    @NotBlank @Pattern(regexp = "socks5|http|vless_reality", message = "入口协议只允许 SOCKS5、HTTP 或 VLESS+REALITY")
     private String proxyType;
 
     private String bindIp;
@@ -30,9 +30,12 @@ public class NetworkRouteApplicationCreateDto {
     @NotNull @Min(1) @Max(65535)
     private Integer listenPort;
 
-    @NotBlank @Size(min = 3, max = 64)
+    @Size(max = 64)
     private String username;
 
-    @NotBlank @Size(min = 8, max = 128)
+    @Size(max = 128)
     private String password;
+
+    @Size(max = 253)
+    private String realityServerName;
 }

@@ -32,11 +32,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class NetworkRouteApplicationService {
     private static final String MIN_AGENT_VERSION = "2.45.0";
+    private static final String MIN_REALITY_AGENT_VERSION = "2.45.3";
 
     private final JdbcTemplate jdbcTemplate;
     private final TunnelMapper tunnelMapper;
@@ -62,7 +64,8 @@ public class NetworkRouteApplicationService {
         List<Map<String, Object>> applications = jdbcTemplate.queryForList(
                 "SELECT a.id,a.name,a.tunnel_id AS tunnelId,t.name AS tunnelName,a.entry_node_id AS entryNodeId,en.name AS entryNodeName,"
                         + "a.exit_node_id AS exitNodeId,xn.name AS exitNodeName,a.proxy_type AS proxyType,a.bind_ip AS bindIp,a.listen_port AS listenPort,"
-                        + "a.auth_username AS username,a.auth_password AS encryptedPassword,a.hop_ports AS hopPorts,a.managed_tunnel AS managedTunnel,a.state,a.last_error AS lastError,"
+                        + "a.auth_username AS username,a.auth_password AS encryptedPassword,a.hop_ports AS hopPorts,a.runtime_port AS runtimePort,"
+                        + "a.reality_server_name AS realityServerName,a.client_config AS encryptedClientConfig,a.managed_tunnel AS managedTunnel,a.state,a.last_error AS lastError,"
                         + "a.last_test_at AS lastTestAt,a.last_test_latency_ms AS lastTestLatencyMs,a.created_time AS createdTime,a.updated_time AS updatedTime,"
                         + "COALESCE(en.server_ip,en.ip) AS entryHost FROM network_route_application a LEFT JOIN tunnel t ON t.id=a.tunnel_id "
                         + "LEFT JOIN node en ON en.id=a.entry_node_id LEFT JOIN node xn ON xn.id=a.exit_node_id WHERE a.state<>'deleted' ORDER BY a.id DESC");
@@ -74,16 +77,25 @@ public class NetworkRouteApplicationService {
         Map<Long, Node> nodesById = nodeIds.isEmpty() ? Collections.emptyMap() : nodeMapper.selectBatchIds(nodeIds).stream()
                 .collect(Collectors.toMap(Node::getId, node -> node));
         for (Map<String, Object> item : applications) {
-            String password = decrypt(String.valueOf(item.remove("encryptedPassword")));
-            item.put("password", password);
-            item.put("clientUri", clientUri(item, password));
+            String encryptedPassword = String.valueOf(item.remove("encryptedPassword"));
+            Object encryptedClientConfig = item.remove("encryptedClientConfig");
+            if (isReality(String.valueOf(item.get("proxyType")))) {
+                item.put("username", "");
+                item.put("password", "");
+                item.put("clientUri", realityClientUri(item, decryptConfig(encryptedClientConfig)));
+            } else {
+                String password = decrypt(encryptedPassword);
+                item.put("password", password);
+                item.put("clientUri", clientUri(item, password));
+            }
             Tunnel tunnel = tunnelsById.get(number(item.get("tunnelId")));
             List<Node> path = tunnel == null ? Collections.emptyList() : TunnelRouteUtil.parseNodePath(tunnel).stream()
                     .map(nodesById::get).filter(Objects::nonNull).collect(Collectors.toList());
             item.put("nodePath", path.stream().map(node -> Map.of("nodeId", node.getId(), "nodeName", node.getName())).toList());
             item.put("hopDetails", tunnel == null ? Collections.emptyList() : transportService.details(tunnel, path));
         }
-        return R.ok(Map.of("minimumAgentVersion", MIN_AGENT_VERSION, "applications", applications));
+        return R.ok(Map.of("minimumAgentVersion", MIN_AGENT_VERSION,
+                "minimumRealityAgentVersion", MIN_REALITY_AGENT_VERSION, "applications", applications));
     }
 
     @Transactional
@@ -93,12 +105,17 @@ public class NetworkRouteApplicationService {
             List<Node> path = requirePath(tunnel);
             validateEntry(dto, path.get(0));
             List<Integer> hopPorts = allocateHopPorts(path, tunnel.getProtocol());
+            boolean reality = isReality(dto.getProxyType());
+            Integer runtimePort = reality ? allocateRuntimePort(path.get(0), dto.getListenPort()) : null;
+            String username = reality ? "route-" + randomToken() : dto.getUsername().trim();
+            String password = reality ? randomToken() + randomToken() : dto.getPassword();
+            String realityServerName = reality ? normalizeServerName(dto.getRealityServerName()) : null;
             long now = System.currentTimeMillis();
-            jdbcTemplate.update("INSERT INTO network_route_application(name,tunnel_id,entry_node_id,exit_node_id,proxy_type,bind_ip,listen_port,auth_username,auth_password,service_name,chain_name,hop_ports,managed_tunnel,state,created_time,updated_time) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,'pending','pending',?,?,'provisioning',?,?)",
+            jdbcTemplate.update("INSERT INTO network_route_application(name,tunnel_id,entry_node_id,exit_node_id,proxy_type,bind_ip,listen_port,auth_username,auth_password,service_name,chain_name,hop_ports,runtime_port,reality_server_name,managed_tunnel,state,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,'pending','pending',?,?,?,?,'provisioning',?,?)",
                     dto.getName().trim(), tunnel.getId(), path.get(0).getId(), path.get(path.size() - 1).getId(),
                     dto.getProxyType().toLowerCase(Locale.ROOT), StringUtils.trimToEmpty(dto.getBindIp()), dto.getListenPort(),
-                    dto.getUsername().trim(), crypto.encrypt(dto.getPassword()), TunnelRouteUtil.joinHopPorts(hopPorts),
+                    username, crypto.encrypt(password), TunnelRouteUtil.joinHopPorts(hopPorts), runtimePort, realityServerName,
                     dto.getTunnelId() == null ? 1 : 0, now, now);
             Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             String base = "network-route-app-" + id;
@@ -146,7 +163,7 @@ public class NetworkRouteApplicationService {
             path = requirePath(tunnel);
             hopPorts = TunnelRouteUtil.parseHopPorts(String.valueOf(application.get("hop_ports")));
             if (hopPorts.size() != path.size() - 1) throw new IllegalStateException("出口应用的跳点端口数据不完整，请删除后重新创建");
-            cleanup(application, tunnel, path, false);
+            cleanup(application, tunnel, path, false, false);
             List<TunnelTransportService.ResolvedHop> hops = transportService.resolve(tunnel, path);
             String chainName = String.valueOf(application.get("chain_name"));
             String protocol = StringUtils.defaultIfBlank(tunnel.getProtocol(), "tls");
@@ -163,10 +180,14 @@ public class NetworkRouteApplicationService {
             }
             requireOK(GostUtil.AddRoutedChains(path.get(0).getId(), chainName, candidates, protocol, null), "创建多跳出口链失败");
             String password = decrypt(String.valueOf(application.get("auth_password")));
-            requireOK(GostUtil.AddPrivateProxyWithChain(path.get(0).getId(), String.valueOf(application.get("service_name")),
-                    String.valueOf(application.get("proxy_type")), String.valueOf(application.get("bind_ip")),
-                    intNumber(application.get("listen_port")), String.valueOf(application.get("auth_username")), password, chainName),
-                    "创建 B 服务器代理入口失败");
+            if (isReality(String.valueOf(application.get("proxy_type")))) {
+                deployReality(application, path.get(0), chainName, password);
+            } else {
+                requireOK(GostUtil.AddPrivateProxyWithChain(path.get(0).getId(), String.valueOf(application.get("service_name")),
+                        String.valueOf(application.get("proxy_type")), String.valueOf(application.get("bind_ip")),
+                        intNumber(application.get("listen_port")), String.valueOf(application.get("auth_username")), password, chainName),
+                        "创建 B 服务器代理入口失败");
+            }
             jdbcTemplate.update("UPDATE network_route_application SET state='active',last_error=NULL,updated_time=? WHERE id=?", System.currentTimeMillis(), id);
             R test = test(id);
             if (test.getCode() != 0) {
@@ -180,19 +201,20 @@ public class NetworkRouteApplicationService {
             try {
                 tunnel = tunnelMapper.selectById(number(application.get("tunnel_id")));
                 path = tunnel == null ? Collections.emptyList() : nodes(tunnel);
-                cleanup(application, tunnel, path, true);
+                cleanup(application, tunnel, path, true, true);
             } catch (Exception ignored) { }
             jdbcTemplate.update("UPDATE network_route_application SET state='error',last_error=?,updated_time=? WHERE id=?", error, System.currentTimeMillis(), id);
             return R.err("出口应用部署失败：" + error + "。已回退本次创建的运行时");
         }
     }
 
-    public R test(Long id) {
+    public synchronized R test(Long id) {
         Map<String, Object> app = one("SELECT * FROM network_route_application WHERE id=? AND state<>'deleted'", id);
         if (app == null) return R.err("出口应用不存在");
         try {
             Long entryId = number(app.get("entry_node_id"));
             requireOnline(nodeMapper.selectById(entryId));
+            if (isReality(String.valueOf(app.get("proxy_type")))) return testReality(app, entryId);
             String bindIp = String.valueOf(app.get("bind_ip"));
             String proxyHost = bindIp == null || bindIp.isBlank() || "0.0.0.0".equals(bindIp) || "::".equals(bindIp) ? "127.0.0.1" : bindIp;
             GostDto result = WebSocketServer.send_msg(entryId, Map.of(
@@ -209,6 +231,81 @@ public class NetworkRouteApplicationService {
             String error = concise(e.getMessage());
             jdbcTemplate.update("UPDATE network_route_application SET last_error=?,last_test_at=?,updated_time=? WHERE id=?", error, System.currentTimeMillis(), System.currentTimeMillis(), id);
             return R.err(error);
+        }
+    }
+
+    private void deployReality(Map<String, Object> application, Node entry, String chainName, String password) {
+        Integer routePort = nullableInt(application.get("runtime_port"));
+        if (routePort == null) throw new IllegalStateException("REALITY 内部路由端口缺失，请删除后重新创建");
+        String username = String.valueOf(application.get("auth_username"));
+        requireOK(GostUtil.AddPrivateProxyWithChain(entry.getId(), routeServiceName(application), "socks5",
+                "127.0.0.1", routePort, username, password, chainName), "创建 REALITY 内部路由失败");
+
+        GostDto runtime = GostUtil.AddRealityRuntime(entry.getId(), realityRuntimeName(application),
+                String.valueOf(application.get("reality_server_name")), "127.0.0.1", routePort, username, password);
+        requireOK(runtime, "准备 REALITY 运行时失败");
+        JSONObject runtimeData = runtime.getData() == null ? null : json(runtime.getData());
+        Integer xrayPort = runtimeData == null ? null : runtimeData.getInteger("port");
+        String clientId = runtimeData == null ? null : runtimeData.getString("clientId");
+        String publicKey = runtimeData == null ? null : runtimeData.getString("publicKey");
+        String shortId = runtimeData == null ? null : runtimeData.getString("shortId");
+        if (xrayPort == null || StringUtils.isAnyBlank(clientId, publicKey, shortId)) {
+            throw new IllegalStateException("Agent 返回的 REALITY 配置不完整");
+        }
+
+        requireOK(GostUtil.AddRealityFrontend(entry.getId(), String.valueOf(application.get("service_name")),
+                String.valueOf(application.get("bind_ip")), intNumber(application.get("listen_port")), xrayPort, null),
+                "创建 B 服务器 REALITY 入口失败");
+        JSONObject clientConfig = new JSONObject(true);
+        clientConfig.put("clientId", clientId);
+        clientConfig.put("publicKey", publicKey);
+        clientConfig.put("shortId", shortId);
+        clientConfig.put("serverName", application.get("reality_server_name"));
+        clientConfig.put("fingerprint", "chrome");
+        clientConfig.put("flow", "xtls-rprx-vision");
+        clientConfig.put("runtimeVersion", runtimeData.getString("version"));
+        jdbcTemplate.update("UPDATE network_route_application SET client_config=?,updated_time=? WHERE id=?",
+                crypto.encrypt(clientConfig.toJSONString()), System.currentTimeMillis(), application.get("id"));
+    }
+
+    private R testReality(Map<String, Object> app, Long entryId) {
+        String probeName = probeRuntimeName(app);
+        try {
+            JSONObject config = decryptConfig(app.get("client_config"));
+            if (config == null || StringUtils.isAnyBlank(config.getString("clientId"), config.getString("publicKey"),
+                    config.getString("shortId"), config.getString("serverName"))) {
+                throw new IllegalStateException("REALITY 客户端配置不完整，请重新部署");
+            }
+            GostUtil.DeleteRealityRuntime(entryId, probeName);
+            String bindIp = StringUtils.trimToEmpty(String.valueOf(app.get("bind_ip")));
+            String remoteHost = bindIp.isEmpty() || "0.0.0.0".equals(bindIp) || "::".equals(bindIp)
+                    || "null".equals(bindIp) ? "127.0.0.1" : bindIp;
+            GostDto runtime = GostUtil.AddNodeRealityClientRuntime(entryId, probeName, remoteHost,
+                    intNumber(app.get("listen_port")), config.getString("clientId"), config.getString("publicKey"),
+                    config.getString("shortId"), config.getString("serverName"));
+            requireOK(runtime, "创建 REALITY 测试客户端失败");
+            JSONObject runtimeData = runtime.getData() == null ? null : json(runtime.getData());
+            Integer proxyPort = runtimeData == null ? null : runtimeData.getInteger("port");
+            if (proxyPort == null) throw new IllegalStateException("Agent 返回的 REALITY 测试端口不完整");
+            GostDto result = WebSocketServer.send_msg(entryId, Map.of(
+                    "proxyType", "socks5", "proxyHost", "127.0.0.1", "proxyPort", proxyPort,
+                    "username", "", "password", "", "target", "www.cloudflare.com:443", "timeoutMs", 8000),
+                    "ProxyRouteProbe", 15);
+            if (result == null || !"OK".equals(result.getMsg()) || result.getData() == null) {
+                throw new IllegalStateException(result == null ? "入口 Agent 无响应" : result.getMsg());
+            }
+            JSONObject data = json(result.getData());
+            if (!data.getBooleanValue("success")) throw new IllegalStateException(data.getString("error"));
+            jdbcTemplate.update("UPDATE network_route_application SET state='active',last_error=NULL,last_test_at=?,last_test_latency_ms=?,updated_time=? WHERE id=?",
+                    System.currentTimeMillis(), data.getDouble("latencyMs"), System.currentTimeMillis(), app.get("id"));
+            return R.ok(data);
+        } catch (Exception e) {
+            String error = concise(e.getMessage());
+            jdbcTemplate.update("UPDATE network_route_application SET last_error=?,last_test_at=?,updated_time=? WHERE id=?",
+                    error, System.currentTimeMillis(), System.currentTimeMillis(), app.get("id"));
+            return R.err(error);
+        } finally {
+            GostUtil.DeleteRealityRuntime(entryId, probeName);
         }
     }
 
@@ -236,7 +333,7 @@ public class NetworkRouteApplicationService {
         if (app == null) return R.err("出口应用不存在");
         Tunnel tunnel = tunnelMapper.selectById(number(app.get("tunnel_id")));
         List<Node> path = tunnel == null ? Collections.emptyList() : nodes(tunnel);
-        List<String> failures = cleanup(app, tunnel, path, true);
+        List<String> failures = cleanup(app, tunnel, path, true, true);
         if (!failures.isEmpty()) {
             String error = "清理失败：" + String.join("、", failures);
             jdbcTemplate.update("UPDATE network_route_application SET state='delete_pending',last_error=?,updated_time=? WHERE id=?", error, System.currentTimeMillis(), id);
@@ -255,10 +352,18 @@ public class NetworkRouteApplicationService {
         return overview();
     }
 
-    private List<String> cleanup(Map<String, Object> app, Tunnel tunnel, List<Node> path, boolean collectFailures) {
+    private List<String> cleanup(Map<String, Object> app, Tunnel tunnel, List<Node> path,
+                                 boolean collectFailures, boolean deleteRealityRuntime) {
         List<String> failures = new ArrayList<>();
         if (!path.isEmpty()) {
             recordFailure(failures, "入口服务", GostUtil.DeleteNamedService(path.get(0).getId(), String.valueOf(app.get("service_name"))), collectFailures);
+            if (isReality(String.valueOf(app.get("proxy_type")))) {
+                recordFailure(failures, "REALITY 内部路由", GostUtil.DeleteNamedService(path.get(0).getId(), routeServiceName(app)), collectFailures);
+                recordFailure(failures, "REALITY 测试运行时", GostUtil.DeleteRealityRuntime(path.get(0).getId(), probeRuntimeName(app)), false);
+                if (deleteRealityRuntime) {
+                    recordFailure(failures, "REALITY 运行时", GostUtil.DeleteRealityRuntime(path.get(0).getId(), realityRuntimeName(app)), collectFailures);
+                }
+            }
             recordFailure(failures, "入口链", GostUtil.DeleteChains(path.get(0).getId(), String.valueOf(app.get("chain_name"))), collectFailures);
             Long id = number(app.get("id"));
             for (int index = 1; index < path.size(); index++) {
@@ -271,6 +376,15 @@ public class NetworkRouteApplicationService {
     private void validateEntry(NetworkRouteApplicationCreateDto dto, Node entry) {
         requireOnline(entry);
         if (!AgentVersionUtil.isAtLeast(entry.getVersion(), MIN_AGENT_VERSION)) throw new IllegalArgumentException(entry.getName() + " Agent 需要升级到 " + MIN_AGENT_VERSION);
+        if (isReality(dto.getProxyType())) {
+            if (!AgentVersionUtil.isAtLeast(entry.getVersion(), MIN_REALITY_AGENT_VERSION)) {
+                throw new IllegalArgumentException(entry.getName() + " Agent 需要升级到 " + MIN_REALITY_AGENT_VERSION + " 才能使用 VLESS + REALITY 入口");
+            }
+            if (normalizeServerName(dto.getRealityServerName()) == null) throw new IllegalArgumentException("REALITY 伪装域名格式不正确");
+        } else if (StringUtils.length(StringUtils.trimToEmpty(dto.getUsername())) < 3
+                || StringUtils.length(StringUtils.defaultString(dto.getPassword())) < 8) {
+            throw new IllegalArgumentException("代理用户名至少 3 位，密码至少 8 位");
+        }
         String bindIp = StringUtils.trimToEmpty(dto.getBindIp());
         if (!bindIp.isEmpty() && !validIp(bindIp)) throw new IllegalArgumentException("入口监听 IP 格式不正确");
         if (Boolean.TRUE.equals(portLedgerService.diagnose(entry.getId(), dto.getListenPort()).get("occupied"))) throw new IllegalArgumentException("B 服务器入口端口已被占用");
@@ -302,6 +416,19 @@ public class NetworkRouteApplicationService {
         return result;
     }
 
+    private Integer allocateRuntimePort(Node entry, Integer publicPort) {
+        int start = entry.getPortSta() == null ? 20000 : entry.getPortSta();
+        int end = entry.getPortEnd() == null ? 60000 : entry.getPortEnd();
+        for (int port = start, attempts = 0; port <= end && attempts < 10000; port++, attempts++) {
+            if (Objects.equals(port, publicPort)) continue;
+            if (Boolean.TRUE.equals(portLedgerService.diagnose(entry.getId(), port).get("occupied"))) continue;
+            AgentPortCheckUtil.Result check = AgentPortCheckUtil.check(entry,
+                    List.of(new AgentPortCheckUtil.Check("tcp", "127.0.0.1", port)));
+            if (check.isAvailable()) return port;
+        }
+        throw new IllegalStateException(entry.getName() + " 没有可用的 REALITY 内部路由端口");
+    }
+
     private Tunnel requireTunnel(Long id) {
         Tunnel tunnel = tunnelMapper.selectById(id);
         if (tunnel == null || !Objects.equals(tunnel.getType(), 2) || !Objects.equals(tunnel.getStatus(), 1)) throw new IllegalArgumentException("请选择启用的多跳隧道");
@@ -326,18 +453,46 @@ public class NetworkRouteApplicationService {
     private static void requireOK(GostDto result, String prefix) { if (!ok(result)) throw new IllegalStateException(prefix + "：" + (result == null ? "Agent 无响应" : result.getMsg())); }
     private static boolean ok(GostDto result) { return result != null && "OK".equals(result.getMsg()); }
     private static String relayName(Long id, int index) { return "network-route-app-" + id + "-hop-" + index; }
+    private static String routeServiceName(Map<String, Object> app) { return String.valueOf(app.get("service_name")) + "-route"; }
+    private static String realityRuntimeName(Map<String, Object> app) { return String.valueOf(app.get("service_name")) + "-xray"; }
+    private static String probeRuntimeName(Map<String, Object> app) { return String.valueOf(app.get("service_name")) + "-probe"; }
     private static void recordFailure(List<String> failures, String label, GostDto result, boolean collect) {
         if (!collect || ok(result)) return;
         if (result == null || !String.valueOf(result.getMsg()).contains("not found")) failures.add(label);
     }
     private static boolean validIp(String value) { return IpLiteralUtil.isLiteral(value); }
+    private static boolean isReality(String value) { return "vless_reality".equalsIgnoreCase(StringUtils.trimToEmpty(value)); }
+    private static String randomToken() { return UUID.randomUUID().toString().replace("-", ""); }
+    private static String normalizeServerName(String value) {
+        String result = StringUtils.trimToEmpty(value).toLowerCase(Locale.ROOT);
+        if (result.endsWith(".")) result = result.substring(0, result.length() - 1);
+        if (result.isEmpty() || result.length() > 253 || result.contains(":") || result.contains("/")
+                || !result.matches("(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}")) return null;
+        return result;
+    }
     private static JSONObject json(Object value) { return value instanceof JSONObject ? (JSONObject)value : JSONObject.parseObject(JSONObject.toJSONString(value)); }
     private Map<String,Object> one(String sql,Object...args){List<Map<String,Object>> rows=jdbcTemplate.queryForList(sql,args);return rows.isEmpty()?null:rows.get(0);}
     private String decrypt(String value) { try { return crypto.decryptString(value); } catch (Exception e) { return ""; } }
+    private JSONObject decryptConfig(Object value) {
+        try {
+            String encrypted = value == null ? "" : String.valueOf(value);
+            String plain = crypto.decryptString(encrypted);
+            return StringUtils.isBlank(plain) ? null : JSONObject.parseObject(plain);
+        } catch (Exception e) {
+            return null;
+        }
+    }
     private static Long number(Object value){return value instanceof Number?((Number)value).longValue():Long.valueOf(String.valueOf(value));}
     private static int intNumber(Object value){return value instanceof Number?((Number)value).intValue():Integer.parseInt(String.valueOf(value));}
+    private static Integer nullableInt(Object value){return value==null?null:intNumber(value);}
     private static String concise(String value){if(value==null||value.isBlank())return "未知错误";String v=value.replace('\r',' ').replace('\n',' ').trim();return v.length()>500?v.substring(0,500):v;}
     private static String clientUri(Map<String,Object> item,String password){String scheme="http".equals(item.get("proxyType"))?"http":"socks5";return scheme+"://"+url(String.valueOf(item.get("username")))+":"+url(password)+"@"+hostPort(String.valueOf(item.get("entryHost")),intNumber(item.get("listenPort")));}
-    private static String url(String value){return URLEncoder.encode(value, StandardCharsets.UTF_8);}
+    static String realityClientUri(Map<String,Object> item,JSONObject config){
+        if(config==null||StringUtils.isAnyBlank(config.getString("clientId"),config.getString("serverName"),config.getString("publicKey"),config.getString("shortId")))return "";
+        return "vless://"+config.getString("clientId")+"@"+hostPort(String.valueOf(item.get("entryHost")),intNumber(item.get("listenPort")))
+                +"?encryption=none&flow=xtls-rprx-vision&security=reality&type=tcp&headerType=none&sni="+url(config.getString("serverName"))
+                +"&fp=chrome&pbk="+url(config.getString("publicKey"))+"&sid="+url(config.getString("shortId"))+"#"+url(String.valueOf(item.get("name")));
+    }
+    private static String url(String value){return URLEncoder.encode(StringUtils.defaultString(value), StandardCharsets.UTF_8).replace("+","%20");}
     private static String hostPort(String host,int port){return host!=null&&host.contains(":")?"["+host.replace("[","").replace("]","")+"]:"+port:host+":"+port;}
 }

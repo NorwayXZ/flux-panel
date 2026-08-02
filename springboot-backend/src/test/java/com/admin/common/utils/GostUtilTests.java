@@ -80,4 +80,17 @@ class GostUtilTests {
         assertEquals("relay", firstHop.getJSONArray("nodes").getJSONObject(0).getJSONObject("connector").getString("type"));
         assertEquals("10.20.0.4:22002", hops.getJSONObject(1).getJSONArray("nodes").getJSONObject(0).getString("addr"));
     }
+
+    @Test
+    void buildsRoutedRealityRuntimeUsingOnlyLoopbackProxy() {
+        JSONObject runtime = GostUtil.createRealityRuntimeData("route-app-9-xray", "www.example.com",
+                "127.0.0.1", 21080, "route-user", "route-password");
+
+        assertEquals("route-app-9-xray", runtime.getString("name"));
+        assertEquals("www.example.com", runtime.getString("serverName"));
+        assertEquals("127.0.0.1", runtime.getString("outboundProxyHost"));
+        assertEquals(21080, runtime.getIntValue("outboundProxyPort"));
+        assertEquals("route-user", runtime.getString("outboundProxyUsername"));
+        assertEquals("route-password", runtime.getString("outboundProxyPassword"));
+    }
 }

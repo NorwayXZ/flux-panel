@@ -444,7 +444,7 @@ export const deletePrivateNetwork = (id: number) => Network.post<PrivateNetworkO
 
 export interface NetworkRouteApplication {
   id: number; name: string; tunnelId: number; tunnelName: string; entryNodeId: number; entryNodeName: string;
-  exitNodeId: number; exitNodeName: string; proxyType: 'socks5' | 'http'; bindIp?: string; listenPort: number;
+  exitNodeId: number; exitNodeName: string; proxyType: 'socks5' | 'http' | 'vless_reality'; bindIp?: string; listenPort: number;
   username: string; password: string; hopPorts: string; state: string; lastError?: string; lastTestAt?: number;
   managedTunnel: number; lastTestLatencyMs?: number; createdTime: number; updatedTime: number; entryHost: string; clientUri: string;
   nodePath: Array<{ nodeId: number; nodeName: string }>;
@@ -456,10 +456,10 @@ export interface NetworkRouteApplication {
     verificationState: string; verifiedAt?: number; candidates: string[];
   }>;
 }
-export interface NetworkRouteApplicationOverview { minimumAgentVersion: string; applications: NetworkRouteApplication[] }
+export interface NetworkRouteApplicationOverview { minimumAgentVersion: string; minimumRealityAgentVersion: string; applications: NetworkRouteApplication[] }
 export interface NetworkRouteApplicationCreateInput {
   name: string; tunnelId?: number; nodePath?: number[]; hopConfigs?: Array<{ fromNodeId: number; toNodeId: number; addressMode: string; resourceGroupId?: number; customAddress?: string; fallbackMode: string }>;
-  tunnelProtocol?: 'tls' | 'quic'; proxyType: 'socks5' | 'http'; bindIp?: string; listenPort: number; username: string; password: string;
+  tunnelProtocol?: 'tls' | 'quic'; proxyType: 'socks5' | 'http' | 'vless_reality'; bindIp?: string; listenPort: number; username?: string; password?: string; realityServerName?: string;
 }
 export const getNetworkRouteApplications = () => Network.post<NetworkRouteApplicationOverview>('/network-route-application/overview');
 export const createNetworkRouteApplication = (data: NetworkRouteApplicationCreateInput) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/create', data);
