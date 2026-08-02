@@ -863,10 +863,12 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 			SessionID string `json:"sessionId"`
 		}
 		err = decodeCommandData(cmd.Data, &request)
+		var result bandwidthStopResponse
 		if err == nil && w.bandwidthManager != nil {
-			w.bandwidthManager.stop(request.SessionID)
+			result = w.bandwidthManager.stop(request.SessionID)
 		}
 		response.Type = "BandwidthStopResponse"
+		response.Data = result
 
 	case "VirtualLanPrepareKey":
 		var request struct {

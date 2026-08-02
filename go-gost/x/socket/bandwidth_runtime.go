@@ -27,6 +27,7 @@ const (
 
 type bandwidthPrepareRequest struct {
 	SessionID      string `json:"sessionId"`
+	Protocol       string `json:"protocol"`
 	ListenPort     int    `json:"listenPort"`
 	TTLSeconds     int    `json:"ttlSeconds"`
 	MaximumBytes   int64  `json:"maximumBytes"`
@@ -35,6 +36,7 @@ type bandwidthPrepareRequest struct {
 
 type bandwidthPrepareResponse struct {
 	SessionID string `json:"sessionId"`
+	Protocol  string `json:"protocol"`
 	Port      int    `json:"port"`
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expiresAt"`
@@ -42,6 +44,7 @@ type bandwidthPrepareResponse struct {
 
 type bandwidthRunRequest struct {
 	TargetHost      string `json:"targetHost"`
+	Protocol        string `json:"protocol"`
 	Port            int    `json:"port"`
 	Token           string `json:"token"`
 	Direction       string `json:"direction"`
@@ -51,6 +54,7 @@ type bandwidthRunRequest struct {
 }
 
 type bandwidthRunResponse struct {
+	Protocol      string  `json:"protocol"`
 	Direction     string  `json:"direction"`
 	Streams       int     `json:"streams"`
 	DurationMs    int64   `json:"durationMs"`
@@ -64,6 +68,28 @@ type bandwidthRunResponse struct {
 	MemoryPercent float64 `json:"memoryPercent"`
 	Successful    int     `json:"successfulStreams"`
 	Failed        int     `json:"failedStreams"`
+	RTTMs         float64 `json:"rttMs"`
+	Retransmits   uint64  `json:"retransmits"`
+	PacketsSent   uint64  `json:"packetsSent"`
+	PacketsRecv   uint64  `json:"packetsReceived"`
+	PacketsLost   uint64  `json:"packetsLost"`
+	OutOfOrder    uint64  `json:"outOfOrderPackets"`
+	JitterMs      float64 `json:"jitterMs"`
+}
+
+type bandwidthNetworkMetrics struct {
+	RTTMs       float64 `json:"rttMs"`
+	Retransmits uint64  `json:"retransmits"`
+	PacketsSent uint64  `json:"packetsSent"`
+	PacketsRecv uint64  `json:"packetsReceived"`
+	PacketsLost uint64  `json:"packetsLost"`
+	OutOfOrder  uint64  `json:"outOfOrderPackets"`
+	JitterMs    float64 `json:"jitterMs"`
+}
+
+type bandwidthStopResponse struct {
+	Protocol string `json:"protocol"`
+	bandwidthNetworkMetrics
 }
 
 type bandwidthStreamHeader struct {
@@ -75,12 +101,18 @@ type bandwidthStreamHeader struct {
 
 type bandwidthServer struct {
 	id             string
+	protocol       string
 	token          string
 	listener       net.Listener
+	udpConnection  *net.UDPConn
 	expiresAt      time.Time
 	maximumBytes   int64
 	maximumStreams int
 	active         atomic.Int32
+	metricsMu      sync.Mutex
+	metrics        bandwidthNetworkMetrics
+	metricSamples  uint64
+	udpStreams     map[string]*udpBandwidthStream
 	closed         chan struct{}
 	closeOnce      sync.Once
 }
@@ -102,6 +134,13 @@ func (m *bandwidthTestManager) prepare(request bandwidthPrepareRequest) (bandwid
 	if request.ListenPort < 1 || request.ListenPort > 65535 {
 		return bandwidthPrepareResponse{}, errors.New("invalid bandwidth test port")
 	}
+	request.Protocol = strings.ToLower(strings.TrimSpace(request.Protocol))
+	if request.Protocol == "" {
+		request.Protocol = "tcp"
+	}
+	if request.Protocol != "tcp" && request.Protocol != "udp" {
+		return bandwidthPrepareResponse{}, errors.New("invalid bandwidth test protocol")
+	}
 	if request.TTLSeconds < 10 || request.TTLSeconds > 120 {
 		request.TTLSeconds = 60
 	}
@@ -111,29 +150,41 @@ func (m *bandwidthTestManager) prepare(request bandwidthPrepareRequest) (bandwid
 	if request.MaximumStreams < 1 || request.MaximumStreams > bandwidthMaximumStreams {
 		request.MaximumStreams = bandwidthMaximumStreams
 	}
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", request.ListenPort))
-	if err != nil {
-		return bandwidthPrepareResponse{}, fmt.Errorf("open bandwidth test port %d: %w", request.ListenPort, err)
-	}
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		listener.Close()
 		return bandwidthPrepareResponse{}, err
 	}
 	server := &bandwidthServer{
-		id: request.SessionID, token: base64.RawURLEncoding.EncodeToString(tokenBytes), listener: listener,
+		id: request.SessionID, protocol: request.Protocol, token: base64.RawURLEncoding.EncodeToString(tokenBytes),
 		expiresAt: time.Now().Add(time.Duration(request.TTLSeconds) * time.Second), maximumBytes: request.MaximumBytes,
-		maximumStreams: request.MaximumStreams, closed: make(chan struct{}),
+		maximumStreams: request.MaximumStreams, closed: make(chan struct{}), udpStreams: make(map[string]*udpBandwidthStream),
+	}
+	var err error
+	if request.Protocol == "udp" {
+		server.udpConnection, err = net.ListenUDP("udp", &net.UDPAddr{Port: request.ListenPort})
+		if err == nil {
+			_ = server.udpConnection.SetReadBuffer(4 * 1024 * 1024)
+			_ = server.udpConnection.SetWriteBuffer(4 * 1024 * 1024)
+		}
+	} else {
+		server.listener, err = net.Listen("tcp", fmt.Sprintf(":%d", request.ListenPort))
+	}
+	if err != nil {
+		return bandwidthPrepareResponse{}, fmt.Errorf("open %s bandwidth test port %d: %w", request.Protocol, request.ListenPort, err)
 	}
 	m.mu.Lock()
 	if existing := m.sessions[request.SessionID]; existing != nil {
 		m.mu.Unlock()
-		listener.Close()
+		server.closeListener()
 		return bandwidthPrepareResponse{}, errors.New("bandwidth session already exists")
 	}
 	m.sessions[request.SessionID] = server
 	m.mu.Unlock()
-	go m.serve(server)
+	if request.Protocol == "udp" {
+		go serveUDPBandwidth(server)
+	} else {
+		go m.serve(server)
+	}
 	go func() {
 		timer := time.NewTimer(time.Until(server.expiresAt))
 		defer timer.Stop()
@@ -143,7 +194,7 @@ func (m *bandwidthTestManager) prepare(request bandwidthPrepareRequest) (bandwid
 		case <-server.closed:
 		}
 	}()
-	return bandwidthPrepareResponse{SessionID: server.id, Port: request.ListenPort, Token: server.token, ExpiresAt: server.expiresAt.UnixMilli()}, nil
+	return bandwidthPrepareResponse{SessionID: server.id, Protocol: server.protocol, Port: request.ListenPort, Token: server.token, ExpiresAt: server.expiresAt.UnixMilli()}, nil
 }
 
 func (m *bandwidthTestManager) serve(server *bandwidthServer) {
@@ -160,25 +211,27 @@ func (m *bandwidthTestManager) serve(server *bandwidthServer) {
 		go func() {
 			defer server.active.Add(-1)
 			defer connection.Close()
-			_ = serveBandwidthStream(connection, server)
+			metrics, _ := serveBandwidthStream(connection, server)
+			server.addMetrics(metrics)
 		}()
 	}
 }
 
-func serveBandwidthStream(connection net.Conn, server *bandwidthServer) error {
+func serveBandwidthStream(connection net.Conn, server *bandwidthServer) (bandwidthNetworkMetrics, error) {
+	startedMetrics := readTCPMetrics(connection)
 	_ = connection.SetDeadline(time.Now().Add(bandwidthMaximumDuration + 5*time.Second))
 	reader := bufio.NewReaderSize(connection, 4096)
 	headerLine, err := reader.ReadBytes('\n')
 	if err != nil || len(headerLine) > 2048 {
-		return errors.New("invalid bandwidth stream header")
+		return bandwidthNetworkMetrics{}, errors.New("invalid bandwidth stream header")
 	}
 	var header bandwidthStreamHeader
 	if json.Unmarshal(headerLine, &header) != nil || header.Token != server.token {
-		return errors.New("invalid bandwidth stream token")
+		return bandwidthNetworkMetrics{}, errors.New("invalid bandwidth stream token")
 	}
 	duration := time.Duration(header.DurationMs) * time.Millisecond
 	if duration < time.Second || duration > bandwidthMaximumDuration {
-		return errors.New("invalid bandwidth stream duration")
+		return bandwidthNetworkMetrics{}, errors.New("invalid bandwidth stream duration")
 	}
 	limit := header.MaximumBytes
 	if limit < 1 || limit > server.maximumBytes {
@@ -186,17 +239,19 @@ func serveBandwidthStream(connection net.Conn, server *bandwidthServer) error {
 	}
 	deadline := time.Now().Add(duration)
 	if _, err := connection.Write([]byte{1}); err != nil {
-		return err
+		return bandwidthNetworkMetrics{}, err
 	}
 	buffer := make([]byte, 64*1024)
+	var transferError error
 	switch header.Mode {
 	case "upload":
-		return transferUntil(reader, io.Discard, buffer, limit, deadline)
+		transferError = transferUntil(reader, io.Discard, buffer, limit, deadline)
 	case "download":
-		return transferUntil(nil, connection, buffer, limit, deadline)
+		transferError = transferUntil(nil, connection, buffer, limit, deadline)
 	default:
-		return errors.New("invalid bandwidth stream mode")
+		return bandwidthNetworkMetrics{}, errors.New("invalid bandwidth stream mode")
 	}
+	return tcpMetricsDelta(startedMetrics, readTCPMetrics(connection)), transferError
 }
 
 func transferUntil(reader io.Reader, writer io.Writer, buffer []byte, maximum int64, deadline time.Time) error {
@@ -229,12 +284,19 @@ func transferUntil(reader io.Reader, writer io.Writer, buffer []byte, maximum in
 
 func (m *bandwidthTestManager) run(request bandwidthRunRequest) (bandwidthRunResponse, error) {
 	request.TargetHost = strings.Trim(strings.TrimSpace(request.TargetHost), "[]")
+	request.Protocol = strings.ToLower(strings.TrimSpace(request.Protocol))
+	if request.Protocol == "" {
+		request.Protocol = "tcp"
+	}
 	request.Direction = strings.ToLower(strings.TrimSpace(request.Direction))
 	if !validDiagnosticTarget(request.TargetHost) {
 		return bandwidthRunResponse{}, errors.New("invalid bandwidth target host")
 	}
 	if request.Port < 1 || request.Port > 65535 || len(request.Token) < 32 {
 		return bandwidthRunResponse{}, errors.New("invalid bandwidth target settings")
+	}
+	if request.Protocol != "tcp" && request.Protocol != "udp" {
+		return bandwidthRunResponse{}, errors.New("invalid bandwidth protocol")
 	}
 	if request.Direction != "upload" && request.Direction != "download" && request.Direction != "bidirectional" {
 		return bandwidthRunResponse{}, errors.New("invalid bandwidth direction")
@@ -251,12 +313,16 @@ func (m *bandwidthTestManager) run(request bandwidthRunRequest) (bandwidthRunRes
 	if request.MaximumBytes < 1 || request.MaximumBytes > bandwidthMaximumBytes {
 		request.MaximumBytes = bandwidthMaximumBytes
 	}
+	if request.Protocol == "udp" {
+		return runUDPBandwidth(request)
+	}
 	beforeCPU, _ := cpu.Percent(0, false)
 	started := time.Now()
 	type outcome struct {
-		mode  string
-		bytes int64
-		err   error
+		mode    string
+		bytes   int64
+		metrics bandwidthNetworkMetrics
+		err     error
 	}
 	outcomes := make(chan outcome, request.Streams)
 	for index := 0; index < request.Streams; index++ {
@@ -269,11 +335,11 @@ func (m *bandwidthTestManager) run(request bandwidthRunRequest) (bandwidthRunRes
 			}
 		}
 		go func(streamMode string) {
-			count, err := runBandwidthStream(request, streamMode)
-			outcomes <- outcome{mode: streamMode, bytes: count, err: err}
+			streamResult, err := runBandwidthStream(request, streamMode)
+			outcomes <- outcome{mode: streamMode, bytes: streamResult.bytes, metrics: streamResult.metrics, err: err}
 		}(mode)
 	}
-	result := bandwidthRunResponse{Direction: request.Direction, Streams: request.Streams}
+	result := bandwidthRunResponse{Protocol: request.Protocol, Direction: request.Direction, Streams: request.Streams}
 	for index := 0; index < request.Streams; index++ {
 		outcome := <-outcomes
 		if outcome.err != nil {
@@ -281,11 +347,16 @@ func (m *bandwidthTestManager) run(request bandwidthRunRequest) (bandwidthRunRes
 			continue
 		}
 		result.Successful++
+		result.RTTMs += outcome.metrics.RTTMs
+		result.Retransmits += outcome.metrics.Retransmits
 		if outcome.mode == "upload" {
 			result.UploadBytes += outcome.bytes
 		} else {
 			result.DownloadBytes += outcome.bytes
 		}
+	}
+	if result.Successful > 0 {
+		result.RTTMs /= float64(result.Successful)
 	}
 	result.DurationMs = maxInt64(time.Since(started).Milliseconds())
 	seconds := float64(result.DurationMs) / 1000
@@ -309,23 +380,29 @@ func (m *bandwidthTestManager) run(request bandwidthRunRequest) (bandwidthRunRes
 	return result, nil
 }
 
-func runBandwidthStream(request bandwidthRunRequest, mode string) (int64, error) {
+type bandwidthTCPStreamResult struct {
+	bytes   int64
+	metrics bandwidthNetworkMetrics
+}
+
+func runBandwidthStream(request bandwidthRunRequest, mode string) (bandwidthTCPStreamResult, error) {
 	connection, err := net.DialTimeout("tcp", net.JoinHostPort(request.TargetHost, fmt.Sprint(request.Port)), 8*time.Second)
 	if err != nil {
-		return 0, err
+		return bandwidthTCPStreamResult{}, err
 	}
 	defer connection.Close()
+	startedMetrics := readTCPMetrics(connection)
 	_ = connection.SetDeadline(time.Now().Add(time.Duration(request.DurationSeconds+10) * time.Second))
 	header, _ := json.Marshal(bandwidthStreamHeader{Token: request.Token, Mode: mode, DurationMs: int64(request.DurationSeconds) * 1000, MaximumBytes: request.MaximumBytes})
 	if _, err := connection.Write(append(header, '\n')); err != nil {
-		return 0, err
+		return bandwidthTCPStreamResult{}, err
 	}
 	ack := []byte{0}
 	if _, err := io.ReadFull(connection, ack); err != nil || ack[0] != 1 {
 		if err == nil {
 			err = errors.New("bandwidth server rejected the stream")
 		}
-		return 0, err
+		return bandwidthTCPStreamResult{}, err
 	}
 	deadline := time.Now().Add(time.Duration(request.DurationSeconds) * time.Second)
 	buffer := make([]byte, 64*1024)
@@ -346,20 +423,26 @@ func runBandwidthStream(request bandwidthRunRequest, mode string) (int64, error)
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return total, err
+			return bandwidthTCPStreamResult{bytes: total, metrics: tcpMetricsDelta(startedMetrics, readTCPMetrics(connection))}, err
 		}
 	}
-	return total, nil
+	return bandwidthTCPStreamResult{bytes: total, metrics: tcpMetricsDelta(startedMetrics, readTCPMetrics(connection))}, nil
 }
 
-func (m *bandwidthTestManager) stop(id string) {
+func (m *bandwidthTestManager) stop(id string) bandwidthStopResponse {
 	m.mu.Lock()
 	server := m.sessions[strings.TrimSpace(id)]
 	delete(m.sessions, strings.TrimSpace(id))
 	m.mu.Unlock()
 	if server != nil {
-		server.closeOnce.Do(func() { close(server.closed); _ = server.listener.Close() })
+		server.closeOnce.Do(func() { close(server.closed); server.closeListener() })
+		deadline := time.Now().Add(750 * time.Millisecond)
+		for server.active.Load() > 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		return bandwidthStopResponse{Protocol: server.protocol, bandwidthNetworkMetrics: server.snapshotMetrics()}
 	}
+	return bandwidthStopResponse{}
 }
 
 func (m *bandwidthTestManager) stopAll() {
@@ -372,4 +455,43 @@ func (m *bandwidthTestManager) stopAll() {
 	for _, id := range ids {
 		m.stop(id)
 	}
+}
+
+func (server *bandwidthServer) closeListener() {
+	if server.listener != nil {
+		_ = server.listener.Close()
+	}
+	if server.udpConnection != nil {
+		_ = server.udpConnection.Close()
+	}
+}
+
+func (server *bandwidthServer) addMetrics(metrics bandwidthNetworkMetrics) {
+	server.metricsMu.Lock()
+	defer server.metricsMu.Unlock()
+	server.metrics.RTTMs += metrics.RTTMs
+	if metrics.RTTMs > 0 {
+		server.metricSamples++
+	}
+	server.metrics.Retransmits += metrics.Retransmits
+	server.metrics.PacketsSent += metrics.PacketsSent
+	server.metrics.PacketsRecv += metrics.PacketsRecv
+	server.metrics.PacketsLost += metrics.PacketsLost
+	server.metrics.OutOfOrder += metrics.OutOfOrder
+	if metrics.JitterMs > server.metrics.JitterMs {
+		server.metrics.JitterMs = metrics.JitterMs
+	}
+}
+
+func (server *bandwidthServer) snapshotMetrics() bandwidthNetworkMetrics {
+	if server.protocol == "udp" {
+		server.collectUDPMetrics()
+	}
+	server.metricsMu.Lock()
+	defer server.metricsMu.Unlock()
+	metrics := server.metrics
+	if server.protocol == "tcp" && server.metricSamples > 0 {
+		metrics.RTTMs /= float64(server.metricSamples)
+	}
+	return metrics
 }

@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 @Service
 public class BandwidthTestService {
-    public static final String MIN_AGENT_VERSION = "2.44.0";
+    public static final String MIN_AGENT_VERSION = "2.44.1";
     private static final long MAXIMUM_BYTES = 2L * 1024 * 1024 * 1024;
     private final JdbcTemplate jdbcTemplate;
     private final NodeMapper nodeMapper;
@@ -45,12 +45,15 @@ public class BandwidthTestService {
         result.put("minimumAgentVersion", MIN_AGENT_VERSION);
         result.put("nodes", jdbcTemplate.queryForList("SELECT id,name,ip,server_ip AS serverIp,status,version FROM node ORDER BY status DESC,id DESC"));
         List<Map<String, Object>> tasks = jdbcTemplate.queryForList("SELECT b.id,b.name,b.source_node_id AS sourceNodeId,b.target_node_id AS targetNodeId,"
-                + "b.listen_port AS listenPort,b.direction,b.streams,b.duration_seconds AS durationSeconds,b.maximum_megabytes AS maximumMegabytes,"
+                + "b.listen_port AS listenPort,b.protocol,b.direction,b.streams,b.duration_seconds AS durationSeconds,b.maximum_megabytes AS maximumMegabytes,"
                 + "b.retention_days AS retentionDays,b.running,b.last_status AS lastStatus,b.last_error AS lastError,b.last_run_at AS lastRunAt,"
                 + "b.created_time AS createdTime,b.updated_time AS updatedTime,COALESCE(s.name,'已删除节点') AS sourceNodeName,s.status AS sourceNodeStatus,"
                 + "s.version AS sourceNodeVersion,COALESCE(t.name,'已删除节点') AS targetNodeName,t.status AS targetNodeStatus,t.version AS targetNodeVersion,"
                 + "r.upload_mbps AS uploadMbps,r.download_mbps AS downloadMbps,r.total_mbps AS totalMbps,r.duration_ms AS latestDurationMs,"
-                + "r.successful_streams AS successfulStreams,r.failed_streams AS failedStreams,r.started_at AS latestStartedAt "
+                + "r.successful_streams AS successfulStreams,r.failed_streams AS failedStreams,r.rtt_ms AS rttMs,r.retransmits,"
+                + "r.retransmission_rate AS retransmissionRate,r.packets_sent AS packetsSent,r.packets_received AS packetsReceived,"
+                + "r.packets_lost AS packetsLost,r.packet_loss_percent AS packetLossPercent,r.jitter_ms AS jitterMs,"
+                + "r.out_of_order_packets AS outOfOrderPackets,r.started_at AS latestStartedAt "
                 + "FROM bandwidth_test_task b LEFT JOIN node s ON s.id=b.source_node_id LEFT JOIN node t ON t.id=b.target_node_id "
                 + "LEFT JOIN bandwidth_test_run r ON r.id=(SELECT MAX(r2.id) FROM bandwidth_test_run r2 WHERE r2.task_id=b.id) ORDER BY b.created_time DESC");
         result.put("tasks", tasks);
@@ -65,12 +68,12 @@ public class BandwidthTestService {
         try { validate(dto); } catch (IllegalArgumentException e) { return R.err(e.getMessage()); }
         long now = System.currentTimeMillis();
         if (dto.getId() == null) {
-            jdbcTemplate.update("INSERT INTO bandwidth_test_task (name,source_node_id,target_node_id,listen_port,direction,streams,duration_seconds,maximum_megabytes,retention_days,running,last_status,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?,0,'pending',?,?)",
-                    dto.getName().trim(), dto.getSourceNodeId(), dto.getTargetNodeId(), dto.getListenPort(), dto.getDirection(), dto.getStreams(),
+            jdbcTemplate.update("INSERT INTO bandwidth_test_task (name,source_node_id,target_node_id,listen_port,protocol,direction,streams,duration_seconds,maximum_megabytes,retention_days,running,last_status,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?,?,0,'pending',?,?)",
+                    dto.getName().trim(), dto.getSourceNodeId(), dto.getTargetNodeId(), dto.getListenPort(), dto.getProtocol(), dto.getDirection(), dto.getStreams(),
                     dto.getDurationSeconds(), dto.getMaximumMegabytes(), dto.getRetentionDays(), now, now);
         } else {
-            int changed = jdbcTemplate.update("UPDATE bandwidth_test_task SET name=?,source_node_id=?,target_node_id=?,listen_port=?,direction=?,streams=?,duration_seconds=?,maximum_megabytes=?,retention_days=?,updated_time=? WHERE id=? AND running=0",
-                    dto.getName().trim(), dto.getSourceNodeId(), dto.getTargetNodeId(), dto.getListenPort(), dto.getDirection(), dto.getStreams(),
+            int changed = jdbcTemplate.update("UPDATE bandwidth_test_task SET name=?,source_node_id=?,target_node_id=?,listen_port=?,protocol=?,direction=?,streams=?,duration_seconds=?,maximum_megabytes=?,retention_days=?,updated_time=? WHERE id=? AND running=0",
+                    dto.getName().trim(), dto.getSourceNodeId(), dto.getTargetNodeId(), dto.getListenPort(), dto.getProtocol(), dto.getDirection(), dto.getStreams(),
                     dto.getDurationSeconds(), dto.getMaximumMegabytes(), dto.getRetentionDays(), now, dto.getId());
             if (changed == 0) return R.err("带宽任务不存在或正在运行");
         }
@@ -101,9 +104,11 @@ public class BandwidthTestService {
     }
 
     public R detail(Long id) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,status,direction,streams,duration_ms AS durationMs,upload_bytes AS uploadBytes,"
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,status,protocol,direction,streams,duration_ms AS durationMs,upload_bytes AS uploadBytes,"
                 + "download_bytes AS downloadBytes,upload_mbps AS uploadMbps,download_mbps AS downloadMbps,total_mbps AS totalMbps,cpu_percent AS cpuPercent,"
                 + "memory_used AS memoryUsed,memory_percent AS memoryPercent,successful_streams AS successfulStreams,failed_streams AS failedStreams,error,"
+                + "rtt_ms AS rttMs,retransmits,retransmission_rate AS retransmissionRate,packets_sent AS packetsSent,packets_received AS packetsReceived,"
+                + "packets_lost AS packetsLost,packet_loss_percent AS packetLossPercent,jitter_ms AS jitterMs,out_of_order_packets AS outOfOrderPackets,"
                 + "started_at AS startedAt,finished_at AS finishedAt FROM bandwidth_test_run WHERE task_id=? ORDER BY started_at DESC LIMIT 200", id);
         return R.ok(Map.of("taskId", id, "runs", rows));
     }
@@ -122,29 +127,46 @@ public class BandwidthTestService {
             String targetHost = firstNonBlank(target.getServerIp(), target.getIp());
             if (targetHost == null) throw new IllegalStateException("目标节点没有可连接地址");
             int streams = intNumber(task.get("streams"));
+            String protocol = String.valueOf(task.getOrDefault("protocol", "tcp")).toLowerCase(Locale.ROOT);
             long totalBytes = Math.min(MAXIMUM_BYTES, (long) intNumber(task.get("maximum_megabytes")) * 1024 * 1024);
             long bytesPerStream = Math.max(1024 * 1024, totalBytes / streams);
-            Map<String, Object> prepare = Map.of("sessionId", sessionId, "listenPort", task.get("listen_port"), "ttlSeconds", Math.min(120, intNumber(task.get("duration_seconds")) + 45),
+            Map<String, Object> prepare = Map.of("sessionId", sessionId, "protocol", protocol, "listenPort", task.get("listen_port"), "ttlSeconds", Math.min(120, intNumber(task.get("duration_seconds")) + 45),
                     "maximumBytes", bytesPerStream, "maximumStreams", streams);
             GostDto prepareResult = WebSocketServer.send_msg(targetId, prepare, "BandwidthPrepare", 12);
             requireOK(prepareResult, "目标节点未能打开带宽测试端口"); prepared = true;
             JSONObject preparedData = json(prepareResult.getData());
             Map<String, Object> run = new LinkedHashMap<>();
             run.put("targetHost", targetHost); run.put("port", preparedData.getIntValue("port")); run.put("token", preparedData.getString("token"));
-            run.put("direction", task.get("direction")); run.put("streams", streams); run.put("durationSeconds", task.get("duration_seconds")); run.put("maximumBytes", bytesPerStream);
+            run.put("protocol", protocol); run.put("direction", task.get("direction")); run.put("streams", streams); run.put("durationSeconds", task.get("duration_seconds")); run.put("maximumBytes", bytesPerStream);
             GostDto runResult = WebSocketServer.send_msg(source.getId(), run, "BandwidthRun", intNumber(task.get("duration_seconds")) + 25L);
             requireOK(runResult, "来源节点未完成带宽测试");
             JSONObject data = json(runResult.getData());
-            jdbcTemplate.update("INSERT INTO bandwidth_test_run (task_id,status,source_node_id,target_node_id,direction,streams,duration_ms,upload_bytes,download_bytes,upload_mbps,download_mbps,total_mbps,cpu_percent,memory_used,memory_percent,successful_streams,failed_streams,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    id, "success", sourceId, targetId, task.get("direction"), streams, data.getLongValue("durationMs"), data.getLongValue("uploadBytes"),
+            JSONObject targetMetrics = new JSONObject();
+            GostDto stopResult = WebSocketServer.send_msg(targetId, Map.of("sessionId", sessionId), "BandwidthStop", 5);
+            if (stopResult != null && "OK".equals(stopResult.getMsg()) && stopResult.getData() != null) {
+                prepared = false;
+                targetMetrics = json(stopResult.getData());
+            }
+            long retransmits = data.getLongValue("retransmits") + targetMetrics.getLongValue("retransmits");
+            long packetsSent = data.getLongValue("packetsSent") + targetMetrics.getLongValue("packetsSent");
+            long packetsReceived = data.getLongValue("packetsReceived") + targetMetrics.getLongValue("packetsReceived");
+            long packetsLost = data.getLongValue("packetsLost") + targetMetrics.getLongValue("packetsLost");
+            long outOfOrder = data.getLongValue("outOfOrderPackets") + targetMetrics.getLongValue("outOfOrderPackets");
+            double rttMs = averagePositive(data.getDoubleValue("rttMs"), targetMetrics.getDoubleValue("rttMs"));
+            double jitterMs = Math.max(data.getDoubleValue("jitterMs"), targetMetrics.getDoubleValue("jitterMs"));
+            double retransmissionRate = percent(retransmits, packetsSent);
+            double packetLossPercent = percent(packetsLost, packetsReceived + packetsLost);
+            jdbcTemplate.update("INSERT INTO bandwidth_test_run (task_id,status,source_node_id,target_node_id,protocol,direction,streams,duration_ms,upload_bytes,download_bytes,upload_mbps,download_mbps,total_mbps,cpu_percent,memory_used,memory_percent,successful_streams,failed_streams,rtt_ms,retransmits,retransmission_rate,packets_sent,packets_received,packets_lost,packet_loss_percent,jitter_ms,out_of_order_packets,started_at,finished_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    id, "success", sourceId, targetId, protocol, task.get("direction"), streams, data.getLongValue("durationMs"), data.getLongValue("uploadBytes"),
                     data.getLongValue("downloadBytes"), data.getDoubleValue("uploadMbps"), data.getDoubleValue("downloadMbps"), data.getDoubleValue("totalMbps"),
                     data.getDoubleValue("cpuPercent"), data.getLongValue("memoryUsed"), data.getDoubleValue("memoryPercent"), data.getIntValue("successfulStreams"),
-                    data.getIntValue("failedStreams"), started, System.currentTimeMillis());
+                    data.getIntValue("failedStreams"), rttMs, retransmits, retransmissionRate, packetsSent, packetsReceived, packetsLost, packetLossPercent,
+                    jitterMs, outOfOrder, started, System.currentTimeMillis());
             finish(id, "success", null, started);
         } catch (Exception e) {
             String error = concise(e.getMessage());
-            jdbcTemplate.update("INSERT INTO bandwidth_test_run (task_id,status,source_node_id,target_node_id,direction,streams,error,started_at,finished_at) VALUES (?,'failed',?,?,?,?,?,?,?)",
-                    id, task.get("source_node_id"), task.get("target_node_id"), task.get("direction"), task.get("streams"), error, started, System.currentTimeMillis());
+            jdbcTemplate.update("INSERT INTO bandwidth_test_run (task_id,status,source_node_id,target_node_id,protocol,direction,streams,error,started_at,finished_at) VALUES (?,'failed',?,?,?,?,?,?,?,?)",
+                    id, task.get("source_node_id"), task.get("target_node_id"), task.getOrDefault("protocol", "tcp"), task.get("direction"), task.get("streams"), error, started, System.currentTimeMillis());
             finish(id, "failed", error, started);
         } finally {
             if (prepared) WebSocketServer.send_msg(targetId, Map.of("sessionId", sessionId), "BandwidthStop", 5);
@@ -163,6 +185,7 @@ public class BandwidthTestService {
         if (Objects.equals(dto.getSourceNodeId(), dto.getTargetNodeId())) throw new IllegalArgumentException("来源节点和目标节点不能相同");
         if (nodeMapper.selectById(dto.getSourceNodeId()) == null || nodeMapper.selectById(dto.getTargetNodeId()) == null) throw new IllegalArgumentException("来源或目标节点不存在");
         dto.setDirection(dto.getDirection().toLowerCase(Locale.ROOT));
+        dto.setProtocol(dto.getProtocol().toLowerCase(Locale.ROOT));
         if ("bidirectional".equals(dto.getDirection()) && dto.getStreams() < 2) throw new IllegalArgumentException("双向测试至少需要 2 个并发流");
     }
 
@@ -191,6 +214,8 @@ public class BandwidthTestService {
     private static Double number(Object value) { return value instanceof Number ? ((Number) value).doubleValue() : 0D; }
     private static int intNumber(Object value) { return value instanceof Number ? ((Number) value).intValue() : Integer.parseInt(String.valueOf(value)); }
     private static Long longNumber(Object value) { return value instanceof Number ? ((Number) value).longValue() : Long.valueOf(String.valueOf(value)); }
+    private static double percent(long numerator, long denominator) { return denominator <= 0 ? 0D : Math.min(100D, numerator * 100D / denominator); }
+    private static double averagePositive(double first, double second) { if (first <= 0) return Math.max(0, second); if (second <= 0) return first; return (first + second) / 2D; }
     private static String firstNonBlank(String... values) { for (String value : values) if (value != null && !value.isBlank()) return value.trim(); return null; }
     private static String concise(String value) { if (value == null || value.isBlank()) return "未知错误"; value = value.replace('\r', ' ').replace('\n', ' ').trim(); return value.length() > 500 ? value.substring(0, 500) : value; }
 }

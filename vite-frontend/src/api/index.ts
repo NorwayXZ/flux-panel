@@ -376,20 +376,24 @@ export const getQualityLabReport = (id: number, range: '24h' | '7d' | '30d') => 
 export interface BandwidthTestTask {
   id: number; name: string; sourceNodeId: number; sourceNodeName: string; sourceNodeStatus: number; sourceNodeVersion?: string;
   targetNodeId: number; targetNodeName: string; targetNodeStatus: number; targetNodeVersion?: string; listenPort: number;
-  direction: 'upload' | 'download' | 'bidirectional'; streams: number; durationSeconds: number; maximumMegabytes: number; retentionDays: number;
+  protocol: 'tcp' | 'udp'; direction: 'upload' | 'download' | 'bidirectional'; streams: number; durationSeconds: number; maximumMegabytes: number; retentionDays: number;
   running: boolean | number; lastStatus: 'pending' | 'running' | 'success' | 'failed'; lastError?: string; lastRunAt?: number;
   uploadMbps?: number; downloadMbps?: number; totalMbps?: number; latestDurationMs?: number; successfulStreams?: number; failedStreams?: number; latestStartedAt?: number;
+  rttMs?: number; retransmits?: number; retransmissionRate?: number; packetsSent?: number; packetsReceived?: number; packetsLost?: number;
+  packetLossPercent?: number; jitterMs?: number; outOfOrderPackets?: number;
 }
 export interface BandwidthTestRun {
-  id: number; status: string; direction: string; streams: number; durationMs: number; uploadBytes: number; downloadBytes: number;
+  id: number; status: string; protocol: 'tcp' | 'udp'; direction: string; streams: number; durationMs: number; uploadBytes: number; downloadBytes: number;
   uploadMbps: number; downloadMbps: number; totalMbps: number; cpuPercent?: number; memoryUsed?: number; memoryPercent?: number;
   successfulStreams: number; failedStreams: number; error?: string; startedAt: number; finishedAt: number;
+  rttMs?: number; retransmits: number; retransmissionRate: number; packetsSent: number; packetsReceived: number; packetsLost: number;
+  packetLossPercent: number; jitterMs: number; outOfOrderPackets: number;
 }
 export interface BandwidthTestOverview {
   minimumAgentVersion: string; nodes: QualityLabNode[]; tasks: BandwidthTestTask[];
   summary: { total: number; running: number; success: number; failed: number; peakMbps: number };
 }
-export type BandwidthTestTaskInput = Pick<BandwidthTestTask, 'name' | 'sourceNodeId' | 'targetNodeId' | 'listenPort' | 'direction' | 'streams' | 'durationSeconds' | 'maximumMegabytes' | 'retentionDays'> & { id?: number };
+export type BandwidthTestTaskInput = Pick<BandwidthTestTask, 'name' | 'sourceNodeId' | 'targetNodeId' | 'listenPort' | 'protocol' | 'direction' | 'streams' | 'durationSeconds' | 'maximumMegabytes' | 'retentionDays'> & { id?: number };
 export const getBandwidthTestOverview = () => Network.post<BandwidthTestOverview>('/bandwidth-test/overview');
 export const saveBandwidthTestTask = (data: BandwidthTestTaskInput) => Network.post<BandwidthTestOverview>('/bandwidth-test/save', data);
 export const runBandwidthTestTask = (id: number) => Network.post<{ id: number; state: string; message: string }>('/bandwidth-test/run', { id });

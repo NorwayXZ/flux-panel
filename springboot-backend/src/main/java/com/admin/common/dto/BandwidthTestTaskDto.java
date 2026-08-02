@@ -16,6 +16,7 @@ public class BandwidthTestTaskDto {
     @NotNull private Long sourceNodeId;
     @NotNull private Long targetNodeId;
     @NotNull @Min(1) @Max(65535) private Integer listenPort = 5201;
+    @NotBlank @Pattern(regexp = "tcp|udp") private String protocol = "tcp";
     @NotBlank @Pattern(regexp = "upload|download|bidirectional") private String direction = "bidirectional";
     @NotNull @Min(1) @Max(8) private Integer streams = 4;
     @NotNull @Min(1) @Max(30) private Integer durationSeconds = 10;

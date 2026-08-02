@@ -3,7 +3,7 @@ param(
     [string]$Secret,
     [ValidateSet("amd64", "arm64")]
     [string]$Architecture = "",
-    [string]$Release = "2.44.0",
+    [string]$Release = "2.44.1",
     [switch]$Uninstall
 )
 

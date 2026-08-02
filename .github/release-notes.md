@@ -1,3 +1,12 @@
+## 2.44.1 TCP retransmission and UDP loss measurements
+
+- Extends Real Bandwidth Testing with explicit TCP and UDP modes. Existing tasks remain TCP by default.
+- TCP tests collect Linux kernel RTT, segment, and retransmission counters from both source and target Agents, then show retransmission count and rate without treating retransmission as raw packet loss.
+- UDP tests use authenticated, sequenced 1200-byte datagrams and report packets sent, received, lost, out of order, loss percentage, jitter, and real payload throughput for upload, download, or bidirectional runs.
+- Keeps the temporary listener lifecycle and one-time token protection. The selected TCP or UDP port closes after the run, on failure, or at session expiry.
+- Adds only defaulted measurement columns to the bandwidth task and history tables. Existing bandwidth history, nodes, tunnels, forwards, virtual LANs, proxies, and ports are preserved.
+- New measurements require Agent `2.44.1`. Agent replacement retains reconnect verification and automatic binary rollback; the panel retains `2.44.0` as its rollback version.
+
 ## 2.43.1 Isolated nftables port forwarding
 
 - Adds an administrator-only **nftables port forwarding** board for direct Linux kernel IPv4 DNAT/SNAT without replacing or restarting GOST forwards, tunnels, proxies, or listeners.
