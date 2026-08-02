@@ -419,6 +419,56 @@ export const resumeVirtualLan = (id: number) => Network.post<VirtualLanOverview>
 export const refreshVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/refresh', { id });
 export const deleteVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/delete', { id });
 
+export interface PrivateNetworkMember {
+  id: number; groupId: number; nodeId: number; nodeName: string; nodeStatus: number; nodeVersion?: string;
+  privateAddress: string; interfaceName?: string; mtu: number; updatedTime: number;
+}
+export interface PrivateNetworkLink {
+  id: number; sourceNodeId: number; sourceNodeName: string; targetNodeId: number; targetNodeName: string;
+  sourceAddress?: string; targetAddress: string; routeInfo?: string; interfaceName?: string; state: string;
+  latencyMs?: number; packetLoss?: number; lastError?: string; verifiedAt?: number;
+}
+export interface PrivateNetworkGroup {
+  id: number; name: string; networkType: 'vpc' | 'cloud_backbone' | 'dedicated'; cidr?: string; state: string;
+  lastError?: string; createdTime: number; updatedTime: number; members: PrivateNetworkMember[]; links: PrivateNetworkLink[];
+}
+export interface PrivateNetworkOverview { minimumAgentVersion: string; nodes: QualityLabNode[]; groups: PrivateNetworkGroup[] }
+export interface PrivateNetworkSaveInput {
+  id?: number; name: string; networkType: string; cidr?: string;
+  members: Array<{ nodeId: number; privateAddress: string; interfaceName?: string; mtu: number }>;
+}
+export const getPrivateNetworkOverview = () => Network.post<PrivateNetworkOverview>('/private-network/overview');
+export const savePrivateNetwork = (data: PrivateNetworkSaveInput) => Network.post<PrivateNetworkOverview>('/private-network/save', data);
+export const verifyPrivateNetwork = (id: number) => Network.post<PrivateNetworkOverview>('/private-network/verify', { id });
+export const deletePrivateNetwork = (id: number) => Network.post<PrivateNetworkOverview>('/private-network/delete', { id });
+
+export interface NetworkRouteApplication {
+  id: number; name: string; tunnelId: number; tunnelName: string; entryNodeId: number; entryNodeName: string;
+  exitNodeId: number; exitNodeName: string; proxyType: 'socks5' | 'http'; bindIp?: string; listenPort: number;
+  username: string; password: string; hopPorts: string; state: string; lastError?: string; lastTestAt?: number;
+  managedTunnel: number; lastTestLatencyMs?: number; createdTime: number; updatedTime: number; entryHost: string; clientUri: string;
+  nodePath: Array<{ nodeId: number; nodeName: string }>;
+  hopDetails: Array<{
+    fromNodeId: number; fromNodeName: string; toNodeId: number; toNodeName: string;
+    addressMode: 'public' | 'private' | 'virtual' | 'custom'; addressModeName: string;
+    resourceGroupId?: number; resourceGroupName?: string; targetAddress: string;
+    fallbackMode: 'fail_closed' | 'public'; fallbackAddress?: string;
+    verificationState: string; verifiedAt?: number; candidates: string[];
+  }>;
+}
+export interface NetworkRouteApplicationOverview { minimumAgentVersion: string; applications: NetworkRouteApplication[] }
+export interface NetworkRouteApplicationCreateInput {
+  name: string; tunnelId?: number; nodePath?: number[]; hopConfigs?: Array<{ fromNodeId: number; toNodeId: number; addressMode: string; resourceGroupId?: number; customAddress?: string; fallbackMode: string }>;
+  tunnelProtocol?: 'tls' | 'quic'; proxyType: 'socks5' | 'http'; bindIp?: string; listenPort: number; username: string; password: string;
+}
+export const getNetworkRouteApplications = () => Network.post<NetworkRouteApplicationOverview>('/network-route-application/overview');
+export const createNetworkRouteApplication = (data: NetworkRouteApplicationCreateInput) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/create', data);
+export const deployNetworkRouteApplication = (id: number) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/deploy', { id });
+export const testNetworkRouteApplication = (id: number) => Network.post('/network-route-application/test', { id });
+export const pauseNetworkRouteApplication = (id: number) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/pause', { id });
+export const resumeNetworkRouteApplication = (id: number) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/resume', { id });
+export const deleteNetworkRouteApplication = (id: number) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/delete', { id });
+
 // 转发服务控制操作 - 通过Java后端接口
 export const pauseForwardService = (forwardId: number) => Network.mutate("/forward/pause", { id: forwardId }, ["/forward/list"]);
 export const resumeForwardService = (forwardId: number) => Network.mutate("/forward/resume", { id: forwardId }, ["/forward/list"]);

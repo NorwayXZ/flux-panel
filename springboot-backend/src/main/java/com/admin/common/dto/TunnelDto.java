@@ -24,6 +24,8 @@ public class TunnelDto {
 
     // 节点路径，当type=2时可传入多跳路径，例如：[入口, 中间1, 中间2, 出口]
     private List<Long> nodePath;
+
+    private List<TunnelHopConfigDto> hopConfigs;
     
     @NotNull(message = "隧道类型不能为空")
     private Integer type;

@@ -89,6 +89,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     NodeService nodeService;
 
     @Resource
+    TunnelTransportService tunnelTransportService;
+
+    @Resource
     PortAllocationLockMapper portAllocationLockMapper;
 
     @Resource
@@ -753,14 +756,20 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             }
             List<Integer> hopPorts = getForwardHopPorts(diagnosticForward, tunnel);
             List<Node> pathNodes = nodeInfo.getPathNodes();
+            List<TunnelTransportService.ResolvedHop> resolvedHops;
+            try {
+                resolvedHops = tunnelTransportService.resolve(tunnel, pathNodes);
+            } catch (RuntimeException e) {
+                return R.err(e.getMessage());
+            }
             for (int i = 0; i < pathNodes.size() - 1; i++) {
                 Node fromNode = pathNodes.get(i);
                 Node toNode = pathNodes.get(i + 1);
                 DiagnosisResult segmentResult = performTcpPingDiagnosis(
                         fromNode,
-                        toNode.getServerIp(),
+                        resolvedHops.get(i).primaryAddress(),
                         hopPorts.get(i),
-                        fromNode.getName() + "->" + toNode.getName()
+                        fromNode.getName() + "->" + toNode.getName() + "（" + resolvedHops.get(i).mode() + "）"
                 );
                 results.add(segmentResult);
             }
@@ -1672,16 +1681,16 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 创建链服务
      */
-    private R createChainService(NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts, String protocol, String interfaceName) {
-        List<String> remoteAddrs = buildHopAddresses(nodeInfo, hopPorts);
-        GostDto result = GostUtil.AddChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
+    private R createChainService(Tunnel tunnel, NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts, String protocol, String interfaceName) {
+        List<List<String>> remoteAddrs = buildHopAddressCandidates(tunnel, nodeInfo, hopPorts);
+        GostDto result = GostUtil.AddRoutedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
     }
 
-    private R createWeightedChainService(NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts,
+    private R createWeightedChainService(Tunnel tunnel, NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts,
                                          String protocol, String interfaceName, Integer weight) {
-        List<String> remoteAddrs = buildHopAddresses(nodeInfo, hopPorts);
-        GostDto result = GostUtil.AddWeightedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs,
+        List<List<String>> remoteAddrs = buildHopAddressCandidates(tunnel, nodeInfo, hopPorts);
+        GostDto result = GostUtil.AddWeightedRoutedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs,
                 protocol, interfaceName, weight);
         return isGostOperationSuccess(result) ? R.ok() : R.err(gostMessage(result));
     }
@@ -1770,11 +1779,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 更新链服务
      */
-    private R updateChainService(NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts, String protocol, String interfaceName) {
-        List<String> remoteAddrs = buildHopAddresses(nodeInfo, hopPorts);
-        GostDto createResult = GostUtil.UpdateChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
+    private R updateChainService(Tunnel tunnel, NodeInfo nodeInfo, String serviceName, List<Integer> hopPorts, String protocol, String interfaceName) {
+        List<List<String>> remoteAddrs = buildHopAddressCandidates(tunnel, nodeInfo, hopPorts);
+        GostDto createResult = GostUtil.UpdateRoutedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
         if (gostMessage(createResult).contains(GOST_NOT_FOUND_MSG)) {
-            createResult = GostUtil.AddChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
+            createResult = GostUtil.AddRoutedChains(nodeInfo.getInNode().getId(), serviceName, remoteAddrs, protocol, interfaceName);
         }
         return isGostOperationSuccess(createResult) ? R.ok() : R.err(gostMessage(createResult));
     }
@@ -1830,9 +1839,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         List<Integer> hopPorts = getForwardHopPorts(routeForward, tunnel);
 
         R chainResult = ROUTE_MODE_BALANCE.equals(forward.getRouteMode())
-                ? createWeightedChainService(routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(),
+                ? createWeightedChainService(tunnel, routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(),
                         tunnel.getInterfaceName(), route.getWeight())
-                : createChainService(routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(), tunnel.getInterfaceName());
+                : createChainService(tunnel, routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(), tunnel.getInterfaceName());
         if (chainResult.getCode() != 0) {
             return chainResult;
         }
@@ -1942,11 +1951,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 .orElse(routes.get(0));
     }
 
-    private List<String> buildHopAddresses(NodeInfo nodeInfo, List<Integer> hopPorts) {
+    private List<List<String>> buildHopAddressCandidates(Tunnel tunnel, NodeInfo nodeInfo, List<Integer> hopPorts) {
         List<Node> pathNodes = nodeInfo.getPathNodes();
-        List<String> remoteAddrs = new ArrayList<>();
+        List<TunnelTransportService.ResolvedHop> resolvedHops = tunnelTransportService.resolve(tunnel, pathNodes);
+        List<List<String>> remoteAddrs = new ArrayList<>();
         for (int i = 1; i < pathNodes.size(); i++) {
-            remoteAddrs.add(TunnelRouteUtil.hostPort(pathNodes.get(i).getServerIp(), hopPorts.get(i - 1)));
+            Integer port = hopPorts.get(i - 1);
+            remoteAddrs.add(resolvedHops.get(i - 1).candidates().stream()
+                    .map(address -> TunnelRouteUtil.hostPort(address, port)).collect(Collectors.toList()));
         }
         return remoteAddrs;
     }
@@ -2226,15 +2238,21 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
             List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(route.getHopPorts());
             List<Node> pathNodes = nodeInfo.getPathNodes();
+            List<TunnelTransportService.ResolvedHop> resolvedHops;
+            try {
+                resolvedHops = tunnelTransportService.resolve(tunnel, pathNodes);
+            } catch (RuntimeException e) {
+                return RouteProbeResult.failure(e.getMessage());
+            }
             if (hopPorts.size() != pathNodes.size() - 1) {
                 return RouteProbeResult.failure("线路端口数据不完整");
             }
             for (int i = 0; i < pathNodes.size() - 1; i++) {
                 DiagnosisResult segment = performTcpPingProbe(
                         pathNodes.get(i),
-                        pathNodes.get(i + 1).getServerIp(),
+                        resolvedHops.get(i).primaryAddress(),
                         hopPorts.get(i),
-                        pathNodes.get(i).getName() + "->" + pathNodes.get(i + 1).getName()
+                        pathNodes.get(i).getName() + "->" + pathNodes.get(i + 1).getName() + "（" + resolvedHops.get(i).mode() + "）"
                 );
                 if (!segment.isSuccess()) {
                     return RouteProbeResult.failure(segment.getMessage());

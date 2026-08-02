@@ -60,6 +60,21 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, services, "AddService");
     }
 
+    public static GostDto AddPrivateProxyWithChain(Long nodeId, String serviceName, String proxyType,
+                                                   String bindIp, Integer port, String username,
+                                                   String password, String chainName) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", listenAddress(bindIp, port));
+        JSONObject auth = new JSONObject(); auth.put("username", username); auth.put("password", password);
+        JSONObject handler = new JSONObject(); handler.put("type", proxyType); handler.put("auth", auth);
+        handler.put("chain", chainName + "_chains");
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject(); listener.put("type", "tcp"); service.put("listener", listener);
+        JSONArray services = new JSONArray(); services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, "AddService");
+    }
+
     public static GostDto AddShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
                                                String cipher, String password, String admissionName) {
         return AddShadowsocksProxy(nodeId, serviceName, bindIp, port, cipher, password, admissionName, null);
@@ -740,6 +755,24 @@ public class GostUtil {
                 createChainData(name, remoteAddrs, protocol, interfaceName, weight), "AddChains");
     }
 
+    public static GostDto AddRoutedChains(Long nodeId, String name, List<List<String>> hopCandidates,
+                                          String protocol, String interfaceName) {
+        return WebSocketServer.send_msg(nodeId, createRoutedChainData(name, hopCandidates, protocol, interfaceName, null), "AddChains");
+    }
+
+    public static GostDto AddWeightedRoutedChains(Long nodeId, String name, List<List<String>> hopCandidates,
+                                                  String protocol, String interfaceName, Integer weight) {
+        return WebSocketServer.send_msg(nodeId, createRoutedChainData(name, hopCandidates, protocol, interfaceName, weight), "AddChains");
+    }
+
+    public static GostDto UpdateRoutedChains(Long nodeId, String name, List<List<String>> hopCandidates,
+                                             String protocol, String interfaceName) {
+        JSONObject request = new JSONObject();
+        request.put("chain", name + "_chains");
+        request.put("data", createRoutedChainData(name, hopCandidates, protocol, interfaceName, null));
+        return WebSocketServer.send_msg(nodeId, request, "UpdateChains");
+    }
+
     public static GostDto UpdateChains(Long node_id, String name, String remoteAddr, String protocol, String interfaceName) {
         return UpdateChains(node_id, name, java.util.Collections.singletonList(remoteAddr), protocol, interfaceName);
     }
@@ -881,6 +914,36 @@ public class GostUtil {
             metadata.put("weight", Math.max(1, Math.min(1000, weight)));
             data.put("metadata", metadata);
         }
+        return data;
+    }
+
+    static JSONObject createRoutedChainData(String name, List<List<String>> hopCandidates, String protocol,
+                                            String interfaceName, Integer weight) {
+        JSONArray hops = new JSONArray();
+        int hopIndex = 1;
+        for (List<String> candidates : hopCandidates) {
+            JSONArray nodes = new JSONArray();
+            int nodeIndex = 1;
+            for (String address : candidates) {
+                JSONObject dialer = new JSONObject();
+                dialer.put("type", protocol);
+                if (Objects.equals(protocol, "quic")) {
+                    JSONObject metadata = new JSONObject(); metadata.put("keepAlive", true); metadata.put("ttl", "10s");
+                    dialer.put("metadata", metadata);
+                }
+                JSONObject connector = new JSONObject(); connector.put("type", "relay");
+                JSONObject node = new JSONObject();
+                node.put("name", "node-" + name + "-" + hopIndex + "-" + nodeIndex++);
+                node.put("addr", address); node.put("connector", connector); node.put("dialer", dialer);
+                if (StringUtils.isNotBlank(interfaceName)) node.put("interface", interfaceName);
+                nodes.add(node);
+            }
+            JSONObject selector = new JSONObject(); selector.put("strategy", "fifo"); selector.put("maxFails", 1); selector.put("failTimeout", "30s");
+            JSONObject hop = new JSONObject(); hop.put("name", "hop-" + name + "-" + hopIndex++); hop.put("nodes", nodes); hop.put("selector", selector);
+            hops.add(hop);
+        }
+        JSONObject data = new JSONObject(); data.put("name", name + "_chains"); data.put("hops", hops);
+        if (weight != null) { JSONObject metadata = new JSONObject(); metadata.put("weight", Math.max(1, Math.min(1000, weight))); data.put("metadata", metadata); }
         return data;
     }
 

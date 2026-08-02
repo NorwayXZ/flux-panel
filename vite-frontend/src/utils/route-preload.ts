@@ -24,6 +24,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/quality-lab': () => import('@/pages/quality-lab'),
   '/bandwidth-test': () => import('@/pages/bandwidth-test'),
   '/virtual-lan': () => import('@/pages/virtual-lan'),
+  '/private-network': () => import('@/pages/private-network'),
   '/server-assets': () => import('@/pages/server-assets'),
   '/dynamic-dns': () => import('@/pages/dynamic-dns'),
   '/home-access': () => import('@/pages/home-access'),

@@ -52,6 +52,15 @@ interface Tunnel {
     name: string;
     status: number;
   }>;
+  hopDetails?: Array<{
+    fromNodeId: number;
+    toNodeId: number;
+    addressModeName: string;
+    resourceGroupName?: string;
+    targetAddress: string;
+    fallbackAddress?: string;
+    verificationState: string;
+  }>;
   quotaFlow?: number;
   quotaUsedFlow?: number;
   quotaFlowUnlimited?: boolean;
@@ -811,10 +820,16 @@ export default function TunnelPage() {
                           </code>
                         </div>
                         {index < pathNodes.length - 1 && (
-                          <div className="text-center py-0.5">
+                          <div className="py-0.5 text-center">
                             <svg className="w-3 h-3 text-default-400 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                             </svg>
+                            {tunnel.hopDetails?.[index] && (
+                              <div className="mt-1 truncate text-[10px] text-default-500" title={`${tunnel.hopDetails[index].addressModeName} ${tunnel.hopDetails[index].targetAddress}`}>
+                                {tunnel.hopDetails[index].addressModeName} · {tunnel.hopDetails[index].targetAddress}
+                                {tunnel.hopDetails[index].fallbackAddress ? ' · 公网备用' : ''}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

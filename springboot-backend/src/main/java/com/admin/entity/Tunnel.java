@@ -54,6 +54,9 @@ public class Tunnel extends BaseEntity {
      */
     private String nodePath;
 
+    /** Per-hop public/private/virtual address policy as JSON. */
+    private String hopConfig;
+
     /**
      * 隧道类型（1-端口转发，2-隧道转发）
      */
@@ -98,6 +101,9 @@ public class Tunnel extends BaseEntity {
 
     @TableField(exist = false)
     private List<TunnelPathNodeDto> pathNodeDetails;
+
+    @TableField(exist = false)
+    private List<com.admin.common.dto.TunnelHopDetailDto> hopDetails;
 
     @TableField(exist = false)
     private Long quotaFlow;

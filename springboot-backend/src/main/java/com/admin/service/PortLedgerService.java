@@ -85,6 +85,7 @@ public class PortLedgerService {
         addHomeProxyRoutes(entries, nodeMap, userMap);
         addSourceIpEntries(entries, nodeMap, userMap);
         addNftForwards(entries, nodeMap, userMap);
+        addNetworkRouteApplications(entries, nodeMap, tunnelMap);
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {
@@ -320,6 +321,36 @@ public class PortLedgerService {
                     Objects.toString(item.get("name"), "nftables 转发"),
                     "nftables 内核转发 → " + item.get("targetAddress") + ":" + item.get("targetPort") + " · " + state,
                     item.get("createdTime") == null ? null : ((Number) item.get("createdTime")).longValue(), null));
+        }
+    }
+
+    private void addNetworkRouteApplications(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Long, Tunnel> tunnels) {
+        if (jdbcTemplate == null) return;
+        List<Map<String, Object>> applications;
+        try {
+            applications = jdbcTemplate.queryForList("SELECT id,name,tunnel_id AS tunnelId,entry_node_id AS entryNodeId,listen_port AS listenPort,"
+                    + "proxy_type AS proxyType,hop_ports AS hopPorts,state,created_time AS createdTime FROM network_route_application WHERE state<>'deleted'");
+        } catch (DataAccessException ignored) {
+            return;
+        }
+        for (Map<String, Object> app : applications) {
+            Long resourceId = ((Number) app.get("id")).longValue();
+            Long entryId = ((Number) app.get("entryNodeId")).longValue();
+            Integer listenPort = ((Number) app.get("listenPort")).intValue();
+            String status = "delete_pending".equals(app.get("state")) ? "cooldown" : "occupied";
+            add(entries, nodeEntry("network_route_application", status, nodes.get(entryId), listenPort, listenPort,
+                    "tcp", 1, "admin", resourceId, Objects.toString(app.get("name")),
+                    String.valueOf(app.get("proxyType")).toUpperCase(Locale.ROOT) + " 多跳出口入口", ((Number) app.get("createdTime")).longValue(), null));
+            Tunnel tunnel = tunnels.get(((Number) app.get("tunnelId")).longValue());
+            if (tunnel == null) continue;
+            List<Long> path = TunnelRouteUtil.parseNodePath(tunnel);
+            List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(Objects.toString(app.get("hopPorts"), ""));
+            for (int index = 1; index < path.size() && index - 1 < hopPorts.size(); index++) {
+                Integer port = hopPorts.get(index - 1);
+                add(entries, nodeEntry("network_route_hop", status, nodes.get(path.get(index)), port, port,
+                        "quic".equalsIgnoreCase(tunnel.getProtocol()) ? "udp" : "tcp", 1, "admin", resourceId,
+                        Objects.toString(app.get("name")), "多跳出口第 " + index + " 跳", ((Number) app.get("createdTime")).longValue(), null));
+            }
         }
     }
 

@@ -685,6 +685,18 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "NetworkDiagnosticResponse"
 		response.Data = diagnosticResult
 
+	case "PrivateNetworkProbe":
+		var privateNetworkResult privateNetworkProbeResponse
+		privateNetworkResult, err = w.handlePrivateNetworkProbe(cmd.Data)
+		response.Type = "PrivateNetworkProbeResponse"
+		response.Data = privateNetworkResult
+
+	case "ProxyRouteProbe":
+		var proxyRouteResult proxyRouteProbeResponse
+		proxyRouteResult, err = w.handleProxyRouteProbe(cmd.Data)
+		response.Type = "ProxyRouteProbeResponse"
+		response.Data = proxyRouteResult
+
 	case "QualityProbe":
 		var probeResult qualityProbeResponse
 		probeResult, err = w.handleQualityProbe(cmd.Data)

@@ -61,4 +61,22 @@ class GostUtilTests {
         assertEquals("tcp", node.getJSONObject("dialer").getString("type"));
         assertEquals("tcp", node.getJSONObject("connector").getString("type"));
     }
+
+    @Test
+    void buildsPrivateFirstMultiHopRelayChainWithPublicFallback() {
+        JSONObject chain = GostUtil.createRoutedChainData("route-app-7", List.of(
+                List.of("10.88.0.3:22001", "198.51.100.30:22001"),
+                List.of("10.20.0.4:22002")
+        ), "tls", null, null);
+
+        JSONArray hops = chain.getJSONArray("hops");
+        assertEquals("route-app-7_chains", chain.getString("name"));
+        assertEquals(2, hops.size());
+        JSONObject firstHop = hops.getJSONObject(0);
+        assertEquals("fifo", firstHop.getJSONObject("selector").getString("strategy"));
+        assertEquals("10.88.0.3:22001", firstHop.getJSONArray("nodes").getJSONObject(0).getString("addr"));
+        assertEquals("198.51.100.30:22001", firstHop.getJSONArray("nodes").getJSONObject(1).getString("addr"));
+        assertEquals("relay", firstHop.getJSONArray("nodes").getJSONObject(0).getJSONObject("connector").getString("type"));
+        assertEquals("10.20.0.4:22002", hops.getJSONObject(1).getJSONArray("nodes").getJSONObject(0).getString("addr"));
+    }
 }

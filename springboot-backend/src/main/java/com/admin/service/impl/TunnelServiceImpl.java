@@ -25,6 +25,7 @@ import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
+import com.admin.service.TunnelTransportService;
 import com.admin.service.UserTunnelService;
 import com.admin.service.UserQuotaService;
 import com.alibaba.fastjson.JSONObject;
@@ -35,6 +36,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
@@ -126,6 +128,12 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     @Resource
     @Lazy
     SpeedLimitService speedLimitService;
+
+    @Resource
+    TunnelTransportService tunnelTransportService;
+
+    @Resource
+    JdbcTemplate jdbcTemplate;
 
     // ========== 公共接口实现 ==========
 
@@ -233,11 +241,22 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         if (nameValidationResult.getCode() != 0) {
             return nameValidationResult;
         }
+        String oldHopConfig = existingTunnel.getHopConfig();
+        String newHopConfig = oldHopConfig;
+        if (Objects.equals(existingTunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)
+                && tunnelUpdateDto.getHopConfigs() != null) {
+            try {
+                newHopConfig = tunnelTransportService.validateAndSerialize(getTunnelPathNodes(existingTunnel), tunnelUpdateDto.getHopConfigs());
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                return R.err(e.getMessage());
+            }
+        }
         int up = 0;
         if (!Objects.equals(existingTunnel.getTcpListenAddr(), tunnelUpdateDto.getTcpListenAddr()) ||
                 !Objects.equals(existingTunnel.getUdpListenAddr(), tunnelUpdateDto.getUdpListenAddr()) ||
                 !Objects.equals(existingTunnel.getProtocol(), tunnelUpdateDto.getProtocol()) ||
-                !Objects.equals(existingTunnel.getInterfaceName(), tunnelUpdateDto.getInterfaceName())) {
+                !Objects.equals(existingTunnel.getInterfaceName(), tunnelUpdateDto.getInterfaceName()) ||
+                !Objects.equals(oldHopConfig, newHopConfig)) {
             up++;
         }
 
@@ -250,6 +269,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         existingTunnel.setTrafficRatio(tunnelUpdateDto.getTrafficRatio());
         existingTunnel.setProtocol(tunnelUpdateDto.getProtocol());
         existingTunnel.setInterfaceName(tunnelUpdateDto.getInterfaceName());
+        existingTunnel.setHopConfig(newHopConfig);
         this.updateById(existingTunnel);
         int err = 0;
         if (up != 0){
@@ -275,6 +295,18 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         }
 
         if (err != 0) {
+            if (!Objects.equals(oldHopConfig, newHopConfig)) {
+                existingTunnel.setHopConfig(oldHopConfig);
+                this.updateById(existingTunnel);
+                for (Forward forward : forwardService.list(new QueryWrapper<Forward>().eq("tunnel_id", tunnelUpdateDto.getId()))) {
+                    ForwardUpdateDto rollback = new ForwardUpdateDto();
+                    rollback.setId(forward.getId()); rollback.setUserId(forward.getUserId()); rollback.setName(forward.getName());
+                    rollback.setTunnelId(forward.getTunnelId()); rollback.setRemoteAddr(forward.getRemoteAddr()); rollback.setStrategy(forward.getStrategy());
+                    rollback.setInPort(forward.getInPort()); rollback.setInterfaceName(forward.getInterfaceName());
+                    forwardService.updateForward(rollback);
+                }
+                return R.err("逐跳线路同步失败，已恢复原来的地址配置");
+            }
             return R.err("隧道信息更新成功，但部分转发同步更新失败");
         }
         return R.ok("隧道更新成功");
@@ -462,6 +494,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                     })
                     .collect(Collectors.toList());
             tunnel.setPathNodeDetails(details);
+            List<Node> pathNodes = TunnelRouteUtil.parseNodePath(tunnel).stream()
+                    .map(nodesById::get).filter(Objects::nonNull).collect(Collectors.toList());
+            tunnel.setHopDetails(tunnelTransportService.details(tunnel, pathNodes));
         }
     }
 
@@ -612,6 +647,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         tunnel.setOutNodeId(tunnelDto.getInNodeId());
         tunnel.setOutIp(server_ip);
         tunnel.setNodePath(TunnelRouteUtil.joinNodePath(Collections.singletonList(tunnelDto.getInNodeId())));
+        tunnel.setHopConfig(null);
         return R.ok();
     }
 
@@ -659,6 +695,12 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         tunnel.setOutIp(outNode.getServerIp());
         tunnel.setNodePath(TunnelRouteUtil.joinNodePath(nodePath));
 
+        try {
+            tunnel.setHopConfig(tunnelTransportService.validateAndSerialize(pathNodes, tunnelDto.getHopConfigs()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return R.err(e.getMessage());
+        }
+
         return R.ok();
     }
 
@@ -702,6 +744,11 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
     private Map<String, Object> cleanupTunnelDependencies(Long tunnelId) {
         Integer tunnelIdInt = tunnelId.intValue();
+        Integer routeApplicationCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM network_route_application WHERE tunnel_id=? AND state<>'deleted'", Integer.class, tunnelId);
+        if (routeApplicationCount != null && routeApplicationCount > 0) {
+            throw new IllegalStateException("该隧道正被 " + routeApplicationCount + " 个出口应用使用，请先删除对应出口应用");
+        }
         Integer homeProxyCount = homeProxyRouteMapper.selectCount(new QueryWrapper<HomeProxyRoute>()
                 .eq("egress_tunnel_id", tunnelId).notIn("state", "deleted", "error"));
         if (homeProxyCount != null && homeProxyCount > 0) {
@@ -941,15 +988,21 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             results.add(inResult);
         } else {
             List<Node> pathNodes = getTunnelPathNodes(tunnel);
+            List<TunnelTransportService.ResolvedHop> resolvedHops;
+            try {
+                resolvedHops = tunnelTransportService.resolve(tunnel, pathNodes);
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                return R.err(e.getMessage());
+            }
             List<Integer> hopPorts = getTunnelSampleHopPorts(tunnel, pathNodes.size() - 1);
             for (int i = 0; i < pathNodes.size() - 1; i++) {
                 Node fromNode = pathNodes.get(i);
                 Node toNode = pathNodes.get(i + 1);
                 DiagnosisResult segmentResult = performTcpPingDiagnosisWithConnectionCheck(
                         fromNode,
-                        toNode.getServerIp(),
+                        resolvedHops.get(i).primaryAddress(),
                         hopPorts.get(i),
-                        fromNode.getName() + "->" + toNode.getName()
+                        fromNode.getName() + "->" + toNode.getName() + "（" + resolvedHops.get(i).mode() + "）"
                 );
                 results.add(segmentResult);
             }

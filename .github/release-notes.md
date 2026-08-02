@@ -1,3 +1,17 @@
+## 2.45.0 Private network routing and proxy egress applications
+
+- Adds an administrator-only **Private Network and Egress** workspace. Agents can automatically establish a WireGuard network, while existing VPC, cloud-backbone, and dedicated private addresses can be registered and verified bidirectionally.
+- Adds SOCKS5 and HTTP egress applications for `B entry -> C exit` and `B entry -> C private transit -> D exit`. Each hop independently selects public, verified native-private, Agent WireGuard, or custom IP transport.
+- Supports strict private routing or ordered public fallback. Existing tunnels without a hop configuration continue using their current public addresses.
+- Shows the resolved address, network resource, verification state, latency, loss, interface, and fallback for each hop. A real proxy CONNECT test runs after deployment and remains available on demand.
+- Adds pause, resume, redeploy, retryable cleanup, port-ledger ownership, managed-tunnel cleanup, and runtime rollback when deployment fails. An Agent timeout cannot be reported as a successful deletion.
+- Agent `2.45.0` adds bounded private-link and proxy-route probes. Existing Agent services, tunnels, forwards, proxies, DNS records, certificates, nftables rules, and WireGuard networks are not rebuilt during upgrade.
+
+### Upgrade and rollback impact
+
+- The schema changes are additive: three native-network tables, one egress-application table, and a nullable per-hop configuration on tunnels. Existing tunnel rows default to public routing.
+- Delete egress applications and Agent-created WireGuard networks before rolling back when possible, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Application deletion removes its managed listeners, chains, relay services, and automatically-created tunnel before releasing ports.
+
 ## 2.44.1 TCP retransmission and UDP loss measurements
 
 - Extends Real Bandwidth Testing with explicit TCP and UDP modes. Existing tasks remain TCP by default.

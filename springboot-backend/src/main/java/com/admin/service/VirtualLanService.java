@@ -36,9 +36,12 @@ public class VirtualLanService {
     private final JdbcTemplate jdbcTemplate;
     private final NodeMapper nodeMapper;
     private final InternalConnectorMapper connectorMapper;
+    private final TunnelTransportService tunnelTransportService;
 
-    public VirtualLanService(JdbcTemplate jdbcTemplate, NodeMapper nodeMapper, InternalConnectorMapper connectorMapper) {
+    public VirtualLanService(JdbcTemplate jdbcTemplate, NodeMapper nodeMapper, InternalConnectorMapper connectorMapper,
+                             TunnelTransportService tunnelTransportService) {
         this.jdbcTemplate = jdbcTemplate; this.nodeMapper = nodeMapper; this.connectorMapper = connectorMapper;
+        this.tunnelTransportService = tunnelTransportService;
     }
 
     public R overview() {
@@ -158,6 +161,8 @@ public class VirtualLanService {
     public R delete(Long id) {
         List<Map<String, Object>> members = jdbcTemplate.queryForList("SELECT * FROM virtual_lan_member WHERE network_id=?", id);
         if (members.isEmpty()) return R.err("虚拟局域网不存在");
+        String usedBy = tunnelTransportService.firstTunnelUsing("virtual", id);
+        if (usedBy != null) return R.err("该自动组网仍被线路使用，请先删除出口应用或修改线路：" + usedBy);
         List<String> failures = new ArrayList<>();
         for (Map<String, Object> member : members) {
             if (!online(member)) { failures.add(String.valueOf(member.get("member_name"))); continue; }
