@@ -1,9 +1,12 @@
 package socket
 
 import (
+	"encoding/json"
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/go-gost/x/config"
 )
 
 func TestReconnectDelayUsesFastStartupWindow(t *testing.T) {
@@ -36,5 +39,23 @@ func TestBuildReporterURLPreservesEncodedIdentity(t *testing.T) {
 	}
 	if len(query.Get("machine")) != 16 {
 		t.Fatalf("machine fingerprint is missing or malformed: %q", query.Get("machine"))
+	}
+}
+
+func TestPreprocessDurationFieldsAcceptsStringTimeoutsInChains(t *testing.T) {
+	reporter := &WebSocketReporter{}
+	processed, err := reporter.preprocessDurationFields([]byte(`{
+		"name":"route_chains",
+		"hops":[{"name":"hop-1","selector":{"strategy":"fifo","maxFails":1,"failTimeout":"30s"}}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chain config.ChainConfig
+	if err := json.Unmarshal(processed, &chain); err != nil {
+		t.Fatal(err)
+	}
+	if len(chain.Hops) != 1 || chain.Hops[0].Selector == nil || chain.Hops[0].Selector.FailTimeout != 30*time.Second {
+		t.Fatalf("unexpected chain selector timeout: %#v", chain.Hops)
 	}
 }

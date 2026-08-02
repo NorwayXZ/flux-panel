@@ -938,7 +938,7 @@ public class GostUtil {
                 if (StringUtils.isNotBlank(interfaceName)) node.put("interface", interfaceName);
                 nodes.add(node);
             }
-            JSONObject selector = new JSONObject(); selector.put("strategy", "fifo"); selector.put("maxFails", 1); selector.put("failTimeout", "30s");
+            JSONObject selector = new JSONObject(); selector.put("strategy", "fifo"); selector.put("maxFails", 1); selector.put("failTimeout", 30_000_000_000L);
             JSONObject hop = new JSONObject(); hop.put("name", "hop-" + name + "-" + hopIndex++); hop.put("nodes", nodes); hop.put("selector", selector);
             hops.add(hop);
         }

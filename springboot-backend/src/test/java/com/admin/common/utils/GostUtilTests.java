@@ -74,6 +74,7 @@ class GostUtilTests {
         assertEquals(2, hops.size());
         JSONObject firstHop = hops.getJSONObject(0);
         assertEquals("fifo", firstHop.getJSONObject("selector").getString("strategy"));
+        assertEquals(30_000_000_000L, firstHop.getJSONObject("selector").getLongValue("failTimeout"));
         assertEquals("10.88.0.3:22001", firstHop.getJSONArray("nodes").getJSONObject(0).getString("addr"));
         assertEquals("198.51.100.30:22001", firstHop.getJSONArray("nodes").getJSONObject(1).getString("addr"));
         assertEquals("relay", firstHop.getJSONArray("nodes").getJSONObject(0).getJSONObject("connector").getString("type"));

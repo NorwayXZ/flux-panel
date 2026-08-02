@@ -1299,9 +1299,13 @@ func (w *WebSocketReporter) handleAddChain(data interface{}) error {
 	if err != nil {
 		return fmt.Errorf("序列化数据失败: %v", err)
 	}
+	processedData, err := w.preprocessDurationFields(jsonData)
+	if err != nil {
+		return fmt.Errorf("预处理duration字段失败: %v", err)
+	}
 
 	var chainConfig config.ChainConfig
-	if err := json.Unmarshal(jsonData, &chainConfig); err != nil {
+	if err := json.Unmarshal(processedData, &chainConfig); err != nil {
 		return fmt.Errorf("解析链配置失败: %v", err)
 	}
 
@@ -1314,6 +1318,10 @@ func (w *WebSocketReporter) handleUpdateChain(data interface{}) error {
 	if err != nil {
 		return fmt.Errorf("序列化数据失败: %v", err)
 	}
+	processedData, err := w.preprocessDurationFields(jsonData)
+	if err != nil {
+		return fmt.Errorf("预处理duration字段失败: %v", err)
+	}
 
 	// 对于更新操作，Java端发送的格式可能是: {"chain": "name", "data": {...}}
 	var updateReq struct {
@@ -1322,10 +1330,10 @@ func (w *WebSocketReporter) handleUpdateChain(data interface{}) error {
 	}
 
 	// 尝试解析为更新请求格式
-	if err := json.Unmarshal(jsonData, &updateReq); err != nil {
+	if err := json.Unmarshal(processedData, &updateReq); err != nil {
 		// 如果失败，可能是直接的ChainConfig，从name字段获取chain名称
 		var chainConfig config.ChainConfig
-		if err := json.Unmarshal(jsonData, &chainConfig); err != nil {
+		if err := json.Unmarshal(processedData, &chainConfig); err != nil {
 			return fmt.Errorf("解析链配置失败: %v", err)
 		}
 		updateReq.Chain = chainConfig.Name
