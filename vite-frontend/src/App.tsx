@@ -27,6 +27,8 @@ const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
+const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
+const VirtualLanPage = lazy(() => import("@/pages/virtual-lan"));
 const ServerAssetsPage = lazy(() => import("@/pages/server-assets"));
 const DynamicDnsPage = lazy(() => import("@/pages/dynamic-dns"));
 const HomeAccessPage = lazy(() => import("@/pages/home-access"));
@@ -295,6 +297,8 @@ function App() {
       <Route path="/home-devices" element={<ProtectedRoute useSimpleLayout={true}><HomeDevicesPage /></ProtectedRoute>} />
       <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
       <Route path="/quality-lab" element={<ProtectedRoute><QualityLabPage /></ProtectedRoute>} />
+      <Route path="/bandwidth-test" element={<ProtectedRoute><BandwidthTestPage /></ProtectedRoute>} />
+      <Route path="/virtual-lan" element={<ProtectedRoute><VirtualLanPage /></ProtectedRoute>} />
       <Route path="/guide" element={<ProtectedRoute useSimpleLayout={true}><GuidePage /></ProtectedRoute>} />
       <Route
         path="/port-resources"

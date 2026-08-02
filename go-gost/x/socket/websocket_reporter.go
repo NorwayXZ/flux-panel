@@ -119,26 +119,28 @@ type PortCheckResponse struct {
 }
 
 type WebSocketReporter struct {
-	url             string
-	addr            string // 保存服务器地址
-	secret          string // 保存密钥
-	version         string // 保存版本号
-	role            string // node 或 connector
-	conn            *websocket.Conn
-	fastRetryUntil  time.Time
-	pingInterval    time.Duration
-	configInterval  time.Duration
-	ctx             context.Context
-	cancel          context.CancelFunc
-	connected       bool
-	connecting      bool              // 新增：正在连接状态
-	connMutex       sync.Mutex        // 新增：连接状态锁
-	aesCrypto       *crypto.AESCrypto // 新增：AES加密器
-	terminalManager *TerminalManager
-	realityManager  *realityRuntimeManager
-	proxyManager    *privateProxyRuntimeManager
-	natManager      *natRuntimeManager
-	nftManager      *nftForwardManager
+	url               string
+	addr              string // 保存服务器地址
+	secret            string // 保存密钥
+	version           string // 保存版本号
+	role              string // node 或 connector
+	conn              *websocket.Conn
+	fastRetryUntil    time.Time
+	pingInterval      time.Duration
+	configInterval    time.Duration
+	ctx               context.Context
+	cancel            context.CancelFunc
+	connected         bool
+	connecting        bool              // 新增：正在连接状态
+	connMutex         sync.Mutex        // 新增：连接状态锁
+	aesCrypto         *crypto.AESCrypto // 新增：AES加密器
+	terminalManager   *TerminalManager
+	realityManager    *realityRuntimeManager
+	proxyManager      *privateProxyRuntimeManager
+	natManager        *natRuntimeManager
+	nftManager        *nftForwardManager
+	bandwidthManager  *bandwidthTestManager
+	virtualLanManager *virtualLanRuntimeManager
 }
 
 const maxIncomingWebSocketMessage = 4 * 1024 * 1024
@@ -172,6 +174,8 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.proxyManager = newPrivateProxyRuntimeManager()
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	reporter.nftManager = newNFTForwardManager()
+	reporter.bandwidthManager = newBandwidthTestManager()
+	reporter.virtualLanManager = newVirtualLanRuntimeManager()
 	return reporter
 }
 
@@ -188,6 +192,9 @@ func (w *WebSocketReporter) Start() {
 	}
 	if w.nftManager != nil {
 		go w.nftManager.restore()
+	}
+	if w.virtualLanManager != nil {
+		go w.virtualLanManager.restore()
 	}
 	go w.run()
 }
@@ -206,6 +213,12 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.natManager != nil {
 		w.natManager.stopAll()
+	}
+	if w.bandwidthManager != nil {
+		w.bandwidthManager.stopAll()
+	}
+	if w.virtualLanManager != nil {
+		w.virtualLanManager.stopAll()
 	}
 	if w.conn != nil {
 		w.conn.Close()
@@ -824,6 +837,102 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		}
 		response.Type = "NftForwardStatusResponse"
 		response.Data = result
+
+	case "BandwidthPrepare":
+		var request bandwidthPrepareRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result bandwidthPrepareResponse
+		if err == nil && w.bandwidthManager != nil {
+			result, err = w.bandwidthManager.prepare(request)
+		}
+		response.Type = "BandwidthPrepareResponse"
+		response.Data = result
+
+	case "BandwidthRun":
+		var request bandwidthRunRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result bandwidthRunResponse
+		if err == nil && w.bandwidthManager != nil {
+			result, err = w.bandwidthManager.run(request)
+		}
+		response.Type = "BandwidthRunResponse"
+		response.Data = result
+
+	case "BandwidthStop":
+		var request struct {
+			SessionID string `json:"sessionId"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.bandwidthManager != nil {
+			w.bandwidthManager.stop(request.SessionID)
+		}
+		response.Type = "BandwidthStopResponse"
+
+	case "VirtualLanPrepareKey":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		var result virtualLanKeyResponse
+		if err == nil && w.virtualLanManager != nil {
+			result, err = w.virtualLanManager.prepareKey(request.Name)
+		}
+		response.Type = "VirtualLanPrepareKeyResponse"
+		response.Data = result
+
+	case "VirtualLanApply":
+		var request virtualLanApplyRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result virtualLanStatusResponse
+		if err == nil && w.virtualLanManager != nil {
+			result, err = w.virtualLanManager.apply(request)
+		}
+		response.Type = "VirtualLanApplyResponse"
+		response.Data = result
+
+	case "VirtualLanPause":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.virtualLanManager != nil {
+			err = w.virtualLanManager.pause(request.Name)
+		}
+		response.Type = "VirtualLanPauseResponse"
+
+	case "VirtualLanResume":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		var result virtualLanStatusResponse
+		if err == nil && w.virtualLanManager != nil {
+			result, err = w.virtualLanManager.resume(request.Name)
+		}
+		response.Type = "VirtualLanResumeResponse"
+		response.Data = result
+
+	case "VirtualLanStatus":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		var result virtualLanStatusResponse
+		if err == nil && w.virtualLanManager != nil {
+			result, err = w.virtualLanManager.status(request.Name)
+		}
+		response.Type = "VirtualLanStatusResponse"
+		response.Data = result
+
+	case "VirtualLanDelete":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.virtualLanManager != nil {
+			err = w.virtualLanManager.delete(request.Name)
+		}
+		response.Type = "VirtualLanDeleteResponse"
 
 	default:
 		err = fmt.Errorf("未知命令类型: %s", cmd.Type)

@@ -373,6 +373,48 @@ export const deleteQualityProbeTask = (id: number) => Network.post('/quality-lab
 export const getQualityLabDetail = (id: number, range: '24h' | '7d' | '30d') => Network.post<QualityLabDetail>('/quality-lab/detail', { id, range });
 export const getQualityLabReport = (id: number, range: '24h' | '7d' | '30d') => Network.post<{ filename: string; content: string; generatedAt: number }>('/quality-lab/report', { id, range });
 
+export interface BandwidthTestTask {
+  id: number; name: string; sourceNodeId: number; sourceNodeName: string; sourceNodeStatus: number; sourceNodeVersion?: string;
+  targetNodeId: number; targetNodeName: string; targetNodeStatus: number; targetNodeVersion?: string; listenPort: number;
+  direction: 'upload' | 'download' | 'bidirectional'; streams: number; durationSeconds: number; maximumMegabytes: number; retentionDays: number;
+  running: boolean | number; lastStatus: 'pending' | 'running' | 'success' | 'failed'; lastError?: string; lastRunAt?: number;
+  uploadMbps?: number; downloadMbps?: number; totalMbps?: number; latestDurationMs?: number; successfulStreams?: number; failedStreams?: number; latestStartedAt?: number;
+}
+export interface BandwidthTestRun {
+  id: number; status: string; direction: string; streams: number; durationMs: number; uploadBytes: number; downloadBytes: number;
+  uploadMbps: number; downloadMbps: number; totalMbps: number; cpuPercent?: number; memoryUsed?: number; memoryPercent?: number;
+  successfulStreams: number; failedStreams: number; error?: string; startedAt: number; finishedAt: number;
+}
+export interface BandwidthTestOverview {
+  minimumAgentVersion: string; nodes: QualityLabNode[]; tasks: BandwidthTestTask[];
+  summary: { total: number; running: number; success: number; failed: number; peakMbps: number };
+}
+export type BandwidthTestTaskInput = Pick<BandwidthTestTask, 'name' | 'sourceNodeId' | 'targetNodeId' | 'listenPort' | 'direction' | 'streams' | 'durationSeconds' | 'maximumMegabytes' | 'retentionDays'> & { id?: number };
+export const getBandwidthTestOverview = () => Network.post<BandwidthTestOverview>('/bandwidth-test/overview');
+export const saveBandwidthTestTask = (data: BandwidthTestTaskInput) => Network.post<BandwidthTestOverview>('/bandwidth-test/save', data);
+export const runBandwidthTestTask = (id: number) => Network.post<{ id: number; state: string; message: string }>('/bandwidth-test/run', { id });
+export const deleteBandwidthTestTask = (id: number) => Network.post<BandwidthTestOverview>('/bandwidth-test/delete', { id });
+export const getBandwidthTestDetail = (id: number) => Network.post<{ taskId: number; runs: BandwidthTestRun[] }>('/bandwidth-test/detail', { id });
+
+export interface VirtualLanConnector { id: number; name: string; platform: string; version?: string; status: number; remoteIp?: string; lastSeen?: number }
+export interface VirtualLanMember {
+  id: number; networkId: number; targetType: 'node' | 'connector'; targetId: number; memberName: string; role: 'hub' | 'member';
+  virtualIp: string; state: string; receiveBytes: number; transmitBytes: number; latestHandshake?: number; lastError?: string; updatedTime: number;
+}
+export interface VirtualLanNetwork {
+  id: number; name: string; cidr: string; hubNodeId: number; hubNodeName: string; hubServerIp?: string; hubIp?: string; listenPort: number;
+  state: string; lastError?: string; memberCount: number; onlineCount: number; createdTime: number; updatedTime: number; members: VirtualLanMember[];
+}
+export interface VirtualLanOverview { minimumAgentVersion: string; nodes: QualityLabNode[]; connectors: VirtualLanConnector[]; networks: VirtualLanNetwork[] }
+export interface VirtualLanCreateInput { name: string; cidr: string; hubNodeId: number; listenPort: number; members: Array<{ targetType: 'node' | 'connector'; targetId: number }> }
+export const getVirtualLanOverview = () => Network.post<VirtualLanOverview>('/virtual-lan/overview');
+export const createVirtualLan = (data: VirtualLanCreateInput) => Network.post<VirtualLanOverview>('/virtual-lan/create', data);
+export const deployVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/deploy', { id });
+export const pauseVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/pause', { id });
+export const resumeVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/resume', { id });
+export const refreshVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/refresh', { id });
+export const deleteVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/delete', { id });
+
 // 转发服务控制操作 - 通过Java后端接口
 export const pauseForwardService = (forwardId: number) => Network.mutate("/forward/pause", { id: forwardId }, ["/forward/list"]);
 export const resumeForwardService = (forwardId: number) => Network.mutate("/forward/resume", { id: forwardId }, ["/forward/list"]);

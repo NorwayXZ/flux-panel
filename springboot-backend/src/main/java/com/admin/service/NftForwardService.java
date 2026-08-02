@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class NftForwardService {
-    public static final String MIN_AGENT_VERSION = "2.43.1";
+    public static final String MIN_AGENT_VERSION = "2.44.0";
 
     private static final int MAX_SOURCE_CIDRS = 64;
     private static final AtomicLong GENERATION = new AtomicLong(System.currentTimeMillis());
