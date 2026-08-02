@@ -1,3 +1,9 @@
+## 2.42.4 Port-grouped route selectors
+
+- Groups TCP route choices by public entry port in Three-network Optimization, Cross-entry Failover, and Source-IP Entry.
+- Sorts port groups numerically, sorts routes within each group by node and route name, and includes the port in search text.
+- Frontend-only release. Agent and Connector remain `2.42.3`; existing nodes, tunnels, forwards, ports, DNS records, certificates, and proxy services are unchanged.
+
 ## 2.42.3 Reliable Agent self-update fallback
 
 - Falls back to a detached helper when `systemd-run` is present but cannot create the transient unit.

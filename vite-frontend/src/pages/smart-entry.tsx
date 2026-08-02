@@ -5,7 +5,7 @@ import { Card, CardBody } from '@heroui/card';
 import { Chip } from '@heroui/chip';
 import { Input } from '@heroui/input';
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
-import { Select, SelectItem } from '@heroui/select';
+import { Select, SelectItem, SelectSection } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Activity, CheckCircle2, History, Pencil, Plus, RefreshCw, Route, ScanSearch, Trash2, TriangleAlert, Waypoints } from 'lucide-react';
@@ -26,6 +26,7 @@ import {
   type SmartEntryGroup,
   type SmartEntryProviderOption,
 } from '@/api';
+import { groupForwardOptionsByPort } from '@/utils/forward-option-groups';
 
 type Carrier = 'default' | 'telecom' | 'unicom' | 'mobile';
 type RouteForm = Record<Carrier, string>;
@@ -146,6 +147,7 @@ export default function SmartEntryPage() {
   }, []);
 
   const selected = useMemo(() => Object.fromEntries(carriers.map(item => [item.key, forwards.find(option => String(option.id) === form.routes[item.key])])) as Record<Carrier, SmartEntryForwardOption | undefined>, [form.routes, forwards]);
+  const forwardGroups = useMemo(() => groupForwardOptionsByPort(forwards), [forwards]);
   const selectionProblem = useMemo(() => {
     if (!selected.default) return '必须选择默认入口';
     const values = carriers.map(item => selected[item.key]).filter(Boolean) as SmartEntryForwardOption[];
@@ -374,7 +376,11 @@ export default function SmartEntryPage() {
                 {carriers.map(carrier => (
                   <div key={carrier.key} className="border-l-2 border-divider pl-3">
                     <Select label={carrier.label} description={carrier.note} placeholder={carrier.key === 'default' ? '必须选择' : '留空使用默认入口'} selectedKeys={form.routes[carrier.key] ? [form.routes[carrier.key]] : []} onSelectionChange={keys => setForm({ ...form, routes: { ...form.routes, [carrier.key]: String(Array.from(keys)[0] || '') } })}>
-                      {forwards.map(option => <SelectItem key={String(option.id)} textValue={`${option.nodeName} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
+                      {forwardGroups.map((group, groupIndex) => (
+                        <SelectSection key={`port-${group.port}`} title={`端口 ${group.port} (${group.options.length})`} showDivider={groupIndex < forwardGroups.length - 1}>
+                          {group.options.map(option => <SelectItem key={String(option.id)} textValue={`端口 ${option.inPort} ${option.nodeName} ${option.entryHost} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
+                        </SelectSection>
+                      ))}
                     </Select>
                   </div>
                 ))}

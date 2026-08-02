@@ -5,7 +5,7 @@ import { Card, CardBody } from '@heroui/card';
 import { Chip } from '@heroui/chip';
 import { Input } from '@heroui/input';
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
-import { Select, SelectItem } from '@heroui/select';
+import { Select, SelectItem, SelectSection } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
 import { Activity, ArrowRight, CheckCircle2, History, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
@@ -25,6 +25,7 @@ import {
   type CrossEntrySummary,
   type DnsZoneOption,
 } from '@/api';
+import { groupForwardOptionsByPort } from '@/utils/forward-option-groups';
 
 type PresetProfileKey = 'fast' | 'standard' | 'stable';
 type ProfileKey = PresetProfileKey | 'custom';
@@ -100,6 +101,7 @@ export default function CrossEntryFailoverPage() {
   }, [loadData]);
 
   const selectedOptions = useMemo(() => form.memberForwardIds.map(id => forwardOptions.find(item => String(item.id) === id)), [form.memberForwardIds, forwardOptions]);
+  const forwardGroups = useMemo(() => groupForwardOptionsByPort(forwardOptions), [forwardOptions]);
   const selectedZone = useMemo(() => zoneOptions.find(item => String(item.id) === form.dnsZoneId), [form.dnsZoneId, zoneOptions]);
   const selectedPort = selectedOptions.find(Boolean)?.inPort;
   const selectionProblem = useMemo(() => {
@@ -317,7 +319,11 @@ export default function CrossEntryFailoverPage() {
                   <div key={`${index}-${id}`} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
                     <span className="w-14 text-xs font-medium text-default-500">{form.routingMode === 'active_active' ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)}</span>
                     <Select aria-label={index === 0 ? '主入口转发' : `备用入口 ${index}`} placeholder="选择一个现有转发" selectedKeys={id ? [id] : []} onSelectionChange={keys => { const values = [...form.memberForwardIds]; values[index] = String(Array.from(keys)[0] || ''); setForm({ ...form, memberForwardIds: values }); }}>
-                      {forwardOptions.map(option => <SelectItem key={String(option.id)} textValue={`${option.nodeName} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
+                      {forwardGroups.map((group, groupIndex) => (
+                        <SelectSection key={`port-${group.port}`} title={`端口 ${group.port} (${group.options.length})`} showDivider={groupIndex < forwardGroups.length - 1}>
+                          {group.options.map(option => <SelectItem key={String(option.id)} textValue={`端口 ${option.inPort} ${option.nodeName} ${option.entryHost} ${option.name}`}>{option.nodeName} · {option.entryHost}:{option.inPort} · {option.name}</SelectItem>)}
+                        </SelectSection>
+                      ))}
                     </Select>
                     <Button isIconOnly variant="light" aria-label="移除入口" isDisabled={form.memberForwardIds.length <= 2} onPress={() => setForm({ ...form, memberForwardIds: form.memberForwardIds.filter((_, current) => current !== index) })}><X size={17} /></Button>
                   </div>
