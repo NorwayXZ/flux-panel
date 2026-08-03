@@ -419,6 +419,23 @@ export const resumeVirtualLan = (id: number) => Network.post<VirtualLanOverview>
 export const refreshVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/refresh', { id });
 export const deleteVirtualLan = (id: number) => Network.post<VirtualLanOverview>('/virtual-lan/delete', { id });
 
+export interface IpQualityServiceResult { name: string; state: 'available' | 'restricted' | 'unavailable' | 'unknown'; httpStatus?: number; latencyMs: number; detail?: string }
+export interface IpQualityPortResult { name: string; host: string; port: number; reachable: boolean; latencyMs: number; error?: string }
+export interface IpQualityBlacklistResult { provider: string; listed: boolean; status: string; answer?: string; detail?: string }
+export interface IpQualityRiskSource { name: string; configured: boolean; status: string; score?: number; proxy?: boolean; vpn?: boolean; tor?: boolean; recentAbuse?: boolean; bot?: boolean; totalReports?: number; lastReportedAt?: string; usageType?: string; error?: string }
+export interface IpQualityScan {
+  scanId?: number; scanStatus?: string; publicIpv4?: string; publicIpv6?: string; countryCode?: string; country?: string; region?: string; city?: string;
+  asn?: string; organization?: string; networkType?: string; riskScore?: number; riskLevel?: string; confidence?: string; riskSources: Record<string, IpQualityRiskSource>;
+  blacklist: IpQualityBlacklistResult[]; unlockResults: IpQualityServiceResult[]; dns: { configuredResolvers?: string[]; observedResolvers?: string[]; error?: string };
+  ports: IpQualityPortResult[]; scanError?: string; startedAt?: number; finishedAt?: number;
+}
+export interface IpQualityNode extends QualityLabNode, IpQualityScan {}
+export interface IpQualityOverview { minimumAgentVersion: string; nodes: IpQualityNode[]; providers: { ipqsConfigured: boolean; abuseipdbConfigured: boolean }; summary: { total: number; running: number; tested: number; highRisk: number } }
+export const getIpQualityOverview = () => Network.post<IpQualityOverview>('/ip-quality/overview');
+export const runIpQualityScan = (nodeId: number) => Network.post<IpQualityOverview>('/ip-quality/run', { nodeId });
+export const getIpQualityHistory = (nodeId: number) => Network.post<{ scans: IpQualityScan[] }>('/ip-quality/history', { nodeId });
+export const saveIpQualityProviders = (data: { ipqsApiKey: string; abuseipdbApiKey: string; clearIpqs: boolean; clearAbuseipdb: boolean }) => Network.post<IpQualityOverview>('/ip-quality/providers/save', data);
+
 export interface PrivateNetworkMember {
   id: number; groupId: number; nodeId: number; nodeName: string; nodeStatus: number; nodeVersion?: string;
   privateAddress: string; interfaceName?: string; mtu: number; updatedTime: number;

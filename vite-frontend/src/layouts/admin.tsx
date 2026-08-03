@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { ArrowRightLeft, BellRing, BookOpen, Boxes, FlaskConical, Gauge, Home, LockKeyhole, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { ArrowRightLeft, BellRing, BookOpen, Boxes, FlaskConical, Gauge, Home, LockKeyhole, MapPinned, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -136,6 +136,12 @@ export default function AdminLayout({
       path: '/bandwidth-test',
       label: '真实带宽测试',
       icon: <Gauge className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
+      path: '/ip-quality',
+      label: 'IP 质量检测',
+      icon: <MapPinned className="h-5 w-5" />,
       adminOnly: true
     },
     {
