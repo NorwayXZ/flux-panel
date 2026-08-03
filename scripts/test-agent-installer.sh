@@ -297,6 +297,42 @@ EOF
   grep -Fq 'systemctl daemon-reload ' "$event_log"
 }
 
+run_low_disk_guard_test() {
+  case_root="$TEST_ROOT/low-disk"
+  mock_dir="$case_root/bin"
+  output="$case_root/output.log"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+  mkdir -p "$case_root/etc/gost" "$case_root/etc/systemd/system"
+  printf '[Service]\n' > "$case_root/etc/systemd/system/gost.service"
+
+  cat > "$mock_dir/df" <<'EOF'
+#!/bin/sh
+case "$1" in
+  -Pi) printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\nmock 1000 1 999 1%% /\n' ;;
+  *) printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nmock 100000 99000 1024 99%% /\n' ;;
+esac
+EOF
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s\n' "\$*" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/df" "$mock_dir/systemctl"
+
+  if PATH="$mock_dir:$PATH" GOST_KEEP_SCRIPT=1 GOST_SERVICE_MANAGER=systemd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost GOST_MIN_FREE_KB=2048 \
+    GOST_INSTALL_DIR="$case_root/etc/gost" GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret >"$output" 2>&1; then
+    printf 'expected low disk preflight to fail\n' >&2
+    exit 1
+  fi
+
+  grep -Fq 'Agent 安装分区空间不足' "$output"
+  test ! -e "$case_root/etc/gost/gost.new"
+  test ! -s "$event_log"
+}
+
 run_macos_bootstrap_retry_test() {
   case_root="$TEST_ROOT/macos-retry"
   mock_dir="$case_root/bin"
@@ -379,5 +415,6 @@ run_systemd_update_test
 run_systemd_update_rollback_test
 run_identity_replacement_guard_test
 run_connector_uninstall_test
+run_low_disk_guard_test
 run_macos_bootstrap_retry_test
 printf 'Agent installer tests passed\n'

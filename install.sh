@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.46.0}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.46.1}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -21,6 +21,7 @@ REPLACE_IDENTITY=0
 DOWNLOAD_URL=""
 CHECKSUM_URL=""
 BINARY_NAME=""
+MIN_FREE_KB="${GOST_MIN_FREE_KB:-98304}"
 
 configure_role_paths() {
   if [ "$AGENT_ROLE" = "connector" ]; then
@@ -278,10 +279,62 @@ check_and_install_tcpkill() {
   esac
 }
 
+storage_value() {
+  mode="$1"
+  path="$2"
+  case "$mode" in
+    blocks) df -Pk "$path" 2>/dev/null | awk 'NR == 2 {print $4}' ;;
+    inodes) df -Pi "$path" 2>/dev/null | awk 'NR == 2 {print $4}' ;;
+  esac
+}
+
+prepare_download_destination() {
+  destination="$1"
+  directory="$(dirname "$destination")"
+  probe="$directory/.gost-write-test.$$"
+
+  mkdir -p "$directory" || fail "无法创建 Agent 安装目录: $directory"
+  rm -f "$destination" "$destination.sha256sums"
+  if ! : > "$probe" 2>/dev/null; then
+    fail "Agent 安装目录不可写: $directory；请检查磁盘是否只读或已满"
+  fi
+  rm -f "$probe"
+
+  available_kb="$(storage_value blocks "$directory")"
+  if [ -n "$available_kb" ] && [ "$available_kb" -eq "$available_kb" ] 2>/dev/null \
+      && [ "$available_kb" -lt "$MIN_FREE_KB" ]; then
+    fail "Agent 安装分区空间不足：可用 $((available_kb / 1024)) MB，至少需要 $((MIN_FREE_KB / 1024)) MB；请先执行 df -h 和 du -xhd1 / 排查"
+  fi
+
+  available_inodes="$(storage_value inodes "$directory")"
+  if [ -n "$available_inodes" ] && [ "$available_inodes" -eq "$available_inodes" ] 2>/dev/null \
+      && [ "$available_inodes" -lt 16 ]; then
+    fail "Agent 安装分区 inode 不足：仅剩 $available_inodes；请先执行 df -i 排查"
+  fi
+}
+
+download_failure() {
+  destination="$1"
+  status="$2"
+  directory="$(dirname "$destination")"
+  available_kb="$(storage_value blocks "$directory")"
+  rm -f "$destination" "$destination.sha256sums"
+  if [ "$status" = "23" ] && [ -n "$available_kb" ]; then
+    fail "Agent 下载写入失败（curl $status，可用磁盘约 $((available_kb / 1024)) MB）；请检查 df -h、df -i 以及文件系统是否只读"
+  fi
+  fail "Agent 下载失败（curl $status）；已清理残缺文件，请检查网络和下载地址"
+}
+
 download_binary() {
   destination="$1"
+  prepare_download_destination "$destination"
   log "下载 GOST Agent: $(get_architecture)"
-  curl -fL --retry 3 --connect-timeout 15 "$DOWNLOAD_URL" -o "$destination"
+  if curl -fL --retry 3 --connect-timeout 15 "$DOWNLOAD_URL" -o "$destination"; then
+    :
+  else
+    download_status="$?"
+    download_failure "$destination" "$download_status"
+  fi
   [ -s "$destination" ] || fail "下载失败，请检查网络或下载地址"
   verify_binary_checksum "$destination"
   chmod 755 "$destination"
@@ -303,8 +356,10 @@ verify_binary_checksum() {
   expected="${GOST_SHA256:-}"
   checksum_file="$destination.sha256sums"
   if [ -z "$expected" ] && [ -n "$CHECKSUM_URL" ]; then
-    curl -fL --retry 3 --connect-timeout 15 "$CHECKSUM_URL" -o "$checksum_file" \
-      || fail "无法下载 Agent SHA256 校验文件"
+    if ! curl -fL --retry 3 --connect-timeout 15 "$CHECKSUM_URL" -o "$checksum_file"; then
+      rm -f "$checksum_file" "$destination"
+      fail "无法下载 Agent SHA256 校验文件；已删除未校验的 Agent 文件"
+    fi
     expected="$(awk -v file="$BINARY_NAME" '$2 == file || $2 == "*" file {print $1; exit}' "$checksum_file")"
     rm -f "$checksum_file"
     [ -n "$expected" ] || fail "校验文件中缺少 $BINARY_NAME"
@@ -394,6 +449,9 @@ install_gost() {
   detect_download_url
   check_and_install_tcpkill
 
+  mkdir -p "$INSTALL_DIR"
+  download_binary "$INSTALL_DIR/gost.new"
+
   if service_exists; then
     log "停止已有 GOST 服务"
     stop_service
@@ -401,8 +459,6 @@ install_gost() {
   fi
   stop_orphaned_processes
 
-  mkdir -p "$INSTALL_DIR"
-  download_binary "$INSTALL_DIR/gost.new"
   mv -f "$INSTALL_DIR/gost.new" "$INSTALL_DIR/gost"
   write_agent_config
   write_service_definition
