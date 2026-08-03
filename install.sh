@@ -2,7 +2,7 @@
 
 set -u
 
-AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.46.1}"
+AGENT_RELEASE="${FLUX_PANEL_AGENT_RELEASE:-2.46.3}"
 AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
@@ -309,7 +309,7 @@ prepare_download_destination() {
   available_inodes="$(storage_value inodes "$directory")"
   if [ -n "$available_inodes" ] && [ "$available_inodes" -eq "$available_inodes" ] 2>/dev/null \
       && [ "$available_inodes" -lt 16 ]; then
-    fail "Agent 安装分区 inode 不足：仅剩 $available_inodes；请先执行 df -i 排查"
+    fail "Agent 安装分区 inode 不足：仅剩 ${available_inodes}；请先执行 df -i 排查"
   fi
 }
 
@@ -335,7 +335,10 @@ download_binary() {
     download_status="$?"
     download_failure "$destination" "$download_status"
   fi
-  [ -s "$destination" ] || fail "下载失败，请检查网络或下载地址"
+  if [ ! -s "$destination" ]; then
+    rm -f "$destination"
+    fail "下载失败，请检查网络或下载地址"
+  fi
   verify_binary_checksum "$destination"
   chmod 755 "$destination"
   verify_binary_version "$destination"
@@ -362,14 +365,20 @@ verify_binary_checksum() {
     fi
     expected="$(awk -v file="$BINARY_NAME" '$2 == file || $2 == "*" file {print $1; exit}' "$checksum_file")"
     rm -f "$checksum_file"
-    [ -n "$expected" ] || fail "校验文件中缺少 $BINARY_NAME"
+    if [ -z "$expected" ]; then
+      rm -f "$destination"
+      fail "校验文件中缺少 $BINARY_NAME；已删除未校验的 Agent 文件"
+    fi
   fi
   if [ -z "$expected" ]; then
     log "使用自定义下载地址，未提供 GOST_SHA256，跳过校验"
     return 0
   fi
   actual="$(calculate_sha256 "$destination")"
-  [ "$actual" = "$expected" ] || fail "Agent SHA256 校验失败"
+  if [ "$actual" != "$expected" ]; then
+    rm -f "$destination"
+    fail "Agent SHA256 校验失败；已删除损坏的 Agent 文件"
+  fi
   log "Agent SHA256 校验通过"
 }
 
@@ -379,7 +388,10 @@ verify_binary_version() {
     return 0
   fi
   actual_version="$($destination --agent-version 2>/dev/null || true)"
-  [ "$actual_version" = "$AGENT_RELEASE" ] || fail "Agent 版本校验失败，期望 $AGENT_RELEASE，实际 ${actual_version:-未知}"
+  if [ "$actual_version" != "$AGENT_RELEASE" ]; then
+    rm -f "$destination"
+    fail "Agent 版本校验失败，期望 ${AGENT_RELEASE}，实际 ${actual_version:-未知}；已删除错误版本文件"
+  fi
   log "Agent 版本校验通过: $actual_version"
 }
 

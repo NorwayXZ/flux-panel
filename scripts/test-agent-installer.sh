@@ -333,6 +333,55 @@ EOF
   test ! -s "$event_log"
 }
 
+run_version_mismatch_guard_test() {
+  case_root="$TEST_ROOT/version-mismatch"
+  mock_dir="$case_root/bin"
+  output="$case_root/output.log"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+  mkdir -p "$case_root/etc/gost" "$case_root/etc/systemd/system"
+  printf '[Service]\n' > "$case_root/etc/systemd/system/gost.service"
+
+  cat > "$mock_dir/curl" <<'EOF'
+#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; output="$1"; fi
+  shift
+done
+[ -n "$output" ] || exit 1
+cat > "$output" <<'AGENT'
+#!/bin/sh
+[ "${1:-}" = "--agent-version" ] && printf 'old-version\n'
+AGENT
+EOF
+  cat > "$mock_dir/sha256sum" <<'EOF'
+#!/bin/sh
+printf 'test-checksum  %s\n' "$1"
+EOF
+  cat > "$mock_dir/systemctl" <<EOF
+#!/bin/sh
+printf 'systemctl %s\n' "\$*" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$mock_dir/curl" "$mock_dir/sha256sum" "$mock_dir/systemctl"
+
+  if PATH="$mock_dir:$PATH" GOST_KEEP_SCRIPT=1 GOST_SERVICE_MANAGER=systemd \
+    GOST_SHA256=test-checksum GOST_INSTALL_DIR="$case_root/etc/gost" \
+    GOST_SYSTEMD_DIR="$case_root/etc/systemd/system" \
+    sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret >"$output" 2>&1; then
+    printf 'expected Agent version mismatch to fail\n' >&2
+    exit 1
+  fi
+
+  grep -Fq 'Agent 版本校验失败' "$output" || {
+    cat "$output" >&2
+    return 1
+  }
+  test ! -e "$case_root/etc/gost/gost.new"
+  test ! -s "$event_log"
+}
+
 run_macos_bootstrap_retry_test() {
   case_root="$TEST_ROOT/macos-retry"
   mock_dir="$case_root/bin"
@@ -416,5 +465,6 @@ run_systemd_update_rollback_test
 run_identity_replacement_guard_test
 run_connector_uninstall_test
 run_low_disk_guard_test
+run_version_mismatch_guard_test
 run_macos_bootstrap_retry_test
 printf 'Agent installer tests passed\n'
