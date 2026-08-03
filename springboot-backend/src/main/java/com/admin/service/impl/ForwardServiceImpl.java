@@ -351,9 +351,25 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R updateForward(ForwardUpdateDto forwardUpdateDto) {
+        if (isManagedByAggregation(forwardUpdateDto.getId())) {
+            return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面编辑");
+        }
+        return updateForwardInternal(forwardUpdateDto, getCurrentUserInfo());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R updateManagedForward(ForwardUpdateDto forwardUpdateDto) {
+        Forward existing = this.getById(forwardUpdateDto.getId());
+        if (existing == null) {
+            return R.err("托管转发不存在");
+        }
+        return updateForwardInternal(forwardUpdateDto,
+                new UserInfo(existing.getUserId(), ADMIN_ROLE_ID, existing.getUserName()));
+    }
+
+    private R updateForwardInternal(ForwardUpdateDto forwardUpdateDto, UserInfo currentUser) {
         portAllocationLockMapper.lockForUpdate();
-        // 1. 获取当前用户信息
-        UserInfo currentUser = getCurrentUserInfo();
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             User user = userService.getById(currentUser.getUserId());
             if (user == null) return R.err("用户不存在");
@@ -502,8 +518,20 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     @Override
     public R deleteForward(Long id) {
-        // 1. 获取当前用户信息
-        UserInfo currentUser = getCurrentUserInfo();
+        if (isManagedByAggregation(id)) {
+            return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面删除");
+        }
+        return deleteForwardInternal(id, getCurrentUserInfo());
+    }
+
+    @Override
+    public R deleteManagedForward(Long id) {
+        Forward existing = this.getById(id);
+        if (existing == null) return R.err("托管转发不存在");
+        return deleteForwardInternal(id, new UserInfo(existing.getUserId(), ADMIN_ROLE_ID, existing.getUserName()));
+    }
+
+    private R deleteForwardInternal(Long id, UserInfo currentUser) {
 
         // 2. 检查转发是否存在
         Forward forward = validateForwardExists(id, currentUser);
@@ -557,16 +585,38 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     @Override
     public R pauseForward(Long id) {
-        return changeForwardStatus(id, FORWARD_STATUS_PAUSED, "暂停", "PauseService");
+        if (isManagedByAggregation(id)) return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面暂停");
+        return changeForwardStatus(id, FORWARD_STATUS_PAUSED, "暂停", "PauseService", getCurrentUserInfo());
     }
 
     @Override
     public R resumeForward(Long id) {
-        return changeForwardStatus(id, FORWARD_STATUS_ACTIVE, "恢复", "ResumeService");
+        if (isManagedByAggregation(id)) return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面恢复");
+        return changeForwardStatus(id, FORWARD_STATUS_ACTIVE, "恢复", "ResumeService", getCurrentUserInfo());
+    }
+
+    @Override
+    public R pauseManagedForward(Long id) {
+        return changeManagedForwardStatus(id, FORWARD_STATUS_PAUSED, "暂停", "PauseService");
+    }
+
+    @Override
+    public R resumeManagedForward(Long id) {
+        return changeManagedForwardStatus(id, FORWARD_STATUS_ACTIVE, "恢复", "ResumeService");
+    }
+
+    private R changeManagedForwardStatus(Long id, int status, String operation, String method) {
+        Forward existing = this.getById(id);
+        if (existing == null) return R.err("托管转发不存在");
+        return changeForwardStatus(id, status, operation, method,
+                new UserInfo(existing.getUserId(), ADMIN_ROLE_ID, existing.getUserName()));
     }
 
     @Override
     public R forceDeleteForward(Long id) {
+        if (isManagedByAggregation(id)) {
+            return R.err("该转发由多线路聚合模块托管，不能在转发页面强制删除");
+        }
         // 1. 获取当前用户信息
         UserInfo currentUser = getCurrentUserInfo();
 
@@ -592,9 +642,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     /**
      * 改变转发状态（暂停/恢复）
      */
-    private R changeForwardStatus(Long id, int targetStatus, String operation, String gostMethod) {
-        // 1. 获取当前用户信息
-        UserInfo currentUser = getCurrentUserInfo();
+    private R changeForwardStatus(Long id, int targetStatus, String operation, String gostMethod, UserInfo currentUser) {
 
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             User user = userService.getById(currentUser.getUserId());
@@ -703,6 +751,17 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM cross_entry_failover_member WHERE forward_id=?", Integer.class, forwardId);
         return count != null && count > 0;
+    }
+
+    private boolean isManagedByAggregation(Long forwardId) {
+        if (forwardId == null) return false;
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM aggregation_group WHERE forward_id=?", Integer.class, forwardId);
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override
@@ -1342,7 +1401,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         for (ForwardRouteDto route : routes) {
             int value = weights == null ? 100 : weights.getOrDefault(route.getTunnelId(), 100);
             route.setWeight(Math.max(1, Math.min(1000, value)));
-            route.setEnabled(true);
+            route.setEnabled(value > 0);
             route.setDraining(false);
         }
     }
@@ -1577,8 +1636,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 NodeInfo oldNodeInfo = getRequiredNodes(oldTunnel);
                 UserTunnel oldUserTunnel = getUserTunnel(oldForward.getUserId(), oldTunnel.getId().intValue());
                 Integer oldLimiter = oldUserTunnel == null ? null : oldUserTunnel.getSpeedId();
-                createGostServices(oldForward, oldTunnel, oldLimiter, oldNodeInfo, oldUserTunnel);
+                R rollbackResult = createGostServices(oldForward, oldTunnel, oldLimiter, oldNodeInfo, oldUserTunnel);
+                if (rollbackResult.getCode() != 0) {
+                    return R.err(createResult.getMsg() + "；原配置回退失败：" + rollbackResult.getMsg());
+                }
+                return R.err(createResult.getMsg() + "；原配置已恢复");
             }
+            return R.err(createResult.getMsg() + "；原隧道不存在，无法回退");
         }
         return createResult;
     }
@@ -2358,6 +2422,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String previousStatus = route.getStatus() == null ? ROUTE_STATUS_UNKNOWN : route.getStatus();
         route.setLastCheckTime(now);
         if (probe.isSuccess()) {
+            // A route disabled by adaptive aggregation may rejoin after the
+            // regular forward health checker confirms recovery.
+            route.setEnabled(true);
             int successCount = (route.getSuccessCount() == null ? 0 : route.getSuccessCount()) + 1;
             route.setSuccessCount(Math.min(successCount, Math.max(routeRecoveryThreshold, 1)));
             route.setFailCount(0);

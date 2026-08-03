@@ -206,6 +206,58 @@ export const updateForward = (data: any) => Network.mutate("/forward/update", da
 export const deleteForward = (id: number) => Network.mutate("/forward/delete", { id }, ["/forward/list"]);
 export const forceDeleteForward = (id: number) => Network.mutate("/forward/force-delete", { id }, ["/forward/list"]);
 
+export type AggregationMode = 'speed' | 'balanced' | 'stability';
+export type AggregationProtocol = 'tcp' | 'udp' | 'tcp_udp';
+
+export interface AggregationMember {
+  id: number; group_id: number; tunnel_id: number; tunnel_name: string;
+  in_node_name?: string; out_node_name?: string; protocol?: string;
+  manual_weight: number; effective_weight: number; enabled: boolean;
+  health_status: 'unknown' | 'healthy' | 'unhealthy' | 'offline';
+  bandwidth_mbps?: number; latency_ms?: number; packet_loss_percent?: number;
+  jitter_ms?: number; metric_measured_at?: number; last_checked_at?: number; last_error?: string;
+}
+
+export interface AggregationGroup {
+  id: number; name: string; forward_id?: number; entry_node_id: number; entry_node_name?: string;
+  entry_server_ip?: string; entry_ip?: string; listen_port: number; remote_addr: string;
+  protocol_mode: AggregationProtocol; mode: AggregationMode; scheduler: 'weighted'; auto_weight: boolean;
+  minimum_healthy_paths: number; enabled: boolean; state: 'provisioning' | 'active' | 'paused' | 'degraded' | 'error';
+  last_error?: string; last_calculated_at?: number; healthyPaths: number; estimatedCapacityMbps: number;
+  degraded: boolean; in_flow?: number; out_flow?: number; members: AggregationMember[];
+}
+
+export interface AggregationTunnelOption {
+  id: number; name: string; entryNodeId: number; entryNodeName: string;
+  exitNodeId: number; exitNodeName: string; protocol?: string; online: boolean;
+}
+
+export interface AggregationOverview {
+  groups: AggregationGroup[]; tunnels: AggregationTunnelOption[];
+  summary: { groups: number; active: number; healthyPaths: number; degraded: number; estimatedCapacityMbps: number };
+  aggregationType: 'multi_session'; agentUpgradeRequired: boolean;
+}
+
+export interface AggregationSaveInput {
+  id?: number; name: string; tunnelIds: number[]; listenPort: number; remoteAddr: string;
+  protocolMode: AggregationProtocol; mode: AggregationMode; autoWeight: boolean;
+  minimumHealthyPaths: number; manualWeights: Record<number, number>;
+}
+
+export interface AggregationEvent {
+  id: number; groupId: number; eventType: string; status: string;
+  detail?: string; snapshotJson?: string; createdTime: number;
+}
+
+export const getAggregationOverview = () => Network.post<AggregationOverview>('/multi-line-aggregation/overview');
+export const saveAggregation = (data: AggregationSaveInput) => Network.post<AggregationOverview>('/multi-line-aggregation/save', data);
+export const deployAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/deploy', { id });
+export const recalculateAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/recalculate', { id });
+export const toggleAggregation = (id: number, enabled: boolean) => Network.post<AggregationOverview>('/multi-line-aggregation/toggle', { id, enabled });
+export const testAggregation = (id: number) => Network.post<{ diagnosis: unknown; testedAt: number }>('/multi-line-aggregation/test', { id });
+export const getAggregationEvents = (id: number) => Network.post<AggregationEvent[]>('/multi-line-aggregation/events', { id });
+export const deleteAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/delete', { id });
+
 export type PrivateProxyType = 'socks5' | 'http' | 'shadowsocks' | 'vless_reality' | 'trojan' | 'hysteria2' | 'tuic' | 'wireguard';
 
 export interface PrivateProxyItem {

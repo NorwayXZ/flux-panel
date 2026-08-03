@@ -38,6 +38,18 @@ public interface ForwardService extends IService<Forward> {
     R updateForward(ForwardUpdateDto forwardUpdateDto);
 
     /**
+     * Reconfigure a panel-owned forward without relying on an HTTP request JWT.
+     * Intended for scheduled control-plane jobs such as adaptive aggregation.
+     */
+    R updateManagedForward(ForwardUpdateDto forwardUpdateDto);
+
+    R deleteManagedForward(Long id);
+
+    R pauseManagedForward(Long id);
+
+    R resumeManagedForward(Long id);
+
+    /**
      * 删除端口转发
      * @param id 转发ID
      * @return 结果

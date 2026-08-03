@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { ArrowRightLeft, BellRing, BookOpen, Boxes, FlaskConical, Gauge, Home, LockKeyhole, MapPinned, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { ArrowRightLeft, BellRing, BookOpen, Boxes, Combine, FlaskConical, Gauge, Home, LockKeyhole, MapPinned, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -139,6 +139,12 @@ export default function AdminLayout({
       adminOnly: true
     },
     {
+      path: '/multi-line-aggregation',
+      label: '多线路聚合',
+      icon: <Combine className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/ip-quality',
       label: 'IP 质量检测',
       icon: <MapPinned className="h-5 w-5" />,
@@ -233,7 +239,7 @@ export default function AdminLayout({
   const menuGroups = [
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access', '/private-network', '/virtual-lan'] },
-    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/ip-quality'] },
+    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/multi-line-aggregation', '/ip-quality'] },
     { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }

@@ -720,3 +720,10 @@
 - Keeps rate-limit configuration and authorization inside user management, so existing user entitlements and limits are unaffected.
 - Keeps `/limit` as a compatibility redirect to `/user` for old bookmarks.
 - Panel-only release. Agent and Connector remain `2.42.3`; existing nodes, tunnels, forwards, ports, DNS records, certificates, and proxy services are unchanged.
+## 2.46.4
+
+- 新增多线路聚合：一个公网入口按权重调度多条同入口隧道上的并发连接。
+- 自动结合真实带宽、延迟、丢包、抖动和线路健康状态计算权重，支持速度、均衡和稳定三种模式。
+- 支持自动健康摘除、五分钟自适应重算、暂停恢复、线路验证、事件历史和部署失败回退。
+- 聚合底层转发由聚合模块托管，避免从普通转发页面误改造成配置脱节。
+- 此版本不要求升级 Agent，现有 2.46.3 Agent 可直接使用。

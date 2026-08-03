@@ -164,9 +164,9 @@ jobs:
           docker pull "${BACKEND_IMAGE}:${VERSION}"
           docker pull "${FRONTEND_IMAGE}:${VERSION}"
           docker run --rm --entrypoint sh "${BACKEND_IMAGE}:${VERSION}" -c \
-            "test -x /app/healthcheck.sh && grep -aq 'RuntimeHealthController.class' /app/app.jar && grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar && grep -aq 'BandwidthTestService.class' /app/app.jar && grep -aq 'VirtualLanService.class' /app/app.jar && grep -aq 'PrivateNetworkService.class' /app/app.jar && grep -aq 'NetworkRouteApplicationService.class' /app/app.jar && grep -aq 'NftForwardService.class' /app/app.jar"
+            "test -x /app/healthcheck.sh && grep -aq 'RuntimeHealthController.class' /app/app.jar && grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar && grep -aq 'BandwidthTestService.class' /app/app.jar && grep -aq 'VirtualLanService.class' /app/app.jar && grep -aq 'PrivateNetworkService.class' /app/app.jar && grep -aq 'NetworkRouteApplicationService.class' /app/app.jar && grep -aq 'NftForwardService.class' /app/app.jar && grep -aq 'MultiLineAggregationService.class' /app/app.jar"
           docker run --rm --entrypoint sh "${FRONTEND_IMAGE}:${VERSION}" -c \
-            "grep -Rqs '发现服务' /usr/share/nginx/html/assets && grep -Rqs '网络质量实验室' /usr/share/nginx/html/assets && grep -Rqs '真实带宽测试中心' /usr/share/nginx/html/assets && grep -Rqs '虚拟局域网组网' /usr/share/nginx/html/assets && grep -Rqs '内网组建与出口' /usr/share/nginx/html/assets && grep -Rqs 'nftables 端口转发' /usr/share/nginx/html/assets"
+            "grep -Rqs '发现服务' /usr/share/nginx/html/assets && grep -Rqs '网络质量实验室' /usr/share/nginx/html/assets && grep -Rqs '真实带宽测试中心' /usr/share/nginx/html/assets && grep -Rqs '多线路聚合' /usr/share/nginx/html/assets && grep -Rqs '虚拟局域网组网' /usr/share/nginx/html/assets && grep -Rqs '内网组建与出口' /usr/share/nginx/html/assets && grep -Rqs 'nftables 端口转发' /usr/share/nginx/html/assets"
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'
