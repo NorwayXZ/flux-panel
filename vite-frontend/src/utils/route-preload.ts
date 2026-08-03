@@ -13,6 +13,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/update': () => import('@/pages/update'),
   '/monitoring': () => import('@/pages/monitoring'),
   '/service-publishing': () => import('@/pages/service-publishing'),
+  '/docker-apps': () => import('@/pages/docker-apps'),
   '/topology': () => import('@/pages/topology'),
   '/port-resources': () => import('@/pages/port-resources'),
   '/cross-entry-failover': () => import('@/pages/cross-entry-failover'),

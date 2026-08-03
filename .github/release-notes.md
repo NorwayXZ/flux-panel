@@ -1,3 +1,11 @@
+## 2.47.0 Docker Application Center
+
+- Adds an administrator-only **Docker App Center** under Access and Publishing. The panel can inspect Docker-capable nodes, deploy X-UI, Nezha, Alist, and Nextcloud, and keep start, stop, upgrade, backup, remove, rollback, and manual fallback records.
+- Deployment can optionally bind a domain through the existing service publishing pipeline, so ports, HTTPS entry, certificates, and reverse proxy rules stay in the same managed chain instead of becoming separate hidden state.
+- Agent `2.47.0` adds bounded Docker inspection and application lifecycle commands. The Agent only accepts known templates and managed container names from the panel, validates Docker/Compose availability, and keeps unsupported or old Agents in manual-command mode.
+- Existing nodes, tunnels, forwards, private proxies, DNS records, certificates, nftables rules, private networks, and Docker containers are not changed during upgrade. Docker actions run only after an administrator explicitly deploys or operates an app.
+- Rollback: stop or remove Docker apps created by this page when possible, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. Existing Docker containers outside CloudNest management are ignored by the feature.
+
 ## 2.45.1 Load-tolerant panel upgrades
 
 - Keeps the complete private-network and proxy-egress feature set from `2.45.0`.

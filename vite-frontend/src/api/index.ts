@@ -42,6 +42,52 @@ export interface NodeServiceDiscoveryResult {
 }
 export const discoverNodeServices = (nodeId: number) =>
   Network.post<NodeServiceDiscoveryResult>("/node/discovery/scan", { nodeId });
+
+export interface DockerAppTemplate {
+  id: string; name: string; category: string; image: string; versionLabel?: string;
+  defaultHostPort: number; containerPort: number;
+}
+export interface DockerAppNode {
+  id: number; name: string; serverIp?: string; ip?: string; status: number; version?: string;
+  online: boolean; compatible: boolean;
+}
+export interface DockerAppInstance {
+  id: number; userId: number; nodeId: number; nodeName?: string; nodeOnline: boolean;
+  templateId: string; name: string; containerName: string; image: string; versionLabel?: string;
+  hostPort: number; containerPort: number; domainRouteId?: number; domain?: string;
+  state: 'draft' | 'provisioning' | 'operating' | 'active' | 'error' | 'delete_pending' | 'deleted';
+  lastError?: string; lastCommand?: string; rollbackCommand?: string; composePath?: string; backupPath?: string;
+  detected: boolean; createdTime: number; updatedTime: number;
+}
+export interface DockerAppOverview {
+  nodes: DockerAppNode[]; templates: DockerAppTemplate[]; apps: DockerAppInstance[];
+  summary: { apps: number; active: number; errors: number; dockerReadyNodes: number };
+  minimumAgentVersion: string;
+}
+export interface DockerContainerInfo {
+  id: string; name: string; image: string; state: string; status: string;
+  ports?: Array<{ privatePort: number; publicPort?: number; type: string; ip?: string }>;
+}
+export interface DockerInspectResult {
+  nodeId: number; nodeName: string; dockerAvailable: boolean; dockerVersion?: string;
+  composeAvailable: boolean; containers: DockerContainerInfo[]; error?: string; minimumAgentVersion: string;
+}
+export interface DockerAppEvent {
+  id: number; appId?: number; nodeId: number; eventType: string; status: string; detail?: string; createdTime: number;
+}
+export const getDockerAppOverview = () => Network.post<DockerAppOverview>("/docker-apps/overview");
+export const inspectDockerNode = (nodeId: number) => Network.post<DockerInspectResult>("/docker-apps/inspect", { nodeId });
+export const deployDockerApp = (data: {
+  nodeId: number; templateId: string; name: string; containerName?: string; hostPort?: number;
+  bindDomain?: boolean; domain?: string; dnsZoneId?: number; entryNodeId?: number; listenPort?: number;
+  pathPrefix?: string; backendPath?: string;
+}) =>
+  Network.post<DockerAppOverview>("/docker-apps/deploy", data);
+export const runDockerAppAction = (id: number, action: 'upgrade' | 'backup' | 'stop' | 'start' | 'remove' | 'rollback') =>
+  Network.post<DockerAppOverview>("/docker-apps/action", { id, action });
+export const getDockerAppCommand = (id: number, action: 'upgrade' | 'backup' | 'stop' | 'start' | 'remove' | 'rollback') =>
+  Network.post<string>("/docker-apps/command", { id, action });
+export const getDockerAppEvents = (id: number) => Network.post<DockerAppEvent[]>("/docker-apps/events", { id });
 export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
   return Network.mutate("/node/check-status", params, ["/node/list"]);

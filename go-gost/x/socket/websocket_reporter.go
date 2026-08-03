@@ -727,6 +727,24 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "NodeServiceDiscoveryResponse"
 		response.Data = discoveryResult
 
+	case "DockerAppInspect":
+		var inspectResult dockerAppInspectResponse
+		inspectResult, err = w.handleDockerAppInspect(cmd.Data)
+		response.Type = "DockerAppInspectResponse"
+		response.Data = inspectResult
+
+	case "DockerAppDeploy":
+		var deployResult dockerAppResponse
+		deployResult, err = w.handleDockerAppDeploy(cmd.Data)
+		response.Type = "DockerAppDeployResponse"
+		response.Data = deployResult
+
+	case "DockerAppAction":
+		var actionResult dockerAppResponse
+		actionResult, err = w.handleDockerAppAction(cmd.Data)
+		response.Type = "DockerAppActionResponse"
+		response.Data = actionResult
+
 	case "SystemSelfCheck":
 		var selfCheckResult systemSelfCheckResponse
 		selfCheckResult, err = w.handleSystemSelfCheck(cmd.Data)

@@ -18,6 +18,7 @@ const ConfigPage = lazy(() => import("@/pages/config"));
 const UpdatePage = lazy(() => import("@/pages/update"));
 const MonitoringPage = lazy(() => import("@/pages/monitoring"));
 const ServicePublishingPage = lazy(() => import("@/pages/service-publishing"));
+const DockerAppsPage = lazy(() => import("@/pages/docker-apps"));
 const TopologyPage = lazy(() => import("@/pages/topology"));
 const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
 const CrossEntryFailoverPage = lazy(() => import("@/pages/cross-entry-failover"));
@@ -295,6 +296,7 @@ function App() {
         path="/service-publishing"
         element={<ProtectedRoute><ServicePublishingPage /></ProtectedRoute>}
       />
+      <Route path="/docker-apps" element={<ProtectedRoute><DockerAppsPage /></ProtectedRoute>} />
       <Route path="/private-proxy" element={<ProtectedRoute><PrivateProxyPage /></ProtectedRoute>} />
       <Route path="/home-access" element={<ProtectedRoute><HomeAccessPage /></ProtectedRoute>} />
       <Route path="/home-devices" element={<ProtectedRoute useSimpleLayout={true}><HomeDevicesPage /></ProtectedRoute>} />
