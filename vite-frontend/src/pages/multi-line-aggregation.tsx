@@ -148,7 +148,9 @@ export default function MultiLineAggregationPage() {
 
     {!data ? <div className="py-24 text-center text-default-400">正在加载...</div> : data.groups.length === 0 ?
       <div className="border-y border-divider py-20 text-center"><Gauge className="mx-auto h-9 w-9 text-default-300" /><div className="mt-3 font-medium">尚未创建聚合入口</div></div> :
-      <div className="space-y-5">{data.groups.map(group => <section key={group.id} className="border-y border-divider bg-content1">
+      <div className="space-y-5">{data.groups.map(group => {
+        const showRepairText = group.state !== 'active' || group.members.some(member => member.health_status === 'unhealthy');
+        return <section key={group.id} className="border-y border-divider bg-content1">
         <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{group.name}</h2>
             <Chip size="sm" variant="flat" color={group.state === 'active' ? 'success' : group.state === 'paused' ? 'default' : group.state === 'degraded' ? 'warning' : 'danger'}>{statusLabel[group.state] || group.state}</Chip>
@@ -157,7 +159,7 @@ export default function MultiLineAggregationPage() {
           <div className="flex flex-wrap gap-2">
             {!group.forward_id && <Button size="sm" color="primary" variant="flat" isLoading={busy === `deploy-${group.id}`} onPress={() => void action(`deploy-${group.id}`, () => deployAggregation(group.id))}>部署</Button>}
             <Button size="sm" isIconOnly variant="flat" title="重新计算权重" isLoading={busy === `calc-${group.id}`} onPress={() => void action(`calc-${group.id}`, () => recalculateAggregation(group.id))}><Calculator className="h-4 w-4" /></Button>
-            <Button size="sm" isIconOnly variant="flat" title="修复底层线路" isDisabled={!group.forward_id} isLoading={busy === `repair-${group.id}`} onPress={() => void action(`repair-${group.id}`, () => repairAggregation(group.id))}><Wrench className="h-4 w-4" /></Button>
+            <Button size="sm" isIconOnly={!showRepairText} variant="flat" title="修复底层线路" aria-label="修复底层线路" startContent={showRepairText ? <Wrench className="h-4 w-4" /> : undefined} isDisabled={!group.forward_id} isLoading={busy === `repair-${group.id}`} onPress={() => void action(`repair-${group.id}`, () => repairAggregation(group.id))}>{showRepairText ? '修复底层线路' : <Wrench className="h-4 w-4" />}</Button>
             <Button size="sm" isIconOnly variant="flat" title="验证线路" isLoading={busy === `test-${group.id}`} onPress={() => void validate(group)}><FlaskConical className="h-4 w-4" /></Button>
             <Button size="sm" isIconOnly variant="flat" title="历史记录" onPress={() => void openEvents(group)}><History className="h-4 w-4" /></Button>
             <Button size="sm" isIconOnly variant="flat" title={group.enabled ? '暂停' : '恢复'} isDisabled={!group.forward_id} isLoading={busy === `toggle-${group.id}`} onPress={() => void action(`toggle-${group.id}`, () => toggleAggregation(group.id, !group.enabled))}>{group.enabled ? <CirclePause className="h-4 w-4" /> : <CirclePlay className="h-4 w-4" />}</Button>
@@ -174,7 +176,8 @@ export default function MultiLineAggregationPage() {
             <TableCell>{member.effective_weight}</TableCell><TableCell>{speed(member.bandwidth_mbps)}</TableCell><TableCell>{latency(member.latency_ms)}</TableCell><TableCell>{percent(member.packet_loss_percent)}</TableCell><TableCell>{latency(member.jitter_ms)}</TableCell><TableCell>{timeText(member.metric_measured_at)}</TableCell></TableRow>}</TableBody>
         </Table></div>
         <div className="flex flex-wrap justify-between gap-2 border-t border-divider px-4 py-3 text-xs text-default-500"><span>{group.healthyPaths}/{group.members.length} 条健康线路 · 预估容量 {speed(group.estimatedCapacityMbps)}</span><span>自动权重 {group.auto_weight ? '已开启' : '手动'} · 最近计算 {timeText(group.last_calculated_at)}</span></div>
-      </section>)}</div>}
+      </section>;
+      })}</div>}
 
     <Modal isOpen={formModal.isOpen} onOpenChange={formModal.onOpenChange} size="3xl" scrollBehavior="inside">
       <ModalContent><ModalHeader>{form.id ? '编辑聚合组' : '新建多线路聚合'}</ModalHeader><ModalBody className="gap-5">
