@@ -56,7 +56,8 @@ public class MultiLineAggregationService {
         List<Map<String, Object>> groups = jdbcTemplate.queryForList("SELECT g.*,n.name AS entry_node_name,n.server_ip AS entry_server_ip,n.ip AS entry_ip,"
                 + "f.status AS forward_status,f.route_config AS forward_route_config,f.in_flow,f.out_flow "
                 + "FROM aggregation_group g LEFT JOIN node n ON n.id=g.entry_node_id LEFT JOIN forward f ON f.id=g.forward_id ORDER BY g.created_time DESC");
-        List<Map<String, Object>> members = jdbcTemplate.queryForList("SELECT m.*,t.name AS tunnel_name,t.in_node_id,t.out_node_id,t.protocol,"
+        List<Map<String, Object>> members = jdbcTemplate.queryForList("SELECT m.*,t.name AS tunnel_name,t.in_node_id,t.out_node_id,t.in_ip AS tunnel_in_ip,"
+                + "t.out_ip AS tunnel_out_ip,t.node_path AS tunnel_node_path,t.protocol,"
                 + "ni.name AS in_node_name,no.name AS out_node_name FROM aggregation_member m JOIN tunnel t ON t.id=m.tunnel_id "
                 + "LEFT JOIN node ni ON ni.id=t.in_node_id LEFT JOIN node no ON no.id=t.out_node_id ORDER BY m.group_id,m.id");
         Map<Long, List<Map<String, Object>>> membersByGroup = members.stream().collect(Collectors.groupingBy(
@@ -159,6 +160,41 @@ public class MultiLineAggregationService {
                 result.getCode() == 0 ? "聚合线路验证完成" : result.getMsg(), JSON.toJSONString(result.getData()));
         if (result.getCode() != 0) return result;
         return R.ok(Map.of("diagnosis", result.getData(), "testedAt", System.currentTimeMillis()));
+    }
+
+    public R repair(long id) {
+        Map<String, Object> group = findGroup(id);
+        if (group == null) return R.err("聚合组不存在");
+        try {
+            List<Tunnel> tunnels = loadGroupTunnels(id);
+            if (tunnels.size() < 2) return R.err("聚合组至少需要两条线路");
+            Map<Long, Integer> weights = refreshMetricsAndWeights(group, tunnels, true);
+            R deployResult = group.get("forward_id") == null
+                    ? createUnderlyingForward(id, group, tunnels, weights)
+                    : updateUnderlyingForward(group, tunnels, weights);
+            if (deployResult.getCode() != 0) {
+                markError(id, deployResult.getMsg());
+                event(id, "repair", deployResult.getMsg() != null && deployResult.getMsg().contains("原配置已恢复") ? "rollback" : "failed",
+                        "底层线路重新下发失败：" + deployResult.getMsg(), snapshot(group, weights));
+                return R.err("修复失败：" + deployResult.getMsg());
+            }
+            Long forwardId = nullableLong(findGroup(id).get("forward_id"));
+            R diagnosis = forwardId == null ? R.err("底层转发记录未生成") : forwardService.diagnoseForward(forwardId);
+            boolean verified = diagnosis.getCode() == 0;
+            long now = System.currentTimeMillis();
+            jdbcTemplate.update("UPDATE aggregation_group SET state=?,last_error=?,last_calculated_at=?,updated_time=? WHERE id=?",
+                    verified ? "active" : "degraded",
+                    verified ? null : concise(diagnosis.getMsg()),
+                    now, now, id);
+            event(id, "repair", verified ? "success" : "warning",
+                    verified ? "底层线路已重新下发并验证完成" : "底层线路已重新下发，但验证仍需处理：" + diagnosis.getMsg(),
+                    JSON.toJSONString(repairSnapshot(deployResult, diagnosis)));
+            return overview();
+        } catch (Exception e) {
+            markError(id, concise(e.getMessage()));
+            event(id, "repair", "failed", "修复异常：" + concise(e.getMessage()), null);
+            return R.err("修复失败：" + concise(e.getMessage()));
+        }
     }
 
     public R events(long id) {
@@ -458,10 +494,31 @@ public class MultiLineAggregationService {
                 member.put("health_status", route.getStatus()); member.put("latency_ms", route.getLatency() == null ? member.get("latency_ms") : route.getLatency());
                 member.put("packet_loss_percent", route.getPacketLoss() == null ? member.get("packet_loss_percent") : route.getPacketLoss());
                 member.put("last_error", route.getMessage());
+                applyRouteFailureHint(member, route);
             }
         } catch (Exception e) {
             log.debug("Could not parse aggregation route state: {}", e.getMessage());
         }
+    }
+
+    private void applyRouteFailureHint(Map<String, Object> member, ForwardRouteDto route) {
+        if (!"unhealthy".equals(Objects.toString(route.getStatus(), "unknown"))) {
+            member.put("failure_segment", null);
+            member.put("failure_address", null);
+            member.put("failure_message", null);
+            return;
+        }
+        String message = concise(route.getMessage());
+        String outNode = Objects.toString(member.get("out_node_name"), "出口节点");
+        String inNode = Objects.toString(member.get("in_node_name"), "入口节点");
+        member.put("failure_message", message);
+        if (route.getOutPort() != null) {
+            member.put("failure_segment", inNode + " → " + outNode + " 的中转监听端口");
+            member.put("failure_address", Objects.toString(member.get("tunnel_out_ip"), outNode) + ":" + route.getOutPort());
+            return;
+        }
+        member.put("failure_segment", "线路探测");
+        member.put("failure_address", "-");
     }
 
     private boolean routeHealthy(Map<String, Object> previous) {
@@ -507,6 +564,14 @@ public class MultiLineAggregationService {
 
     private String snapshot(Map<String, Object> group, Map<Long, Integer> weights) {
         return JSON.toJSONString(Map.of("group", group, "weights", weights));
+    }
+
+    private Map<String, Object> repairSnapshot(R deployResult, R diagnosis) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("deploy", deployResult.getData());
+        data.put("diagnosis", diagnosis.getData());
+        data.put("diagnosisMessage", diagnosis.getMsg());
+        return data;
     }
 
     private Map<Integer, Integer> integerWeights(Map<Long, Integer> weights) {

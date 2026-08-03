@@ -9,12 +9,12 @@ import { Switch } from '@heroui/switch';
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/table';
 import {
   Activity, Calculator, CirclePause, CirclePlay, FlaskConical, Gauge, History,
-  Plus, RefreshCw, Route, Trash2, X,
+  Plus, RefreshCw, Route, Trash2, Wrench, X,
 } from 'lucide-react';
 import {
   AggregationEvent, AggregationGroup, AggregationMode, AggregationOverview, AggregationProtocol,
   deleteAggregation, deployAggregation, getAggregationEvents, getAggregationOverview,
-  recalculateAggregation, saveAggregation, testAggregation, toggleAggregation,
+  recalculateAggregation, repairAggregation, saveAggregation, testAggregation, toggleAggregation,
 } from '@/api';
 
 type FormState = {
@@ -31,7 +31,7 @@ const emptyForm = (): FormState => ({
 
 const modeLabel: Record<AggregationMode, string> = { speed: '速度优先', balanced: '均衡', stability: '稳定优先' };
 const statusLabel: Record<string, string> = { active: '运行中', paused: '已暂停', degraded: '线路不足', error: '部署失败', provisioning: '待部署' };
-const eventLabel: Record<string, string> = { create: '创建', update: '更新', deploy: '部署', pause: '暂停', resume: '恢复', validation: '线路验证', weight_change: '权重调整', health: '健康变化' };
+const eventLabel: Record<string, string> = { create: '创建', update: '更新', deploy: '部署', repair: '修复', pause: '暂停', resume: '恢复', validation: '线路验证', weight_change: '权重调整', health: '健康变化' };
 
 const number = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const speed = (value?: number) => value == null ? '待测试' : `${number(value).toFixed(value >= 100 ? 0 : 1)} Mbps`;
@@ -157,6 +157,7 @@ export default function MultiLineAggregationPage() {
           <div className="flex flex-wrap gap-2">
             {!group.forward_id && <Button size="sm" color="primary" variant="flat" isLoading={busy === `deploy-${group.id}`} onPress={() => void action(`deploy-${group.id}`, () => deployAggregation(group.id))}>部署</Button>}
             <Button size="sm" isIconOnly variant="flat" title="重新计算权重" isLoading={busy === `calc-${group.id}`} onPress={() => void action(`calc-${group.id}`, () => recalculateAggregation(group.id))}><Calculator className="h-4 w-4" /></Button>
+            <Button size="sm" isIconOnly variant="flat" title="修复底层线路" isDisabled={!group.forward_id} isLoading={busy === `repair-${group.id}`} onPress={() => void action(`repair-${group.id}`, () => repairAggregation(group.id))}><Wrench className="h-4 w-4" /></Button>
             <Button size="sm" isIconOnly variant="flat" title="验证线路" isLoading={busy === `test-${group.id}`} onPress={() => void validate(group)}><FlaskConical className="h-4 w-4" /></Button>
             <Button size="sm" isIconOnly variant="flat" title="历史记录" onPress={() => void openEvents(group)}><History className="h-4 w-4" /></Button>
             <Button size="sm" isIconOnly variant="flat" title={group.enabled ? '暂停' : '恢复'} isDisabled={!group.forward_id} isLoading={busy === `toggle-${group.id}`} onPress={() => void action(`toggle-${group.id}`, () => toggleAggregation(group.id, !group.enabled))}>{group.enabled ? <CirclePause className="h-4 w-4" /> : <CirclePlay className="h-4 w-4" />}</Button>
@@ -165,10 +166,11 @@ export default function MultiLineAggregationPage() {
           </div>
         </div>
         {group.last_error && <div className="border-t border-warning-200 bg-warning-50 px-4 py-2 text-xs text-warning-700 dark:bg-warning-950/20">{group.last_error}</div>}
-        <div className="overflow-x-auto border-t border-divider"><Table removeWrapper aria-label={`${group.name} 线路`} classNames={{ table: 'min-w-[900px]' }}>
+        <div className="overflow-x-auto border-t border-divider"><Table removeWrapper aria-label={`${group.name} 线路`} classNames={{ table: 'min-w-[1000px]' }}>
           <TableHeader><TableColumn>线路</TableColumn><TableColumn>状态</TableColumn><TableColumn>有效权重</TableColumn><TableColumn>实测带宽</TableColumn><TableColumn>RTT</TableColumn><TableColumn>丢包</TableColumn><TableColumn>抖动</TableColumn><TableColumn>指标时间</TableColumn></TableHeader>
           <TableBody items={group.members}>{member => <TableRow key={member.id}><TableCell><div className="font-medium">{member.tunnel_name}</div><div className="text-xs text-default-400">{member.in_node_name} → {member.out_node_name}</div></TableCell>
-            <TableCell><Chip size="sm" variant="dot" color={member.health_status === 'healthy' ? 'success' : member.health_status === 'unhealthy' ? 'danger' : 'warning'}>{member.health_status === 'healthy' ? '健康' : member.health_status === 'unhealthy' ? '异常' : '待确认'}</Chip></TableCell>
+            <TableCell><div className="space-y-1"><Chip size="sm" variant="dot" color={member.health_status === 'healthy' ? 'success' : member.health_status === 'unhealthy' ? 'danger' : 'warning'}>{member.health_status === 'healthy' ? '健康' : member.health_status === 'unhealthy' ? '异常' : '待确认'}</Chip>
+              {member.health_status === 'unhealthy' && <div className="max-w-[300px] text-xs leading-5 text-danger-600"><div>{member.failure_segment || '线路探测失败'}</div><div className="font-mono">{member.failure_address || '-'}</div><div className="truncate" title={member.failure_message || member.last_error}>{member.failure_message || member.last_error}</div></div>}</div></TableCell>
             <TableCell>{member.effective_weight}</TableCell><TableCell>{speed(member.bandwidth_mbps)}</TableCell><TableCell>{latency(member.latency_ms)}</TableCell><TableCell>{percent(member.packet_loss_percent)}</TableCell><TableCell>{latency(member.jitter_ms)}</TableCell><TableCell>{timeText(member.metric_measured_at)}</TableCell></TableRow>}</TableBody>
         </Table></div>
         <div className="flex flex-wrap justify-between gap-2 border-t border-divider px-4 py-3 text-xs text-default-500"><span>{group.healthyPaths}/{group.members.length} 条健康线路 · 预估容量 {speed(group.estimatedCapacityMbps)}</span><span>自动权重 {group.auto_weight ? '已开启' : '手动'} · 最近计算 {timeText(group.last_calculated_at)}</span></div>

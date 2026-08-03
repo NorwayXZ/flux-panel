@@ -24,6 +24,7 @@ public class MultiLineAggregationController {
     @RequireRole @LogAnnotation @PostMapping("/save") public R save(@Validated @RequestBody MultiLineAggregationDto dto) { return service.save(dto); }
     @RequireRole @LogAnnotation @PostMapping("/deploy") public R deploy(@RequestBody Map<String, Object> body) { return service.deploy(id(body)); }
     @RequireRole @LogAnnotation @PostMapping("/recalculate") public R recalculate(@RequestBody Map<String, Object> body) { return service.recalculate(id(body)); }
+    @RequireRole @LogAnnotation @PostMapping("/repair") public R repair(@RequestBody Map<String, Object> body) { return service.repair(id(body)); }
     @RequireRole @LogAnnotation @PostMapping("/toggle") public R toggle(@RequestBody Map<String, Object> body) { return service.toggle(id(body), Boolean.parseBoolean(body.get("enabled").toString())); }
     @RequireRole @LogAnnotation @PostMapping("/test") public R test(@RequestBody Map<String, Object> body) { return service.test(id(body)); }
     @RequireRole @PostMapping("/events") public R events(@RequestBody Map<String, Object> body) { return service.events(id(body)); }

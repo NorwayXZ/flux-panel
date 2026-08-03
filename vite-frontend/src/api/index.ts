@@ -216,6 +216,7 @@ export interface AggregationMember {
   health_status: 'unknown' | 'healthy' | 'unhealthy' | 'offline';
   bandwidth_mbps?: number; latency_ms?: number; packet_loss_percent?: number;
   jitter_ms?: number; metric_measured_at?: number; last_checked_at?: number; last_error?: string;
+  failure_segment?: string; failure_address?: string; failure_message?: string;
 }
 
 export interface AggregationGroup {
@@ -253,6 +254,7 @@ export const getAggregationOverview = () => Network.post<AggregationOverview>('/
 export const saveAggregation = (data: AggregationSaveInput) => Network.post<AggregationOverview>('/multi-line-aggregation/save', data);
 export const deployAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/deploy', { id });
 export const recalculateAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/recalculate', { id });
+export const repairAggregation = (id: number) => Network.post<AggregationOverview>('/multi-line-aggregation/repair', { id });
 export const toggleAggregation = (id: number, enabled: boolean) => Network.post<AggregationOverview>('/multi-line-aggregation/toggle', { id, enabled });
 export const testAggregation = (id: number) => Network.post<{ diagnosis: unknown; testedAt: number }>('/multi-line-aggregation/test', { id });
 export const getAggregationEvents = (id: number) => Network.post<AggregationEvent[]>('/multi-line-aggregation/events', { id });
