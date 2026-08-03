@@ -233,7 +233,7 @@ export default function AdminLayout({
   const menuGroups = [
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/home-access', '/private-network', '/virtual-lan'] },
-    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test'] },
+    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/ip-quality'] },
     { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }

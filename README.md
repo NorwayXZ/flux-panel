@@ -57,7 +57,7 @@
 
 ### IP 质量与解锁检测
 
-`2.46.0` 新增独立的“IP 质量检测”页面。Agent 从节点真实出口并发检测 IPv4/IPv6、ChatGPT、Netflix、Disney+、YouTube Premium、系统 DNS、权威侧观察到的解析器出口，以及 DNS、HTTPS、DoT、SSH、SMTP Submission 和 SMTP 出站端口。所有目标固定在 Agent 代码中，面板不能将该命令用作任意 URL 请求或端口扫描；每项请求均有独立超时，不影响现有转发和心跳。
+`2.46.0` 新增独立的“IP 质量检测”页面，`2.46.1` 补齐侧边栏“实用工具”入口。Agent 从节点真实出口并发检测 IPv4/IPv6、ChatGPT、Netflix、Disney+、YouTube Premium、系统 DNS、权威侧观察到的解析器出口，以及 DNS、HTTPS、DoT、SSH、SMTP Submission 和 SMTP 出站端口。所有目标固定在 Agent 代码中，面板不能将该命令用作任意 URL 请求或端口扫描；每项请求均有独立超时，不影响现有转发和心跳。
 
 地区与 ASN 使用公开地理数据查询。IPQualityScore 和 AbuseIPDB API Key 可在“情报源”中配置，使用面板 JWT 密钥派生的 AES-GCM 密钥加密保存，不会下发给 Agent。综合风险分只在至少一家风险服务返回有效分数后生成；没有密钥时显示“暂无风险分”，不会根据机房标签猜测风险。公开 DNSBL 的拒绝响应不会被当作黑名单命中。页面保留各家原始结果、可信度、失败原因和最近 30 次历史。
 
