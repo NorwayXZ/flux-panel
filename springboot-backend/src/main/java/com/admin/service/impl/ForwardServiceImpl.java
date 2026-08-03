@@ -53,6 +53,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     // 常量定义
     private static final String GOST_SUCCESS_MSG = "OK";
     private static final String GOST_NOT_FOUND_MSG = "not found";
+    private static final String GOST_ALREADY_EXISTS_MSG = "already exists";
     private static final int ADMIN_ROLE_ID = 0;
     private static final int TUNNEL_TYPE_PORT_FORWARD = 1;
     private static final int TUNNEL_TYPE_TUNNEL_FORWARD = 2;
@@ -1804,9 +1805,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     private R createBalancedMainService(Node inNode, String serviceName, Forward forward,
                                         List<ForwardRouteDto> routes, Integer limiter, Tunnel tunnel) {
-        List<ForwardRouteDto> eligible = routes.stream()
-                .filter(this::isBalanceRouteEligible)
-                .collect(Collectors.toList());
+        List<ForwardRouteDto> eligible = balanceServiceRoutes(routes);
         if (eligible.isEmpty()) return R.err("负载均衡没有可用线路");
         List<String> chainNames = eligible.stream()
                 .map(route -> routeResourceName(forward, serviceName, route))
@@ -1819,9 +1818,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     private R updateBalancedMainService(Node inNode, String serviceName, Forward forward,
                                         List<ForwardRouteDto> routes, Integer limiter, Tunnel tunnel) {
-        List<ForwardRouteDto> eligible = routes.stream()
-                .filter(this::isBalanceRouteEligible)
-                .collect(Collectors.toList());
+        List<ForwardRouteDto> eligible = balanceServiceRoutes(routes);
         if (eligible.isEmpty()) return R.err("负载均衡没有可用线路");
         List<String> chainNames = eligible.stream()
                 .map(route -> routeResourceName(forward, serviceName, route))
@@ -1838,6 +1835,18 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private boolean isBalanceRouteEligible(ForwardRouteDto route) {
         return !Boolean.FALSE.equals(route.getEnabled()) && !Boolean.TRUE.equals(route.getDraining())
                 && !ROUTE_STATUS_UNHEALTHY.equals(route.getStatus());
+    }
+
+    private List<ForwardRouteDto> balanceServiceRoutes(List<ForwardRouteDto> routes) {
+        List<ForwardRouteDto> eligible = routes.stream()
+                .filter(this::isBalanceRouteEligible)
+                .collect(Collectors.toList());
+        if (!eligible.isEmpty()) {
+            return eligible;
+        }
+        return routes.stream()
+                .filter(route -> !Boolean.FALSE.equals(route.getEnabled()) && !Boolean.TRUE.equals(route.getDraining()))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -1901,7 +1910,18 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         Forward routeForward = forwardForRoute(forward, route);
         String routeServiceName = routeResourceName(forward, mainServiceName, route);
         List<Integer> hopPorts = getForwardHopPorts(routeForward, tunnel);
+        R routeResult = createRouteInfrastructureOnce(forward, route, tunnel, routeNodeInfo, routeForward, routeServiceName, hopPorts);
+        if (routeResult.getCode() == 0 || !isAlreadyExistsMessage(routeResult.getMsg())) {
+            return routeResult;
+        }
+        log.warn("线路资源 {} 已存在，清理后重试创建", routeServiceName);
+        GostUtil.DeleteChains(routeNodeInfo.getInNode().getId(), routeServiceName);
+        deleteTunnelHopServices(routeNodeInfo, routeServiceName);
+        return createRouteInfrastructureOnce(forward, route, tunnel, routeNodeInfo, routeForward, routeServiceName, hopPorts);
+    }
 
+    private R createRouteInfrastructureOnce(Forward forward, ForwardRouteDto route, Tunnel tunnel, NodeInfo routeNodeInfo,
+                                            Forward routeForward, String routeServiceName, List<Integer> hopPorts) {
         R chainResult = ROUTE_MODE_BALANCE.equals(forward.getRouteMode())
                 ? createWeightedChainService(tunnel, routeNodeInfo, routeServiceName, hopPorts, tunnel.getProtocol(),
                         tunnel.getInterfaceName(), route.getWeight())
@@ -1921,6 +1941,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             deleteTunnelHopServices(routeNodeInfo, routeServiceName);
         }
         return hopResult;
+    }
+
+    private boolean isAlreadyExistsMessage(String message) {
+        return message != null && message.toLowerCase(Locale.ROOT).contains(GOST_ALREADY_EXISTS_MSG);
     }
 
     private Forward forwardForRoute(Forward forward, ForwardRouteDto route) {
