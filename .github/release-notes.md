@@ -1,3 +1,12 @@
+## 2.48.0 CloudFront XHTTP split transport
+
+- Adds AWS credential management to the Resource Center with encrypted secrets and live STS identity verification.
+- Adds `VLESS + XHTTP + TLS` to private-network egress applications. The Agent reuses its managed Xray runtime, persists and restores XHTTP services, and performs a real temporary-client route test after deployment.
+- Supports manual CloudFront/PSGO upload and download domains, or automatic Cloudflare origin DNS plus two AWS CloudFront distributions. Generated client URIs include XHTTP padding and download settings.
+- CloudFront creation uses uncached HTTPS viewer behavior and forwards all XHTTP methods, headers, query strings, and cookies to the selected entry port. Existing tunnels continue carrying traffic from the entry to the selected exit.
+- Failed deployment removes new Agent runtimes and attempts to disable any partially-created CloudFront resource. Deletion disables distributions first and retains the panel record until AWS permits final deletion; AWS accounts in use cannot be removed.
+- Panel and Agent move to `2.48.0`. Existing nodes and applications are unchanged until an administrator creates this protocol. Roll back the panel with `sudo /usr/local/sbin/flux-panel-manager rollback`; delete CloudFront XHTTP applications first so their AWS and Cloudflare resources are reclaimed.
+
 ## 2.47.0 Docker Application Center
 
 - Adds an administrator-only **Docker App Center** under Access and Publishing. The panel can inspect Docker-capable nodes, deploy X-UI, Nezha, Alist, and Nextcloud, and keep start, stop, upgrade, backup, remove, rollback, and manual fallback records.

@@ -52,6 +52,18 @@ public class PrivateNetworkSchemaInitializer {
             ensureColumn("network_route_application", "runtime_port", "int DEFAULT NULL AFTER hop_ports");
             ensureColumn("network_route_application", "reality_server_name", "varchar(253) DEFAULT NULL AFTER runtime_port");
             ensureColumn("network_route_application", "client_config", "text DEFAULT NULL AFTER reality_server_name");
+            ensureColumn("network_route_application", "xhttp_path", "varchar(255) DEFAULT NULL AFTER client_config");
+            ensureColumn("network_route_application", "xhttp_mode", "varchar(16) DEFAULT NULL AFTER xhttp_path");
+            ensureColumn("network_route_application", "xhttp_padding_bytes", "varchar(32) DEFAULT NULL AFTER xhttp_mode");
+            ensureColumn("network_route_application", "xhttp_origin_domain", "varchar(253) DEFAULT NULL AFTER xhttp_padding_bytes");
+            ensureColumn("network_route_application", "xhttp_upload_domain", "varchar(253) DEFAULT NULL AFTER xhttp_origin_domain");
+            ensureColumn("network_route_application", "xhttp_download_domain", "varchar(253) DEFAULT NULL AFTER xhttp_upload_domain");
+            ensureColumn("network_route_application", "aws_access_account_id", "bigint DEFAULT NULL AFTER xhttp_download_domain");
+            ensureColumn("network_route_application", "dns_zone_id", "bigint DEFAULT NULL AFTER aws_access_account_id");
+            ensureColumn("network_route_application", "xhttp_dns_record_id", "varchar(128) DEFAULT NULL AFTER dns_zone_id");
+            ensureColumn("network_route_application", "xhttp_upload_distribution_id", "varchar(64) DEFAULT NULL AFTER xhttp_dns_record_id");
+            ensureColumn("network_route_application", "xhttp_download_distribution_id", "varchar(64) DEFAULT NULL AFTER xhttp_upload_distribution_id");
+            ensureColumn("network_route_application", "cloudfront_state", "varchar(24) DEFAULT NULL AFTER xhttp_download_distribution_id");
         } catch (DataAccessException e) {
             log.error("Private network storage initialization failed", e);
         }

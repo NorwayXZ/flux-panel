@@ -22,7 +22,7 @@ public class NetworkRouteApplicationCreateDto {
 
     private String tunnelProtocol;
 
-    @NotBlank @Pattern(regexp = "socks5|http|vless_reality", message = "入口协议只允许 SOCKS5、HTTP 或 VLESS+REALITY")
+    @NotBlank @Pattern(regexp = "socks5|http|vless_reality|vless_xhttp_tls", message = "入口协议不受支持")
     private String proxyType;
 
     private String bindIp;
@@ -38,4 +38,28 @@ public class NetworkRouteApplicationCreateDto {
 
     @Size(max = 253)
     private String realityServerName;
+
+    @Size(max = 255)
+    private String xhttpPath;
+
+    @Pattern(regexp = "auto|packet-up|stream-up", message = "XHTTP 模式不正确")
+    private String xhttpMode;
+
+    @Size(max = 32)
+    private String xhttpPaddingBytes;
+
+    @Size(max = 253)
+    private String xhttpOriginDomain;
+
+    @Size(max = 253)
+    private String xhttpUploadDomain;
+
+    @Size(max = 253)
+    private String xhttpDownloadDomain;
+
+    private Boolean autoProvisionCloudFront;
+
+    private Long awsAccessAccountId;
+
+    private Long dnsZoneId;
 }

@@ -133,6 +133,48 @@ func TestRealityLegacyStateDefaultsToServerMode(t *testing.T) {
 	}
 }
 
+func TestXHTTPServerConfigUsesRoutedOutbound(t *testing.T) {
+	directory := t.TempDir()
+	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	state := realityRuntimeState{Mode: "server", Network: "xhttp", Security: "none", Name: "xhttp-server", Port: 19090,
+		ClientID: "00000000-0000-4000-8000-000000000001", Path: "/aws/", XHTTPMode: "auto", XPaddingBytes: "100-1000",
+		OutboundProxyHost: "127.0.0.1", OutboundProxyPort: 21080, OutboundProxyUsername: "route-user", OutboundProxyPassword: "route-password", Version: xrayRuntimeVersion}
+	if err := manager.writeStateAndConfig(state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(manager.configPath(state.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{`"network": "xhttp"`, `"path": "/aws/"`, `"xPaddingBytes": "100-1000"`, `"protocol": "socks"`, `"port": 21080`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("XHTTP server config is missing %s: %s", expected, text)
+		}
+	}
+}
+
+func TestXHTTPClientConfigUsesTLSAndLocalSocks(t *testing.T) {
+	directory := t.TempDir()
+	manager := &realityRuntimeManager{directory: directory, binary: directory + "/xray", processes: map[string]*exec.Cmd{}, stopping: map[string]bool{}}
+	state := realityRuntimeState{Mode: "client", Network: "xhttp", Security: "tls", Name: "xhttp-client", Port: 19091,
+		ClientID: "00000000-0000-4000-8000-000000000001", Path: "/aws/", XHTTPMode: "auto", XPaddingBytes: "100-1000",
+		RemoteHost: "d123.cloudfront.net", RemotePort: 443, ServerName: "d123.cloudfront.net", Version: xrayRuntimeVersion}
+	if err := manager.writeStateAndConfig(state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(manager.configPath(state.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{`"protocol": "socks"`, `"protocol": "vless"`, `"network": "xhttp"`, `"security": "tls"`, `"serverName": "d123.cloudfront.net"`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("XHTTP client config is missing %s: %s", expected, text)
+		}
+	}
+}
+
 func TestParseXrayChecksum(t *testing.T) {
 	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if actual := parseSHA256("SHA2-256= " + digest + "\n"); actual != digest {
@@ -202,6 +244,33 @@ func TestRealityRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := manager.delete("integration"); err != nil {
+		t.Fatal(err)
+	}
+	xhttp, err := manager.addXHTTP(xhttpRuntimeRequest{
+		Name: "integration-xhttp", ClientID: "00000000-0000-4000-8000-000000000001",
+		Path: "/cloudnest/", Mode: "auto", PaddingBytes: "100-1000", Security: "none",
+	})
+	if err != nil {
+		t.Fatalf("XHTTP server runtime failed: %v", err)
+	}
+	xhttpClient, err := manager.addXHTTPClient(xhttpClientRuntimeRequest{
+		Name: "integration-xhttp-client", RemoteHost: "127.0.0.1", RemotePort: xhttp.Port,
+		ClientID: xhttp.ClientID, Path: xhttp.Path, Mode: "auto", PaddingBytes: "100-1000", Security: "none",
+	})
+	if err != nil {
+		t.Fatalf("XHTTP client runtime failed: %v", err)
+	}
+	for name, port := range map[string]int{"XHTTP server": xhttp.Port, "XHTTP client": xhttpClient.Port} {
+		connection, dialErr := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), time.Second)
+		if dialErr != nil {
+			t.Fatalf("%s listener is unavailable: %v", name, dialErr)
+		}
+		connection.Close()
+	}
+	if err := manager.delete("integration-xhttp-client"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.delete("integration-xhttp"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(manager.configPath("integration")); !os.IsNotExist(err) {

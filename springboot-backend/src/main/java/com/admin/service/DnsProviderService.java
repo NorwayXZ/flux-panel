@@ -206,6 +206,30 @@ public class DnsProviderService {
         return ensureOwnedRecord(zoneRefId, requestedRecordId, domain, type, content, 60, "domain_route", ownerId);
     }
 
+    public String ensureXhttpOriginRecord(Long zoneRefId, String domain, String content, Long ownerId) {
+        String type;
+        try {
+            InetAddress address = InetAddress.getByName(content);
+            type = address instanceof Inet6Address ? "AAAA" : "A";
+            content = address.getHostAddress();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("XHTTP 源站必须是可解析的 IPv4 或 IPv6 地址");
+        }
+        return ensureOwnedRecord(zoneRefId, null, domain, type, content, 60, "xhttp_route", ownerId);
+    }
+
+    public void deleteXhttpOriginRecord(Long ownerId) {
+        if (ownerId == null) return;
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT r.id,r.provider_record_id AS providerRecordId,r.zone_id AS zoneId FROM dns_managed_record r "
+                        + "WHERE r.owner_type='xhttp_route' AND r.owner_id=?", ownerId);
+        for (Map<String, Object> row : rows) {
+            ZoneAccess zone = loadZoneAccess(number(row.get("zoneId")).longValue());
+            deleteRecord(zone, Objects.toString(row.get("providerRecordId")));
+            jdbcTemplate.update("DELETE FROM dns_managed_record WHERE id=?", row.get("id"));
+        }
+    }
+
     public String createDnsChallenge(Long zoneRefId, String recordName, String value) {
         ZoneAccess zone = loadZoneAccess(zoneRefId);
         String fqdn = normalizeChallengeName(zone, recordName);

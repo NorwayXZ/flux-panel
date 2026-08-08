@@ -11,6 +11,7 @@ import {
 } from "@heroui/modal";
 import { Select, SelectItem } from "@heroui/select";
 import { Spinner } from "@heroui/spinner";
+import { Switch } from "@heroui/switch";
 import {
   Copy,
   Gauge,
@@ -37,6 +38,8 @@ import {
   deleteVirtualLan,
   deployNetworkRouteApplication,
   getNetworkRouteApplications,
+  getAwsAccessAccounts,
+  getDnsZoneOptions,
   getPrivateNetworkOverview,
   getVirtualLanOverview,
   NetworkRouteApplication,
@@ -50,6 +53,8 @@ import {
   verifyPrivateNetwork,
   VirtualLanNetwork,
   VirtualLanOverview,
+  AwsAccessAccount,
+  DnsZoneOption,
 } from "@/api";
 
 type NativeMemberForm = {
@@ -88,12 +93,25 @@ const applicationEmpty = {
     { addressMode: "public", resourceGroupId: "", fallbackMode: "fail_closed" },
   ] as RouteHopForm[],
   tunnelProtocol: "tls" as "tls" | "quic",
-  proxyType: "socks5" as "socks5" | "http" | "vless_reality",
+  proxyType: "socks5" as
+    | "socks5"
+    | "http"
+    | "vless_reality"
+    | "vless_xhttp_tls",
   bindIp: "",
   listenPort: "1080",
   username: "",
   password: "",
   realityServerName: "www.cloudflare.com",
+  xhttpPath: "/xhttp/",
+  xhttpMode: "auto" as "auto" | "packet-up" | "stream-up",
+  xhttpPaddingBytes: "100-1000",
+  xhttpOriginDomain: "",
+  xhttpUploadDomain: "",
+  xhttpDownloadDomain: "",
+  autoProvisionCloudFront: true,
+  awsAccessAccountId: "",
+  dnsZoneId: "",
 };
 
 const stateMeta = (state: string) => {
@@ -150,6 +168,8 @@ export default function PrivateNetworkPage() {
   const [nativeForm, setNativeForm] = useState(nativeEmpty);
   const [automaticForm, setAutomaticForm] = useState(automaticEmpty);
   const [applicationForm, setApplicationForm] = useState(applicationEmpty);
+  const [awsAccounts, setAwsAccounts] = useState<AwsAccessAccount[]>([]);
+  const [dnsZones, setDnsZones] = useState<DnsZoneOption[]>([]);
 
   const onlineNodes = useMemo(
     () => native.nodes.filter((node) => node.status === 1),
@@ -194,6 +214,14 @@ export default function PrivateNetworkPage() {
   useEffect(() => {
     void load(true);
   }, []);
+
+  useEffect(() => {
+    if (!applicationOpen || applicationForm.proxyType !== "vless_xhttp_tls") return;
+    void Promise.allSettled([getAwsAccessAccounts(), getDnsZoneOptions()]).then(([aws, zones]) => {
+      if (aws.status === "fulfilled" && aws.value.code === 0) setAwsAccounts(aws.value.data.accounts || []);
+      if (zones.status === "fulfilled" && zones.value.code === 0) setDnsZones(zones.value.data || []);
+    });
+  }, [applicationOpen, applicationForm.proxyType]);
 
   const saveNative = async () => {
     if (
@@ -336,6 +364,13 @@ export default function PrivateNetworkPage() {
     if (applicationForm.proxyType === "vless_reality") {
       if (!applicationForm.realityServerName.trim())
         return toast.error("请填写 REALITY 伪装域名");
+    } else if (applicationForm.proxyType === "vless_xhttp_tls") {
+      if (!applicationForm.xhttpPath.trim().startsWith("/"))
+        return toast.error("XHTTP 路径必须以 / 开头");
+      if (applicationForm.autoProvisionCloudFront && (!applicationForm.awsAccessAccountId || !applicationForm.dnsZoneId || !applicationForm.xhttpOriginDomain.trim()))
+        return toast.error("请选择 AWS 账号、Cloudflare Zone 并填写源站域名");
+      if (!applicationForm.autoProvisionCloudFront && !applicationForm.xhttpUploadDomain.trim())
+        return toast.error("请填写 CloudFront 上行域名");
     } else if (
       applicationForm.username.length < 3 ||
       applicationForm.password.length < 8
@@ -360,6 +395,42 @@ export default function PrivateNetworkPage() {
         realityServerName:
           applicationForm.proxyType === "vless_reality"
             ? applicationForm.realityServerName.trim()
+            : undefined,
+        xhttpPath:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpPath.trim()
+            : undefined,
+        xhttpMode:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpMode
+            : undefined,
+        xhttpPaddingBytes:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpPaddingBytes.trim()
+            : undefined,
+        xhttpOriginDomain:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpOriginDomain.trim()
+            : undefined,
+        xhttpUploadDomain:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpUploadDomain.trim()
+            : undefined,
+        xhttpDownloadDomain:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.xhttpDownloadDomain.trim()
+            : undefined,
+        autoProvisionCloudFront:
+          applicationForm.proxyType === "vless_xhttp_tls"
+            ? applicationForm.autoProvisionCloudFront
+            : undefined,
+        awsAccessAccountId:
+          applicationForm.proxyType === "vless_xhttp_tls" && applicationForm.autoProvisionCloudFront
+            ? Number(applicationForm.awsAccessAccountId)
+            : undefined,
+        dnsZoneId:
+          applicationForm.proxyType === "vless_xhttp_tls" && applicationForm.autoProvisionCloudFront
+            ? Number(applicationForm.dnsZoneId)
             : undefined,
         hopConfigs: applicationForm.hops.map((hop, index) => ({
           fromNodeId: nodePath[index],
@@ -760,7 +831,9 @@ export default function PrivateNetworkPage() {
                       <Chip size="sm" variant="flat">
                         {app.proxyType === "vless_reality"
                           ? "VLESS + REALITY"
-                          : app.proxyType.toUpperCase()}
+                          : app.proxyType === "vless_xhttp_tls"
+                            ? "VLESS + XHTTP + TLS"
+                            : app.proxyType.toUpperCase()}
                       </Chip>
                     </div>
                     <p className="mt-1 text-sm">
@@ -1150,13 +1223,19 @@ export default function PrivateNetworkPage() {
                   setApplicationForm({
                     ...applicationForm,
                     proxyType: String(Array.from(keys)[0]) as
-                      "socks5" | "http" | "vless_reality",
+                      | "socks5"
+                      | "http"
+                      | "vless_reality"
+                      | "vless_xhttp_tls",
                   })
                 }
               >
                 <SelectItem key="socks5">SOCKS5</SelectItem>
                 <SelectItem key="http">HTTP</SelectItem>
                 <SelectItem key="vless_reality">VLESS + REALITY</SelectItem>
+                <SelectItem key="vless_xhttp_tls">
+                  VLESS + XHTTP + TLS / CloudFront
+                </SelectItem>
               </Select>
             </div>
             <div className="space-y-3">
@@ -1344,6 +1423,134 @@ export default function PrivateNetworkPage() {
                   })
                 }
               />
+            ) : applicationForm.proxyType === "vless_xhttp_tls" ? (
+              <div className="space-y-4">
+                <Switch
+                  isSelected={applicationForm.autoProvisionCloudFront}
+                  onValueChange={(autoProvisionCloudFront) =>
+                    setApplicationForm({
+                      ...applicationForm,
+                      autoProvisionCloudFront,
+                    })
+                  }
+                >
+                  自动创建 Cloudflare DNS 和两条 CloudFront 分配
+                </Switch>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Input
+                    label="XHTTP 路径"
+                    placeholder="/aws/"
+                    value={applicationForm.xhttpPath}
+                    onValueChange={(xhttpPath) =>
+                      setApplicationForm({ ...applicationForm, xhttpPath })
+                    }
+                  />
+                  <Select
+                    label="XHTTP 模式"
+                    selectedKeys={[applicationForm.xhttpMode]}
+                    onSelectionChange={(keys) =>
+                      setApplicationForm({
+                        ...applicationForm,
+                        xhttpMode: String(Array.from(keys)[0]) as
+                          | "auto"
+                          | "packet-up"
+                          | "stream-up",
+                      })
+                    }
+                  >
+                    <SelectItem key="auto">自动</SelectItem>
+                    <SelectItem key="packet-up">Packet Up</SelectItem>
+                    <SelectItem key="stream-up">Stream Up</SelectItem>
+                  </Select>
+                  <Input
+                    label="填充字节"
+                    placeholder="100-1000"
+                    value={applicationForm.xhttpPaddingBytes}
+                    onValueChange={(xhttpPaddingBytes) =>
+                      setApplicationForm({
+                        ...applicationForm,
+                        xhttpPaddingBytes,
+                      })
+                    }
+                  />
+                </div>
+                {applicationForm.autoProvisionCloudFront ? (
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Select
+                      isRequired
+                      label="AWS 账号"
+                      selectedKeys={applicationForm.awsAccessAccountId ? [applicationForm.awsAccessAccountId] : []}
+                      onSelectionChange={(keys) =>
+                        setApplicationForm({ ...applicationForm, awsAccessAccountId: String(Array.from(keys)[0] || "") })
+                      }
+                    >
+                      {awsAccounts
+                        .filter((item) => Boolean(item.enabled))
+                        .map((item) => (
+                          <SelectItem key={String(item.id)}>{item.name}</SelectItem>
+                        ))}
+                    </Select>
+                    <Select
+                      isRequired
+                      label="Cloudflare Zone"
+                      selectedKeys={applicationForm.dnsZoneId ? [applicationForm.dnsZoneId] : []}
+                      onSelectionChange={(keys) =>
+                        setApplicationForm({ ...applicationForm, dnsZoneId: String(Array.from(keys)[0] || "") })
+                      }
+                    >
+                      {dnsZones.map((item) => (
+                        <SelectItem key={String(item.id)}>{item.zoneName}</SelectItem>
+                      ))}
+                    </Select>
+                    <Input
+                      isRequired
+                      label="源站域名"
+                      placeholder="origin.example.com"
+                      value={applicationForm.xhttpOriginDomain}
+                      onValueChange={(xhttpOriginDomain) =>
+                        setApplicationForm({ ...applicationForm, xhttpOriginDomain })
+                      }
+                    />
+                  </div>
+                ) : (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Input
+                    label="源站域名"
+                    placeholder="origin.example.com"
+                    value={applicationForm.xhttpOriginDomain}
+                    onValueChange={(xhttpOriginDomain) =>
+                      setApplicationForm({
+                        ...applicationForm,
+                        xhttpOriginDomain,
+                      })
+                    }
+                  />
+                  <Input
+                    isRequired
+                    label="CloudFront 上行域名"
+                    placeholder="dxxx.cloudfront.net"
+                    value={applicationForm.xhttpUploadDomain}
+                    onValueChange={(xhttpUploadDomain) =>
+                      setApplicationForm({
+                        ...applicationForm,
+                        xhttpUploadDomain,
+                      })
+                    }
+                  />
+                  <Input
+                    label="CloudFront 下行域名"
+                    placeholder="dyyy.cloudfront.net"
+                    value={applicationForm.xhttpDownloadDomain}
+                    onValueChange={(xhttpDownloadDomain) =>
+                      setApplicationForm({
+                        ...applicationForm,
+                        xhttpDownloadDomain,
+                      })
+                    }
+                  />
+                </div>
+                )}
+              </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input

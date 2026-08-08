@@ -20,6 +20,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/source-ip-entry': () => import('@/pages/source-ip-entry'),
   '/smart-entry': () => import('@/pages/smart-entry'),
   '/dns-settings': () => import('@/pages/dns-settings'),
+  '/aws-access': () => import('@/pages/aws-access'),
   '/private-proxy': () => import('@/pages/private-proxy'),
   '/network-tools': () => import('@/pages/network-tools'),
   '/quality-lab': () => import('@/pages/quality-lab'),

@@ -561,7 +561,7 @@ export const deletePrivateNetwork = (id: number) => Network.post<PrivateNetworkO
 
 export interface NetworkRouteApplication {
   id: number; name: string; tunnelId: number; tunnelName: string; entryNodeId: number; entryNodeName: string;
-  exitNodeId: number; exitNodeName: string; proxyType: 'socks5' | 'http' | 'vless_reality'; bindIp?: string; listenPort: number;
+  exitNodeId: number; exitNodeName: string; proxyType: 'socks5' | 'http' | 'vless_reality' | 'vless_xhttp_tls'; bindIp?: string; listenPort: number;
   username: string; password: string; hopPorts: string; state: string; lastError?: string; lastTestAt?: number;
   managedTunnel: number; lastTestLatencyMs?: number; createdTime: number; updatedTime: number; entryHost: string; clientUri: string;
   nodePath: Array<{ nodeId: number; nodeName: string }>;
@@ -573,10 +573,12 @@ export interface NetworkRouteApplication {
     verificationState: string; verifiedAt?: number; candidates: string[];
   }>;
 }
-export interface NetworkRouteApplicationOverview { minimumAgentVersion: string; minimumRealityAgentVersion: string; applications: NetworkRouteApplication[] }
+export interface NetworkRouteApplicationOverview { minimumAgentVersion: string; minimumRealityAgentVersion: string; minimumXhttpAgentVersion?: string; applications: NetworkRouteApplication[] }
 export interface NetworkRouteApplicationCreateInput {
   name: string; tunnelId?: number; nodePath?: number[]; hopConfigs?: Array<{ fromNodeId: number; toNodeId: number; addressMode: string; resourceGroupId?: number; customAddress?: string; fallbackMode: string }>;
-  tunnelProtocol?: 'tls' | 'quic'; proxyType: 'socks5' | 'http' | 'vless_reality'; bindIp?: string; listenPort: number; username?: string; password?: string; realityServerName?: string;
+  tunnelProtocol?: 'tls' | 'quic'; proxyType: 'socks5' | 'http' | 'vless_reality' | 'vless_xhttp_tls'; bindIp?: string; listenPort: number; username?: string; password?: string; realityServerName?: string;
+  xhttpPath?: string; xhttpMode?: 'auto' | 'packet-up' | 'stream-up'; xhttpPaddingBytes?: string; xhttpOriginDomain?: string; xhttpUploadDomain?: string; xhttpDownloadDomain?: string;
+  autoProvisionCloudFront?: boolean; awsAccessAccountId?: number; dnsZoneId?: number;
 }
 export const getNetworkRouteApplications = () => Network.post<NetworkRouteApplicationOverview>('/network-route-application/overview');
 export const createNetworkRouteApplication = (data: NetworkRouteApplicationCreateInput) => Network.post<NetworkRouteApplicationOverview>('/network-route-application/create', data);
@@ -946,6 +948,41 @@ export const saveDnsProviderAccount = (data: { id?: number; name: string; apiTok
 export const syncDnsProviderAccount = (id: number) =>
   Network.mutate<{ zoneCount: number }>("/dns-provider/account/sync", { id }, ["/dns-provider/zones", "/dynamic-dns/overview"]);
 export const deleteDnsProviderAccount = (id: number) => Network.mutate("/dns-provider/account/delete", { id }, ["/dns-provider/zones", "/dynamic-dns/overview"]);
+
+export interface AwsAccessAccount {
+  id: number;
+  name: string;
+  accessKeyId: string;
+  defaultRegion?: string;
+  enabled: boolean | number;
+  awsAccountId?: string;
+  callerArn?: string;
+  lastTestAt?: number;
+  lastError?: string;
+  createdTime: number;
+  updatedTime: number;
+}
+
+export interface AwsAccessSummary {
+  accounts: number;
+  enabled: number;
+  errors: number;
+}
+
+export interface AwsAccessOverview {
+  accounts: AwsAccessAccount[];
+  summary: AwsAccessSummary;
+}
+
+export const getAwsAccessAccounts = () =>
+  Network.post<AwsAccessOverview>("/aws-access/list");
+export const saveAwsAccessAccount = (data: {
+  id?: number; name: string; accessKeyId: string; secretAccessKey?: string; defaultRegion?: string; enabled: boolean;
+}) => Network.mutate("/aws-access/save", data, ["/aws-access/list"]);
+export const syncAwsAccessAccount = (id: number) =>
+  Network.mutate("/aws-access/sync", { id }, ["/aws-access/list"]);
+export const deleteAwsAccessAccount = (id: number) =>
+  Network.mutate("/aws-access/delete", { id }, ["/aws-access/list"]);
 
 export interface TopologyResourceNode {
   [key: string]: unknown;

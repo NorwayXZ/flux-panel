@@ -37,6 +37,34 @@ type realityRuntimeRequest struct {
 	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
 }
 
+type xhttpRuntimeRequest struct {
+	Name                  string `json:"name"`
+	ClientID              string `json:"clientId,omitempty"`
+	Path                  string `json:"path"`
+	Mode                  string `json:"mode,omitempty"`
+	PaddingBytes          string `json:"xPaddingBytes,omitempty"`
+	Security              string `json:"security,omitempty"`
+	ServerName            string `json:"serverName,omitempty"`
+	CertificateFile       string `json:"certificateFile,omitempty"`
+	KeyFile               string `json:"keyFile,omitempty"`
+	OutboundProxyHost     string `json:"outboundProxyHost,omitempty"`
+	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
+	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
+	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
+}
+
+type xhttpClientRuntimeRequest struct {
+	Name         string `json:"name"`
+	RemoteHost   string `json:"remoteHost"`
+	RemotePort   int    `json:"remotePort"`
+	ClientID     string `json:"clientId"`
+	Path         string `json:"path"`
+	Mode         string `json:"mode,omitempty"`
+	PaddingBytes string `json:"xPaddingBytes,omitempty"`
+	Security     string `json:"security,omitempty"`
+	ServerName   string `json:"serverName,omitempty"`
+}
+
 type realityClientRuntimeRequest struct {
 	Name       string `json:"name"`
 	RemoteHost string `json:"remoteHost"`
@@ -56,6 +84,16 @@ type realityRuntimeResponse struct {
 	Version    string `json:"version"`
 }
 
+type xhttpRuntimeResponse struct {
+	Port         int    `json:"port"`
+	ClientID     string `json:"clientId"`
+	Path         string `json:"path"`
+	Mode         string `json:"mode"`
+	PaddingBytes string `json:"xPaddingBytes"`
+	Security     string `json:"security"`
+	Version      string `json:"version"`
+}
+
 type realityRuntimeState struct {
 	Mode                  string `json:"mode,omitempty"`
 	Name                  string `json:"name"`
@@ -72,6 +110,13 @@ type realityRuntimeState struct {
 	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
 	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
 	Version               string `json:"version"`
+	Network               string `json:"network,omitempty"`
+	Security              string `json:"security,omitempty"`
+	Path                  string `json:"path,omitempty"`
+	XHTTPMode             string `json:"xhttpMode,omitempty"`
+	XPaddingBytes         string `json:"xPaddingBytes,omitempty"`
+	CertificateFile       string `json:"certificateFile,omitempty"`
+	KeyFile               string `json:"keyFile,omitempty"`
 }
 
 type xrayConfig struct {
@@ -217,6 +262,149 @@ func (m *realityRuntimeManager) addClient(request realityClientRuntimeRequest) (
 		return realityRuntimeResponse{}, err
 	}
 	return state.response(), nil
+}
+
+func (m *realityRuntimeManager) addXHTTP(request xhttpRuntimeRequest) (xhttpRuntimeResponse, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.Path = strings.TrimSpace(request.Path)
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	request.Security = strings.ToLower(strings.TrimSpace(request.Security))
+	if !runtimeNamePattern.MatchString(request.Name) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP runtime name")
+	}
+	if request.Path == "" || !strings.HasPrefix(request.Path, "/") || len(request.Path) > 255 || strings.ContainsAny(request.Path, "\r\n") {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP path")
+	}
+	if request.Mode == "" {
+		request.Mode = "auto"
+	}
+	if request.Mode != "auto" && request.Mode != "packet-up" && request.Mode != "stream-up" {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP mode")
+	}
+	if request.Security == "" {
+		request.Security = "none"
+	}
+	if request.Security != "none" && request.Security != "tls" {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP security")
+	}
+	if request.Security == "tls" && (request.ServerName == "" || request.CertificateFile == "" || request.KeyFile == "") {
+		return xhttpRuntimeResponse{}, errors.New("XHTTP TLS requires server name and certificate files")
+	}
+	request.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(request.ServerName), "."))
+	if request.Security == "tls" && !serverNamePattern.MatchString(request.ServerName) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP TLS server name")
+	}
+	if request.PaddingBytes == "" {
+		request.PaddingBytes = "100-1000"
+	}
+	if !regexp.MustCompile(`^[0-9]+(?:-[0-9]+)?$`).MatchString(request.PaddingBytes) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP padding range")
+	}
+	if err := os.MkdirAll(m.directory, 0700); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	if state, err := m.readState(request.Name); err == nil {
+		if state.Network != "xhttp" || state.Path != request.Path || state.Security != request.Security || state.ServerName != request.ServerName {
+			return xhttpRuntimeResponse{}, errors.New("XHTTP runtime already exists with different settings")
+		}
+		if err := m.ensureRunning(state); err != nil {
+			return xhttpRuntimeResponse{}, err
+		}
+		return state.xhttpResponse(), nil
+	}
+	if err := m.ensureBinary(); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	port, err := availableLocalPort()
+	if err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	clientID := strings.TrimSpace(request.ClientID)
+	if clientID == "" {
+		clientID = newRuntimeUUID()
+	}
+	if !regexp.MustCompile(`^[0-9a-fA-F-]{36}$`).MatchString(clientID) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP client id")
+	}
+	state := realityRuntimeState{Mode: "server", Network: "xhttp", Security: request.Security, Name: request.Name,
+		Port: port, ClientID: clientID, Path: request.Path, XHTTPMode: request.Mode, XPaddingBytes: request.PaddingBytes,
+		ServerName: request.ServerName, CertificateFile: request.CertificateFile, KeyFile: request.KeyFile,
+		OutboundProxyHost: strings.TrimSpace(request.OutboundProxyHost), OutboundProxyPort: request.OutboundProxyPort,
+		OutboundProxyUsername: request.OutboundProxyUsername, OutboundProxyPassword: request.OutboundProxyPassword, Version: xrayRuntimeVersion}
+	if err := m.writeStateAndConfig(state); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	if err := m.ensureRunning(state); err != nil {
+		_ = os.Remove(m.statePath(state.Name))
+		_ = os.Remove(m.configPath(state.Name))
+		return xhttpRuntimeResponse{}, err
+	}
+	return state.xhttpResponse(), nil
+}
+
+func (m *realityRuntimeManager) addXHTTPClient(request xhttpClientRuntimeRequest) (xhttpRuntimeResponse, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.RemoteHost = strings.TrimSpace(strings.Trim(request.RemoteHost, "[]"))
+	request.Path = strings.TrimSpace(request.Path)
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	request.Security = strings.ToLower(strings.TrimSpace(request.Security))
+	request.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(request.ServerName), "."))
+	if !runtimeNamePattern.MatchString(request.Name) || request.RemoteHost == "" || request.RemotePort < 1 || request.RemotePort > 65535 {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP client endpoint")
+	}
+	if request.Path == "" || !strings.HasPrefix(request.Path, "/") || len(request.Path) > 255 || strings.ContainsAny(request.Path, "\r\n") {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP path")
+	}
+	if request.Mode == "" {
+		request.Mode = "auto"
+	}
+	if request.Security == "" {
+		request.Security = "tls"
+	}
+	if request.Security != "none" && request.Security != "tls" {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP security")
+	}
+	if request.Security == "tls" && !serverNamePattern.MatchString(request.ServerName) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP TLS server name")
+	}
+	if request.PaddingBytes == "" {
+		request.PaddingBytes = "100-1000"
+	}
+	if err := os.MkdirAll(m.directory, 0700); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	if state, err := m.readState(request.Name); err == nil {
+		if state.Mode != "client" || state.Network != "xhttp" || state.RemoteHost != request.RemoteHost || state.RemotePort != request.RemotePort || state.Path != request.Path || state.ServerName != request.ServerName {
+			return xhttpRuntimeResponse{}, errors.New("XHTTP client runtime already exists with different settings")
+		}
+		if err := m.ensureRunning(state); err != nil {
+			return xhttpRuntimeResponse{}, err
+		}
+		return state.xhttpResponse(), nil
+	}
+	if err := m.ensureBinary(); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	port, err := availableLocalPort()
+	if err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	clientID := strings.TrimSpace(request.ClientID)
+	if !regexp.MustCompile(`^[0-9a-fA-F-]{36}$`).MatchString(clientID) {
+		return xhttpRuntimeResponse{}, errors.New("invalid XHTTP client id")
+	}
+	state := realityRuntimeState{Mode: "client", Network: "xhttp", Security: request.Security, Name: request.Name,
+		Port: port, ClientID: clientID, Path: request.Path, XHTTPMode: request.Mode, XPaddingBytes: request.PaddingBytes,
+		ServerName: request.ServerName, RemoteHost: request.RemoteHost, RemotePort: request.RemotePort, Version: xrayRuntimeVersion}
+	if err := m.writeStateAndConfig(state); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	if err := m.ensureRunning(state); err != nil {
+		_ = os.Remove(m.statePath(state.Name))
+		_ = os.Remove(m.configPath(state.Name))
+		return xhttpRuntimeResponse{}, err
+	}
+	return state.xhttpResponse(), nil
 }
 
 func (m *realityRuntimeManager) delete(name string) error {
@@ -429,6 +617,38 @@ func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) e
 }
 
 func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayConfig {
+	if state.Network == "xhttp" {
+		if state.Mode == "client" {
+			stream := map[string]interface{}{"network": "xhttp", "security": state.Security, "xhttpSettings": map[string]interface{}{
+				"path": state.Path, "mode": state.XHTTPMode, "extra": map[string]interface{}{"xPaddingBytes": state.XPaddingBytes},
+			}}
+			if state.Security == "tls" {
+				stream["tlsSettings"] = map[string]interface{}{"serverName": state.ServerName, "allowInsecure": true}
+			}
+			return xrayConfig{Log: map[string]interface{}{"loglevel": "warning"}, Inbounds: []interface{}{map[string]interface{}{
+				"listen": "127.0.0.1", "port": state.Port, "protocol": "socks", "settings": map[string]interface{}{"auth": "noauth", "udp": true},
+			}}, Outbounds: []interface{}{map[string]interface{}{"protocol": "vless", "settings": map[string]interface{}{"vnext": []interface{}{map[string]interface{}{
+				"address": state.RemoteHost, "port": state.RemotePort, "users": []interface{}{map[string]interface{}{"id": state.ClientID, "encryption": "none"}},
+			}}}, "streamSettings": stream}}}
+		}
+		outbound := map[string]interface{}{"protocol": "freedom", "tag": "direct"}
+		if state.OutboundProxyPort > 0 {
+			outbound = map[string]interface{}{"protocol": "socks", "tag": "routed", "settings": map[string]interface{}{"servers": []interface{}{map[string]interface{}{
+				"address": state.OutboundProxyHost, "port": state.OutboundProxyPort, "users": []interface{}{map[string]interface{}{"user": state.OutboundProxyUsername, "pass": state.OutboundProxyPassword}},
+			}}}}
+		}
+		stream := map[string]interface{}{"network": "xhttp", "xhttpSettings": map[string]interface{}{
+			"path": state.Path, "mode": state.XHTTPMode, "extra": map[string]interface{}{"xPaddingBytes": state.XPaddingBytes},
+		}}
+		if state.Security == "tls" {
+			stream["security"] = "tls"
+			stream["tlsSettings"] = map[string]interface{}{"serverName": state.ServerName, "certificates": []interface{}{map[string]interface{}{"certificateFile": state.CertificateFile, "keyFile": state.KeyFile}}}
+		}
+		return xrayConfig{Log: map[string]interface{}{"loglevel": "warning"}, Inbounds: []interface{}{map[string]interface{}{
+			"listen": "127.0.0.1", "port": state.Port, "protocol": "vless",
+			"settings": map[string]interface{}{"clients": []interface{}{map[string]interface{}{"id": state.ClientID, "email": state.Name}}, "decryption": "none"}, "streamSettings": stream,
+		}}, Outbounds: []interface{}{outbound}}
+	}
 	if state.Mode == "client" {
 		return xrayConfig{
 			Log: map[string]interface{}{"loglevel": "warning"},
@@ -504,6 +724,20 @@ func (m *realityRuntimeManager) readState(name string) (realityRuntimeState, err
 func (s realityRuntimeState) response() realityRuntimeResponse {
 	return realityRuntimeResponse{Port: s.Port, ClientID: s.ClientID, PublicKey: s.PublicKey,
 		ShortID: s.ShortID, ServerName: s.ServerName, Version: s.Version}
+}
+
+func (s realityRuntimeState) xhttpResponse() xhttpRuntimeResponse {
+	return xhttpRuntimeResponse{Port: s.Port, ClientID: s.ClientID, Path: s.Path, Mode: s.XHTTPMode, PaddingBytes: s.XPaddingBytes, Security: s.Security, Version: s.Version}
+}
+
+func newRuntimeUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%08x-%04x-4%03x-8%03x-%012x", time.Now().UnixNano()&0xffffffff, time.Now().UnixNano()&0xffff, time.Now().UnixNano()&0xfff, time.Now().UnixNano()&0xfff, time.Now().UnixNano()&0xffffffffffff)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return formatUUID(b)
 }
 
 func (m *realityRuntimeManager) statePath(name string) string {

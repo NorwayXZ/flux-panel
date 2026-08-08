@@ -1,5 +1,5 @@
 import { Tab, Tabs } from '@heroui/tabs';
-import { Boxes, Globe2, Laptop, RefreshCw } from 'lucide-react';
+import { Boxes, CloudCog, Globe2, Laptop, RefreshCw } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -10,6 +10,7 @@ const resources = [
   { path: '/home-devices', label: '家庭设备', icon: <Laptop size={16} /> },
   { path: '/dns-settings', label: '域名管理', icon: <Globe2 size={16} />, adminOnly: true },
   { path: '/dynamic-dns', label: '动态解析', icon: <RefreshCw size={16} />, adminOnly: true },
+  { path: '/aws-access', label: 'AWS 账号', icon: <CloudCog size={16} />, adminOnly: true },
 ];
 
 export default function AccessResourceTabs() {

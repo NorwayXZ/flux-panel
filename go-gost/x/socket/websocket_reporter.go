@@ -774,6 +774,18 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "AddRealityRuntimeResponse"
 		response.Data = result
 
+	case "AddXHTTPRuntime":
+		var result xhttpRuntimeResponse
+		result, err = w.handleAddXHTTPRuntime(cmd.Data)
+		response.Type = "AddXHTTPRuntimeResponse"
+		response.Data = result
+
+	case "AddXHTTPClientRuntime":
+		var result xhttpRuntimeResponse
+		result, err = w.handleAddXHTTPClientRuntime(cmd.Data)
+		response.Type = "AddXHTTPClientRuntimeResponse"
+		response.Data = result
+
 	case "AddRealityClientRuntime":
 		var result realityRuntimeResponse
 		result, err = w.handleAddRealityClientRuntime(cmd.Data)
@@ -1031,6 +1043,28 @@ func (w *WebSocketReporter) handleAddRealityRuntime(data interface{}) (realityRu
 		return realityRuntimeResponse{}, err
 	}
 	return w.realityManager.add(request)
+}
+
+func (w *WebSocketReporter) handleAddXHTTPRuntime(data interface{}) (xhttpRuntimeResponse, error) {
+	if w.realityManager == nil {
+		return xhttpRuntimeResponse{}, errors.New("XHTTP runtime manager is unavailable")
+	}
+	var request xhttpRuntimeRequest
+	if err := decodeCommandData(data, &request); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	return w.realityManager.addXHTTP(request)
+}
+
+func (w *WebSocketReporter) handleAddXHTTPClientRuntime(data interface{}) (xhttpRuntimeResponse, error) {
+	if w.realityManager == nil {
+		return xhttpRuntimeResponse{}, errors.New("XHTTP runtime manager is unavailable")
+	}
+	var request xhttpClientRuntimeRequest
+	if err := decodeCommandData(data, &request); err != nil {
+		return xhttpRuntimeResponse{}, err
+	}
+	return w.realityManager.addXHTTPClient(request)
 }
 
 func (w *WebSocketReporter) handleDeleteRealityRuntime(data interface{}) error {

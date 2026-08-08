@@ -148,6 +148,38 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
     }
 
+    public static GostDto AddXHTTPRuntime(Long nodeId, String runtimeName, String clientId, String path,
+                                          String mode, String paddingBytes, String security, String serverName,
+                                          String certificateFile, String keyFile, String outboundProxyHost,
+                                          Integer outboundProxyPort, String outboundProxyUsername, String outboundProxyPassword) {
+        JSONObject data = new JSONObject();
+        data.put("name", runtimeName);
+        data.put("clientId", clientId);
+        data.put("path", path);
+        data.put("mode", mode);
+        data.put("xPaddingBytes", paddingBytes);
+        data.put("security", security);
+        data.put("serverName", serverName);
+        data.put("certificateFile", certificateFile);
+        data.put("keyFile", keyFile);
+        if (outboundProxyPort != null) {
+            data.put("outboundProxyHost", StringUtils.defaultIfBlank(outboundProxyHost, "127.0.0.1"));
+            data.put("outboundProxyPort", outboundProxyPort);
+            data.put("outboundProxyUsername", outboundProxyUsername);
+            data.put("outboundProxyPassword", outboundProxyPassword);
+        }
+        return WebSocketServer.send_msg(nodeId, data, "AddXHTTPRuntime", 120);
+    }
+
+    public static GostDto AddXHTTPClientRuntime(Long nodeId, String runtimeName, String remoteHost, Integer remotePort,
+                                                String clientId, String path, String mode, String paddingBytes,
+                                                String security, String serverName) {
+        JSONObject data = new JSONObject(); data.put("name", runtimeName); data.put("remoteHost", remoteHost);
+        data.put("remotePort", remotePort); data.put("clientId", clientId); data.put("path", path);
+        data.put("mode", mode); data.put("xPaddingBytes", paddingBytes); data.put("security", security); data.put("serverName", serverName);
+        return WebSocketServer.send_msg(nodeId, data, "AddXHTTPClientRuntime", 120);
+    }
+
     static JSONObject createRealityRuntimeData(String runtimeName, String serverName,
                                                String outboundProxyHost, Integer outboundProxyPort,
                                                String outboundProxyUsername, String outboundProxyPassword) {

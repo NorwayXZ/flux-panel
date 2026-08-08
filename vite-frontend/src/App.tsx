@@ -25,6 +25,7 @@ const CrossEntryFailoverPage = lazy(() => import("@/pages/cross-entry-failover")
 const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
+const AwsAccessPage = lazy(() => import("@/pages/aws-access"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
@@ -229,6 +230,7 @@ function App() {
         path="/dns-settings"
         element={<ProtectedRoute useSimpleLayout={true}><DnsSettingsPage /></ProtectedRoute>}
       />
+      <Route path="/aws-access" element={<ProtectedRoute useSimpleLayout={true}><AwsAccessPage /></ProtectedRoute>} />
       <Route path="/dynamic-dns" element={<ProtectedRoute useSimpleLayout={true}><DynamicDnsPage /></ProtectedRoute>} />
       <Route path="/server-assets" element={<ProtectedRoute useSimpleLayout={true}><ServerAssetsPage /></ProtectedRoute>} />
       <Route 

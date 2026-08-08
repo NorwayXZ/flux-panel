@@ -190,7 +190,7 @@ export default function AdminLayout({
       path: '/port-resources',
       label: '资源中心',
       icon: <Boxes className="h-5 w-5" />,
-      activePaths: ['/port-resources', '/home-devices', '/dns-settings', '/dynamic-dns'],
+      activePaths: ['/port-resources', '/home-devices', '/dns-settings', '/dynamic-dns', '/aws-access'],
       adminOnly: true
     },
     {
