@@ -26,8 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.48.1";
-    public static final String SELF_UPDATE_MIN_VERSION = "2.47.0";
+    public static final String TARGET_VERSION = "2.48.2";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";
@@ -396,7 +395,6 @@ public class AgentUpgradeService {
     }
 
     String upgradeMode(String version) {
-        if (AgentVersionUtil.isAtLeast(version, SELF_UPDATE_MIN_VERSION)) return "self";
         if (AgentVersionUtil.isAtLeast(version, TERMINAL_BOOTSTRAP_MIN_VERSION)) return "terminal";
         return "manual";
     }

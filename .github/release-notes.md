@@ -1,3 +1,9 @@
+## 2.48.2 Bootstrap-first Agent upgrades
+
+- Routes every remote-upgradable online Agent through the panel-controlled terminal bootstrap installer instead of the older Agent self-update path.
+- This keeps reconnect-confirmed upgrade tracking while avoiding per-node GitHub Release metadata downloads, which caused some otherwise-online nodes to time out during batch upgrades.
+- Panel and Agent move to `2.48.2`. Existing nodes, tunnels, forwards, XHTTP applications, CloudFront resources, DNS records, and private-network routes are not rebuilt by the panel update.
+
 ## 2.48.1 Old Agent upgrade fallback
 
 - Routes Agent `2.8.0` through `2.46.x` upgrades through the rollback-protected terminal bootstrap installer instead of the older self-updater. This avoids nodes getting stuck while reading GitHub release metadata and uses the install script path with mirror fallback.
