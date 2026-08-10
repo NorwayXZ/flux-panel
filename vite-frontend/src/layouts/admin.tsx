@@ -145,6 +145,12 @@ export default function AdminLayout({
       adminOnly: true
     },
     {
+      path: '/udp-quic-diagnostic',
+      label: 'UDP / QUIC 诊断',
+      icon: <RadioTower className="h-5 w-5" />,
+      adminOnly: true
+    },
+    {
       path: '/multi-line-aggregation',
       label: '多线路聚合',
       icon: <Combine className="h-5 w-5" />,
@@ -245,7 +251,7 @@ export default function AdminLayout({
   const menuGroups = [
     { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
     { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/docker-apps', '/home-access', '/private-network', '/virtual-lan'] },
-    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/multi-line-aggregation', '/ip-quality'] },
+    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/udp-quic-diagnostic', '/multi-line-aggregation', '/ip-quality'] },
     { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }

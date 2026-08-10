@@ -30,6 +30,7 @@ const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
 const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
+const UdpQuicDiagnosticPage = lazy(() => import("@/pages/udp-quic-diagnostic"));
 const MultiLineAggregationPage = lazy(() => import("@/pages/multi-line-aggregation"));
 const IpQualityPage = lazy(() => import("@/pages/ip-quality"));
 const VirtualLanPage = lazy(() => import("@/pages/virtual-lan"));
@@ -305,6 +306,7 @@ function App() {
       <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
       <Route path="/quality-lab" element={<ProtectedRoute><QualityLabPage /></ProtectedRoute>} />
       <Route path="/bandwidth-test" element={<ProtectedRoute><BandwidthTestPage /></ProtectedRoute>} />
+      <Route path="/udp-quic-diagnostic" element={<ProtectedRoute><UdpQuicDiagnosticPage /></ProtectedRoute>} />
       <Route path="/multi-line-aggregation" element={<ProtectedRoute><MultiLineAggregationPage /></ProtectedRoute>} />
       <Route path="/ip-quality" element={<ProtectedRoute><IpQualityPage /></ProtectedRoute>} />
       <Route path="/virtual-lan" element={<ProtectedRoute><VirtualLanPage /></ProtectedRoute>} />

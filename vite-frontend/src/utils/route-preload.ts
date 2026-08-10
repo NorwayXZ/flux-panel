@@ -25,6 +25,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/network-tools': () => import('@/pages/network-tools'),
   '/quality-lab': () => import('@/pages/quality-lab'),
   '/bandwidth-test': () => import('@/pages/bandwidth-test'),
+  '/udp-quic-diagnostic': () => import('@/pages/udp-quic-diagnostic'),
   '/multi-line-aggregation': () => import('@/pages/multi-line-aggregation'),
   '/ip-quality': () => import('@/pages/ip-quality'),
   '/virtual-lan': () => import('@/pages/virtual-lan'),

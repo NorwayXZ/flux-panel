@@ -500,6 +500,33 @@ export const runBandwidthTestTask = (id: number) => Network.post<{ id: number; s
 export const deleteBandwidthTestTask = (id: number) => Network.post<BandwidthTestOverview>('/bandwidth-test/delete', { id });
 export const getBandwidthTestDetail = (id: number) => Network.post<{ taskId: number; runs: BandwidthTestRun[] }>('/bandwidth-test/detail', { id });
 
+export interface UdpQuicNode extends QualityLabNode { compatible?: boolean }
+export interface UdpQuicDiagnosticTask {
+  id: number; name: string; sourceNodeId: number; sourceNodeName: string; sourceNodeStatus: number; sourceNodeVersion?: string;
+  targetType: 'node' | 'custom'; targetNodeId?: number; targetNodeName?: string; targetNodeStatus?: number; targetNodeVersion?: string;
+  targetHost?: string; port: number; mode: 'udp_echo' | 'quic'; serverName?: string; ipFamily: 'auto' | 'ipv4' | 'ipv6';
+  sampleCount: number; timeoutMs: number; packetSize: number; idleTimeoutSeconds: number; alpn?: string; verifyCertificate: boolean | number;
+  retentionDays: number; running: boolean | number; lastStatus: 'pending' | 'running' | 'success' | 'partial' | 'failed'; lastError?: string; lastRunAt?: number;
+  resolvedAddress?: string; successCount?: number; latestSampleCount?: number; failureRate?: number; packetLossPercent?: number; rttAvgMs?: number;
+  jitterMs?: number; natIdleAlive?: boolean | number; quicHandshakeAvgMs?: number; diagnosis?: string; latestStartedAt?: number;
+}
+export interface UdpQuicDiagnosticRun {
+  id: number; status: 'success' | 'partial' | 'failed'; targetHost: string; resolvedAddress?: string; ipFamily: string; port: number;
+  mode: 'udp_echo' | 'quic'; packetSize: number; sampleCount: number; successCount: number; failureRate: number; packetLossPercent: number;
+  rttMinMs?: number; rttAvgMs?: number; rttMaxMs?: number; jitterMs?: number; natIdleSeconds?: number; natIdleAlive?: boolean | number;
+  quicHandshakeAvgMs?: number; alpn?: string; diagnosis?: string; error?: string; samplesJson?: string; startedAt: number; finishedAt: number;
+}
+export interface UdpQuicDiagnosticOverview {
+  minimumAgentVersion: string; nodes: UdpQuicNode[]; tasks: UdpQuicDiagnosticTask[];
+  summary: { total: number; running: number; success: number; degraded: number; failed: number };
+}
+export type UdpQuicDiagnosticInput = Pick<UdpQuicDiagnosticTask, 'name' | 'sourceNodeId' | 'targetType' | 'targetNodeId' | 'targetHost' | 'port' | 'mode' | 'serverName' | 'ipFamily' | 'sampleCount' | 'timeoutMs' | 'packetSize' | 'idleTimeoutSeconds' | 'alpn' | 'verifyCertificate' | 'retentionDays'> & { id?: number };
+export const getUdpQuicDiagnosticOverview = () => Network.post<UdpQuicDiagnosticOverview>('/udp-quic-diagnostic/overview');
+export const saveUdpQuicDiagnosticTask = (data: UdpQuicDiagnosticInput) => Network.post<UdpQuicDiagnosticOverview>('/udp-quic-diagnostic/save', data);
+export const runUdpQuicDiagnosticTask = (id: number) => Network.post<{ id: number; state: string; message: string }>('/udp-quic-diagnostic/run', { id });
+export const deleteUdpQuicDiagnosticTask = (id: number) => Network.post<UdpQuicDiagnosticOverview>('/udp-quic-diagnostic/delete', { id });
+export const getUdpQuicDiagnosticDetail = (id: number) => Network.post<{ taskId: number; runs: UdpQuicDiagnosticRun[] }>('/udp-quic-diagnostic/detail', { id });
+
 export interface VirtualLanConnector { id: number; name: string; platform: string; version?: string; status: number; remoteIp?: string; lastSeen?: number }
 export interface VirtualLanMember {
   id: number; networkId: number; targetType: 'node' | 'connector'; targetId: number; memberName: string; role: 'hub' | 'member';

@@ -140,6 +140,7 @@ type WebSocketReporter struct {
 	natManager        *natRuntimeManager
 	nftManager        *nftForwardManager
 	bandwidthManager  *bandwidthTestManager
+	udpQuicManager    *udpQuicDiagnosticManager
 	virtualLanManager *virtualLanRuntimeManager
 }
 
@@ -175,6 +176,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	reporter.nftManager = newNFTForwardManager()
 	reporter.bandwidthManager = newBandwidthTestManager()
+	reporter.udpQuicManager = newUDPQuicDiagnosticManager()
 	reporter.virtualLanManager = newVirtualLanRuntimeManager()
 	return reporter
 }
@@ -216,6 +218,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.bandwidthManager != nil {
 		w.bandwidthManager.stopAll()
+	}
+	if w.udpQuicManager != nil {
+		w.udpQuicManager.stopAll()
 	}
 	if w.virtualLanManager != nil {
 		w.virtualLanManager.stopAll()
@@ -917,6 +922,28 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		}
 		response.Type = "BandwidthStopResponse"
 		response.Data = result
+
+	case "UdpQuicPrepare":
+		var result udpQuicPrepareResponse
+		result, err = w.handleUDPQuicPrepare(cmd.Data)
+		response.Type = "UdpQuicPrepareResponse"
+		response.Data = result
+
+	case "UdpQuicRun":
+		var result udpQuicRunResponse
+		result, err = w.handleUDPQuicRun(cmd.Data)
+		response.Type = "UdpQuicRunResponse"
+		response.Data = result
+
+	case "UdpQuicStop":
+		var request struct {
+			SessionID string `json:"sessionId"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.udpQuicManager != nil {
+			w.udpQuicManager.stop(request.SessionID)
+		}
+		response.Type = "UdpQuicStopResponse"
 
 	case "VirtualLanPrepareKey":
 		var request struct {

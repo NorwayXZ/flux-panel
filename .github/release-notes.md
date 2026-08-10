@@ -1,3 +1,11 @@
+## 2.49.0 UDP / QUIC diagnostics
+
+- Adds an administrator-only **UDP / QUIC Diagnostics** page under Utilities.
+- Supports authenticated Agent-to-Agent UDP Echo checks with packet loss, RTT, jitter, packet size, IPv4/IPv6 selection, and NAT idle keepalive verification.
+- Supports QUIC handshake checks from any online Agent to a custom host or node address, with SNI, ALPN, certificate verification, resolved address, failure reason, and historical results.
+- Stores additive task and run history tables. Existing nodes, tunnels, forwards, proxy protocols, DNS records, certificates, nftables rules, private networks, Docker apps, and CloudFront resources are not rebuilt by this update.
+- Agent `2.49.0` is required only for this new diagnostic command. Older Agents keep existing functions but must be upgraded before running UDP / QUIC diagnostics.
+
 ## 2.48.3 Agent upgrade status reconciliation
 
 - Treats the Agent's reconnect-reported version as the final source of truth for online upgrades.
