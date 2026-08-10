@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.48.2";
+    public static final String TARGET_VERSION = "2.48.3";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";
@@ -48,6 +48,7 @@ public class AgentUpgradeService {
 
     public Map<String, Object> getStatus(Long nodeId) {
         List<Node> nodes = nodeId == null ? nodeService.list() : List.of(requireNode(nodeId));
+        reconcileCompletedTasks(nodes);
         Map<Long, Map<String, Object>> latest = latestTasks(nodes.stream().map(Node::getId).toList());
         List<Map<String, Object>> items = new ArrayList<>();
         for (Node node : nodes) {
@@ -244,11 +245,15 @@ public class AgentUpgradeService {
 
     public void handleNodeConnected(Long nodeId, String version) {
         Map<String, Object> active = latestActiveTask(nodeId);
+        if (active == null) active = latestTask(nodeId);
         if (active == null) return;
         String taskId = Objects.toString(active.get("taskId"), "");
         String target = Objects.toString(active.get("targetVersion"), TARGET_VERSION);
-        if (AgentVersionUtil.isAtLeast(version, target)) {
+        String state = Objects.toString(active.get("state"), "");
+        if (!"success".equals(state) && AgentVersionUtil.isAtLeast(version, target)) {
             updateTask(taskId, "success", "Agent 已升级并重新上线", System.currentTimeMillis());
+            String batchId = Objects.toString(active.get("batchId"), "");
+            if (!batchId.isBlank()) refreshBatchProgress(batchId);
             bootstrapSessions.entrySet().removeIf(entry -> Objects.equals(entry.getValue().nodeId(), nodeId));
             bootstrapOutput.entrySet().removeIf(entry -> !bootstrapSessions.containsKey(entry.getKey()));
         }
@@ -436,12 +441,31 @@ public class AgentUpgradeService {
         return items.isEmpty() ? Map.of() : items.get(0);
     }
 
+    private void reconcileCompletedTasks(List<Node> nodes) {
+        try {
+            Map<Long, Map<String, Object>> latest = latestTasks(nodes.stream().map(Node::getId).toList());
+            long now = System.currentTimeMillis();
+            for (Node node : nodes) {
+                Map<String, Object> task = latest.get(node.getId());
+                if (task == null || "success".equals(Objects.toString(task.get("state"), ""))) continue;
+                String target = Objects.toString(task.get("targetVersion"), TARGET_VERSION);
+                if (!AgentVersionUtil.isAtLeast(node.getVersion(), target)) continue;
+                jdbcTemplate.update("UPDATE agent_upgrade_task SET state='success',message=?,updated_at=?,finished_at=? WHERE task_id=?",
+                        "Agent 已上报目标版本，升级状态已自动校正", now, now, Objects.toString(task.get("taskId"), ""));
+                String batchId = Objects.toString(task.get("batchId"), "");
+                if (!batchId.isBlank()) refreshBatchProgress(batchId);
+            }
+        } catch (Exception e) {
+            log.warn("Reconcile Agent upgrade status failed: {}", e.getMessage());
+        }
+    }
+
     private Map<Long, Map<String, Object>> latestTasks(List<Long> nodeIds) {
         Map<Long, Map<String, Object>> result = new HashMap<>();
         if (nodeIds.isEmpty()) return result;
         String placeholders = String.join(",", java.util.Collections.nCopies(nodeIds.size(), "?"));
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT t.task_id AS taskId,t.node_id AS nodeId,t.from_version AS fromVersion,t.target_version AS targetVersion,"
+                "SELECT t.task_id AS taskId,t.batch_id AS batchId,t.node_id AS nodeId,t.from_version AS fromVersion,t.target_version AS targetVersion,"
                         + "t.state,t.message,t.requested_at AS requestedAt,t.updated_at AS updatedAt,t.finished_at AS finishedAt "
                         + "FROM agent_upgrade_task t INNER JOIN (SELECT node_id,MAX(id) id FROM agent_upgrade_task WHERE node_id IN ("
                         + placeholders + ") GROUP BY node_id) latest ON latest.id=t.id", nodeIds.toArray());
@@ -449,9 +473,16 @@ public class AgentUpgradeService {
         return result;
     }
 
+    private Map<String, Object> latestTask(Long nodeId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT task_id AS taskId,batch_id AS batchId,target_version AS targetVersion,state "
+                        + "FROM agent_upgrade_task WHERE node_id=? ORDER BY id DESC LIMIT 1", nodeId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     private Map<String, Object> latestActiveTask(Long nodeId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT task_id AS taskId,target_version AS targetVersion,state FROM agent_upgrade_task "
+                "SELECT task_id AS taskId,batch_id AS batchId,target_version AS targetVersion,state FROM agent_upgrade_task "
                         + "WHERE node_id=? AND state IN (?,?,?,?,?,?,?,?) ORDER BY id DESC LIMIT 1",
                 nodeId, ACTIVE_STATES.get(0), ACTIVE_STATES.get(1), ACTIVE_STATES.get(2),
                 ACTIVE_STATES.get(3), ACTIVE_STATES.get(4), ACTIVE_STATES.get(5), ACTIVE_STATES.get(6), ACTIVE_STATES.get(7));
@@ -534,9 +565,15 @@ public class AgentUpgradeService {
     }
 
     private void advanceParallelBatch(String batchId) {
+        refreshBatchProgress(batchId);
+    }
+
+    private void refreshBatchProgress(String batchId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT total_nodes AS totalNodes FROM agent_upgrade_batch WHERE batch_id=? AND state='running' LIMIT 1", batchId);
+                "SELECT total_nodes AS totalNodes,state FROM agent_upgrade_batch WHERE batch_id=? LIMIT 1", batchId);
         if (rows.isEmpty()) return;
+        String currentState = Objects.toString(rows.get(0).get("state"), "");
+        if ("paused".equals(currentState)) return;
         int total = ((Number) rows.get(0).get("totalNodes")).intValue();
         Integer active = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=? AND state IN (?,?,?,?,?,?,?,?)", Integer.class,
@@ -547,10 +584,12 @@ public class AgentUpgradeService {
         Integer successes = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM agent_upgrade_task WHERE batch_id=? AND state='success'", Integer.class, batchId);
         int completed = Math.max(0, Objects.requireNonNullElse(taskCount, 0) - Objects.requireNonNullElse(active, 0));
-        jdbcTemplate.update("UPDATE agent_upgrade_batch SET completed_nodes=?,message=?,updated_at=? WHERE batch_id=? AND state='running'",
-                completed, "并发升级进行中：已完成 " + completed + "/" + total + "，成功 "
-                        + Objects.requireNonNullElse(successes, 0), System.currentTimeMillis(), batchId);
-        if (Objects.requireNonNullElse(taskCount, 0) < total || Objects.requireNonNullElse(active, 0) > 0) return;
+        if (Objects.requireNonNullElse(taskCount, 0) < total || Objects.requireNonNullElse(active, 0) > 0) {
+            jdbcTemplate.update("UPDATE agent_upgrade_batch SET completed_nodes=?,message=?,updated_at=? WHERE batch_id=? AND state='running'",
+                    completed, "并发升级进行中：已完成 " + completed + "/" + total + "，成功 "
+                            + Objects.requireNonNullElse(successes, 0), System.currentTimeMillis(), batchId);
+            return;
+        }
 
         int successCount = Objects.requireNonNullElse(successes, 0);
         int failureCount = total - successCount;
@@ -560,7 +599,8 @@ public class AgentUpgradeService {
                 ? "全部 " + total + " 台节点升级成功并重新上线"
                 : "批量升级已结束：成功 " + successCount + " 台，失败或回退 " + failureCount + " 台；可单独重试失败节点";
         jdbcTemplate.update("UPDATE agent_upgrade_batch SET state=?,completed_nodes=?,message=?,updated_at=?,finished_at=? "
-                        + "WHERE batch_id=? AND state='running'", state, total, message, now, now, batchId);
+                        + "WHERE batch_id=? AND state IN ('running','success','completed_with_errors')",
+                state, total, message, now, now, batchId);
     }
 
     private void pauseBatch(String batchId, String message) {

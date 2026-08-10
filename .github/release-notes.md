@@ -1,3 +1,9 @@
+## 2.48.3 Agent upgrade status reconciliation
+
+- Treats the Agent's reconnect-reported version as the final source of truth for online upgrades.
+- If the bootstrap terminal reports a failure but the node comes back on the target version, the panel automatically corrects that task and its batch summary to success.
+- Keeps the `2.48.2` bootstrap-first upgrade path. Existing nodes, tunnels, forwards, XHTTP applications, CloudFront resources, DNS records, and private-network routes are not rebuilt by the panel update.
+
 ## 2.48.2 Bootstrap-first Agent upgrades
 
 - Routes every remote-upgradable online Agent through the panel-controlled terminal bootstrap installer instead of the older Agent self-update path.
