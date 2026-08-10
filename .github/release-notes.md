@@ -1,3 +1,9 @@
+## 2.48.1 Old Agent upgrade fallback
+
+- Routes Agent `2.8.0` through `2.46.x` upgrades through the rollback-protected terminal bootstrap installer instead of the older self-updater. This avoids nodes getting stuck while reading GitHub release metadata and uses the install script path with mirror fallback.
+- Keeps Agent `2.47.0` and newer on the self-update path, which was verified by the `2.48.0` production batch upgrade. Existing nodes, tunnels, forwards, XHTTP applications, CloudFront resources, DNS records, and private-network routes are not rebuilt by the panel update.
+- Panel and Agent move to `2.48.1`; use the normal panel rollback command if the panel update fails health checks.
+
 ## 2.48.0 CloudFront XHTTP split transport
 
 - Adds AWS credential management to the Resource Center with encrypted secrets and live STS identity verification.
