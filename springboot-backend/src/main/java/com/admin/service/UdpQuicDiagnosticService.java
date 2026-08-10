@@ -99,8 +99,13 @@ public class UdpQuicDiagnosticService {
     }
 
     public R runNow(Long id) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM udp_quic_diagnostic_task WHERE id=?", Integer.class, id);
-        if (count == null || count == 0) return R.err("诊断任务不存在");
+        Map<String, Object> task = one("SELECT * FROM udp_quic_diagnostic_task WHERE id=?", id);
+        if (task == null) return R.err("诊断任务不存在");
+        try {
+            validateRunnable(task);
+        } catch (IllegalStateException e) {
+            return R.err(e.getMessage());
+        }
         if (active.get() >= 3) return R.err("已有 3 项 UDP / QUIC 诊断在运行，请稍后重试");
         long now = System.currentTimeMillis();
         if (jdbcTemplate.update("UPDATE udp_quic_diagnostic_task SET running=1,last_status='running',last_error=NULL,updated_time=? WHERE id=? AND running=0", now, id) != 1) {
@@ -206,6 +211,16 @@ public class UdpQuicDiagnosticService {
         if (!WebSocketServer.isNodeOnline(id)) throw new IllegalStateException(label + "节点离线");
         if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_AGENT_VERSION)) throw new IllegalStateException(label + "节点 Agent 需要升级到 " + MIN_AGENT_VERSION);
         return node;
+    }
+
+    private void validateRunnable(Map<String, Object> task) {
+        requireOnlineNode(longNumber(task.get("source_node_id")), "执行");
+        String mode = Objects.toString(task.get("mode"), "udp_echo").toLowerCase(Locale.ROOT);
+        if ("udp_echo".equals(mode)) {
+            requireOnlineNode(longOrNull(task.get("target_node_id")), "目标");
+        } else {
+            targetHost(task);
+        }
     }
 
     private void normalizeAndValidate(UdpQuicDiagnosticTaskDto dto) {

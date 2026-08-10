@@ -73,6 +73,23 @@ export default function UdpQuicDiagnosticPage() {
   }, [data.tasks, load]);
 
   const onlineNodes = useMemo(() => data.nodes.filter(node => node.status === 1), [data.nodes]);
+  const agentNodeDisabledKeys = useMemo(() => data.nodes.filter(node => node.status !== 1 || !node.compatible).map(node => String(node.id)), [data.nodes]);
+  const nodeById = useMemo(() => new Map(data.nodes.map(node => [node.id, node])), [data.nodes]);
+  const noCompatibleNodes = !loading && onlineNodes.length > 0 && onlineNodes.every(node => !node.compatible);
+  const targetNodeOptions = form.mode === 'udp_echo' ? data.nodes : onlineNodes;
+  const nodeOptionText = (node: (typeof data.nodes)[number], address = false) => `${node.name} · ${address ? `${node.serverIp || node.ip || '未设置地址'} · ` : ''}${node.status !== 1 ? '离线' : !node.compatible ? `需升级到 ${data.minimumAgentVersion}` : '可用'} · Agent ${node.version || '未知'}`;
+  const agentBlockReason = (nodeId: number | undefined, label: string) => {
+    const node = nodeId ? nodeById.get(nodeId) : undefined;
+    if (!node) return `${label}节点不存在`;
+    if (node.status !== 1) return `${label}节点离线`;
+    if (!node.compatible) return `${label}节点 Agent 需要升级到 ${data.minimumAgentVersion}`;
+    return '';
+  };
+  const taskRunBlockReason = (task: UdpQuicDiagnosticTask) => {
+    const sourceReason = agentBlockReason(task.sourceNodeId, '执行');
+    if (sourceReason) return sourceReason;
+    return task.mode === 'udp_echo' ? agentBlockReason(task.targetNodeId, '目标') : '';
+  };
 
   const openCreate = () => { setForm(emptyForm); setFormOpen(true); };
   const openEdit = (task: UdpQuicDiagnosticTask) => {
@@ -100,6 +117,12 @@ export default function UdpQuicDiagnosticPage() {
     if (!form.name.trim() || !form.sourceNodeId) return toast.error('请填写任务名称并选择执行节点');
     if ((form.mode === 'udp_echo' || form.targetType === 'node') && !form.targetNodeId) return toast.error('请选择目标节点');
     if (form.mode === 'quic' && form.targetType === 'custom' && !form.targetHost.trim()) return toast.error('请填写 QUIC 目标地址');
+    const sourceReason = agentBlockReason(Number(form.sourceNodeId), '执行');
+    if (sourceReason) return toast.error(sourceReason);
+    if (form.mode === 'udp_echo') {
+      const targetReason = agentBlockReason(Number(form.targetNodeId), '目标');
+      if (targetReason) return toast.error(targetReason);
+    }
     setBusy('save');
     const response = await saveUdpQuicDiagnosticTask(input());
     setBusy('');
@@ -143,16 +166,19 @@ export default function UdpQuicDiagnosticPage() {
       ['失败', loading ? '-' : data.summary.failed, <Trash2 size={18} />, 'text-danger bg-danger/10'],
     ].map(([label, value, icon, tone]) => <div key={String(label)} className="border border-divider bg-content1 p-4"><div className="flex items-center justify-between"><span className="text-sm text-default-500">{label as string}</span><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone}`}>{icon}</span></div><p className="mt-3 text-2xl font-semibold">{value as string | number}</p></div>)}</section>
 
+    {noCompatibleNodes && <section className="border border-warning-200 bg-warning-50 p-4 text-sm text-warning-700 dark:border-warning-800 dark:bg-warning-900/20 dark:text-warning-300">当前在线节点 Agent 均低于 {data.minimumAgentVersion}，UDP / QUIC 诊断需要先升级 Agent 后才能执行。</section>}
+
     {data.tasks.length === 0 && !loading ? <div className="flex min-h-72 flex-col items-center justify-center gap-3 border-y border-divider text-default-400"><RadioTower size={36} /><p>尚未创建 UDP / QUIC 诊断</p><Button size="sm" variant="flat" onPress={openCreate}>创建第一项诊断</Button></div> : <section className="grid gap-4 xl:grid-cols-2">{data.tasks.map(task => {
       const state = stateMeta(task);
+      const blockReason = taskRunBlockReason(task);
       return <article key={task.id} className="border border-divider bg-content1 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2"><h2 className="truncate font-semibold">{task.name}</h2><Chip size="sm" color={state.color} variant="flat">{state.label}</Chip><Chip size="sm" variant="flat">{modeText(task.mode)} · {task.ipFamily.toUpperCase()}</Chip></div>
+            <div className="flex flex-wrap items-center gap-2"><h2 className="truncate font-semibold">{task.name}</h2><Chip size="sm" color={state.color} variant="flat">{state.label}</Chip><Chip size="sm" variant="flat">{modeText(task.mode)} · {task.ipFamily.toUpperCase()}</Chip>{blockReason && <Chip size="sm" color="warning" variant="flat" title={blockReason}>需升级 Agent</Chip>}</div>
             <p className="mt-2 truncate text-sm text-default-500">{task.sourceNodeName} → {task.targetType === 'node' ? task.targetNodeName : task.targetHost}:{task.port}</p>
             <p className="mt-1 text-xs text-default-400">Agent {data.minimumAgentVersion}+ · {task.sampleCount} 次 · {task.timeoutMs} ms</p>
           </div>
-          <div className="flex gap-1"><Button isIconOnly size="sm" variant="light" title="开始诊断" isLoading={busy === `run-${task.id}`} isDisabled={bool(task.running)} onPress={() => void run(task)}><Play size={16} /></Button><Button isIconOnly size="sm" variant="light" title="历史结果" isLoading={busy === `history-${task.id}`} onPress={() => void history(task)}><History size={16} /></Button><Button isIconOnly size="sm" variant="light" title="编辑" isDisabled={bool(task.running)} onPress={() => openEdit(task)}><Pencil size={16} /></Button><Button isIconOnly size="sm" variant="light" color="danger" title="删除" isLoading={busy === `delete-${task.id}`} isDisabled={bool(task.running)} onPress={() => void remove(task)}><Trash2 size={16} /></Button></div>
+          <div className="flex gap-1"><Button isIconOnly size="sm" variant="light" title={blockReason || '开始诊断'} isLoading={busy === `run-${task.id}`} isDisabled={bool(task.running) || Boolean(blockReason)} onPress={() => void run(task)}><Play size={16} /></Button><Button isIconOnly size="sm" variant="light" title="历史结果" isLoading={busy === `history-${task.id}`} onPress={() => void history(task)}><History size={16} /></Button><Button isIconOnly size="sm" variant="light" title="编辑" isDisabled={bool(task.running)} onPress={() => openEdit(task)}><Pencil size={16} /></Button><Button isIconOnly size="sm" variant="light" color="danger" title="删除" isLoading={busy === `delete-${task.id}`} isDisabled={bool(task.running)} onPress={() => void remove(task)}><Trash2 size={16} /></Button></div>
         </div>
         <div className="mt-4 grid grid-cols-4 divide-x divide-divider border-y border-divider py-3 text-center">
           <div><p className="text-xs text-default-500">成功</p><p className="mt-1 font-semibold">{Number(task.successCount || 0)}/{Number(task.latestSampleCount || task.sampleCount || 0)}</p></div>
@@ -168,11 +194,11 @@ export default function UdpQuicDiagnosticPage() {
       <Input isRequired label="任务名称" placeholder="移动 5G 到香港 QUIC" value={form.name} onValueChange={value => setForm({ ...form, name: value })} />
       <div className="grid gap-4 md:grid-cols-3">
         <Select label="诊断类型" selectedKeys={[form.mode]} onSelectionChange={keys => { const mode = String(Array.from(keys)[0] || 'udp_echo') as FormState['mode']; setForm({ ...form, mode, targetType: mode === 'udp_echo' ? 'node' : form.targetType, port: mode === 'quic' ? form.port : form.port }); }}><SelectItem key="udp_echo">UDP Echo</SelectItem><SelectItem key="quic">QUIC 握手</SelectItem></Select>
-        <Select isRequired label="执行节点" selectedKeys={form.sourceNodeId ? [form.sourceNodeId] : []} onSelectionChange={keys => setForm({ ...form, sourceNodeId: String(Array.from(keys)[0] || '') })}>{onlineNodes.map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · Agent {node.version || '未知'}</SelectItem>)}</Select>
+        <Select isRequired label="执行节点" selectedKeys={form.sourceNodeId ? [form.sourceNodeId] : []} disabledKeys={agentNodeDisabledKeys} onSelectionChange={keys => setForm({ ...form, sourceNodeId: String(Array.from(keys)[0] || '') })}>{data.nodes.map(node => <SelectItem key={String(node.id)} textValue={node.name}>{nodeOptionText(node)}</SelectItem>)}</Select>
         <Input label="端口" type="number" min={1} max={65535} value={form.port} onValueChange={value => setForm({ ...form, port: value })} />
       </div>
       {form.mode === 'quic' && <Select label="目标类型" selectedKeys={[form.targetType]} onSelectionChange={keys => setForm({ ...form, targetType: String(Array.from(keys)[0] || 'custom') as FormState['targetType'] })}><SelectItem key="custom">自定义目标</SelectItem><SelectItem key="node">节点地址</SelectItem></Select>}
-      {(form.mode === 'udp_echo' || form.targetType === 'node') ? <Select isRequired label="目标节点" selectedKeys={form.targetNodeId ? [form.targetNodeId] : []} onSelectionChange={keys => setForm({ ...form, targetNodeId: String(Array.from(keys)[0] || '') })}>{onlineNodes.map(node => <SelectItem key={String(node.id)} textValue={node.name}>{node.name} · {node.serverIp || node.ip || '未设置地址'} · Agent {node.version || '未知'}</SelectItem>)}</Select> : <Input isRequired label="目标地址" placeholder="example.com 或 1.1.1.1" value={form.targetHost} onValueChange={value => setForm({ ...form, targetHost: value })} />}
+      {(form.mode === 'udp_echo' || form.targetType === 'node') ? <Select isRequired label="目标节点" selectedKeys={form.targetNodeId ? [form.targetNodeId] : []} disabledKeys={form.mode === 'udp_echo' ? agentNodeDisabledKeys : []} onSelectionChange={keys => setForm({ ...form, targetNodeId: String(Array.from(keys)[0] || '') })}>{targetNodeOptions.map(node => <SelectItem key={String(node.id)} textValue={node.name}>{nodeOptionText(node, true)}</SelectItem>)}</Select> : <Input isRequired label="目标地址" placeholder="example.com 或 1.1.1.1" value={form.targetHost} onValueChange={value => setForm({ ...form, targetHost: value })} />}
       <div className="grid gap-4 md:grid-cols-4">
         <Select label="IP 栈" selectedKeys={[form.ipFamily]} onSelectionChange={keys => setForm({ ...form, ipFamily: String(Array.from(keys)[0] || 'auto') as FormState['ipFamily'] })}><SelectItem key="auto">自动</SelectItem><SelectItem key="ipv4">IPv4</SelectItem><SelectItem key="ipv6">IPv6</SelectItem></Select>
         <Input label="探测次数" type="number" min={1} max={20} value={form.sampleCount} onValueChange={value => setForm({ ...form, sampleCount: value })} />
