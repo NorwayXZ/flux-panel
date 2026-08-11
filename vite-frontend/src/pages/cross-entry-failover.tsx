@@ -8,7 +8,7 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem, SelectSection } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Switch } from '@heroui/switch';
-import { Activity, ArrowRight, CheckCircle2, History, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, ArrowUp, CheckCircle2, History, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 import {
@@ -136,6 +136,16 @@ export default function CrossEntryFailoverPage() {
   const selectProfile = (profile: PresetProfileKey) => {
     const value = profiles[profile];
     setForm(current => ({ ...current, profile, probeIntervalMs: String(value.interval), connectTimeoutMs: String(value.timeout), failureThreshold: String(value.failures), recoveryThreshold: String(value.recovery) }));
+  };
+
+  const moveMember = (index: number, direction: -1 | 1) => {
+    setForm(current => {
+      const target = index + direction;
+      if (target < 0 || target >= current.memberForwardIds.length) return current;
+      const memberForwardIds = [...current.memberForwardIds];
+      [memberForwardIds[index], memberForwardIds[target]] = [memberForwardIds[target], memberForwardIds[index]];
+      return { ...current, memberForwardIds };
+    });
   };
 
   const submit = async () => {
@@ -325,7 +335,11 @@ export default function CrossEntryFailoverPage() {
                         </SelectSection>
                       ))}
                     </Select>
-                    <Button isIconOnly variant="light" aria-label="移除入口" isDisabled={form.memberForwardIds.length <= 2} onPress={() => setForm({ ...form, memberForwardIds: form.memberForwardIds.filter((_, current) => current !== index) })}><X size={17} /></Button>
+                    <div className="flex h-10 items-center gap-1">
+                      <Button isIconOnly size="sm" variant="light" title="上移" aria-label="上移入口" isDisabled={index === 0} onPress={() => moveMember(index, -1)}><ArrowUp size={16} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="下移" aria-label="下移入口" isDisabled={index === form.memberForwardIds.length - 1} onPress={() => moveMember(index, 1)}><ArrowDown size={16} /></Button>
+                      <Button isIconOnly size="sm" variant="light" title="移除" aria-label="移除入口" isDisabled={form.memberForwardIds.length <= 2} onPress={() => setForm({ ...form, memberForwardIds: form.memberForwardIds.filter((_, current) => current !== index) })}><X size={17} /></Button>
+                    </div>
                   </div>
                 ))}
               </div>

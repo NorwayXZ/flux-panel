@@ -1,3 +1,9 @@
+## 2.49.2 Cross-entry failover ordering
+
+- Adds up and down controls to the Cross-entry Failover edit form so entry members can be reordered without removing and recreating them.
+- The saved order continues to map directly to failover priority: first row is the primary entry, then backup 1, backup 2, and so on.
+- Frontend-only release. Agent and Connector remain `2.49.1`; existing nodes, tunnels, forwards, ports, DNS records, certificates, proxy services, Docker apps, and CloudFront resources are unchanged.
+
 ## 2.49.1 UDP / QUIC diagnostics guardrail
 
 - Adds an administrator-only **UDP / QUIC Diagnostics** page under Utilities.
