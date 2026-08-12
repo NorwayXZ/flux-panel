@@ -656,6 +656,10 @@ export interface CrossEntryMember {
   qualityState?: 'unknown' | 'warming' | 'healthy' | 'degraded';
   qualityBadCount?: number;
   qualityGoodCount?: number;
+  qualityFlapCount?: number;
+  qualityFlapWindowStartedAt?: number;
+  qualitySuppressedUntil?: number;
+  qualitySuppressedReason?: string;
   qualityLastError?: string;
   qualityCheckedAt?: number;
   lastError?: string;
@@ -693,6 +697,10 @@ export interface CrossEntryGroup {
   qualityFixedTargetEnabled?: boolean | number;
   qualityFixedTargetMs?: number;
   qualityFixedTargetStrict?: boolean | number;
+  qualityFlapGuardEnabled?: boolean | number;
+  qualityFlapWindowSeconds?: number;
+  qualityFlapThreshold?: number;
+  qualityFlapSuppressSeconds?: number;
   qualityProbeStatus?: 'disabled' | 'pending' | 'ok' | 'warning' | 'failed';
   qualityProbeError?: string;
   qualityProbeAt?: number;

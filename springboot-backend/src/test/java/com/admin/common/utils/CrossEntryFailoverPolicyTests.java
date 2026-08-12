@@ -62,6 +62,15 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
+    void doesNotFailbackToSuppressedPrimary() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(suppressedMember(1, 0, true, 8), member(2, 1, true, 8)), 2L, true, 3, true);
+
+        assertFalse(decision.switchRequired());
+        assertEquals("主入口处于质量抖动保护期", decision.reason());
+    }
+
+    @Test
     void staysOnDegradedActiveWhenNoHealthyQualityBackupExists() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(degradedMember(1, 0, true, 10), degradedMember(2, 1, true, 10)), 1L, false, 3, true);
@@ -80,15 +89,29 @@ class CrossEntryFailoverPolicyTests {
         assertEquals(3L, decision.targetId());
     }
 
+    @Test
+    void qualitySwitchSkipsSuppressedBackup() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 10), suppressedMember(2, 1, true, 10), member(3, 2, true, 10)),
+                1L, false, 3, true);
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
     private CrossEntryFailoverPolicy.Member member(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true, false);
     }
 
     private CrossEntryFailoverPolicy.Member degradedMember(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, true, true);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, true, true, false);
     }
 
     private CrossEntryFailoverPolicy.Member unacceptableMember(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, false);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, false, false);
+    }
+
+    private CrossEntryFailoverPolicy.Member suppressedMember(long id, int priority, boolean healthy, int successCount) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true, true);
     }
 }

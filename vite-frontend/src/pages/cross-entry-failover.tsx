@@ -49,12 +49,21 @@ const emptyForm = {
   qualityProbeCount: '4', qualityDegradeThresholdMs: '100', qualityRecoverThresholdMs: '60', qualityDegradeFactor: '3',
   qualityRecoverFactor: '1.8', qualityDegradeSamples: '3', qualityRecoverSamples: '3', qualityLossThresholdPercent: '30',
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
+  qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
   memberForwardIds: ['', ''],
 };
 
 const truthy = (value: boolean | number) => value === true || value === 1;
 const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
 const metricText = (value?: number, unit = '') => typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 10) / 10}${unit}` : '-';
+const durationText = (seconds?: number) => {
+  const value = Number(seconds || 0);
+  if (!Number.isFinite(value) || value <= 0) return '-';
+  if (value % 3600 === 0) return `${value / 3600} 小时`;
+  if (value >= 3600) return `${Math.round(value / 360) / 10} 小时`;
+  if (value % 60 === 0) return `${value / 60} 分钟`;
+  return `${value} 秒`;
+};
 const eventRouteText = (event?: CrossEntryEvent) => {
   if (!event) return '暂无自动切换';
   const from = event.fromForwardName || event.fromNodeName || '初始状态';
@@ -173,6 +182,10 @@ export default function CrossEntryFailoverPage() {
       qualityFixedTargetEnabled: truthy(group.qualityFixedTargetEnabled || false),
       qualityFixedTargetMs: String(group.qualityFixedTargetMs || 20),
       qualityFixedTargetStrict: !Number.isFinite(Number(group.qualityFixedTargetStrict)) ? truthy(group.qualityFixedTargetStrict ?? true) : Number(group.qualityFixedTargetStrict) !== 0,
+      qualityFlapGuardEnabled: !Number.isFinite(Number(group.qualityFlapGuardEnabled)) ? truthy(group.qualityFlapGuardEnabled ?? true) : Number(group.qualityFlapGuardEnabled) !== 0,
+      qualityFlapWindowSeconds: String(group.qualityFlapWindowSeconds || 900),
+      qualityFlapThreshold: String(group.qualityFlapThreshold || 3),
+      qualityFlapSuppressSeconds: String(group.qualityFlapSuppressSeconds || 1800),
       memberForwardIds: group.members.map(item => String(item.forwardId)),
     });
     setFormOpen(true);
@@ -219,6 +232,10 @@ export default function CrossEntryFailoverPage() {
       qualityFixedTargetEnabled: form.qualityFixedTargetEnabled,
       qualityFixedTargetMs: Number(form.qualityFixedTargetMs),
       qualityFixedTargetStrict: form.qualityFixedTargetStrict,
+      qualityFlapGuardEnabled: form.qualityFlapGuardEnabled,
+      qualityFlapWindowSeconds: Number(form.qualityFlapWindowSeconds),
+      qualityFlapThreshold: Number(form.qualityFlapThreshold),
+      qualityFlapSuppressSeconds: Number(form.qualityFlapSuppressSeconds),
     });
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || '保存入口容灾失败');
@@ -304,12 +321,13 @@ export default function CrossEntryFailoverPage() {
             const activeActive = group.routingMode === 'active_active';
             const qualityEnabled = truthy(group.qualityEnabled || false);
             const fixedTargetEnabled = qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
+            const flapGuardEnabled = qualityEnabled && truthy(group.qualityFlapGuardEnabled ?? true);
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -329,9 +347,10 @@ export default function CrossEntryFailoverPage() {
                     {group.members.map((member, index) => {
                       const isActive = member.id === group.activeMemberId;
                       const qMeta = qualityMeta(member.qualityState);
+                      const suppressed = Boolean(member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now());
                       return (
                         <div key={member.id} className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
-                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p></div>
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">抖动保护至 {timeText(member.qualitySuppressedUntil)}</p>}</div>
                           <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">质量 {metricText(member.qualityLatencyMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}</div>
                         </div>
                       );
@@ -463,6 +482,13 @@ export default function CrossEntryFailoverPage() {
                     <Input type="number" label="目标延迟 ms" min={1} value={form.qualityFixedTargetMs} isDisabled={!form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetMs => setForm({ ...form, qualityFixedTargetMs })} />
                     <Switch isSelected={form.qualityFixedTargetStrict} isDisabled={!form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetStrict => setForm({ ...form, qualityFixedTargetStrict })}>只切到达标备用入口</Switch>
                     <p className="text-xs leading-5 text-default-500">开启后，入口连续超过目标延迟会算作质量劣化；严格模式下，只会切到最近探测延迟小于等于目标值的备用入口。</p>
+                  </div>
+                  <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-[minmax(0,1fr)_repeat(3,150px)] sm:items-center">
+                    <Switch isSelected={form.qualityFlapGuardEnabled} onValueChange={qualityFlapGuardEnabled => setForm({ ...form, qualityFlapGuardEnabled })}>启用抖动保护</Switch>
+                    <Input type="number" label="统计窗口（秒）" min={60} value={form.qualityFlapWindowSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapWindowSeconds => setForm({ ...form, qualityFlapWindowSeconds })} />
+                    <Input type="number" label="触发次数" min={2} max={20} value={form.qualityFlapThreshold} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapThreshold => setForm({ ...form, qualityFlapThreshold })} />
+                    <Input type="number" label="保护时长（秒）" min={60} value={form.qualityFlapSuppressSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapSuppressSeconds => setForm({ ...form, qualityFlapSuppressSeconds })} />
+                    <p className="text-xs leading-5 text-default-500 sm:col-span-4">默认规则：{durationText(Number(form.qualityFlapWindowSeconds))}内质量劣化 {form.qualityFlapThreshold || 3} 次，则该入口进入 {durationText(Number(form.qualityFlapSuppressSeconds))} 保护期。保护期内不会自动回切到它，也不会优先切到它，避免主入口 10ms/200ms 来回跳造成体验抖动。</p>
                   </div>
                 </div>
               )}

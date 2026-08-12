@@ -13,20 +13,31 @@ public final class CrossEntryFailoverPolicy {
         Member active = members.stream().filter(member -> Objects.equals(member.id(), activeId)).findFirst().orElse(null);
         Member preferred = members.stream().min(Comparator.comparingInt(Member::priority)).orElse(null);
         if (active == null || !active.healthy()) {
-            Member target = members.stream().filter(Member::healthy)
+            Member target = members.stream().filter(Member::healthy).filter(member -> !member.suppressed())
                     .min(Comparator.comparingInt(Member::priority)).orElse(null);
+            if (target == null) {
+                target = members.stream().filter(Member::healthy)
+                        .min(Comparator.comparingInt(Member::priority)).orElse(null);
+            }
             if (target == null || (active != null && Objects.equals(target.id(), active.id()))) {
                 return Decision.stay("没有可用的备用入口");
             }
-            return Decision.switchTo(target.id(), active == null ? "当前入口不存在" : "入口连续检测失败");
+            String reason = active == null ? "当前入口不存在" : "入口连续检测失败";
+            if (target.suppressed()) reason += "，仅剩抖动保护中的入口可用";
+            return Decision.switchTo(target.id(), reason);
         }
         if (active.degraded()) {
             if (!cooldownElapsed) return Decision.stay("质量切换仍在冷却期");
             Member target = members.stream()
                     .filter(member -> member.healthy() && !member.degraded() && !Objects.equals(member.id(), active.id()))
+                    .filter(member -> !member.suppressed())
                     .filter(Member::acceptableForQualitySwitch)
                     .min(Comparator.comparingInt(Member::priority)).orElse(null);
             if (target != null) return Decision.switchTo(target.id(), "当前入口质量劣化，自动切换");
+            boolean hasSuppressedBackup = members.stream()
+                    .anyMatch(member -> member.healthy() && !member.degraded() && !Objects.equals(member.id(), active.id())
+                            && member.suppressed());
+            if (hasSuppressedBackup) return Decision.stay("当前入口质量劣化，但备用入口处于抖动保护期");
             return Decision.stay("当前入口质量劣化，但没有质量正常的备用入口");
         }
         if (!autoFailback || preferred == null || Objects.equals(preferred.id(), active.id())) {
@@ -38,6 +49,9 @@ public final class CrossEntryFailoverPolicy {
         if (preferred.degraded()) {
             return Decision.stay("主入口质量尚未恢复");
         }
+        if (preferred.suppressed()) {
+            return Decision.stay("主入口处于质量抖动保护期");
+        }
         if (!preferred.acceptableForQualitySwitch()) {
             return Decision.stay("主入口尚未达到固定延迟目标");
         }
@@ -46,7 +60,7 @@ public final class CrossEntryFailoverPolicy {
     }
 
     public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
-                         boolean acceptableForQualitySwitch) {
+                         boolean acceptableForQualitySwitch, boolean suppressed) {
     }
 
     public record Decision(Long targetId, boolean switchRequired, String reason) {

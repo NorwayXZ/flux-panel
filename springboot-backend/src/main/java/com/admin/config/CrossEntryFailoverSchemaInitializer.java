@@ -66,7 +66,11 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "quality_fixed_target_enabled", "tinyint NOT NULL DEFAULT 0 AFTER quality_loss_threshold_percent");
             ensureColumn("cross_entry_failover_group", "quality_fixed_target_ms", "int NOT NULL DEFAULT 20 AFTER quality_fixed_target_enabled");
             ensureColumn("cross_entry_failover_group", "quality_fixed_target_strict", "tinyint NOT NULL DEFAULT 1 AFTER quality_fixed_target_ms");
-            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER quality_fixed_target_strict");
+            ensureColumn("cross_entry_failover_group", "quality_flap_guard_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_fixed_target_strict");
+            ensureColumn("cross_entry_failover_group", "quality_flap_window_seconds", "int NOT NULL DEFAULT 900 AFTER quality_flap_guard_enabled");
+            ensureColumn("cross_entry_failover_group", "quality_flap_threshold", "int NOT NULL DEFAULT 3 AFTER quality_flap_window_seconds");
+            ensureColumn("cross_entry_failover_group", "quality_flap_suppress_seconds", "int NOT NULL DEFAULT 1800 AFTER quality_flap_threshold");
+            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER quality_flap_suppress_seconds");
             ensureColumn("cross_entry_failover_group", "quality_probe_error", "varchar(500) DEFAULT NULL AFTER quality_probe_status");
             ensureColumn("cross_entry_failover_group", "quality_probe_at", "bigint DEFAULT NULL AFTER quality_probe_error");
             ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");
@@ -77,7 +81,11 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "quality_state", "varchar(24) NOT NULL DEFAULT 'unknown' AFTER quality_baseline_ms");
             ensureColumn("cross_entry_failover_member", "quality_bad_count", "int NOT NULL DEFAULT 0 AFTER quality_state");
             ensureColumn("cross_entry_failover_member", "quality_good_count", "int NOT NULL DEFAULT 0 AFTER quality_bad_count");
-            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_good_count");
+            ensureColumn("cross_entry_failover_member", "quality_flap_count", "int NOT NULL DEFAULT 0 AFTER quality_good_count");
+            ensureColumn("cross_entry_failover_member", "quality_flap_window_started_at", "bigint DEFAULT NULL AFTER quality_flap_count");
+            ensureColumn("cross_entry_failover_member", "quality_suppressed_until", "bigint DEFAULT NULL AFTER quality_flap_window_started_at");
+            ensureColumn("cross_entry_failover_member", "quality_suppressed_reason", "varchar(255) DEFAULT NULL AFTER quality_suppressed_until");
+            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_suppressed_reason");
             ensureColumn("cross_entry_failover_member", "quality_checked_at", "bigint DEFAULT NULL AFTER quality_last_error");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"

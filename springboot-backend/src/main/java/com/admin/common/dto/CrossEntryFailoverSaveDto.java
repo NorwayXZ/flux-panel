@@ -53,6 +53,10 @@ public class CrossEntryFailoverSaveDto {
     private Boolean qualityFixedTargetEnabled = false;
     private Integer qualityFixedTargetMs = 20;
     private Boolean qualityFixedTargetStrict = true;
+    private Boolean qualityFlapGuardEnabled = true;
+    private Integer qualityFlapWindowSeconds = 900;
+    private Integer qualityFlapThreshold = 3;
+    private Integer qualityFlapSuppressSeconds = 1800;
 
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;

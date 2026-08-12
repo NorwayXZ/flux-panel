@@ -1,3 +1,9 @@
+## 2.49.7 Cross-entry quality flap guard
+
+- Adds quality flap protection for Cross-entry Failover. If an entry repeatedly transitions into quality degradation inside a configurable time window, the panel temporarily suppresses it as an automatic switch or failback target.
+- Adds admin controls for flap window, trigger count, and suppression duration, with a conservative default of 3 degradation transitions within 15 minutes causing a 30-minute suppression.
+- Shows suppressed entries directly in the failover page so operators can see why a recovered primary is not immediately selected again. This is a panel-only release; Agent and Connector remain `2.49.1`.
+
 ## 2.49.6 OpenWrt connector installer support
 
 - Adds OpenWrt/iStoreOS `procd` service support to the Linux Agent/Connector installer, so home devices can be installed as `/etc/init.d/flux-connector` and managed with the router's native service system.
