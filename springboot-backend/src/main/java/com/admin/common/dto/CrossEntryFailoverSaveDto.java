@@ -50,6 +50,8 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityDegradeSamples = 3;
     private Integer qualityRecoverSamples = 3;
     private Double qualityLossThresholdPercent = 30.0;
+    private Integer qualityP95ThresholdMs = 100;
+    private Integer qualityJitterThresholdMs = 50;
     private Boolean qualityFixedTargetEnabled = false;
     private Integer qualityFixedTargetMs = 20;
     private Boolean qualityFixedTargetStrict = true;
@@ -64,6 +66,10 @@ public class CrossEntryFailoverSaveDto {
     private Integer minResidencySeconds = 300;
     private Integer failbackGainMs = 10;
     private Double failbackGainPercent = 20.0;
+    private Boolean preheatEnabled = true;
+    private Integer preheatBackupCount = 3;
+    private Boolean postSwitchVerifyEnabled = true;
+    private Boolean dnsVerifyEnabled = true;
     private String manualControlMode = "auto";
     private Long lockedMemberId;
 

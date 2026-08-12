@@ -1,3 +1,11 @@
+## 2.50.0 Cross-entry failover verification and preheat
+
+- Adds P95 TCP latency and jitter into Cross-entry Failover quality decisions so short spikes can trigger quality failover even when average latency still looks acceptable.
+- Keeps all backup entries continuously probed and marks up to three different-node/different-subnet healthy backups as preheated candidates for smarter quality switching.
+- Verifies the target entry after a DNS switch and automatically rolls DNS back when the switched-to entry cannot be reached.
+- Confirms Cloudflare managed DNS record content after each switch and records public DNS propagation observations without treating resolver cache lag as a hard failure.
+- Agent and Connector binaries are rebuilt as `2.50.0` so remote TCP probes can return samples, P95, and jitter while older agents remain compatible through average-latency fallback.
+
 ## 2.49.9 Cross-entry smart quality failover
 
 - Adds smart selection rules to Cross-entry Failover quality mode. The panel now keeps probing every candidate entry, avoids backups with the same current fault when another clean choice exists, avoids same-node or same-address-group entries when possible, and falls back to the best degraded entry only when every line is poor.

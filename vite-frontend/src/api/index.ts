@@ -651,8 +651,11 @@ export interface CrossEntryMember {
   successCount: number;
   latencyMs?: number;
   qualityLatencyMs?: number;
+  qualityP95Ms?: number;
+  qualityJitterMs?: number;
   qualityLossPercent?: number;
   qualityBaselineMs?: number;
+  qualityPreheated?: boolean | number;
   qualityState?: 'unknown' | 'warming' | 'healthy' | 'degraded';
   qualityBadCount?: number;
   qualityGoodCount?: number;
@@ -694,6 +697,8 @@ export interface CrossEntryGroup {
   qualityDegradeSamples?: number;
   qualityRecoverSamples?: number;
   qualityLossThresholdPercent?: number;
+  qualityP95ThresholdMs?: number;
+  qualityJitterThresholdMs?: number;
   qualityFixedTargetEnabled?: boolean | number;
   qualityFixedTargetMs?: number;
   qualityFixedTargetStrict?: boolean | number;
@@ -708,6 +713,10 @@ export interface CrossEntryGroup {
   minResidencySeconds?: number;
   failbackGainMs?: number;
   failbackGainPercent?: number;
+  preheatEnabled?: boolean | number;
+  preheatBackupCount?: number;
+  postSwitchVerifyEnabled?: boolean | number;
+  dnsVerifyEnabled?: boolean | number;
   manualControlMode?: 'auto' | 'pause' | 'lock';
   lockedMemberId?: number;
   qualityProbeStatus?: 'disabled' | 'pending' | 'ok' | 'warning' | 'failed';

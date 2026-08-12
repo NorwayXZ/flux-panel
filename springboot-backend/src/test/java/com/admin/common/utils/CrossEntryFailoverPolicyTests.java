@@ -207,6 +207,21 @@ class CrossEntryFailoverPolicyTests {
         assertEquals(3L, decision.targetId());
     }
 
+    @Test
+    void smartQualitySelectionPrefersPreheatedBackup() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 150, 0.0, 0, 0, 10, "203.0.113.10", "latency", true),
+                        qualityMember(2, 1, true, 10, false, true, false, 15, 0.0, 0, 0, 11, "198.51.100.20", "none", false),
+                        qualityMember(3, 2, true, 10, false, true, false, 22, 0.0, 0, 0, 12, "192.0.2.30", "none", true)
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
     private CrossEntryFailoverPolicy.Member member(long id, int priority, boolean healthy, int successCount) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true, false);
     }
@@ -227,8 +242,17 @@ class CrossEntryFailoverPolicyTests {
                                                          boolean degraded, boolean acceptable, boolean suppressed,
                                                          Integer latencyMs, Double lossPercent, int flapCount,
                                                          int failCount, long nodeId, String address, String faultKind) {
+        return qualityMember(id, priority, healthy, successCount, degraded, acceptable, suppressed,
+                latencyMs, lossPercent, flapCount, failCount, nodeId, address, faultKind, true);
+    }
+
+    private CrossEntryFailoverPolicy.Member qualityMember(long id, int priority, boolean healthy, int successCount,
+                                                         boolean degraded, boolean acceptable, boolean suppressed,
+                                                         Integer latencyMs, Double lossPercent, int flapCount,
+                                                         int failCount, long nodeId, String address, String faultKind,
+                                                         boolean preheated) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, degraded, acceptable, suppressed,
-                latencyMs, lossPercent, flapCount, failCount, nodeId, address, faultKind);
+                latencyMs, lossPercent, flapCount, failCount, nodeId, address, faultKind, preheated);
     }
 
     private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,
@@ -236,8 +260,18 @@ class CrossEntryFailoverPolicyTests {
                                                       boolean degradedFallbackEnabled, boolean sameFaultAvoidanceEnabled,
                                                       boolean topologyAvoidanceEnabled, int failbackGainMs,
                                                       double failbackGainPercent, String manualControlMode, Long lockedMemberId) {
+        return settings(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
+                degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled, true, failbackGainMs,
+                failbackGainPercent, manualControlMode, lockedMemberId);
+    }
+
+    private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,
+                                                      boolean cooldownElapsed, boolean minResidencyElapsed,
+                                                      boolean degradedFallbackEnabled, boolean sameFaultAvoidanceEnabled,
+                                                      boolean topologyAvoidanceEnabled, boolean preheatPreferred, int failbackGainMs,
+                                                      double failbackGainPercent, String manualControlMode, Long lockedMemberId) {
         return new CrossEntryFailoverPolicy.Settings(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
-                degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled, failbackGainMs,
+                degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled, preheatPreferred, failbackGainMs,
                 failbackGainPercent, manualControlMode, lockedMemberId);
     }
 }

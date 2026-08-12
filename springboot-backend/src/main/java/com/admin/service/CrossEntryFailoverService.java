@@ -39,6 +39,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -116,14 +117,17 @@ public class CrossEntryFailoverService {
                         + "quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                         + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
                         + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
-                        + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
+                        + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_p95_threshold_ms AS qualityP95ThresholdMs,"
+                        + "quality_jitter_threshold_ms AS qualityJitterThresholdMs,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
                         + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                         + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                         + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
                         + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
                         + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                         + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
-                        + "failback_gain_percent AS failbackGainPercent,manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
+                        + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
+                        + "post_switch_verify_enabled AS postSwitchVerifyEnabled,dns_verify_enabled AS dnsVerifyEnabled,"
+                        + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
@@ -215,23 +219,27 @@ public class CrossEntryFailoverService {
                                 + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
                                 + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,routing_mode,quality_enabled,quality_probe_source_type,"
                                 + "quality_probe_source_id,quality_probe_count,quality_degrade_threshold_ms,quality_recover_threshold_ms,quality_degrade_factor,"
-                                + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,quality_fixed_target_enabled,"
+                                + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,"
+                                + "quality_p95_threshold_ms,quality_jitter_threshold_ms,quality_fixed_target_enabled,"
                                 + "quality_fixed_target_ms,quality_fixed_target_strict,quality_flap_guard_enabled,quality_flap_window_seconds,"
                                 + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,degraded_fallback_enabled,"
                                 + "same_fault_avoidance_enabled,topology_avoidance_enabled,min_residency_seconds,failback_gain_ms,"
-                                + "failback_gain_percent,manual_control_mode,locked_member_id,quality_probe_status,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "failback_gain_percent,preheat_enabled,preheat_backup_count,post_switch_verify_enabled,dns_verify_enabled,"
+                                + "manual_control_mode,locked_member_id,quality_probe_status,enabled,state,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
                         dto.getQualityEnabled(), dto.getQualityProbeSourceType(), dto.getQualityProbeSourceId(), dto.getQualityProbeCount(),
                         dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(), dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(),
                         dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(), dto.getQualityLossThresholdPercent(),
+                        dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
                         dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
-                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getManualControlMode(), dto.getLockedMemberId(),
+                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
+                        dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
@@ -240,21 +248,24 @@ public class CrossEntryFailoverService {
                                 + "auto_failback=?,routing_mode=?,quality_enabled=?,quality_probe_source_type=?,quality_probe_source_id=?,"
                         + "quality_probe_count=?,quality_degrade_threshold_ms=?,quality_recover_threshold_ms=?,quality_degrade_factor=?,"
                                 + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
-                                + "quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
+                                + "quality_p95_threshold_ms=?,quality_jitter_threshold_ms=?,quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_flap_guard_enabled=?,quality_flap_window_seconds=?,quality_flap_threshold=?,quality_flap_suppress_seconds=?,"
                                 + "smart_selection_enabled=?,degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
-                                + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,manual_control_mode=?,locked_member_id=?,"
+                                + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,preheat_enabled=?,preheat_backup_count=?,"
+                                + "post_switch_verify_enabled=?,dns_verify_enabled=?,manual_control_mode=?,locked_member_id=?,"
                                 + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
                         dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(), dto.getQualityEnabled(), dto.getQualityProbeSourceType(),
                         dto.getQualityProbeSourceId(), dto.getQualityProbeCount(), dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(),
                         dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(), dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(),
-                        dto.getQualityLossThresholdPercent(), dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
+                        dto.getQualityLossThresholdPercent(), dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
+                        dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
                         dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
-                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getManualControlMode(), dto.getLockedMemberId(),
+                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
+                        dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -435,6 +446,7 @@ public class CrossEntryFailoverService {
                 smartSelection && bool(group.get("degradedFallbackEnabled")),
                 smartSelection && bool(group.get("sameFaultAvoidanceEnabled")),
                 smartSelection && bool(group.get("topologyAvoidanceEnabled")),
+                smartSelection && bool(group.get("preheatEnabled")),
                 smartSelection ? number(group.get("failbackGainMs")).intValue() : 0,
                 smartSelection ? doubleNumber(group.get("failbackGainPercent")) : 0.0,
                 Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")));
@@ -486,6 +498,7 @@ public class CrossEntryFailoverService {
                 errors.add(Objects.toString(result.member().get("nodeName"), "入口") + "：" + result.error());
             }
         }
+        markPreheatedBackups(group, now);
         String status = degraded > 0 || failures > 0 ? "warning" : "ok";
         String error = errors.isEmpty() ? null : shorten(errors.get(0) + (errors.size() > 1 ? " 等 " + errors.size() + " 条" : ""), 500);
         jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status=?,quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
@@ -509,30 +522,35 @@ public class CrossEntryFailoverService {
                 ? WebSocketServer.send_msg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds)
                 : WebSocketServer.sendConnectorMsg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds);
         if (response == null || !"OK".equals(response.getMsg())) {
-            return new QualityProbeResult(member, false, null, 100.0,
+            return new QualityProbeResult(member, false, null, null, null, 100.0,
                     response == null ? "探测源无响应" : response.getMsg());
         }
         JSONObject data = responseData(response.getData());
-        if (data == null) return new QualityProbeResult(member, false, null, 100.0, "探测源返回为空");
+        if (data == null) return new QualityProbeResult(member, false, null, null, null, 100.0, "探测源返回为空");
         boolean success = data.getBooleanValue("success");
         double loss = data.containsKey("packetLoss") ? data.getDoubleValue("packetLoss") : (success ? 0.0 : 100.0);
+        List<Integer> samples = numericSamples(data.getJSONArray("samples"));
         Integer latency = success && data.containsKey("averageTime")
                 ? Math.max(1, (int) Math.round(data.getDoubleValue("averageTime")))
-                : null;
+                : average(samples);
+        Integer p95 = data.containsKey("p95Time")
+                ? Math.max(1, (int) Math.round(data.getDoubleValue("p95Time")))
+                : percentile(samples, 0.95);
+        Integer jitter = data.containsKey("jitter")
+                ? Math.max(0, (int) Math.round(data.getDoubleValue("jitter")))
+                : jitter(samples);
         String error = success ? null : StringUtils.defaultIfBlank(data.getString("errorMessage"), "TCP 探测失败");
-        return new QualityProbeResult(member, success, latency, loss, error);
+        return new QualityProbeResult(member, success, latency, p95, jitter, loss, error);
     }
 
     private QualityProbeResult tcpPingLocal(Map<String, Object> member, String address, int port, int count, int timeoutMs) {
-        int success = 0;
-        long totalMs = 0;
+        List<Integer> samples = new ArrayList<>();
         String lastError = null;
         for (int i = 0; i < count; i++) {
             long started = System.nanoTime();
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress(address, port), timeoutMs);
-                totalMs += Math.max(1, (System.nanoTime() - started) / 1_000_000L);
-                success++;
+                samples.add(Math.max(1, (int) ((System.nanoTime() - started) / 1_000_000L)));
             } catch (Exception e) {
                 lastError = "TCP 探测失败";
             }
@@ -546,24 +564,28 @@ public class CrossEntryFailoverService {
                 }
             }
         }
+        int success = samples.size();
         double loss = count <= 0 ? 100.0 : (count - success) * 100.0 / count;
-        if (success == 0) return new QualityProbeResult(member, false, null, 100.0,
+        if (success == 0) return new QualityProbeResult(member, false, null, null, null, 100.0,
                 StringUtils.defaultIfBlank(lastError, "所有 TCP 探测失败"));
-        return new QualityProbeResult(member, true, Math.max(1, (int) Math.round(totalMs * 1.0 / success)), loss, null);
+        return new QualityProbeResult(member, true, average(samples), percentile(samples, 0.95), jitter(samples), loss, null);
     }
 
     private String updateMemberQuality(Map<String, Object> group, QualityProbeResult result, long now) {
         Map<String, Object> member = result.member();
         String oldState = Objects.toString(member.get("qualityState"), "unknown");
         Integer latency = result.latencyMs();
+        Integer p95 = result.p95Ms();
+        Integer jitter = result.jitterMs();
         Double loss = result.lossPercent();
         CrossEntryQualityEvaluator.Decision decision = CrossEntryQualityEvaluator.evaluate(
-                new CrossEntryQualityEvaluator.Snapshot(oldState, nullableInt(member.get("qualityBaselineMs")), latency, loss,
+                new CrossEntryQualityEvaluator.Snapshot(oldState, nullableInt(member.get("qualityBaselineMs")), latency, p95, jitter, loss,
                         result.success(), number(member.get("qualityBadCount")).intValue(), number(member.get("qualityGoodCount")).intValue()),
                 new CrossEntryQualityEvaluator.Settings(number(group.get("qualityDegradeThresholdMs")).intValue(),
                         number(group.get("qualityRecoverThresholdMs")).intValue(), doubleNumber(group.get("qualityDegradeFactor")),
                         doubleNumber(group.get("qualityRecoverFactor")), number(group.get("qualityDegradeSamples")).intValue(),
                         number(group.get("qualityRecoverSamples")).intValue(), doubleNumber(group.get("qualityLossThresholdPercent")),
+                        number(group.get("qualityP95ThresholdMs")).intValue(), number(group.get("qualityJitterThresholdMs")).intValue(),
                         bool(group.get("qualityFixedTargetEnabled")), number(group.get("qualityFixedTargetMs")).intValue()));
         CrossEntryQualityFlapGuard.Decision flapDecision = CrossEntryQualityFlapGuard.evaluate(
                 new CrossEntryQualityFlapGuard.Snapshot(oldState, decision.state(),
@@ -573,13 +595,62 @@ public class CrossEntryFailoverService {
                         number(group.get("qualityFlapWindowSeconds")).intValue(), number(group.get("qualityFlapThreshold")).intValue(),
                         number(group.get("qualityFlapSuppressSeconds")).intValue()));
         if (loss == null) loss = result.success() ? 0.0 : 100.0;
-        jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
                         + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,quality_flap_window_started_at=?,"
                         + "quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
-                latency, loss, decision.baselineMs(), decision.state(), decision.badCount(), decision.goodCount(),
+                latency, p95, jitter, loss, decision.baselineMs(), decision.state(), decision.badCount(), decision.goodCount(),
                 flapDecision.flapCount(), flapDecision.windowStartedAt(), flapDecision.suppressedUntil(),
                 flapDecision.suppressedReason(), shorten(result.error(), 500), now, now, member.get("id"));
         return decision.state();
+    }
+
+    private void markPreheatedBackups(Map<String, Object> group, long now) {
+        long groupId = number(group.get("id")).longValue();
+        if (!bool(group.get("preheatEnabled"))) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_preheated=0 WHERE group_id=?", groupId);
+            return;
+        }
+        int limit = Math.max(1, number(group.get("preheatBackupCount")).intValue());
+        Long activeId = nullableLong(group.get("activeMemberId"));
+        List<Map<String, Object>> currentMembers = loadMembers(groupId);
+        Set<Long> selected = new HashSet<>();
+        Set<Long> nodeIds = new HashSet<>();
+        Set<String> topologyGroups = new HashSet<>();
+        Map<String, Object> active = memberById(currentMembers, activeId);
+        if (active != null) {
+            nodeIds.add(number(active.get("entryNodeId")).longValue());
+            String topology = topologyGroup(Objects.toString(active.get("entryAddress"), ""));
+            if (!topology.isEmpty()) topologyGroups.add(topology);
+        }
+        List<Map<String, Object>> candidates = currentMembers.stream()
+                .filter(member -> bool(member.get("enabled")))
+                .filter(member -> activeId == null || number(member.get("id")).longValue() != activeId)
+                .filter(member -> "healthy".equals(member.get("status")))
+                .filter(member -> "healthy".equals(member.get("qualityState")))
+                .filter(member -> nullableInt(member.get("qualityLatencyMs")) != null)
+                .filter(member -> !isQualitySuppressed(member, now))
+                .collect(Collectors.toList());
+        for (Map<String, Object> member : candidates) {
+            long nodeId = number(member.get("entryNodeId")).longValue();
+            String topology = topologyGroup(Objects.toString(member.get("entryAddress"), ""));
+            if (nodeIds.contains(nodeId) || (!topology.isEmpty() && topologyGroups.contains(topology))) {
+                continue;
+            }
+            selected.add(number(member.get("id")).longValue());
+            nodeIds.add(nodeId);
+            if (!topology.isEmpty()) topologyGroups.add(topology);
+            if (selected.size() >= limit) break;
+        }
+        if (selected.size() < limit) {
+            for (Map<String, Object> member : candidates) {
+                long id = number(member.get("id")).longValue();
+                if (selected.add(id) && selected.size() >= limit) break;
+            }
+        }
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_preheated=0 WHERE group_id=?", groupId);
+        for (Long id : selected) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_preheated=1,updated_time=? WHERE id=?", now, id);
+        }
     }
 
     private String qualitySourceError(Map<String, Object> group) {
@@ -655,11 +726,28 @@ public class CrossEntryFailoverService {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='switching',updated_time=? WHERE id=?", now, groupId);
             updateCloudflareDns(group, to);
             dnsChanged = true;
+            if (bool(group.get("postSwitchVerifyEnabled"))) {
+                ProbeResult targetProbe = probe(to, number(group.get("connectTimeoutMs")).intValue());
+                if (!targetProbe.healthy()) {
+                    markPostSwitchRejected(to, targetProbe.error(), now);
+                    throw new IllegalStateException("切换后目标入口验证失败：" + targetProbe.error());
+                }
+            }
+            String dnsDetail = "";
+            if (bool(group.get("dnsVerifyEnabled"))) {
+                DnsVerification dnsVerification = verifyDnsAfterSwitch(group, to);
+                if (!dnsVerification.providerMatched()) {
+                    throw new IllegalStateException(dnsVerification.message());
+                }
+                if (!dnsVerification.publicMatched()) {
+                    dnsDetail = "；" + dnsVerification.message();
+                }
+            }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state='healthy',last_error=NULL,"
                             + "last_checked_at=?,last_switch_at=?,updated_time=? WHERE id=?",
                     to.get("id"), now, now, now, groupId);
             addEvent(groupId, from == null ? null : nullableLong(from.get("id")), nullableLong(to.get("id")), reason,
-                    "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress"));
+                    "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress") + dnsDetail);
             telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
                     Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), reason, true, now);
         } catch (RuntimeException e) {
@@ -683,6 +771,12 @@ public class CrossEntryFailoverService {
             telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
                     Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), detail, false, now);
         }
+    }
+
+    private void markPostSwitchRejected(Map<String, Object> member, String error, long now) {
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET status='unhealthy',fail_count=fail_count+1,success_count=0,"
+                        + "last_error=?,last_checked_at=?,last_failure_at=?,updated_time=? WHERE id=?",
+                shorten(StringUtils.defaultIfBlank(error, "切换后目标入口验证失败"), 500), now, now, now, member.get("id"));
     }
 
     /** Active-active DNS is connection selection at resolver time, not a TCP connection migrator. */
@@ -751,6 +845,91 @@ public class CrossEntryFailoverService {
             if (json == null || !json.getBooleanValue("success")) throw new IllegalStateException(cloudflareError(json));
         } catch (RestClientException e) {
             throw new IllegalStateException("Cloudflare DNS 更新失败");
+        }
+    }
+
+    private DnsVerification verifyDnsAfterSwitch(Map<String, Object> group, Map<String, Object> member) {
+        String expected = Objects.toString(member.get("entryAddress"), "");
+        String type = Objects.toString(group.get("recordType"), "A");
+        String domain = Objects.toString(group.get("domain"));
+        String providerContent = readProviderRecordContent(group);
+        if (!expected.equalsIgnoreCase(providerContent)) {
+            return new DnsVerification(false, false,
+                    "DNS 服务商记录确认失败：期望 " + expected + "，实际 " + StringUtils.defaultIfBlank(providerContent, "空"));
+        }
+        PublicDnsVerification publicDns = queryPublicDns(domain, type, expected);
+        if (!publicDns.matched()) {
+            return new DnsVerification(true, false, "公共 DNS 暂未全部生效：" + publicDns.detail());
+        }
+        return new DnsVerification(true, true, "DNS 已确认生效");
+    }
+
+    private String readProviderRecordContent(Map<String, Object> group) {
+        Long dnsZoneId = nullableLong(group.get("dnsZoneId"));
+        String zoneId;
+        String token;
+        if (dnsZoneId != null) {
+            DnsProviderService.ZoneAccess access = dnsProviderService.loadZoneAccess(dnsZoneId);
+            zoneId = access.providerZoneId();
+            token = access.token();
+        } else {
+            zoneId = Objects.toString(group.get("zoneId"), "");
+            token = crypto().decryptString(Objects.toString(group.get("apiToken")));
+        }
+        String url = CF_API + "/zones/" + zoneId + "/dns_records/" + Objects.toString(group.get("recordId"));
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET,
+                    new HttpEntity<>(cloudflareHeaders(token)), String.class);
+            JSONObject json = JSON.parseObject(response.getBody());
+            if (json == null || !json.getBooleanValue("success")) throw new IllegalStateException(cloudflareError(json));
+            JSONObject result = json.getJSONObject("result");
+            return result == null ? "" : StringUtils.trimToEmpty(result.getString("content"));
+        } catch (RestClientException e) {
+            throw new IllegalStateException("Cloudflare DNS 记录确认失败");
+        }
+    }
+
+    private PublicDnsVerification queryPublicDns(String domain, String type, String expected) {
+        List<String> details = new ArrayList<>();
+        int matched = 0;
+        for (String endpoint : List.of("https://cloudflare-dns.com/dns-query", "https://dns.google/resolve")) {
+            try {
+                URI uri = UriComponentsBuilder.fromHttpUrl(endpoint)
+                        .queryParam("name", domain).queryParam("type", type).build(true).toUri();
+                HttpHeaders headers = new HttpHeaders();
+                headers.setAccept(List.of(MediaType.valueOf("application/dns-json")));
+                ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+                List<String> answers = parseDnsAnswers(type, response.getBody());
+                if (answers.stream().anyMatch(answer -> answer.equalsIgnoreCase(expected))) matched++;
+                details.add(endpointHost(endpoint) + "=" + (answers.isEmpty() ? "空" : String.join(",", answers)));
+            } catch (RuntimeException e) {
+                details.add(endpointHost(endpoint) + "=查询失败");
+            }
+        }
+        return new PublicDnsVerification(matched > 0, String.join("；", details));
+    }
+
+    private List<String> parseDnsAnswers(String type, String responseBody) {
+        JSONObject body = JSON.parseObject(responseBody);
+        if (body == null || body.getIntValue("Status") != 0) return List.of();
+        int expectedType = "AAAA".equalsIgnoreCase(type) ? 28 : 1;
+        JSONArray answers = body.getJSONArray("Answer");
+        if (answers == null) return List.of();
+        List<String> result = new ArrayList<>();
+        for (int i = 0; i < answers.size(); i++) {
+            JSONObject answer = answers.getJSONObject(i);
+            if (answer.getIntValue("type") != expectedType) continue;
+            String value = StringUtils.removeEnd(StringUtils.trimToEmpty(answer.getString("data")), ".");
+            if (StringUtils.isNotBlank(value) && !result.contains(value)) result.add(value);
+        }
+        return result;
+    }
+
+    private String endpointHost(String endpoint) {
+        try {
+            return URI.create(endpoint).getHost();
+        } catch (RuntimeException e) {
+            return endpoint;
         }
     }
 
@@ -871,6 +1050,8 @@ public class CrossEntryFailoverService {
         dto.setQualityDegradeSamples(clamp(dto.getQualityDegradeSamples(), 1, 20));
         dto.setQualityRecoverSamples(clamp(dto.getQualityRecoverSamples(), 1, 20));
         dto.setQualityLossThresholdPercent(clampDouble(dto.getQualityLossThresholdPercent(), 1.0, 100.0));
+        dto.setQualityP95ThresholdMs(clamp(dto.getQualityP95ThresholdMs(), 20, 30000));
+        dto.setQualityJitterThresholdMs(clamp(dto.getQualityJitterThresholdMs(), 1, 30000));
         dto.setQualityFixedTargetEnabled(Boolean.TRUE.equals(dto.getQualityFixedTargetEnabled()));
         dto.setQualityFixedTargetMs(clamp(dto.getQualityFixedTargetMs(), 1, 30000));
         dto.setQualityFixedTargetStrict(!Boolean.FALSE.equals(dto.getQualityFixedTargetStrict()));
@@ -885,6 +1066,10 @@ public class CrossEntryFailoverService {
         dto.setMinResidencySeconds(clamp(dto.getMinResidencySeconds(), 0, 86400));
         dto.setFailbackGainMs(clamp(dto.getFailbackGainMs(), 0, 30000));
         dto.setFailbackGainPercent(clampDouble(dto.getFailbackGainPercent(), 0.0, 100.0));
+        dto.setPreheatEnabled(!Boolean.FALSE.equals(dto.getPreheatEnabled()));
+        dto.setPreheatBackupCount(clamp(dto.getPreheatBackupCount(), 1, 9));
+        dto.setPostSwitchVerifyEnabled(!Boolean.FALSE.equals(dto.getPostSwitchVerifyEnabled()));
+        dto.setDnsVerifyEnabled(!Boolean.FALSE.equals(dto.getDnsVerifyEnabled()));
         String manualMode = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getManualControlMode(), "auto"), Locale.ROOT);
         if (!Set.of("auto", "pause", "lock").contains(manualMode)) throw new IllegalArgumentException("手动控制模式不正确");
         dto.setManualControlMode(manualMode);
@@ -904,14 +1089,17 @@ public class CrossEntryFailoverService {
                 + "quality_probe_source_id AS qualityProbeSourceId,quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                 + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
                 + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
-                + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
+                + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_p95_threshold_ms AS qualityP95ThresholdMs,"
+                + "quality_jitter_threshold_ms AS qualityJitterThresholdMs,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
                 + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                 + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                 + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
                 + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
                 + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                 + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
-                + "failback_gain_percent AS failbackGainPercent,manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
+                + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
+                + "post_switch_verify_enabled AS postSwitchVerifyEnabled,dns_verify_enabled AS dnsVerifyEnabled,"
+                + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
@@ -923,7 +1111,8 @@ public class CrossEntryFailoverService {
         return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
                 + "entry_host AS entryHost,entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
                 + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,quality_latency_ms AS qualityLatencyMs,"
-                + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_state AS qualityState,"
+                + "quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
+                + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,quality_state AS qualityState,"
                 + "quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,quality_flap_count AS qualityFlapCount,"
                 + "quality_flap_window_started_at AS qualityFlapWindowStartedAt,quality_suppressed_until AS qualitySuppressedUntil,"
                 + "quality_suppressed_reason AS qualitySuppressedReason,quality_last_error AS qualityLastError,"
@@ -941,6 +1130,19 @@ public class CrossEntryFailoverService {
     private Map<String, Object> memberById(List<Map<String, Object>> members, Long id) {
         if (id == null) return null;
         return members.stream().filter(member -> number(member.get("id")).longValue() == id).findFirst().orElse(null);
+    }
+
+    private String topologyGroup(String address) {
+        if (StringUtils.isBlank(address)) return "";
+        if (address.indexOf('.') > 0) {
+            String[] parts = address.split("\\.");
+            return parts.length == 4 ? parts[0] + "." + parts[1] + "." + parts[2] : "";
+        }
+        if (address.indexOf(':') > 0) {
+            String[] parts = address.split(":");
+            return parts.length >= 4 ? parts[0] + ":" + parts[1] + ":" + parts[2] + ":" + parts[3] : "";
+        }
+        return "";
     }
 
     private boolean cooldownElapsed(Map<String, Object> group, long now) {
@@ -971,7 +1173,8 @@ public class CrossEntryFailoverService {
                 number(member.get("failCount")).intValue(),
                 number(member.get("entryNodeId")).longValue(),
                 Objects.toString(member.get("entryAddress"), ""),
-                faultKind(group, member, useQualityDecision, now));
+                faultKind(group, member, useQualityDecision, now),
+                !useQualityDecision || !bool(group.get("preheatEnabled")) || bool(member.get("qualityPreheated")));
     }
 
     private String faultKind(Map<String, Object> group, Map<String, Object> member, boolean useQualityDecision, long now) {
@@ -1116,6 +1319,46 @@ public class CrossEntryFailoverService {
         return null;
     }
 
+    private List<Integer> numericSamples(JSONArray values) {
+        if (values == null || values.isEmpty()) return List.of();
+        List<Integer> samples = new ArrayList<>();
+        for (int i = 0; i < values.size(); i++) {
+            Object raw = values.get(i);
+            Double value = null;
+            if (raw instanceof Number number) value = number.doubleValue();
+            else if (raw != null) {
+                try {
+                    value = Double.parseDouble(raw.toString());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            if (value != null && value >= 0) samples.add(Math.max(1, (int) Math.round(value)));
+        }
+        return samples;
+    }
+
+    private Integer average(List<Integer> samples) {
+        if (samples == null || samples.isEmpty()) return null;
+        long total = 0;
+        for (Integer sample : samples) total += sample;
+        return Math.max(1, (int) Math.round(total * 1.0 / samples.size()));
+    }
+
+    private Integer percentile(List<Integer> samples, double percentile) {
+        if (samples == null || samples.isEmpty()) return null;
+        List<Integer> sorted = new ArrayList<>(samples);
+        Collections.sort(sorted);
+        int index = (int) Math.ceil(percentile * sorted.size()) - 1;
+        return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
+    }
+
+    private Integer jitter(List<Integer> samples) {
+        if (samples == null || samples.size() < 2) return 0;
+        long total = 0;
+        for (int i = 1; i < samples.size(); i++) total += Math.abs(samples.get(i) - samples.get(i - 1));
+        return Math.max(0, (int) Math.round(total * 1.0 / (samples.size() - 1)));
+    }
+
     private int memberWeight(CrossEntryFailoverSaveDto dto, int index) {
         if (dto.getMemberWeights() == null || index >= dto.getMemberWeights().size()) return 100;
         Integer value = dto.getMemberWeights().get(index);
@@ -1136,5 +1379,7 @@ public class CrossEntryFailoverService {
     private record ProbeResult(Map<String, Object> member, boolean healthy, Integer latencyMs, String error) {}
 
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
-                                      Double lossPercent, String error) {}
+                                      Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
+    private record DnsVerification(boolean providerMatched, boolean publicMatched, String message) {}
+    private record PublicDnsVerification(boolean matched, String detail) {}
 }

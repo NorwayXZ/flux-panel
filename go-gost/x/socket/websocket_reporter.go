@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync" // 新增：用于管理连接状态的互斥锁
@@ -87,13 +89,16 @@ type TcpPingRequest struct {
 
 // TcpPingResponse TCP ping响应结构体
 type TcpPingResponse struct {
-	IP           string  `json:"ip"`
-	Port         int     `json:"port"`
-	Success      bool    `json:"success"`
-	AverageTime  float64 `json:"averageTime"` // 平均连接时间(ms)
-	PacketLoss   float64 `json:"packetLoss"`  // 连接失败率(%)
-	ErrorMessage string  `json:"errorMessage,omitempty"`
-	RequestId    string  `json:"requestId,omitempty"`
+	IP           string    `json:"ip"`
+	Port         int       `json:"port"`
+	Success      bool      `json:"success"`
+	AverageTime  float64   `json:"averageTime"` // 平均连接时间(ms)
+	P95Time      float64   `json:"p95Time,omitempty"`
+	Jitter       float64   `json:"jitter,omitempty"`
+	PacketLoss   float64   `json:"packetLoss"` // 连接失败率(%)
+	Samples      []float64 `json:"samples,omitempty"`
+	ErrorMessage string    `json:"errorMessage,omitempty"`
+	RequestId    string    `json:"requestId,omitempty"`
 }
 
 type PortCheckRequest struct {
@@ -1870,7 +1875,7 @@ func (w *WebSocketReporter) handleTcpPing(data interface{}) (TcpPingResponse, er
 	}
 
 	// 执行TCP ping操作
-	avgTime, packetLoss, err := tcpPingHost(req.IP, req.Port, req.Count, req.Timeout)
+	avgTime, p95Time, jitter, packetLoss, samples, err := tcpPingHost(req.IP, req.Port, req.Count, req.Timeout)
 
 	response := TcpPingResponse{
 		IP:        req.IP,
@@ -1884,7 +1889,10 @@ func (w *WebSocketReporter) handleTcpPing(data interface{}) (TcpPingResponse, er
 	} else {
 		response.Success = true
 		response.AverageTime = avgTime
+		response.P95Time = p95Time
+		response.Jitter = jitter
 		response.PacketLoss = packetLoss
+		response.Samples = samples
 	}
 
 	return response, nil
@@ -1947,9 +1955,10 @@ func checkLocalPort(check PortCheckItem) PortCheckResult {
 }
 
 // tcpPingHost 执行TCP连接测试，返回平均连接时间和失败率
-func tcpPingHost(ip string, port int, count int, timeoutMs int) (float64, float64, error) {
+func tcpPingHost(ip string, port int, count int, timeoutMs int) (float64, float64, float64, float64, []float64, error) {
 	var totalTime float64
 	var successCount int
+	samples := make([]float64, 0, count)
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 
@@ -1969,10 +1978,10 @@ func tcpPingHost(ip string, port int, count int, timeoutMs int) (float64, float6
 		dnsDuration := time.Since(dnsStart)
 
 		if err != nil {
-			return 0, 100.0, fmt.Errorf("DNS解析失败: %v", err)
+			return 0, 0, 0, 100.0, samples, fmt.Errorf("DNS解析失败: %v", err)
 		}
 		if len(addrs) == 0 {
-			return 0, 100.0, fmt.Errorf("DNS解析未返回任何IP地址")
+			return 0, 0, 0, 100.0, samples, fmt.Errorf("DNS解析未返回任何IP地址")
 		}
 
 		fmt.Printf("✅ DNS解析完成 (%.2fms)，解析到 %d 个IP: %v\n",
@@ -1996,10 +2005,12 @@ func tcpPingHost(ip string, port int, count int, timeoutMs int) (float64, float6
 		if err != nil {
 			fmt.Printf("  第%d次连接失败: %v (%.2fms)\n", i+1, err, elapsed.Seconds()*1000)
 		} else {
-			fmt.Printf("  第%d次连接成功: %.2fms\n", i+1, elapsed.Seconds()*1000)
+			sample := elapsed.Seconds() * 1000
+			fmt.Printf("  第%d次连接成功: %.2fms\n", i+1, sample)
 			conn.Close()
-			totalTime += elapsed.Seconds() * 1000 // 转换为毫秒
+			totalTime += sample
 			successCount++
+			samples = append(samples, sample)
 		}
 
 		// 如果不是最后一次，等待一下再进行下次测试
@@ -2009,15 +2020,48 @@ func tcpPingHost(ip string, port int, count int, timeoutMs int) (float64, float6
 	}
 
 	if successCount == 0 {
-		return 0, 100.0, fmt.Errorf("所有TCP连接尝试都失败")
+		return 0, 0, 0, 100.0, samples, fmt.Errorf("所有TCP连接尝试都失败")
 	}
 
 	avgTime := totalTime / float64(successCount)
 	packetLoss := float64(count-successCount) / float64(count) * 100
+	p95Time := tcpPingPercentile(samples, 0.95)
+	jitter := tcpPingJitter(samples)
 
-	fmt.Printf("✅ TCP ping完成: 平均连接时间 %.2fms，失败率 %.1f%%\n", avgTime, packetLoss)
+	fmt.Printf("✅ TCP ping完成: 平均连接时间 %.2fms，P95 %.2fms，抖动 %.2fms，失败率 %.1f%%\n", avgTime, p95Time, jitter, packetLoss)
 
-	return avgTime, packetLoss, nil
+	return avgTime, p95Time, jitter, packetLoss, samples, nil
+}
+
+func tcpPingPercentile(samples []float64, percentile float64) float64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), samples...)
+	sort.Float64s(sorted)
+	index := int(math.Ceil(percentile*float64(len(sorted)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
+}
+
+func tcpPingJitter(samples []float64) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+	var total float64
+	for i := 1; i < len(samples); i++ {
+		diff := samples[i] - samples[i-1]
+		if diff < 0 {
+			diff = -diff
+		}
+		total += diff
+	}
+	return total / float64(len(samples)-1)
 }
 
 // isValidHostname 验证主机名格式

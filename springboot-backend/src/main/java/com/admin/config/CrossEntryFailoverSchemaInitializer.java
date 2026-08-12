@@ -63,7 +63,9 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "quality_degrade_samples", "int NOT NULL DEFAULT 3 AFTER quality_recover_factor");
             ensureColumn("cross_entry_failover_group", "quality_recover_samples", "int NOT NULL DEFAULT 3 AFTER quality_degrade_samples");
             ensureColumn("cross_entry_failover_group", "quality_loss_threshold_percent", "decimal(8,2) NOT NULL DEFAULT 30.00 AFTER quality_recover_samples");
-            ensureColumn("cross_entry_failover_group", "quality_fixed_target_enabled", "tinyint NOT NULL DEFAULT 0 AFTER quality_loss_threshold_percent");
+            ensureColumn("cross_entry_failover_group", "quality_p95_threshold_ms", "int NOT NULL DEFAULT 100 AFTER quality_loss_threshold_percent");
+            ensureColumn("cross_entry_failover_group", "quality_jitter_threshold_ms", "int NOT NULL DEFAULT 50 AFTER quality_p95_threshold_ms");
+            ensureColumn("cross_entry_failover_group", "quality_fixed_target_enabled", "tinyint NOT NULL DEFAULT 0 AFTER quality_jitter_threshold_ms");
             ensureColumn("cross_entry_failover_group", "quality_fixed_target_ms", "int NOT NULL DEFAULT 20 AFTER quality_fixed_target_enabled");
             ensureColumn("cross_entry_failover_group", "quality_fixed_target_strict", "tinyint NOT NULL DEFAULT 1 AFTER quality_fixed_target_ms");
             ensureColumn("cross_entry_failover_group", "quality_flap_guard_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_fixed_target_strict");
@@ -77,7 +79,11 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "min_residency_seconds", "int NOT NULL DEFAULT 300 AFTER topology_avoidance_enabled");
             ensureColumn("cross_entry_failover_group", "failback_gain_ms", "int NOT NULL DEFAULT 10 AFTER min_residency_seconds");
             ensureColumn("cross_entry_failover_group", "failback_gain_percent", "decimal(8,2) NOT NULL DEFAULT 20.00 AFTER failback_gain_ms");
-            ensureColumn("cross_entry_failover_group", "manual_control_mode", "varchar(16) NOT NULL DEFAULT 'auto' AFTER failback_gain_percent");
+            ensureColumn("cross_entry_failover_group", "preheat_enabled", "tinyint NOT NULL DEFAULT 1 AFTER failback_gain_percent");
+            ensureColumn("cross_entry_failover_group", "preheat_backup_count", "int NOT NULL DEFAULT 3 AFTER preheat_enabled");
+            ensureColumn("cross_entry_failover_group", "post_switch_verify_enabled", "tinyint NOT NULL DEFAULT 1 AFTER preheat_backup_count");
+            ensureColumn("cross_entry_failover_group", "dns_verify_enabled", "tinyint NOT NULL DEFAULT 1 AFTER post_switch_verify_enabled");
+            ensureColumn("cross_entry_failover_group", "manual_control_mode", "varchar(16) NOT NULL DEFAULT 'auto' AFTER dns_verify_enabled");
             ensureColumn("cross_entry_failover_group", "locked_member_id", "bigint DEFAULT NULL AFTER manual_control_mode");
             ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER locked_member_id");
             ensureColumn("cross_entry_failover_group", "quality_probe_error", "varchar(500) DEFAULT NULL AFTER quality_probe_status");
@@ -85,8 +91,11 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");
             ensureColumn("cross_entry_failover_member", "enabled", "tinyint NOT NULL DEFAULT 1 AFTER weight");
             ensureColumn("cross_entry_failover_member", "quality_latency_ms", "int DEFAULT NULL AFTER latency_ms");
-            ensureColumn("cross_entry_failover_member", "quality_loss_percent", "decimal(8,2) DEFAULT NULL AFTER quality_latency_ms");
+            ensureColumn("cross_entry_failover_member", "quality_p95_ms", "int DEFAULT NULL AFTER quality_latency_ms");
+            ensureColumn("cross_entry_failover_member", "quality_jitter_ms", "int DEFAULT NULL AFTER quality_p95_ms");
+            ensureColumn("cross_entry_failover_member", "quality_loss_percent", "decimal(8,2) DEFAULT NULL AFTER quality_jitter_ms");
             ensureColumn("cross_entry_failover_member", "quality_baseline_ms", "int DEFAULT NULL AFTER quality_loss_percent");
+            ensureColumn("cross_entry_failover_member", "quality_preheated", "tinyint NOT NULL DEFAULT 0 AFTER quality_baseline_ms");
             ensureColumn("cross_entry_failover_member", "quality_state", "varchar(24) NOT NULL DEFAULT 'unknown' AFTER quality_baseline_ms");
             ensureColumn("cross_entry_failover_member", "quality_bad_count", "int NOT NULL DEFAULT 0 AFTER quality_state");
             ensureColumn("cross_entry_failover_member", "quality_good_count", "int NOT NULL DEFAULT 0 AFTER quality_bad_count");

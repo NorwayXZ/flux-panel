@@ -14,7 +14,7 @@ public final class CrossEntryFailoverPolicy {
     public static Decision select(List<Member> members, Long activeId, boolean autoFailback,
                                   int recoveryThreshold, boolean cooldownElapsed) {
         return select(members, activeId, new Settings(autoFailback, recoveryThreshold, cooldownElapsed,
-                true, false, true, true, 10, 20.0, "auto", null));
+                true, false, true, true, true, 10, 20.0, "auto", null));
     }
 
     public static Decision select(List<Member> members, Long activeId, Settings settings) {
@@ -109,17 +109,18 @@ public final class CrossEntryFailoverPolicy {
     public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                          boolean acceptableForQualitySwitch, boolean suppressed,
                          Integer latencyMs, Double lossPercent, int flapCount, int failCount,
-                         long entryNodeId, String entryAddress, String faultKind) {
+                         long entryNodeId, String entryAddress, String faultKind, boolean preheated) {
         public Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                       boolean acceptableForQualitySwitch, boolean suppressed) {
             this(id, priority, healthy, successCount, degraded, acceptableForQualitySwitch, suppressed,
-                    null, null, 0, 0, 0L, "", "none");
+                    null, null, 0, 0, 0L, "", "none", true);
         }
     }
 
     public record Settings(boolean autoFailback, int recoveryThreshold, boolean cooldownElapsed,
                            boolean minResidencyElapsed, boolean degradedFallbackEnabled,
                            boolean sameFaultAvoidanceEnabled, boolean topologyAvoidanceEnabled,
+                           boolean preheatPreferred,
                            int failbackGainMs, double failbackGainPercent,
                            String manualControlMode, Long lockedMemberId) {
         public Settings {
@@ -142,7 +143,8 @@ public final class CrossEntryFailoverPolicy {
 
     private static Comparator<Member> cleanComparator(Member active, Settings settings) {
         return Comparator
-                .comparingInt((Member member) -> sameFaultPenalty(active, member, settings))
+                .comparingInt((Member member) -> preheatPenalty(member, settings))
+                .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
                 .thenComparingInt(Member::priority);
     }
@@ -152,6 +154,7 @@ public final class CrossEntryFailoverPolicy {
                 .comparingInt((Member member) -> member.healthy() ? 0 : 1)
                 .thenComparingInt(member -> member.suppressed() ? 1 : 0)
                 .thenComparingInt(member -> member.acceptableForQualitySwitch() ? 0 : 1)
+                .thenComparingInt(member -> preheatPenalty(member, settings))
                 .thenComparingDouble(member -> member.lossPercent() == null ? 0.0 : member.lossPercent())
                 .thenComparingInt(member -> member.latencyMs() == null ? Integer.MAX_VALUE : member.latencyMs())
                 .thenComparingInt(Member::flapCount)
@@ -159,6 +162,10 @@ public final class CrossEntryFailoverPolicy {
                 .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
                 .thenComparingInt(Member::priority);
+    }
+
+    private static int preheatPenalty(Member member, Settings settings) {
+        return settings.preheatPreferred() && !member.preheated() ? 1 : 0;
     }
 
     private static int sameFaultPenalty(Member active, Member member, Settings settings) {

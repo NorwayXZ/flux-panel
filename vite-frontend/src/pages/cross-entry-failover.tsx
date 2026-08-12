@@ -48,10 +48,12 @@ const emptyForm = {
   qualityEnabled: false, qualityProbeSourceType: 'panel' as 'panel' | 'node' | 'connector', qualityProbeSourceId: '',
   qualityProbeCount: '4', qualityDegradeThresholdMs: '100', qualityRecoverThresholdMs: '60', qualityDegradeFactor: '3',
   qualityRecoverFactor: '1.8', qualityDegradeSamples: '3', qualityRecoverSamples: '3', qualityLossThresholdPercent: '30',
+  qualityP95ThresholdMs: '100', qualityJitterThresholdMs: '50',
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
   smartSelectionEnabled: true, degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
   minResidencySeconds: '300', failbackGainMs: '10', failbackGainPercent: '20',
+  preheatEnabled: true, preheatBackupCount: '3', postSwitchVerifyEnabled: true, dnsVerifyEnabled: true,
   manualControlMode: 'auto' as 'auto' | 'pause' | 'lock', lockedMemberId: '',
   memberForwardIds: ['', ''],
 };
@@ -188,6 +190,8 @@ export default function CrossEntryFailoverPage() {
       qualityDegradeSamples: String(group.qualityDegradeSamples || 3),
       qualityRecoverSamples: String(group.qualityRecoverSamples || 3),
       qualityLossThresholdPercent: String(group.qualityLossThresholdPercent || 30),
+      qualityP95ThresholdMs: String(group.qualityP95ThresholdMs || 100),
+      qualityJitterThresholdMs: String(group.qualityJitterThresholdMs || 50),
       qualityFixedTargetEnabled: truthy(group.qualityFixedTargetEnabled || false),
       qualityFixedTargetMs: String(group.qualityFixedTargetMs || 20),
       qualityFixedTargetStrict: !Number.isFinite(Number(group.qualityFixedTargetStrict)) ? truthy(group.qualityFixedTargetStrict ?? true) : Number(group.qualityFixedTargetStrict) !== 0,
@@ -202,6 +206,10 @@ export default function CrossEntryFailoverPage() {
       minResidencySeconds: String(group.minResidencySeconds ?? 300),
       failbackGainMs: String(group.failbackGainMs ?? 10),
       failbackGainPercent: String(group.failbackGainPercent ?? 20),
+      preheatEnabled: !Number.isFinite(Number(group.preheatEnabled)) ? truthy(group.preheatEnabled ?? true) : Number(group.preheatEnabled) !== 0,
+      preheatBackupCount: String(group.preheatBackupCount ?? 3),
+      postSwitchVerifyEnabled: !Number.isFinite(Number(group.postSwitchVerifyEnabled)) ? truthy(group.postSwitchVerifyEnabled ?? true) : Number(group.postSwitchVerifyEnabled) !== 0,
+      dnsVerifyEnabled: !Number.isFinite(Number(group.dnsVerifyEnabled)) ? truthy(group.dnsVerifyEnabled ?? true) : Number(group.dnsVerifyEnabled) !== 0,
       manualControlMode: group.manualControlMode || 'auto',
       lockedMemberId: group.lockedMemberId ? String(group.lockedMemberId) : '',
       memberForwardIds: group.members.map(item => String(item.forwardId)),
@@ -248,6 +256,8 @@ export default function CrossEntryFailoverPage() {
       qualityDegradeSamples: Number(form.qualityDegradeSamples),
       qualityRecoverSamples: Number(form.qualityRecoverSamples),
       qualityLossThresholdPercent: Number(form.qualityLossThresholdPercent),
+      qualityP95ThresholdMs: Number(form.qualityP95ThresholdMs),
+      qualityJitterThresholdMs: Number(form.qualityJitterThresholdMs),
       qualityFixedTargetEnabled: form.qualityFixedTargetEnabled,
       qualityFixedTargetMs: Number(form.qualityFixedTargetMs),
       qualityFixedTargetStrict: form.qualityFixedTargetStrict,
@@ -262,6 +272,10 @@ export default function CrossEntryFailoverPage() {
       minResidencySeconds: Number(form.minResidencySeconds),
       failbackGainMs: Number(form.failbackGainMs),
       failbackGainPercent: Number(form.failbackGainPercent),
+      preheatEnabled: form.preheatEnabled,
+      preheatBackupCount: Number(form.preheatBackupCount),
+      postSwitchVerifyEnabled: form.postSwitchVerifyEnabled,
+      dnsVerifyEnabled: form.dnsVerifyEnabled,
       manualControlMode: form.routingMode === 'failover' ? form.manualControlMode : 'auto',
       lockedMemberId: form.routingMode === 'failover' && form.manualControlMode === 'lock' ? Number(form.lockedMemberId) : undefined,
     });
@@ -378,10 +392,11 @@ export default function CrossEntryFailoverPage() {
                       const isActive = member.id === group.activeMemberId;
                       const qMeta = qualityMeta(member.qualityState);
                       const suppressed = Boolean(member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now());
+                      const preheated = qualityEnabled && truthy(member.qualityPreheated || false);
                       return (
                         <div key={member.id} className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
-                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">抖动保护至 {timeText(member.qualitySuppressedUntil)}</p>}</div>
-                          <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">质量 {metricText(member.qualityLatencyMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}</div>
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{preheated && <Chip size="sm" variant="flat" color="success">已预热</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">抖动保护至 {timeText(member.qualitySuppressedUntil)}</p>}</div>
+                          <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">均值 {metricText(member.qualityLatencyMs, ' ms')} · P95 {metricText(member.qualityP95Ms, ' ms')} · 抖动 {metricText(member.qualityJitterMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}</div>
                         </div>
                       );
                     })}
@@ -525,6 +540,8 @@ export default function CrossEntryFailoverPage() {
                     <Input type="number" label="兜底劣化 ms" min={20} value={form.qualityDegradeThresholdMs} onValueChange={qualityDegradeThresholdMs => setForm({ ...form, qualityDegradeThresholdMs })} />
                     <Input type="number" label="恢复参考 ms" min={10} value={form.qualityRecoverThresholdMs} onValueChange={qualityRecoverThresholdMs => setForm({ ...form, qualityRecoverThresholdMs })} />
                     <Input type="number" label="丢包阈值 %" min={1} max={100} value={form.qualityLossThresholdPercent} onValueChange={qualityLossThresholdPercent => setForm({ ...form, qualityLossThresholdPercent })} />
+                    <Input type="number" label="P95 阈值 ms" min={20} value={form.qualityP95ThresholdMs} onValueChange={qualityP95ThresholdMs => setForm({ ...form, qualityP95ThresholdMs })} />
+                    <Input type="number" label="抖动阈值 ms" min={1} value={form.qualityJitterThresholdMs} onValueChange={qualityJitterThresholdMs => setForm({ ...form, qualityJitterThresholdMs })} />
                     <Input type="number" label="基线劣化倍数" min={1.2} step={0.1} value={form.qualityDegradeFactor} onValueChange={qualityDegradeFactor => setForm({ ...form, qualityDegradeFactor })} />
                     <Input type="number" label="基线恢复倍数" min={1} step={0.1} value={form.qualityRecoverFactor} onValueChange={qualityRecoverFactor => setForm({ ...form, qualityRecoverFactor })} />
                     <Input type="number" label="劣化确认次数" min={1} max={20} value={form.qualityDegradeSamples} onValueChange={qualityDegradeSamples => setForm({ ...form, qualityDegradeSamples })} />
@@ -555,7 +572,13 @@ export default function CrossEntryFailoverPage() {
                       <Input type="number" label="回切至少快 ms" min={0} value={form.failbackGainMs} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainMs => setForm({ ...form, failbackGainMs })} />
                       <Input type="number" label="回切至少快 %" min={0} max={100} value={form.failbackGainPercent} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainPercent => setForm({ ...form, failbackGainPercent })} />
                     </div>
-                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、延迟、抖动次数、失败次数和拓扑关系。主入口劣化时优先切到没有同类问题的备用；如果全部入口都差，则在差的线路里选当前综合最好的。</p>
+                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Switch isSelected={form.preheatEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={preheatEnabled => setForm({ ...form, preheatEnabled })}>备用线路预热</Switch>
+                      <Input type="number" label="预热备用数" min={1} max={9} value={form.preheatBackupCount} isDisabled={!form.smartSelectionEnabled || !form.preheatEnabled} onValueChange={preheatBackupCount => setForm({ ...form, preheatBackupCount })} />
+                      <Switch isSelected={form.postSwitchVerifyEnabled} onValueChange={postSwitchVerifyEnabled => setForm({ ...form, postSwitchVerifyEnabled })}>切换后验证入口</Switch>
+                      <Switch isSelected={form.dnsVerifyEnabled} onValueChange={dnsVerifyEnabled => setForm({ ...form, dnsVerifyEnabled })}>DNS 生效确认</Switch>
+                    </div>
+                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用预热会优先保留不同节点/不同网段且最近质量正常的备用线路；切换后验证失败会自动回滚到原入口。</p>
                   </div>
                 </div>
               )}
