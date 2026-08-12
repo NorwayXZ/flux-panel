@@ -3,6 +3,7 @@ package com.admin.common.utils;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 public final class CrossEntryFailoverPolicy {
     private static final String MODE_PAUSE = "pause";
@@ -109,11 +110,11 @@ public final class CrossEntryFailoverPolicy {
     public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                          boolean acceptableForQualitySwitch, boolean suppressed,
                          Integer latencyMs, Double lossPercent, int flapCount, int failCount,
-                         long entryNodeId, String entryAddress, String faultKind, boolean preheated) {
+                         long entryNodeId, String entryAddress, String topologySignature, String faultKind, boolean preheated) {
         public Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                       boolean acceptableForQualitySwitch, boolean suppressed) {
             this(id, priority, healthy, successCount, degraded, acceptableForQualitySwitch, suppressed,
-                    null, null, 0, 0, 0L, "", "none", true);
+                    null, null, 0, 0, 0L, "", "", "none", true);
         }
     }
 
@@ -179,9 +180,9 @@ public final class CrossEntryFailoverPolicy {
     private static int topologyPenalty(Member active, Member member, Settings settings) {
         if (!settings.topologyAvoidanceEnabled() || active == null) return 0;
         if (active.entryNodeId() > 0 && active.entryNodeId() == member.entryNodeId()) return 1;
-        String activeGroup = topologyGroup(active.entryAddress());
-        String memberGroup = topologyGroup(member.entryAddress());
-        return !activeGroup.isEmpty() && activeGroup.equals(memberGroup) ? 1 : 0;
+        Set<String> activeKeys = CrossEntryTopology.keysFromSignatureOrAddress(active.topologySignature(), active.entryAddress());
+        Set<String> memberKeys = CrossEntryTopology.keysFromSignatureOrAddress(member.topologySignature(), member.entryAddress());
+        return CrossEntryTopology.overlaps(activeKeys, memberKeys) ? 1 : 0;
     }
 
     private static boolean hasFailbackBenefit(Member preferred, Member active, Settings settings) {
@@ -200,17 +201,4 @@ public final class CrossEntryFailoverPolicy {
         return value == null || value.isBlank() ? "none" : value;
     }
 
-    private static String topologyGroup(String address) {
-        if (address == null || address.isBlank()) return "";
-        if (address.indexOf('.') > 0) {
-            String[] parts = address.split("\\.");
-            return parts.length == 4 ? parts[0] + "." + parts[1] + "." + parts[2] : "";
-        }
-        if (address.indexOf(':') > 0) {
-            String[] parts = address.split(":");
-            if (parts.length < 4) return "";
-            return parts[0] + ":" + parts[1] + ":" + parts[2] + ":" + parts[3];
-        }
-        return "";
-    }
 }

@@ -126,6 +126,21 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
+    void topologyAvoidanceTreatsSameLargeIpv4RangeAsSameRiskGroup() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 150, 0.0, 0, 0, 10, "8.218.89.115", "latency"),
+                        qualityMember(2, 1, true, 10, false, true, false, 18, 0.0, 0, 0, 11, "8.218.152.71", "none"),
+                        qualityMember(3, 2, true, 10, false, true, false, 25, 0.0, 0, 0, 12, "34.150.15.102", "none")
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
+    @Test
     void minimumResidencyBlocksQualitySwitch() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(degradedMember(1, 0, true, 10), member(2, 1, true, 5)),
@@ -252,7 +267,7 @@ class CrossEntryFailoverPolicyTests {
                                                          int failCount, long nodeId, String address, String faultKind,
                                                          boolean preheated) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, degraded, acceptable, suppressed,
-                latencyMs, lossPercent, flapCount, failCount, nodeId, address, faultKind, preheated);
+                latencyMs, lossPercent, flapCount, failCount, nodeId, address, "", faultKind, preheated);
     }
 
     private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,

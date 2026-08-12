@@ -1,3 +1,9 @@
+## 2.50.2 Cross-entry topology-isolated preheat
+
+- Tightens Cross-entry Failover topology avoidance so `8.218.x.x`-style same large IPv4 ranges are treated as the same risk group instead of only comparing `/24` subnets.
+- Adds strict backup preheat isolation. When enabled, preheat will not mark same-provider, same-ASN, same IPv4 `/16`, same IPv6 `/48`, or same-node entries just to fill the requested backup count.
+- Adds a panel switch for strict preheat isolation and clearer copy explaining that preheated backups prefer different node, cloud/provider, ASN, and large network ranges.
+
 ## 2.50.1 Cross-entry quality probe hotfix
 
 - Fixes a production edge case where a remote quality probe reported success without usable latency samples, causing Cross-entry Failover group checks to loop with a P95 calculation error.

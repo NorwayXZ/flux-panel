@@ -8,6 +8,7 @@ import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.CrossEntryFailoverPolicy;
 import com.admin.common.utils.CrossEntryQualityFlapGuard;
 import com.admin.common.utils.CrossEntryQualityEvaluator;
+import com.admin.common.utils.CrossEntryTopology;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.alibaba.fastjson.JSON;
@@ -126,6 +127,7 @@ public class CrossEntryFailoverService {
                         + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                         + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                         + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
+                        + "preheat_strict_isolation AS preheatStrictIsolation,"
                         + "post_switch_verify_enabled AS postSwitchVerifyEnabled,dns_verify_enabled AS dnsVerifyEnabled,"
                         + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                         + "quality_probe_status AS qualityProbeStatus,"
@@ -224,9 +226,16 @@ public class CrossEntryFailoverService {
                                 + "quality_fixed_target_ms,quality_fixed_target_strict,quality_flap_guard_enabled,quality_flap_window_seconds,"
                                 + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,degraded_fallback_enabled,"
                                 + "same_fault_avoidance_enabled,topology_avoidance_enabled,min_residency_seconds,failback_gain_ms,"
-                                + "failback_gain_percent,preheat_enabled,preheat_backup_count,post_switch_verify_enabled,dns_verify_enabled,"
+                                + "failback_gain_percent,preheat_enabled,preheat_backup_count,preheat_strict_isolation,post_switch_verify_enabled,dns_verify_enabled,"
                                 + "manual_control_mode,locked_member_id,quality_probe_status,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "VALUES ("
+                                + "?,?,?,?,?,?,?,?,?,?,"
+                                + "?,?,?,?,?,?,?,?,?,?,"
+                                + "?,?,?,?,?,?,?,?,?,?,"
+                                + "?,?,?,?,?,?,?,?,?,?,"
+                                + "?,?,?,?,?,?,?,?,?,?,"
+                                + "?,?,?,?,?"
+                                + ")",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
@@ -239,7 +248,7 @@ public class CrossEntryFailoverService {
                         dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
-                        dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
+                        dto.getPreheatStrictIsolation(), dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
@@ -251,7 +260,7 @@ public class CrossEntryFailoverService {
                                 + "quality_p95_threshold_ms=?,quality_jitter_threshold_ms=?,quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_flap_guard_enabled=?,quality_flap_window_seconds=?,quality_flap_threshold=?,quality_flap_suppress_seconds=?,"
                                 + "smart_selection_enabled=?,degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
-                                + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,preheat_enabled=?,preheat_backup_count=?,"
+                                + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,preheat_enabled=?,preheat_backup_count=?,preheat_strict_isolation=?,"
                                 + "post_switch_verify_enabled=?,dns_verify_enabled=?,manual_control_mode=?,locked_member_id=?,"
                                 + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
@@ -265,7 +274,7 @@ public class CrossEntryFailoverService {
                         dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
-                        dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
+                        dto.getPreheatStrictIsolation(), dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -278,10 +287,11 @@ public class CrossEntryFailoverService {
                 Map<String, Object> forward = forwards.get(priority);
                 long forwardId = number(forward.get("id")).longValue();
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_member "
-                        + "(group_id,forward_id,priority,weight,enabled,entry_node_id,entry_host,entry_address,entry_port,forward_name,node_name,status,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?, ?,?,?,?,?,?,'unknown',?,?)",
+                        + "(group_id,forward_id,priority,weight,enabled,entry_node_id,entry_host,entry_address,topology_signature,entry_port,forward_name,node_name,status,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'unknown',?,?)",
                         id, forwardId, priority, memberWeight(dto, priority), true,
-                        number(forward.get("inNodeId")).longValue(), forward.get("entryHost"), forward.get("entryAddress"), number(forward.get("inPort")).intValue(),
+                        number(forward.get("inNodeId")).longValue(), forward.get("entryHost"), forward.get("entryAddress"), forward.get("topologySignature"),
+                        number(forward.get("inPort")).intValue(),
                         forward.get("name"), forward.get("nodeName"), now, now);
                 Long memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
                 if (priority == 0) primaryMemberId = memberId;
@@ -615,12 +625,11 @@ public class CrossEntryFailoverService {
         List<Map<String, Object>> currentMembers = loadMembers(groupId);
         Set<Long> selected = new HashSet<>();
         Set<Long> nodeIds = new HashSet<>();
-        Set<String> topologyGroups = new HashSet<>();
+        Set<String> topologyKeys = new HashSet<>();
         Map<String, Object> active = memberById(currentMembers, activeId);
         if (active != null) {
             nodeIds.add(number(active.get("entryNodeId")).longValue());
-            String topology = topologyGroup(Objects.toString(active.get("entryAddress"), ""));
-            if (!topology.isEmpty()) topologyGroups.add(topology);
+            topologyKeys.addAll(topologyKeys(active));
         }
         List<Map<String, Object>> candidates = currentMembers.stream()
                 .filter(member -> bool(member.get("enabled")))
@@ -632,16 +641,16 @@ public class CrossEntryFailoverService {
                 .collect(Collectors.toList());
         for (Map<String, Object> member : candidates) {
             long nodeId = number(member.get("entryNodeId")).longValue();
-            String topology = topologyGroup(Objects.toString(member.get("entryAddress"), ""));
-            if (nodeIds.contains(nodeId) || (!topology.isEmpty() && topologyGroups.contains(topology))) {
+            Set<String> currentKeys = topologyKeys(member);
+            if (nodeIds.contains(nodeId) || CrossEntryTopology.overlaps(topologyKeys, currentKeys)) {
                 continue;
             }
             selected.add(number(member.get("id")).longValue());
             nodeIds.add(nodeId);
-            if (!topology.isEmpty()) topologyGroups.add(topology);
+            topologyKeys.addAll(currentKeys);
             if (selected.size() >= limit) break;
         }
-        if (selected.size() < limit) {
+        if (!bool(group.get("preheatStrictIsolation")) && selected.size() < limit) {
             for (Map<String, Object> member : candidates) {
                 long id = number(member.get("id")).longValue();
                 if (selected.add(id) && selected.size() >= limit) break;
@@ -957,8 +966,10 @@ public class CrossEntryFailoverService {
         String placeholders = distinctIds.stream().map(id -> "?").collect(Collectors.joining(","));
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT f.id,f.name,f.in_port AS inPort,f.status,"
                         + "COALESCE(f.protocol_mode,'tcp') AS protocolMode,t.in_node_id AS inNodeId,"
-                        + "COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost,COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName "
-                        + "FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id WHERE f.id IN (" + placeholders + ")",
+                        + "COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost,COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName,"
+                        + "a.provider AS assetProvider,a.asn AS assetAsn "
+                        + "FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id "
+                        + "LEFT JOIN server_asset a ON a.node_id=t.in_node_id WHERE f.id IN (" + placeholders + ")",
                 distinctIds.toArray());
         Map<Long, Map<String, Object>> byId = rows.stream().collect(Collectors.toMap(row -> number(row.get("id")).longValue(), row -> row));
         List<Map<String, Object>> ordered = new ArrayList<>();
@@ -981,6 +992,10 @@ public class CrossEntryFailoverService {
             String address = resolveAddress(host, recordType);
             if (!entryAddresses.add(address)) throw new IllegalArgumentException("候选入口必须使用不同的公网 IP");
             row.put("entryAddress", address);
+            row.put("topologySignature", CrossEntryTopology.signature(address,
+                    Objects.toString(row.get("assetProvider"), ""),
+                    Objects.toString(row.get("assetAsn"), ""),
+                    Objects.toString(row.get("nodeName"), "") + " " + Objects.toString(row.get("name"), "")));
             ordered.add(row);
         }
         return ordered;
@@ -1068,6 +1083,7 @@ public class CrossEntryFailoverService {
         dto.setFailbackGainPercent(clampDouble(dto.getFailbackGainPercent(), 0.0, 100.0));
         dto.setPreheatEnabled(!Boolean.FALSE.equals(dto.getPreheatEnabled()));
         dto.setPreheatBackupCount(clamp(dto.getPreheatBackupCount(), 1, 9));
+        dto.setPreheatStrictIsolation(!Boolean.FALSE.equals(dto.getPreheatStrictIsolation()));
         dto.setPostSwitchVerifyEnabled(!Boolean.FALSE.equals(dto.getPostSwitchVerifyEnabled()));
         dto.setDnsVerifyEnabled(!Boolean.FALSE.equals(dto.getDnsVerifyEnabled()));
         String manualMode = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getManualControlMode(), "auto"), Locale.ROOT);
@@ -1098,6 +1114,7 @@ public class CrossEntryFailoverService {
                 + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                 + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                 + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
+                + "preheat_strict_isolation AS preheatStrictIsolation,"
                 + "post_switch_verify_enabled AS postSwitchVerifyEnabled,dns_verify_enabled AS dnsVerifyEnabled,"
                 + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                 + "quality_probe_status AS qualityProbeStatus,"
@@ -1109,7 +1126,7 @@ public class CrossEntryFailoverService {
 
     private List<Map<String, Object>> loadMembers(long groupId) {
         return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
-                + "entry_host AS entryHost,entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
+                + "entry_host AS entryHost,entry_address AS entryAddress,topology_signature AS topologySignature,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
                 + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,quality_latency_ms AS qualityLatencyMs,"
                 + "quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
                 + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,quality_state AS qualityState,"
@@ -1132,17 +1149,10 @@ public class CrossEntryFailoverService {
         return members.stream().filter(member -> number(member.get("id")).longValue() == id).findFirst().orElse(null);
     }
 
-    private String topologyGroup(String address) {
-        if (StringUtils.isBlank(address)) return "";
-        if (address.indexOf('.') > 0) {
-            String[] parts = address.split("\\.");
-            return parts.length == 4 ? parts[0] + "." + parts[1] + "." + parts[2] : "";
-        }
-        if (address.indexOf(':') > 0) {
-            String[] parts = address.split(":");
-            return parts.length >= 4 ? parts[0] + ":" + parts[1] + ":" + parts[2] + ":" + parts[3] : "";
-        }
-        return "";
+    private Set<String> topologyKeys(Map<String, Object> member) {
+        return CrossEntryTopology.keysFromSignatureOrAddress(
+                Objects.toString(member.get("topologySignature"), ""),
+                Objects.toString(member.get("entryAddress"), ""));
     }
 
     private boolean cooldownElapsed(Map<String, Object> group, long now) {
@@ -1173,6 +1183,7 @@ public class CrossEntryFailoverService {
                 number(member.get("failCount")).intValue(),
                 number(member.get("entryNodeId")).longValue(),
                 Objects.toString(member.get("entryAddress"), ""),
+                Objects.toString(member.get("topologySignature"), ""),
                 faultKind(group, member, useQualityDecision, now),
                 !useQualityDecision || !bool(group.get("preheatEnabled")) || bool(member.get("qualityPreheated")));
     }

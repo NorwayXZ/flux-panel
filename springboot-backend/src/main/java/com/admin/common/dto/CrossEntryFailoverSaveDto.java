@@ -68,6 +68,7 @@ public class CrossEntryFailoverSaveDto {
     private Double failbackGainPercent = 20.0;
     private Boolean preheatEnabled = true;
     private Integer preheatBackupCount = 3;
+    private Boolean preheatStrictIsolation = true;
     private Boolean postSwitchVerifyEnabled = true;
     private Boolean dnsVerifyEnabled = true;
     private String manualControlMode = "auto";

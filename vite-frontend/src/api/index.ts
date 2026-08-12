@@ -715,6 +715,7 @@ export interface CrossEntryGroup {
   failbackGainPercent?: number;
   preheatEnabled?: boolean | number;
   preheatBackupCount?: number;
+  preheatStrictIsolation?: boolean | number;
   postSwitchVerifyEnabled?: boolean | number;
   dnsVerifyEnabled?: boolean | number;
   manualControlMode?: 'auto' | 'pause' | 'lock';

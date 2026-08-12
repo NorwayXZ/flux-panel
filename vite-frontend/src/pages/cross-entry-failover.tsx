@@ -53,7 +53,7 @@ const emptyForm = {
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
   smartSelectionEnabled: true, degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
   minResidencySeconds: '300', failbackGainMs: '10', failbackGainPercent: '20',
-  preheatEnabled: true, preheatBackupCount: '3', postSwitchVerifyEnabled: true, dnsVerifyEnabled: true,
+  preheatEnabled: true, preheatBackupCount: '3', preheatStrictIsolation: true, postSwitchVerifyEnabled: true, dnsVerifyEnabled: true,
   manualControlMode: 'auto' as 'auto' | 'pause' | 'lock', lockedMemberId: '',
   memberForwardIds: ['', ''],
 };
@@ -208,6 +208,7 @@ export default function CrossEntryFailoverPage() {
       failbackGainPercent: String(group.failbackGainPercent ?? 20),
       preheatEnabled: !Number.isFinite(Number(group.preheatEnabled)) ? truthy(group.preheatEnabled ?? true) : Number(group.preheatEnabled) !== 0,
       preheatBackupCount: String(group.preheatBackupCount ?? 3),
+      preheatStrictIsolation: !Number.isFinite(Number(group.preheatStrictIsolation)) ? truthy(group.preheatStrictIsolation ?? true) : Number(group.preheatStrictIsolation) !== 0,
       postSwitchVerifyEnabled: !Number.isFinite(Number(group.postSwitchVerifyEnabled)) ? truthy(group.postSwitchVerifyEnabled ?? true) : Number(group.postSwitchVerifyEnabled) !== 0,
       dnsVerifyEnabled: !Number.isFinite(Number(group.dnsVerifyEnabled)) ? truthy(group.dnsVerifyEnabled ?? true) : Number(group.dnsVerifyEnabled) !== 0,
       manualControlMode: group.manualControlMode || 'auto',
@@ -274,6 +275,7 @@ export default function CrossEntryFailoverPage() {
       failbackGainPercent: Number(form.failbackGainPercent),
       preheatEnabled: form.preheatEnabled,
       preheatBackupCount: Number(form.preheatBackupCount),
+      preheatStrictIsolation: form.preheatStrictIsolation,
       postSwitchVerifyEnabled: form.postSwitchVerifyEnabled,
       dnsVerifyEnabled: form.dnsVerifyEnabled,
       manualControlMode: form.routingMode === 'failover' ? form.manualControlMode : 'auto',
@@ -565,20 +567,21 @@ export default function CrossEntryFailoverPage() {
                       <Switch isSelected={form.smartSelectionEnabled} onValueChange={smartSelectionEnabled => setForm({ ...form, smartSelectionEnabled })}>启用智能选择</Switch>
                       <Switch isSelected={form.degradedFallbackEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={degradedFallbackEnabled => setForm({ ...form, degradedFallbackEnabled })}>全部差时差中选优</Switch>
                       <Switch isSelected={form.sameFaultAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={sameFaultAvoidanceEnabled => setForm({ ...form, sameFaultAvoidanceEnabled })}>避开同类故障</Switch>
-                      <Switch isSelected={form.topologyAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={topologyAvoidanceEnabled => setForm({ ...form, topologyAvoidanceEnabled })}>避开同节点/同网段</Switch>
+                      <Switch isSelected={form.topologyAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={topologyAvoidanceEnabled => setForm({ ...form, topologyAvoidanceEnabled })}>避开同节点/同大网段</Switch>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <Input type="number" label="最短驻留（秒）" min={0} value={form.minResidencySeconds} isDisabled={!form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} />
                       <Input type="number" label="回切至少快 ms" min={0} value={form.failbackGainMs} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainMs => setForm({ ...form, failbackGainMs })} />
                       <Input type="number" label="回切至少快 %" min={0} max={100} value={form.failbackGainPercent} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainPercent => setForm({ ...form, failbackGainPercent })} />
                     </div>
-                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-5">
                       <Switch isSelected={form.preheatEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={preheatEnabled => setForm({ ...form, preheatEnabled })}>备用线路预热</Switch>
                       <Input type="number" label="预热备用数" min={1} max={9} value={form.preheatBackupCount} isDisabled={!form.smartSelectionEnabled || !form.preheatEnabled} onValueChange={preheatBackupCount => setForm({ ...form, preheatBackupCount })} />
+                      <Switch isSelected={form.preheatStrictIsolation} isDisabled={!form.smartSelectionEnabled || !form.preheatEnabled} onValueChange={preheatStrictIsolation => setForm({ ...form, preheatStrictIsolation })}>严格预热隔离</Switch>
                       <Switch isSelected={form.postSwitchVerifyEnabled} onValueChange={postSwitchVerifyEnabled => setForm({ ...form, postSwitchVerifyEnabled })}>切换后验证入口</Switch>
                       <Switch isSelected={form.dnsVerifyEnabled} onValueChange={dnsVerifyEnabled => setForm({ ...form, dnsVerifyEnabled })}>DNS 生效确认</Switch>
                     </div>
-                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用预热会优先保留不同节点/不同网段且最近质量正常的备用线路；切换后验证失败会自动回滚到原入口。</p>
+                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用预热会优先保留不同节点、不同云厂商/ASN、不同 IPv4 /16 或 IPv6 /48 且最近质量正常的备用线路；严格隔离开启时，不会为了凑满数量而预热同类线路。</p>
                   </div>
                 </div>
               )}
