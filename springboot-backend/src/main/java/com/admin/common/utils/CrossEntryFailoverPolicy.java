@@ -101,9 +101,6 @@ public final class CrossEntryFailoverPolicy {
         }
         if (!settings.minResidencyElapsed()) return Decision.stay("当前入口驻留时间不足");
         if (!settings.cooldownElapsed()) return Decision.stay("回切仍在冷却期");
-        if (!primaryIsNotMeaningfullyWorse(preferred, active, settings)) {
-            return Decision.stay("主入口恢复但明显慢于当前入口");
-        }
         return Decision.switchTo(preferred.id(), "主入口持续恢复，自动回切");
     }
 
@@ -183,18 +180,6 @@ public final class CrossEntryFailoverPolicy {
         Set<String> activeKeys = CrossEntryTopology.keysFromSignatureOrAddress(active.topologySignature(), active.entryAddress());
         Set<String> memberKeys = CrossEntryTopology.keysFromSignatureOrAddress(member.topologySignature(), member.entryAddress());
         return CrossEntryTopology.overlaps(activeKeys, memberKeys) ? 1 : 0;
-    }
-
-    private static boolean primaryIsNotMeaningfullyWorse(Member preferred, Member active, Settings settings) {
-        if (active == null || active.degraded() || !active.healthy()) return true;
-        if (preferred.latencyMs() == null || active.latencyMs() == null) return true;
-        int preferredLatency = preferred.latencyMs();
-        int activeLatency = active.latencyMs();
-        if (preferredLatency <= activeLatency) return true;
-        int disadvantageMs = preferredLatency - activeLatency;
-        if (settings.failbackGainMs() > 0 && disadvantageMs <= settings.failbackGainMs()) return true;
-        double percent = settings.failbackGainPercent();
-        return percent > 0.0 && activeLatency > 0 && preferredLatency <= activeLatency * (1.0 + percent / 100.0);
     }
 
     private static String normalizeFault(String value) {

@@ -166,11 +166,11 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
-    void failbackAllowsPrimaryThatIsOnlySlightlySlower() {
+    void failbackAllowsPrimaryEvenWhenBackupHasLowerLatency() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(
-                        qualityMember(1, 0, true, 5, false, true, false, 53, 0.0, 0, 0, 10, "203.0.113.10", "none"),
-                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                        qualityMember(1, 0, true, 5, false, true, false, 30, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 10, 0.0, 0, 0, 11, "198.51.100.20", "none")
                 ),
                 2L,
                 settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
@@ -180,17 +180,17 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
-    void failbackStaysOnBackupWhenPrimaryIsClearlySlower() {
+    void failbackUsesPrimaryOwnQualityInsteadOfComparingBackupLatency() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(
-                        qualityMember(1, 0, true, 5, false, true, false, 70, 0.0, 0, 0, 10, "203.0.113.10", "none"),
-                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                        qualityMember(1, 0, true, 5, false, true, false, 120, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 10, 0.0, 0, 0, 11, "198.51.100.20", "none")
                 ),
                 2L,
                 settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
 
-        assertFalse(decision.switchRequired());
-        assertEquals("主入口恢复但明显慢于当前入口", decision.reason());
+        assertTrue(decision.switchRequired());
+        assertEquals(1L, decision.targetId());
     }
 
     @Test

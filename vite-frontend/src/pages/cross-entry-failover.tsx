@@ -52,7 +52,7 @@ const emptyForm = {
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
   smartSelectionEnabled: true, degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
-  minResidencySeconds: '300', failbackGainMs: '5', failbackGainPercent: '15',
+  minResidencySeconds: '300',
   preheatEnabled: true, preheatBackupCount: '3', preheatStrictIsolation: true, postSwitchVerifyEnabled: true, dnsVerifyEnabled: true,
   manualControlMode: 'auto' as 'auto' | 'pause' | 'lock', lockedMemberId: '',
   memberForwardIds: ['', ''],
@@ -204,8 +204,6 @@ export default function CrossEntryFailoverPage() {
       sameFaultAvoidanceEnabled: !Number.isFinite(Number(group.sameFaultAvoidanceEnabled)) ? truthy(group.sameFaultAvoidanceEnabled ?? true) : Number(group.sameFaultAvoidanceEnabled) !== 0,
       topologyAvoidanceEnabled: !Number.isFinite(Number(group.topologyAvoidanceEnabled)) ? truthy(group.topologyAvoidanceEnabled ?? true) : Number(group.topologyAvoidanceEnabled) !== 0,
       minResidencySeconds: String(group.minResidencySeconds ?? 300),
-      failbackGainMs: String(group.failbackGainMs ?? 5),
-      failbackGainPercent: String(group.failbackGainPercent ?? 15),
       preheatEnabled: !Number.isFinite(Number(group.preheatEnabled)) ? truthy(group.preheatEnabled ?? true) : Number(group.preheatEnabled) !== 0,
       preheatBackupCount: String(group.preheatBackupCount ?? 3),
       preheatStrictIsolation: !Number.isFinite(Number(group.preheatStrictIsolation)) ? truthy(group.preheatStrictIsolation ?? true) : Number(group.preheatStrictIsolation) !== 0,
@@ -271,8 +269,6 @@ export default function CrossEntryFailoverPage() {
       sameFaultAvoidanceEnabled: form.sameFaultAvoidanceEnabled,
       topologyAvoidanceEnabled: form.topologyAvoidanceEnabled,
       minResidencySeconds: Number(form.minResidencySeconds),
-      failbackGainMs: Number(form.failbackGainMs),
-      failbackGainPercent: Number(form.failbackGainPercent),
       preheatEnabled: form.preheatEnabled,
       preheatBackupCount: Number(form.preheatBackupCount),
       preheatStrictIsolation: form.preheatStrictIsolation,
@@ -571,8 +567,6 @@ export default function CrossEntryFailoverPage() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <Input type="number" label="最短驻留（秒）" min={0} value={form.minResidencySeconds} isDisabled={!form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} />
-                      <Input type="number" label="回主线容忍慢 ms" min={0} value={form.failbackGainMs} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainMs => setForm({ ...form, failbackGainMs })} />
-                      <Input type="number" label="回主线容忍慢 %" min={0} max={100} value={form.failbackGainPercent} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainPercent => setForm({ ...form, failbackGainPercent })} />
                     </div>
                     <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-5">
                       <Switch isSelected={form.preheatEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={preheatEnabled => setForm({ ...form, preheatEnabled })}>备用线路预热</Switch>
@@ -581,7 +575,7 @@ export default function CrossEntryFailoverPage() {
                       <Switch isSelected={form.postSwitchVerifyEnabled} onValueChange={postSwitchVerifyEnabled => setForm({ ...form, postSwitchVerifyEnabled })}>切换后验证入口</Switch>
                       <Switch isSelected={form.dnsVerifyEnabled} onValueChange={dnsVerifyEnabled => setForm({ ...form, dnsVerifyEnabled })}>DNS 生效确认</Switch>
                     </div>
-                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用之间切换才需要明显收益；主入口回切只要求持续稳定且不明显慢于当前备用。备用预热会优先保留不同节点、不同云厂商/ASN、不同 IPv4 /16 或 IPv6 /48 且最近质量正常的备用线路；严格隔离开启时，不会为了凑满数量而预热同类线路。</p>
+                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用之间切换才需要明显收益；主入口回切只看主入口自身是否持续稳定、质量正常，并且已过冷却和驻留时间，不会因为备用入口延迟更低而阻止回主线。备用预热会优先保留不同节点、不同云厂商/ASN、不同 IPv4 /16 或 IPv6 /48 且最近质量正常的备用线路；严格隔离开启时，不会为了凑满数量而预热同类线路。</p>
                   </div>
                 </div>
               )}

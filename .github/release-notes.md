@@ -1,3 +1,9 @@
+## 2.50.4 Cross-entry primary-priority failback
+
+- Changes Cross-entry Failover primary failback to use the primary entry's own recovery state instead of comparing its latency with the active backup.
+- A recovered primary now fails back after stability, cooldown, residency, and quality checks even when a backup has lower raw latency, matching primary-as-preferred-line behavior for premium routes.
+- Removes the misleading primary failback latency tolerance controls from the panel; backup-to-backup quality switching still stays conservative.
+
 ## 2.50.3 Cross-entry primary failback tolerance
 
 - Changes Cross-entry Failover primary failback so a recovered primary can return after stability and cooldown when it is equal to, faster than, or only slightly slower than the active backup.
