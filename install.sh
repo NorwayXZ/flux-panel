@@ -219,7 +219,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/gost -C $INSTALL_DIR/gost.json
+ExecStart=$INSTALL_DIR/gost -agent-config $INSTALL_DIR/config.json -C $INSTALL_DIR/gost.json
 Restart=always
 RestartSec=1
 
@@ -236,7 +236,7 @@ EOF
 name="Gost Proxy Service"
 description="Flux Panel GOST agent"
 command="$INSTALL_DIR/gost"
-command_args="-C $INSTALL_DIR/gost.json"
+command_args="-agent-config $INSTALL_DIR/config.json -C $INSTALL_DIR/gost.json"
 command_background="yes"
 directory="$INSTALL_DIR"
 pidfile="$PID_FILE"
@@ -263,7 +263,7 @@ name="Gost Proxy Service"
 
 start_service() {
   procd_open_instance
-  procd_set_param command "$INSTALL_DIR/gost" -C "$INSTALL_DIR/gost.json"
+  procd_set_param command "$INSTALL_DIR/gost" -agent-config "$INSTALL_DIR/config.json" -C "$INSTALL_DIR/gost.json"
   procd_set_param respawn 3600 5 0
   procd_set_param stdout 1
   procd_set_param stderr 1

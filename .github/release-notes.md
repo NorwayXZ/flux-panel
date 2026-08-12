@@ -1,3 +1,8 @@
+## 2.49.8 OpenWrt connector service startup fix
+
+- Fixes OpenWrt/iStoreOS Connector service startup by passing the Agent config path explicitly to every Linux service definition. The Agent now enters the Connector install directory before loading runtime state, matching the manual `cd /etc/flux-connector && ./gost -C ./gost.json` startup path.
+- Extends installer coverage for systemd, OpenRC, and procd service definitions so future releases keep `config.json` and `gost.json` anchored to the install directory. Agent and Connector binaries remain `2.49.1`.
+
 ## 2.49.7 Cross-entry quality flap guard
 
 - Adds quality flap protection for Cross-entry Failover. If an entry repeatedly transitions into quality degradation inside a configurable time window, the panel temporarily suppresses it as an automatic switch or failback target.

@@ -90,7 +90,7 @@ EOF
   test -x "$case_root/etc/init.d/flux-connector"
   grep -Fq '#!/sbin/openrc-run' "$case_root/etc/init.d/flux-connector"
   grep -Fq "command=\"$case_root/etc/gost/gost\"" "$case_root/etc/init.d/flux-connector"
-  grep -Fq "command_args=\"-C $case_root/etc/gost/gost.json\"" "$case_root/etc/init.d/flux-connector"
+  grep -Fq "command_args=\"-agent-config $case_root/etc/gost/config.json -C $case_root/etc/gost/gost.json\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'use net' "$case_root/etc/init.d/flux-connector"
   ! grep -Fq 'need net' "$case_root/etc/init.d/flux-connector"
   grep -Fq '"addr": "127.0.0.1:6365"' "$case_root/etc/gost/config.json"
@@ -131,7 +131,7 @@ EOF
   test -x "$case_root/etc/init.d/flux-connector"
   grep -Fq "#!/bin/sh $case_root/etc/rc.common" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'USE_PROCD=1' "$case_root/etc/init.d/flux-connector"
-  grep -Fq "procd_set_param command \"$case_root/etc/flux-connector/gost\" -C \"$case_root/etc/flux-connector/gost.json\"" "$case_root/etc/init.d/flux-connector"
+  grep -Fq "procd_set_param command \"$case_root/etc/flux-connector/gost\" -agent-config \"$case_root/etc/flux-connector/config.json\" -C \"$case_root/etc/flux-connector/gost.json\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'procd_set_param respawn 3600 5 0' "$case_root/etc/init.d/flux-connector"
   grep -Fq "procd_set_param pidfile \"$case_root/run/flux-connector.pid\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'procd_running "flux-connector"' "$case_root/etc/init.d/flux-connector"
@@ -168,7 +168,7 @@ EOF
     sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret >/dev/null
 
   test -f "$case_root/etc/systemd/system/gost.service"
-  grep -Fq "ExecStart=$case_root/etc/gost/gost -C $case_root/etc/gost/gost.json" "$case_root/etc/systemd/system/gost.service"
+  grep -Fq "ExecStart=$case_root/etc/gost/gost -agent-config $case_root/etc/gost/config.json -C $case_root/etc/gost/gost.json" "$case_root/etc/systemd/system/gost.service"
   grep -Fq 'After=network.target' "$case_root/etc/systemd/system/gost.service"
   grep -Fq 'StartLimitIntervalSec=0' "$case_root/etc/systemd/system/gost.service"
   grep -Fq 'Restart=always' "$case_root/etc/systemd/system/gost.service"
@@ -197,7 +197,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=$case_root/etc/gost/gost -C $case_root/etc/gost/gost.json
+ExecStart=$case_root/etc/gost/gost -agent-config $case_root/etc/gost/config.json -C $case_root/etc/gost/gost.json
 Restart=on-failure
 RestartSec=3
 EOF
