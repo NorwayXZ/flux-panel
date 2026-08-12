@@ -701,6 +701,15 @@ export interface CrossEntryGroup {
   qualityFlapWindowSeconds?: number;
   qualityFlapThreshold?: number;
   qualityFlapSuppressSeconds?: number;
+  smartSelectionEnabled?: boolean | number;
+  degradedFallbackEnabled?: boolean | number;
+  sameFaultAvoidanceEnabled?: boolean | number;
+  topologyAvoidanceEnabled?: boolean | number;
+  minResidencySeconds?: number;
+  failbackGainMs?: number;
+  failbackGainPercent?: number;
+  manualControlMode?: 'auto' | 'pause' | 'lock';
+  lockedMemberId?: number;
   qualityProbeStatus?: 'disabled' | 'pending' | 'ok' | 'warning' | 'failed';
   qualityProbeError?: string;
   qualityProbeAt?: number;

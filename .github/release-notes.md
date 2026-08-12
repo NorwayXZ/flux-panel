@@ -1,3 +1,9 @@
+## 2.49.9 Cross-entry smart quality failover
+
+- Adds smart selection rules to Cross-entry Failover quality mode. The panel now keeps probing every candidate entry, avoids backups with the same current fault when another clean choice exists, avoids same-node or same-address-group entries when possible, and falls back to the best degraded entry only when every line is poor.
+- Adds minimum entry residency, failback gain thresholds, manual pause, and manual lock controls so a primary that jumps between good and bad latency does not cause rapid DNS switching.
+- Keeps hard outage failover compatible with existing priority order: primary, backup 1, backup 2, and so on. The smarter ranking is only applied when quality probing is active. Agent and Connector binaries remain `2.49.1`.
+
 ## 2.49.8 OpenWrt connector service startup fix
 
 - Fixes OpenWrt/iStoreOS Connector service startup by passing the Agent config path explicitly to every Linux service definition. The Agent now enters the Connector install directory before loading runtime state, matching the manual `cd /etc/flux-connector && ./gost -C ./gost.json` startup path.

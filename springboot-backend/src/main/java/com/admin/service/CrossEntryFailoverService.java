@@ -120,6 +120,10 @@ public class CrossEntryFailoverService {
                         + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                         + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                         + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
+                        + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                        + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
+                        + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
+                        + "failback_gain_percent AS failbackGainPercent,manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
@@ -166,6 +170,7 @@ public class CrossEntryFailoverService {
             Long id = dto.getId();
             Long previousActiveForwardId = null;
             String previousActiveName = null;
+            Long requestedLockedForwardId = null;
             String requestedRecordId = dto.getRecordId();
             if (id == null) {
                 if (!managedDns) return R.err("请选择已在 DNS 与域名中登记的 Cloudflare Zone");
@@ -195,6 +200,13 @@ public class CrossEntryFailoverService {
                         || !Objects.equals(dto.getDnsZoneId(), nullableLong(old.get("dns_zone_id")))
                         || !dto.getRecordType().equalsIgnoreCase(Objects.toString(old.get("record_type"), ""));
                 requestedRecordId = recordIdentityChanged ? null : Objects.toString(old.get("record_id"), null);
+                if ("lock".equals(dto.getManualControlMode())) {
+                    List<Map<String, Object>> lockedRows = jdbcTemplate.queryForList(
+                            "SELECT forward_id AS forwardId FROM cross_entry_failover_member WHERE group_id=? AND id=?",
+                            id, dto.getLockedMemberId());
+                    if (lockedRows.isEmpty()) throw new IllegalArgumentException("锁定入口不存在或已被移除");
+                    requestedLockedForwardId = number(lockedRows.get(0).get("forwardId")).longValue();
+                }
             }
             String recordId = StringUtils.defaultString(requestedRecordId);
 
@@ -205,8 +217,10 @@ public class CrossEntryFailoverService {
                                 + "quality_probe_source_id,quality_probe_count,quality_degrade_threshold_ms,quality_recover_threshold_ms,quality_degrade_factor,"
                                 + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,quality_fixed_target_enabled,"
                                 + "quality_fixed_target_ms,quality_fixed_target_strict,quality_flap_guard_enabled,quality_flap_window_seconds,"
-                                + "quality_flap_threshold,quality_flap_suppress_seconds,quality_probe_status,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,degraded_fallback_enabled,"
+                                + "same_fault_avoidance_enabled,topology_avoidance_enabled,min_residency_seconds,failback_gain_ms,"
+                                + "failback_gain_percent,manual_control_mode,locked_member_id,quality_probe_status,enabled,state,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
@@ -215,7 +229,9 @@ public class CrossEntryFailoverService {
                         dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(), dto.getQualityLossThresholdPercent(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
+                        dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
+                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
@@ -226,6 +242,8 @@ public class CrossEntryFailoverService {
                                 + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
                                 + "quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_flap_guard_enabled=?,quality_flap_window_seconds=?,quality_flap_threshold=?,quality_flap_suppress_seconds=?,"
+                                + "smart_selection_enabled=?,degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
+                                + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,manual_control_mode=?,locked_member_id=?,"
                                 + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
@@ -234,7 +252,9 @@ public class CrossEntryFailoverService {
                         dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(), dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(),
                         dto.getQualityLossThresholdPercent(), dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
+                        dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
+                        dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getManualControlMode(), dto.getLockedMemberId(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -242,26 +262,35 @@ public class CrossEntryFailoverService {
 
             Long primaryMemberId = null;
             Long retainedActiveMemberId = null;
+            Long retainedLockedMemberId = null;
             for (int priority = 0; priority < forwards.size(); priority++) {
                 Map<String, Object> forward = forwards.get(priority);
+                long forwardId = number(forward.get("id")).longValue();
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_member "
                         + "(group_id,forward_id,priority,weight,enabled,entry_node_id,entry_host,entry_address,entry_port,forward_name,node_name,status,created_time,updated_time) "
                                 + "VALUES (?,?,?,?,?, ?,?,?,?,?,?,'unknown',?,?)",
-                        id, number(forward.get("id")).longValue(), priority, memberWeight(dto, priority), true,
+                        id, forwardId, priority, memberWeight(dto, priority), true,
                         number(forward.get("inNodeId")).longValue(), forward.get("entryHost"), forward.get("entryAddress"), number(forward.get("inPort")).intValue(),
                         forward.get("name"), forward.get("nodeName"), now, now);
                 Long memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
                 if (priority == 0) primaryMemberId = memberId;
-                if (previousActiveForwardId != null && previousActiveForwardId == number(forward.get("id")).longValue()) {
+                if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
                     retainedActiveMemberId = memberId;
+                }
+                if (requestedLockedForwardId != null && requestedLockedForwardId == forwardId) {
+                    retainedLockedMemberId = memberId;
                 }
             }
             Long activeMemberId = "active_active".equals(dto.getRoutingMode())
                     ? primaryMemberId
                     : (retainedActiveMemberId == null ? primaryMemberId : retainedActiveMemberId);
+            if ("lock".equals(dto.getManualControlMode()) && retainedLockedMemberId == null) {
+                throw new IllegalArgumentException("锁定入口未包含在当前入口顺序中");
+            }
+            Long lockedMemberId = "lock".equals(dto.getManualControlMode()) ? retainedLockedMemberId : null;
             boolean configuredEntryChanged = previousActiveForwardId != null && retainedActiveMemberId == null;
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END WHERE id=?",
-                    activeMemberId, configuredEntryChanged, now, id);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,locked_member_id=?,last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END WHERE id=?",
+                    activeMemberId, lockedMemberId, configuredEntryChanged, now, id);
 
             Map<String, Object> selectedEntry = loadMember(activeMemberId);
             if (managedDns) {
@@ -397,16 +426,20 @@ public class CrossEntryFailoverService {
         final boolean useQualityDecision = qualityDecisionEnabled;
         boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
         List<CrossEntryFailoverPolicy.Member> snapshots = members.stream()
-                .map(member -> new CrossEntryFailoverPolicy.Member(
-                        number(member.get("id")).longValue(), number(member.get("priority")).intValue(),
-                        "healthy".equals(member.get("status")), number(member.get("successCount")).intValue(),
-                        useQualityDecision && isQualityDegraded(member),
-                        !useQualityDecision || acceptableForQualitySwitch(group, member),
-                        useQualityDecision && isQualitySuppressed(member, now)))
+                .map(member -> policyMember(group, member, useQualityDecision, now))
                 .collect(Collectors.toList());
+        boolean smartSelection = useQualityDecision && bool(group.get("smartSelectionEnabled"));
+        CrossEntryFailoverPolicy.Settings policySettings = new CrossEntryFailoverPolicy.Settings(
+                bool(group.get("autoFailback")), number(group.get("recoveryThreshold")).intValue(),
+                cooldownElapsed(group, now), !smartSelection || minResidencyElapsed(group, now),
+                smartSelection && bool(group.get("degradedFallbackEnabled")),
+                smartSelection && bool(group.get("sameFaultAvoidanceEnabled")),
+                smartSelection && bool(group.get("topologyAvoidanceEnabled")),
+                smartSelection ? number(group.get("failbackGainMs")).intValue() : 0,
+                smartSelection ? doubleNumber(group.get("failbackGainPercent")) : 0.0,
+                Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")));
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
-                snapshots, active == null ? null : number(active.get("id")).longValue(), bool(group.get("autoFailback")),
-                number(group.get("recoveryThreshold")).intValue(), cooldownElapsed(group, now));
+                snapshots, active == null ? null : number(active.get("id")).longValue(), policySettings);
         Map<String, Object> target = decision.switchRequired() ? memberById(members, decision.targetId()) : null;
 
         if (target != null) {
@@ -845,6 +878,22 @@ public class CrossEntryFailoverService {
         dto.setQualityFlapWindowSeconds(clamp(dto.getQualityFlapWindowSeconds(), 60, 86400));
         dto.setQualityFlapThreshold(clamp(dto.getQualityFlapThreshold(), 2, 20));
         dto.setQualityFlapSuppressSeconds(clamp(dto.getQualityFlapSuppressSeconds(), 60, 86400));
+        dto.setSmartSelectionEnabled(!Boolean.FALSE.equals(dto.getSmartSelectionEnabled()));
+        dto.setDegradedFallbackEnabled(!Boolean.FALSE.equals(dto.getDegradedFallbackEnabled()));
+        dto.setSameFaultAvoidanceEnabled(!Boolean.FALSE.equals(dto.getSameFaultAvoidanceEnabled()));
+        dto.setTopologyAvoidanceEnabled(!Boolean.FALSE.equals(dto.getTopologyAvoidanceEnabled()));
+        dto.setMinResidencySeconds(clamp(dto.getMinResidencySeconds(), 0, 86400));
+        dto.setFailbackGainMs(clamp(dto.getFailbackGainMs(), 0, 30000));
+        dto.setFailbackGainPercent(clampDouble(dto.getFailbackGainPercent(), 0.0, 100.0));
+        String manualMode = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getManualControlMode(), "auto"), Locale.ROOT);
+        if (!Set.of("auto", "pause", "lock").contains(manualMode)) throw new IllegalArgumentException("手动控制模式不正确");
+        dto.setManualControlMode(manualMode);
+        if ("lock".equals(manualMode)) {
+            if (dto.getId() == null) throw new IllegalArgumentException("请先创建容灾组后再锁定入口");
+            if (dto.getLockedMemberId() == null) throw new IllegalArgumentException("请选择要锁定的入口");
+        } else {
+            dto.setLockedMemberId(null);
+        }
     }
 
     private Map<String, Object> loadGroup(long id) {
@@ -859,6 +908,10 @@ public class CrossEntryFailoverService {
                 + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                 + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                 + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
+                + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
+                + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
+                + "failback_gain_percent AS failbackGainPercent,manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,"
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
@@ -893,6 +946,45 @@ public class CrossEntryFailoverService {
     private boolean cooldownElapsed(Map<String, Object> group, long now) {
         Long lastSwitch = nullableLong(group.get("lastSwitchAt"));
         return lastSwitch == null || now - lastSwitch >= number(group.get("cooldownSeconds")).longValue() * 1000L;
+    }
+
+    private boolean minResidencyElapsed(Map<String, Object> group, long now) {
+        Long lastSwitch = nullableLong(group.get("lastSwitchAt"));
+        return lastSwitch == null || now - lastSwitch >= number(group.get("minResidencySeconds")).longValue() * 1000L;
+    }
+
+    private CrossEntryFailoverPolicy.Member policyMember(Map<String, Object> group, Map<String, Object> member,
+                                                        boolean useQualityDecision, long now) {
+        Integer qualityLatency = nullableInt(member.get("qualityLatencyMs"));
+        Integer regularLatency = nullableInt(member.get("latencyMs"));
+        return new CrossEntryFailoverPolicy.Member(
+                number(member.get("id")).longValue(),
+                number(member.get("priority")).intValue(),
+                "healthy".equals(member.get("status")),
+                number(member.get("successCount")).intValue(),
+                useQualityDecision && isQualityDegraded(member),
+                !useQualityDecision || acceptableForQualitySwitch(group, member),
+                useQualityDecision && isQualitySuppressed(member, now),
+                qualityLatency != null ? qualityLatency : regularLatency,
+                nullableDouble(member.get("qualityLossPercent")),
+                number(member.get("qualityFlapCount")).intValue(),
+                number(member.get("failCount")).intValue(),
+                number(member.get("entryNodeId")).longValue(),
+                Objects.toString(member.get("entryAddress"), ""),
+                faultKind(group, member, useQualityDecision, now));
+    }
+
+    private String faultKind(Map<String, Object> group, Map<String, Object> member, boolean useQualityDecision, long now) {
+        if (member == null) return "none";
+        if ("unhealthy".equals(member.get("status"))) return "connect";
+        if (!useQualityDecision) return "none";
+        Double loss = nullableDouble(member.get("qualityLossPercent"));
+        if (loss != null && loss >= doubleNumber(group.get("qualityLossThresholdPercent"))) return "loss";
+        if (isQualitySuppressed(member, now)) return "flap";
+        if (isQualityDegraded(member)) {
+            return nullableInt(member.get("qualityLatencyMs")) == null ? "quality" : "latency";
+        }
+        return "none";
     }
 
     private void addEvent(long groupId, Long from, Long to, String reason, String status, String detail) {
@@ -975,6 +1067,10 @@ public class CrossEntryFailoverService {
 
     private Long nullableLong(Object value) {
         return value == null ? null : number(value).longValue();
+    }
+
+    private Double nullableDouble(Object value) {
+        return value == null ? null : doubleNumber(value);
     }
 
     private boolean bool(Object value) {

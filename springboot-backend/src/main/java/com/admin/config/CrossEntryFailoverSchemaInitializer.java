@@ -70,7 +70,16 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "quality_flap_window_seconds", "int NOT NULL DEFAULT 900 AFTER quality_flap_guard_enabled");
             ensureColumn("cross_entry_failover_group", "quality_flap_threshold", "int NOT NULL DEFAULT 3 AFTER quality_flap_window_seconds");
             ensureColumn("cross_entry_failover_group", "quality_flap_suppress_seconds", "int NOT NULL DEFAULT 1800 AFTER quality_flap_threshold");
-            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER quality_flap_suppress_seconds");
+            ensureColumn("cross_entry_failover_group", "smart_selection_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_flap_suppress_seconds");
+            ensureColumn("cross_entry_failover_group", "degraded_fallback_enabled", "tinyint NOT NULL DEFAULT 1 AFTER smart_selection_enabled");
+            ensureColumn("cross_entry_failover_group", "same_fault_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER degraded_fallback_enabled");
+            ensureColumn("cross_entry_failover_group", "topology_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER same_fault_avoidance_enabled");
+            ensureColumn("cross_entry_failover_group", "min_residency_seconds", "int NOT NULL DEFAULT 300 AFTER topology_avoidance_enabled");
+            ensureColumn("cross_entry_failover_group", "failback_gain_ms", "int NOT NULL DEFAULT 10 AFTER min_residency_seconds");
+            ensureColumn("cross_entry_failover_group", "failback_gain_percent", "decimal(8,2) NOT NULL DEFAULT 20.00 AFTER failback_gain_ms");
+            ensureColumn("cross_entry_failover_group", "manual_control_mode", "varchar(16) NOT NULL DEFAULT 'auto' AFTER failback_gain_percent");
+            ensureColumn("cross_entry_failover_group", "locked_member_id", "bigint DEFAULT NULL AFTER manual_control_mode");
+            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER locked_member_id");
             ensureColumn("cross_entry_failover_group", "quality_probe_error", "varchar(500) DEFAULT NULL AFTER quality_probe_status");
             ensureColumn("cross_entry_failover_group", "quality_probe_at", "bigint DEFAULT NULL AFTER quality_probe_error");
             ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");

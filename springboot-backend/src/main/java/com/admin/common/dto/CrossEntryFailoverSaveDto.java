@@ -57,6 +57,15 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityFlapWindowSeconds = 900;
     private Integer qualityFlapThreshold = 3;
     private Integer qualityFlapSuppressSeconds = 1800;
+    private Boolean smartSelectionEnabled = true;
+    private Boolean degradedFallbackEnabled = true;
+    private Boolean sameFaultAvoidanceEnabled = true;
+    private Boolean topologyAvoidanceEnabled = true;
+    private Integer minResidencySeconds = 300;
+    private Integer failbackGainMs = 10;
+    private Double failbackGainPercent = 20.0;
+    private String manualControlMode = "auto";
+    private Long lockedMemberId;
 
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;

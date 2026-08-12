@@ -50,6 +50,9 @@ const emptyForm = {
   qualityRecoverFactor: '1.8', qualityDegradeSamples: '3', qualityRecoverSamples: '3', qualityLossThresholdPercent: '30',
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
+  smartSelectionEnabled: true, degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
+  minResidencySeconds: '300', failbackGainMs: '10', failbackGainPercent: '20',
+  manualControlMode: 'auto' as 'auto' | 'pause' | 'lock', lockedMemberId: '',
   memberForwardIds: ['', ''],
 };
 
@@ -97,6 +100,11 @@ const qualityProbeMeta = (status?: CrossEntryGroup['qualityProbeStatus']) => ({
   pending: { label: '等待探测', color: 'secondary' as const },
   disabled: { label: '未启用', color: 'default' as const },
 })[status || 'disabled'] || { label: '未启用', color: 'default' as const };
+const manualControlMeta = (mode?: CrossEntryGroup['manualControlMode']) => ({
+  pause: { label: '已暂停自动切换', color: 'warning' as const },
+  lock: { label: '已锁定入口', color: 'secondary' as const },
+  auto: { label: '自动选择', color: 'default' as const },
+})[mode || 'auto'] || { label: '自动选择', color: 'default' as const };
 
 export default function CrossEntryFailoverPage() {
   const navigate = useNavigate();
@@ -142,6 +150,7 @@ export default function CrossEntryFailoverPage() {
   const selectedOptions = useMemo(() => form.memberForwardIds.map(id => forwardOptions.find(item => String(item.id) === id)), [form.memberForwardIds, forwardOptions]);
   const forwardGroups = useMemo(() => groupForwardOptionsByPort(forwardOptions), [forwardOptions]);
   const selectedZone = useMemo(() => zoneOptions.find(item => String(item.id) === form.dnsZoneId), [form.dnsZoneId, zoneOptions]);
+  const lockableMembers = useMemo(() => groups.find(item => item.id === form.id)?.members || [], [form.id, groups]);
   const selectedPort = selectedOptions.find(Boolean)?.inPort;
   const selectionProblem = useMemo(() => {
     const selected = selectedOptions.filter(Boolean) as CrossEntryForwardOption[];
@@ -186,6 +195,15 @@ export default function CrossEntryFailoverPage() {
       qualityFlapWindowSeconds: String(group.qualityFlapWindowSeconds || 900),
       qualityFlapThreshold: String(group.qualityFlapThreshold || 3),
       qualityFlapSuppressSeconds: String(group.qualityFlapSuppressSeconds || 1800),
+      smartSelectionEnabled: !Number.isFinite(Number(group.smartSelectionEnabled)) ? truthy(group.smartSelectionEnabled ?? true) : Number(group.smartSelectionEnabled) !== 0,
+      degradedFallbackEnabled: !Number.isFinite(Number(group.degradedFallbackEnabled)) ? truthy(group.degradedFallbackEnabled ?? true) : Number(group.degradedFallbackEnabled) !== 0,
+      sameFaultAvoidanceEnabled: !Number.isFinite(Number(group.sameFaultAvoidanceEnabled)) ? truthy(group.sameFaultAvoidanceEnabled ?? true) : Number(group.sameFaultAvoidanceEnabled) !== 0,
+      topologyAvoidanceEnabled: !Number.isFinite(Number(group.topologyAvoidanceEnabled)) ? truthy(group.topologyAvoidanceEnabled ?? true) : Number(group.topologyAvoidanceEnabled) !== 0,
+      minResidencySeconds: String(group.minResidencySeconds ?? 300),
+      failbackGainMs: String(group.failbackGainMs ?? 10),
+      failbackGainPercent: String(group.failbackGainPercent ?? 20),
+      manualControlMode: group.manualControlMode || 'auto',
+      lockedMemberId: group.lockedMemberId ? String(group.lockedMemberId) : '',
       memberForwardIds: group.members.map(item => String(item.forwardId)),
     });
     setFormOpen(true);
@@ -212,6 +230,7 @@ export default function CrossEntryFailoverPage() {
     if (form.routingMode === 'failover' && form.qualityEnabled && form.qualityProbeSourceType !== 'panel' && !form.qualityProbeSourceId) {
       return toast.error('请选择质量探测源');
     }
+    if (form.routingMode === 'failover' && form.manualControlMode === 'lock' && !form.lockedMemberId) return toast.error('请选择要锁定的入口');
     setSubmitting(true);
     const response = await saveCrossEntryGroup({
       ...form,
@@ -236,6 +255,15 @@ export default function CrossEntryFailoverPage() {
       qualityFlapWindowSeconds: Number(form.qualityFlapWindowSeconds),
       qualityFlapThreshold: Number(form.qualityFlapThreshold),
       qualityFlapSuppressSeconds: Number(form.qualityFlapSuppressSeconds),
+      smartSelectionEnabled: form.smartSelectionEnabled,
+      degradedFallbackEnabled: form.degradedFallbackEnabled,
+      sameFaultAvoidanceEnabled: form.sameFaultAvoidanceEnabled,
+      topologyAvoidanceEnabled: form.topologyAvoidanceEnabled,
+      minResidencySeconds: Number(form.minResidencySeconds),
+      failbackGainMs: Number(form.failbackGainMs),
+      failbackGainPercent: Number(form.failbackGainPercent),
+      manualControlMode: form.routingMode === 'failover' ? form.manualControlMode : 'auto',
+      lockedMemberId: form.routingMode === 'failover' && form.manualControlMode === 'lock' ? Number(form.lockedMemberId) : undefined,
     });
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || '保存入口容灾失败');
@@ -322,12 +350,14 @@ export default function CrossEntryFailoverPage() {
             const qualityEnabled = truthy(group.qualityEnabled || false);
             const fixedTargetEnabled = qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
             const flapGuardEnabled = qualityEnabled && truthy(group.qualityFlapGuardEnabled ?? true);
+            const smartSelectionEnabled = qualityEnabled && truthy(group.smartSelectionEnabled ?? true);
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
+            const manualMeta = manualControlMeta(group.manualControlMode);
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{smartSelectionEnabled && <Chip size="sm" variant="flat" color="success">智能选择</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}{group.manualControlMode && group.manualControlMode !== 'auto' && <Chip size="sm" variant="flat" color={manualMeta.color}>{manualMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -434,7 +464,30 @@ export default function CrossEntryFailoverPage() {
 
             <section className="border-t border-divider pt-4"><h3 className="text-sm font-semibold">失效检测</h3><div className="mt-3 grid grid-cols-3 gap-2">{(Object.keys(profiles) as PresetProfileKey[]).map(key => <button type="button" key={key} onClick={() => selectProfile(key)} className={`min-h-20 rounded-md border p-3 text-left transition-colors ${form.profile === key ? 'border-primary bg-primary-50 dark:bg-primary-500/10' : 'border-divider hover:bg-default-100'}`}><span className="text-sm font-medium">{profiles[key].label}</span><span className="mt-1 block text-xs text-default-500">{profiles[key].note}</span></button>)}</div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Input type="number" label="探测间隔（毫秒）" value={form.probeIntervalMs} onValueChange={probeIntervalMs => setForm({ ...form, profile: 'custom', probeIntervalMs })} /><Input type="number" label="连接超时（毫秒）" value={form.connectTimeoutMs} onValueChange={connectTimeoutMs => setForm({ ...form, profile: 'custom', connectTimeoutMs })} /><Input type="number" label="连续失败次数" value={form.failureThreshold} onValueChange={failureThreshold => setForm({ ...form, profile: 'custom', failureThreshold })} /><Input type="number" label="恢复确认次数" value={form.recoveryThreshold} onValueChange={recoveryThreshold => setForm({ ...form, profile: 'custom', recoveryThreshold })} /><Input type="number" label="回切冷却（秒）" value={form.cooldownSeconds} onValueChange={cooldownSeconds => setForm({ ...form, profile: 'custom', cooldownSeconds })} /></div>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">{form.routingMode === 'failover' ? <Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch> : <span className="text-xs text-default-500">多入口模式不回切，健康成员会自动恢复到 DNS 记录。</span>}<Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-center">
+                {form.routingMode === 'failover' ? <Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch> : <span className="text-xs text-default-500">多入口模式不回切，健康成员会自动恢复到 DNS 记录。</span>}
+                <Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch>
+                {form.routingMode === 'failover' && (
+                  <Select
+                    label="自动控制"
+                    selectedKeys={[form.manualControlMode]}
+                    onSelectionChange={keys => {
+                      const manualControlMode = String(Array.from(keys)[0] || 'auto') as 'auto' | 'pause' | 'lock';
+                      setForm({ ...form, manualControlMode, lockedMemberId: manualControlMode === 'lock' ? form.lockedMemberId : '' });
+                    }}
+                    disabledKeys={!form.id ? ['lock'] : []}
+                  >
+                    <SelectItem key="auto">自动选择</SelectItem>
+                    <SelectItem key="pause">暂停自动切换</SelectItem>
+                    <SelectItem key="lock">锁定指定入口</SelectItem>
+                  </Select>
+                )}
+                {form.routingMode === 'failover' && form.manualControlMode === 'lock' && (
+                  <Select label="锁定入口" placeholder="选择要固定承载的入口" selectedKeys={form.lockedMemberId ? [form.lockedMemberId] : []} onSelectionChange={keys => setForm({ ...form, lockedMemberId: String(Array.from(keys)[0] || '') })}>
+                    {lockableMembers.map((member, index) => <SelectItem key={String(member.id)} textValue={`${member.nodeName} ${member.entryAddress}:${member.entryPort}`}>{index === 0 ? '主入口' : `备用 ${index}`} · {member.nodeName} · {member.entryAddress}:{member.entryPort}</SelectItem>)}
+                  </Select>
+                )}
+              </div>
             </section>
 
             <section className="border-t border-divider pt-4">
@@ -489,6 +542,20 @@ export default function CrossEntryFailoverPage() {
                     <Input type="number" label="触发次数" min={2} max={20} value={form.qualityFlapThreshold} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapThreshold => setForm({ ...form, qualityFlapThreshold })} />
                     <Input type="number" label="保护时长（秒）" min={60} value={form.qualityFlapSuppressSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapSuppressSeconds => setForm({ ...form, qualityFlapSuppressSeconds })} />
                     <p className="text-xs leading-5 text-default-500 sm:col-span-4">默认规则：{durationText(Number(form.qualityFlapWindowSeconds))}内质量劣化 {form.qualityFlapThreshold || 3} 次，则该入口进入 {durationText(Number(form.qualityFlapSuppressSeconds))} 保护期。保护期内不会自动回切到它，也不会优先切到它，避免主入口 10ms/200ms 来回跳造成体验抖动。</p>
+                  </div>
+                  <div className="grid gap-3 border-t border-divider pt-3">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Switch isSelected={form.smartSelectionEnabled} onValueChange={smartSelectionEnabled => setForm({ ...form, smartSelectionEnabled })}>启用智能选择</Switch>
+                      <Switch isSelected={form.degradedFallbackEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={degradedFallbackEnabled => setForm({ ...form, degradedFallbackEnabled })}>全部差时差中选优</Switch>
+                      <Switch isSelected={form.sameFaultAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={sameFaultAvoidanceEnabled => setForm({ ...form, sameFaultAvoidanceEnabled })}>避开同类故障</Switch>
+                      <Switch isSelected={form.topologyAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={topologyAvoidanceEnabled => setForm({ ...form, topologyAvoidanceEnabled })}>避开同节点/同网段</Switch>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <Input type="number" label="最短驻留（秒）" min={0} value={form.minResidencySeconds} isDisabled={!form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} />
+                      <Input type="number" label="回切至少快 ms" min={0} value={form.failbackGainMs} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainMs => setForm({ ...form, failbackGainMs })} />
+                      <Input type="number" label="回切至少快 %" min={0} max={100} value={form.failbackGainPercent} isDisabled={!form.smartSelectionEnabled || !form.autoFailback} onValueChange={failbackGainPercent => setForm({ ...form, failbackGainPercent })} />
+                    </div>
+                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、延迟、抖动次数、失败次数和拓扑关系。主入口劣化时优先切到没有同类问题的备用；如果全部入口都差，则在差的线路里选当前综合最好的。</p>
                   </div>
                 </div>
               )}

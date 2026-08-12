@@ -80,6 +80,114 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
+    void degradedFallbackChoosesBestBadBackupWhenEveryEntryIsBad() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 180, 0.0, 1, 0, 10, "203.0.113.10", "latency"),
+                        qualityMember(2, 1, true, 10, true, true, false, 70, 0.0, 0, 0, 11, "198.51.100.20", "latency"),
+                        qualityMember(3, 2, true, 10, true, true, false, 120, 5.0, 0, 0, 12, "192.0.2.30", "latency")
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(2L, decision.targetId());
+        assertEquals("全部入口质量不佳，选择差中最优", decision.reason());
+    }
+
+    @Test
+    void sameFaultAvoidancePrefersBackupWithoutTheActiveFault() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 150, 40.0, 0, 0, 10, "203.0.113.10", "loss"),
+                        qualityMember(2, 1, true, 10, false, true, false, 18, 35.0, 0, 0, 11, "198.51.100.20", "loss"),
+                        qualityMember(3, 2, true, 10, false, true, false, 25, 0.0, 0, 0, 12, "192.0.2.30", "none")
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
+    @Test
+    void topologyAvoidancePrefersDifferentAddressGroup() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 150, 0.0, 0, 0, 10, "203.0.113.10", "latency"),
+                        qualityMember(2, 1, true, 10, false, true, false, 18, 0.0, 0, 0, 11, "203.0.113.20", "none"),
+                        qualityMember(3, 2, true, 10, false, true, false, 25, 0.0, 0, 0, 12, "198.51.100.30", "none")
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
+    @Test
+    void minimumResidencyBlocksQualitySwitch() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 10), member(2, 1, true, 5)),
+                1L,
+                settings(false, 3, true, false, true, true, true, 10, 20.0, "auto", null));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("当前入口驻留时间不足", decision.reason());
+    }
+
+    @Test
+    void failbackRequiresMeaningfulLatencyBenefit() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 45, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                2L,
+                settings(true, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("主入口恢复但收益不足", decision.reason());
+    }
+
+    @Test
+    void failbackSucceedsWhenLatencyBenefitIsLargeEnough() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 35, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                2L,
+                settings(true, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(1L, decision.targetId());
+    }
+
+    @Test
+    void manualPauseKeepsCurrentEntry() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, false, 0), member(2, 1, true, 5)),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "pause", null));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("已暂停自动切换", decision.reason());
+    }
+
+    @Test
+    void manualLockSwitchesToLockedHealthyEntry() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 5), member(2, 1, true, 5)),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "lock", 2L));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(2L, decision.targetId());
+        assertEquals("手动锁定入口", decision.reason());
+    }
+
+    @Test
     void strictFixedTargetSkipsBackupThatDoesNotMeetTarget() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(degradedMember(1, 0, true, 10), unacceptableMember(2, 1, true, 10), member(3, 2, true, 10)),
@@ -113,5 +221,23 @@ class CrossEntryFailoverPolicyTests {
 
     private CrossEntryFailoverPolicy.Member suppressedMember(long id, int priority, boolean healthy, int successCount) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true, true);
+    }
+
+    private CrossEntryFailoverPolicy.Member qualityMember(long id, int priority, boolean healthy, int successCount,
+                                                         boolean degraded, boolean acceptable, boolean suppressed,
+                                                         Integer latencyMs, Double lossPercent, int flapCount,
+                                                         int failCount, long nodeId, String address, String faultKind) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, degraded, acceptable, suppressed,
+                latencyMs, lossPercent, flapCount, failCount, nodeId, address, faultKind);
+    }
+
+    private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,
+                                                      boolean cooldownElapsed, boolean minResidencyElapsed,
+                                                      boolean degradedFallbackEnabled, boolean sameFaultAvoidanceEnabled,
+                                                      boolean topologyAvoidanceEnabled, int failbackGainMs,
+                                                      double failbackGainPercent, String manualControlMode, Long lockedMemberId) {
+        return new CrossEntryFailoverPolicy.Settings(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
+                degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled, failbackGainMs,
+                failbackGainPercent, manualControlMode, lockedMemberId);
     }
 }
