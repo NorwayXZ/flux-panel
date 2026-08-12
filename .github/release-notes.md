@@ -1,3 +1,9 @@
+## 2.50.1 Cross-entry quality probe hotfix
+
+- Fixes a production edge case where a remote quality probe reported success without usable latency samples, causing Cross-entry Failover group checks to loop with a P95 calculation error.
+- Empty or malformed Agent quality metrics are now treated as an invalid probe result instead of crashing the scheduler; the member records a clear probe error and the next backup can still be evaluated.
+- Keeps the 2.50.0 failover behavior unchanged: backup preheat, DNS provider confirmation, post-switch verification with rollback, P95/jitter checks, flap guard, and topology/fault avoidance remain active.
+
 ## 2.50.0 Cross-entry failover verification and preheat
 
 - Adds P95 TCP latency and jitter into Cross-entry Failover quality decisions so short spikes can trigger quality failover even when average latency still looks acceptable.

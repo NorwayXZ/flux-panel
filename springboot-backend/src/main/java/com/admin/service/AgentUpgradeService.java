@@ -26,8 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.50.0";
-    private static final String INSTALLER_RELEASE = "2.50.0";
+    public static final String TARGET_VERSION = "2.50.1";
+    private static final String INSTALLER_RELEASE = "2.50.1";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";

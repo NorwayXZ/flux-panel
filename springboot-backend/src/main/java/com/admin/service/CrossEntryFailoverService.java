@@ -530,15 +530,15 @@ public class CrossEntryFailoverService {
         boolean success = data.getBooleanValue("success");
         double loss = data.containsKey("packetLoss") ? data.getDoubleValue("packetLoss") : (success ? 0.0 : 100.0);
         List<Integer> samples = numericSamples(data.getJSONArray("samples"));
-        Integer latency = success && data.containsKey("averageTime")
-                ? Math.max(1, (int) Math.round(data.getDoubleValue("averageTime")))
-                : average(samples);
-        Integer p95 = data.containsKey("p95Time")
-                ? Math.max(1, (int) Math.round(data.getDoubleValue("p95Time")))
-                : percentile(samples, 0.95);
-        Integer jitter = data.containsKey("jitter")
-                ? Math.max(0, (int) Math.round(data.getDoubleValue("jitter")))
-                : jitter(samples);
+        Integer latency = success ? roundedMetric(data, "averageTime", 1) : null;
+        if (latency == null) latency = average(samples);
+        Integer p95 = roundedMetric(data, "p95Time", 1);
+        if (p95 == null) p95 = percentile(samples, 0.95);
+        Integer jitter = roundedMetric(data, "jitter", 0);
+        if (jitter == null) jitter = jitter(samples);
+        if (success && latency == null) {
+            return new QualityProbeResult(member, false, null, null, null, 100.0, "探测源没有返回有效延迟样本");
+        }
         String error = success ? null : StringUtils.defaultIfBlank(data.getString("errorMessage"), "TCP 探测失败");
         return new QualityProbeResult(member, success, latency, p95, jitter, loss, error);
     }
@@ -1350,6 +1350,24 @@ public class CrossEntryFailoverService {
         Collections.sort(sorted);
         int index = (int) Math.ceil(percentile * sorted.size()) - 1;
         return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
+    }
+
+    static Integer roundedMetric(JSONObject data, String key, int min) {
+        if (data == null || !data.containsKey(key)) return null;
+        Object raw = data.get(key);
+        if (raw == null) return null;
+        double value;
+        if (raw instanceof Number number) {
+            value = number.doubleValue();
+        } else {
+            try {
+                value = Double.parseDouble(raw.toString());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) return null;
+        return Math.max(min, (int) Math.round(value));
     }
 
     private Integer jitter(List<Integer> samples) {
