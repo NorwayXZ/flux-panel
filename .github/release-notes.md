@@ -1,3 +1,9 @@
+## 2.49.5 Fixed latency target for cross-entry quality failover
+
+- Adds an optional fixed latency target for Cross-entry Failover quality mode. Low-latency groups can now treat sustained latency above a configured target, such as 20 ms, as quality degradation even when baseline-relative rules would still allow it.
+- Adds a strict target mode that only switches to backup entries whose latest quality probe is at or below the configured target latency.
+- Keeps the feature disabled by default so existing mixed-region groups continue using baseline-first quality evaluation unchanged. This is a panel-only release; Agent and Connector remain `2.49.1`.
+
 ## 2.49.4 Cross-entry quality baseline tuning
 
 - Changes quality failover to evaluate latency primarily against each entry member's learned baseline. A high-latency route such as US West to Hong Kong no longer degrades merely because its normal latency is above the default 100 ms fallback threshold.

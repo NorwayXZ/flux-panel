@@ -70,11 +70,25 @@ class CrossEntryFailoverPolicyTests {
         assertEquals("当前入口质量劣化，但没有质量正常的备用入口", decision.reason());
     }
 
+    @Test
+    void strictFixedTargetSkipsBackupThatDoesNotMeetTarget() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 10), unacceptableMember(2, 1, true, 10), member(3, 2, true, 10)),
+                1L, false, 3, true);
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
     private CrossEntryFailoverPolicy.Member member(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true);
     }
 
     private CrossEntryFailoverPolicy.Member degradedMember(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, true);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, true, true);
+    }
+
+    private CrossEntryFailoverPolicy.Member unacceptableMember(long id, int priority, boolean healthy, int successCount) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, false);
     }
 }

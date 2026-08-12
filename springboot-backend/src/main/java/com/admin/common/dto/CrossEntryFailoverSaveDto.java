@@ -50,6 +50,9 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityDegradeSamples = 3;
     private Integer qualityRecoverSamples = 3;
     private Double qualityLossThresholdPercent = 30.0;
+    private Boolean qualityFixedTargetEnabled = false;
+    private Integer qualityFixedTargetMs = 20;
+    private Boolean qualityFixedTargetStrict = true;
 
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;

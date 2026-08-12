@@ -24,6 +24,7 @@ public final class CrossEntryFailoverPolicy {
             if (!cooldownElapsed) return Decision.stay("质量切换仍在冷却期");
             Member target = members.stream()
                     .filter(member -> member.healthy() && !member.degraded() && !Objects.equals(member.id(), active.id()))
+                    .filter(Member::acceptableForQualitySwitch)
                     .min(Comparator.comparingInt(Member::priority)).orElse(null);
             if (target != null) return Decision.switchTo(target.id(), "当前入口质量劣化，自动切换");
             return Decision.stay("当前入口质量劣化，但没有质量正常的备用入口");
@@ -37,11 +38,15 @@ public final class CrossEntryFailoverPolicy {
         if (preferred.degraded()) {
             return Decision.stay("主入口质量尚未恢复");
         }
+        if (!preferred.acceptableForQualitySwitch()) {
+            return Decision.stay("主入口尚未达到固定延迟目标");
+        }
         if (!cooldownElapsed) return Decision.stay("回切仍在冷却期");
         return Decision.switchTo(preferred.id(), "主入口持续恢复，自动回切");
     }
 
-    public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded) {
+    public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
+                         boolean acceptableForQualitySwitch) {
     }
 
     public record Decision(Long targetId, boolean switchRequired, String reason) {

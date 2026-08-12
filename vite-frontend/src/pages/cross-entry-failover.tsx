@@ -48,6 +48,7 @@ const emptyForm = {
   qualityEnabled: false, qualityProbeSourceType: 'panel' as 'panel' | 'node' | 'connector', qualityProbeSourceId: '',
   qualityProbeCount: '4', qualityDegradeThresholdMs: '100', qualityRecoverThresholdMs: '60', qualityDegradeFactor: '3',
   qualityRecoverFactor: '1.8', qualityDegradeSamples: '3', qualityRecoverSamples: '3', qualityLossThresholdPercent: '30',
+  qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   memberForwardIds: ['', ''],
 };
 
@@ -169,6 +170,9 @@ export default function CrossEntryFailoverPage() {
       qualityDegradeSamples: String(group.qualityDegradeSamples || 3),
       qualityRecoverSamples: String(group.qualityRecoverSamples || 3),
       qualityLossThresholdPercent: String(group.qualityLossThresholdPercent || 30),
+      qualityFixedTargetEnabled: truthy(group.qualityFixedTargetEnabled || false),
+      qualityFixedTargetMs: String(group.qualityFixedTargetMs || 20),
+      qualityFixedTargetStrict: !Number.isFinite(Number(group.qualityFixedTargetStrict)) ? truthy(group.qualityFixedTargetStrict ?? true) : Number(group.qualityFixedTargetStrict) !== 0,
       memberForwardIds: group.members.map(item => String(item.forwardId)),
     });
     setFormOpen(true);
@@ -212,6 +216,9 @@ export default function CrossEntryFailoverPage() {
       qualityDegradeSamples: Number(form.qualityDegradeSamples),
       qualityRecoverSamples: Number(form.qualityRecoverSamples),
       qualityLossThresholdPercent: Number(form.qualityLossThresholdPercent),
+      qualityFixedTargetEnabled: form.qualityFixedTargetEnabled,
+      qualityFixedTargetMs: Number(form.qualityFixedTargetMs),
+      qualityFixedTargetStrict: form.qualityFixedTargetStrict,
     });
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || '保存入口容灾失败');
@@ -296,12 +303,13 @@ export default function CrossEntryFailoverPage() {
             const active = group.members.find(item => item.id === group.activeMemberId);
             const activeActive = group.routingMode === 'active_active';
             const qualityEnabled = truthy(group.qualityEnabled || false);
+            const fixedTargetEnabled = qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -449,6 +457,12 @@ export default function CrossEntryFailoverPage() {
                     <Input type="number" label="基线恢复倍数" min={1} step={0.1} value={form.qualityRecoverFactor} onValueChange={qualityRecoverFactor => setForm({ ...form, qualityRecoverFactor })} />
                     <Input type="number" label="劣化确认次数" min={1} max={20} value={form.qualityDegradeSamples} onValueChange={qualityDegradeSamples => setForm({ ...form, qualityDegradeSamples })} />
                     <Input type="number" label="恢复确认次数" min={1} max={20} value={form.qualityRecoverSamples} onValueChange={qualityRecoverSamples => setForm({ ...form, qualityRecoverSamples })} />
+                  </div>
+                  <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
+                    <Switch isSelected={form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetEnabled => setForm({ ...form, qualityFixedTargetEnabled })}>启用固定延迟目标</Switch>
+                    <Input type="number" label="目标延迟 ms" min={1} value={form.qualityFixedTargetMs} isDisabled={!form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetMs => setForm({ ...form, qualityFixedTargetMs })} />
+                    <Switch isSelected={form.qualityFixedTargetStrict} isDisabled={!form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetStrict => setForm({ ...form, qualityFixedTargetStrict })}>只切到达标备用入口</Switch>
+                    <p className="text-xs leading-5 text-default-500">开启后，入口连续超过目标延迟会算作质量劣化；严格模式下，只会切到最近探测延迟小于等于目标值的备用入口。</p>
                   </div>
                 </div>
               )}

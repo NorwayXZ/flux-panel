@@ -115,7 +115,8 @@ public class CrossEntryFailoverService {
                         + "quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                         + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
                         + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
-                        + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_probe_status AS qualityProbeStatus,"
+                        + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
+                        + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
                         + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
@@ -198,29 +199,33 @@ public class CrossEntryFailoverService {
                                 + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
                                 + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,routing_mode,quality_enabled,quality_probe_source_type,"
                                 + "quality_probe_source_id,quality_probe_count,quality_degrade_threshold_ms,quality_recover_threshold_ms,quality_degrade_factor,"
-                                + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,quality_probe_status,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,quality_fixed_target_enabled,"
+                                + "quality_fixed_target_ms,quality_fixed_target_strict,quality_probe_status,enabled,state,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
                         dto.getQualityEnabled(), dto.getQualityProbeSourceType(), dto.getQualityProbeSourceId(), dto.getQualityProbeCount(),
                         dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(), dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(),
                         dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(), dto.getQualityLossThresholdPercent(),
+                        dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,dns_zone_id=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
                                 + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,cooldown_seconds=?,"
                                 + "auto_failback=?,routing_mode=?,quality_enabled=?,quality_probe_source_type=?,quality_probe_source_id=?,"
-                                + "quality_probe_count=?,quality_degrade_threshold_ms=?,quality_recover_threshold_ms=?,quality_degrade_factor=?,"
+                        + "quality_probe_count=?,quality_degrade_threshold_ms=?,quality_recover_threshold_ms=?,quality_degrade_factor=?,"
                                 + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
+                                + "quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
                         dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(), dto.getQualityEnabled(), dto.getQualityProbeSourceType(),
                         dto.getQualityProbeSourceId(), dto.getQualityProbeCount(), dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(),
                         dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(), dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(),
-                        dto.getQualityLossThresholdPercent(), dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
+                        dto.getQualityLossThresholdPercent(), dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
+                        dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
@@ -385,7 +390,8 @@ public class CrossEntryFailoverService {
                 .map(member -> new CrossEntryFailoverPolicy.Member(
                         number(member.get("id")).longValue(), number(member.get("priority")).intValue(),
                         "healthy".equals(member.get("status")), number(member.get("successCount")).intValue(),
-                        useQualityDecision && isQualityDegraded(member)))
+                        useQualityDecision && isQualityDegraded(member),
+                        !useQualityDecision || acceptableForQualitySwitch(group, member)))
                 .collect(Collectors.toList());
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 snapshots, active == null ? null : number(active.get("id")).longValue(), bool(group.get("autoFailback")),
@@ -513,7 +519,8 @@ public class CrossEntryFailoverService {
                 new CrossEntryQualityEvaluator.Settings(number(group.get("qualityDegradeThresholdMs")).intValue(),
                         number(group.get("qualityRecoverThresholdMs")).intValue(), doubleNumber(group.get("qualityDegradeFactor")),
                         doubleNumber(group.get("qualityRecoverFactor")), number(group.get("qualityDegradeSamples")).intValue(),
-                        number(group.get("qualityRecoverSamples")).intValue(), doubleNumber(group.get("qualityLossThresholdPercent"))));
+                        number(group.get("qualityRecoverSamples")).intValue(), doubleNumber(group.get("qualityLossThresholdPercent")),
+                        bool(group.get("qualityFixedTargetEnabled")), number(group.get("qualityFixedTargetMs")).intValue()));
         if (loss == null) loss = result.success() ? 0.0 : 100.0;
         jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
                         + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
@@ -811,6 +818,9 @@ public class CrossEntryFailoverService {
         dto.setQualityDegradeSamples(clamp(dto.getQualityDegradeSamples(), 1, 20));
         dto.setQualityRecoverSamples(clamp(dto.getQualityRecoverSamples(), 1, 20));
         dto.setQualityLossThresholdPercent(clampDouble(dto.getQualityLossThresholdPercent(), 1.0, 100.0));
+        dto.setQualityFixedTargetEnabled(Boolean.TRUE.equals(dto.getQualityFixedTargetEnabled()));
+        dto.setQualityFixedTargetMs(clamp(dto.getQualityFixedTargetMs(), 1, 30000));
+        dto.setQualityFixedTargetStrict(!Boolean.FALSE.equals(dto.getQualityFixedTargetStrict()));
     }
 
     private Map<String, Object> loadGroup(long id) {
@@ -821,7 +831,8 @@ public class CrossEntryFailoverService {
                 + "quality_probe_source_id AS qualityProbeSourceId,quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                 + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
                 + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
-                + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_probe_status AS qualityProbeStatus,"
+                + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_fixed_target_enabled AS qualityFixedTargetEnabled,"
+                + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
@@ -958,6 +969,14 @@ public class CrossEntryFailoverService {
 
     private boolean isQualityDegraded(Map<String, Object> member) {
         return member != null && "degraded".equals(Objects.toString(member.get("qualityState"), "unknown"));
+    }
+
+    private boolean acceptableForQualitySwitch(Map<String, Object> group, Map<String, Object> member) {
+        if (member == null || !bool(group.get("qualityFixedTargetEnabled")) || !bool(group.get("qualityFixedTargetStrict"))) {
+            return true;
+        }
+        Integer latency = nullableInt(member.get("qualityLatencyMs"));
+        return latency != null && latency <= number(group.get("qualityFixedTargetMs")).intValue();
     }
 
     private JSONObject responseData(Object data) {

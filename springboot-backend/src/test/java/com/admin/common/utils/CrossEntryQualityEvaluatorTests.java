@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CrossEntryQualityEvaluatorTests {
     private final CrossEntryQualityEvaluator.Settings defaults =
-            new CrossEntryQualityEvaluator.Settings(100, 60, 3.0, 1.8, 3, 3, 30.0);
+            new CrossEntryQualityEvaluator.Settings(100, 60, 3.0, 1.8, 3, 3, 30.0, false, 20);
 
     @Test
     void learnedHighLatencyBaselineDoesNotTripDefaultAbsoluteThreshold() {
@@ -52,5 +52,31 @@ class CrossEntryQualityEvaluatorTests {
         assertFalse(decision.bad());
         assertEquals(170, decision.baselineMs());
         assertEquals("warming", decision.state());
+    }
+
+    @Test
+    void fixedTargetCanDegradeLowLatencyGroupBeforeBaselineMultiplier() {
+        CrossEntryQualityEvaluator.Settings settings =
+                new CrossEntryQualityEvaluator.Settings(100, 60, 3.0, 1.8, 3, 3, 30.0, true, 20);
+        CrossEntryQualityEvaluator.Decision decision = CrossEntryQualityEvaluator.evaluate(
+                new CrossEntryQualityEvaluator.Snapshot("healthy", 15, 25, 0.0, true, 2, 0),
+                settings);
+
+        assertTrue(decision.bad());
+        assertTrue(decision.fixedLatencyBad());
+        assertEquals("degraded", decision.state());
+    }
+
+    @Test
+    void fixedTargetBoundaryAllowsTargetLatency() {
+        CrossEntryQualityEvaluator.Settings settings =
+                new CrossEntryQualityEvaluator.Settings(100, 60, 3.0, 1.8, 3, 3, 30.0, true, 20);
+        CrossEntryQualityEvaluator.Decision decision = CrossEntryQualityEvaluator.evaluate(
+                new CrossEntryQualityEvaluator.Snapshot("healthy", 15, 20, 0.0, true, 0, 5),
+                settings);
+
+        assertFalse(decision.bad());
+        assertFalse(decision.fixedLatencyBad());
+        assertEquals("healthy", decision.state());
     }
 }

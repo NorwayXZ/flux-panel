@@ -690,6 +690,9 @@ export interface CrossEntryGroup {
   qualityDegradeSamples?: number;
   qualityRecoverSamples?: number;
   qualityLossThresholdPercent?: number;
+  qualityFixedTargetEnabled?: boolean | number;
+  qualityFixedTargetMs?: number;
+  qualityFixedTargetStrict?: boolean | number;
   qualityProbeStatus?: 'disabled' | 'pending' | 'ok' | 'warning' | 'failed';
   qualityProbeError?: string;
   qualityProbeAt?: number;

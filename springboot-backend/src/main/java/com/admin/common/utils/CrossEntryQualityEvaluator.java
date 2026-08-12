@@ -13,9 +13,11 @@ public final class CrossEntryQualityEvaluator {
         Double loss = snapshot.lossPercent();
 
         boolean lossBad = loss != null && loss >= settings.lossThresholdPercent();
-        boolean latencyBad = snapshot.success() && latency != null && referenceBaseline != null
+        boolean fixedLatencyBad = snapshot.success() && latency != null && settings.fixedTargetEnabled()
+                && latency > settings.fixedTargetMs();
+        boolean latencyBad = fixedLatencyBad || (snapshot.success() && latency != null && referenceBaseline != null
                 && (latency >= referenceBaseline * settings.degradeFactor()
-                || (settings.degradeThresholdMs() > referenceBaseline && latency >= settings.degradeThresholdMs()));
+                || (settings.degradeThresholdMs() > referenceBaseline && latency >= settings.degradeThresholdMs())));
         boolean bad = !snapshot.success() || lossBad || latencyBad;
         boolean good = snapshot.success() && latency != null && !lossBad
                 && (referenceBaseline == null
@@ -43,7 +45,7 @@ public final class CrossEntryQualityEvaluator {
                 nextState = "warming";
             }
         }
-        return new Decision(nextState, nextBaseline, badCount, goodCount, bad, good, latencyBad, lossBad);
+        return new Decision(nextState, nextBaseline, badCount, goodCount, bad, good, latencyBad, lossBad, fixedLatencyBad);
     }
 
     private static Integer nextBaseline(Integer referenceBaseline, Integer latency, boolean good, Settings settings) {
@@ -66,10 +68,10 @@ public final class CrossEntryQualityEvaluator {
 
     public record Settings(int degradeThresholdMs, int recoverThresholdMs, double degradeFactor,
                            double recoverFactor, int degradeSamples, int recoverSamples,
-                           double lossThresholdPercent) {
+                           double lossThresholdPercent, boolean fixedTargetEnabled, int fixedTargetMs) {
     }
 
     public record Decision(String state, Integer baselineMs, int badCount, int goodCount,
-                           boolean bad, boolean good, boolean latencyBad, boolean lossBad) {
+                           boolean bad, boolean good, boolean latencyBad, boolean lossBad, boolean fixedLatencyBad) {
     }
 }
