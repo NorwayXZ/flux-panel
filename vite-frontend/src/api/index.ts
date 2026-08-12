@@ -650,6 +650,14 @@ export interface CrossEntryMember {
   failCount: number;
   successCount: number;
   latencyMs?: number;
+  qualityLatencyMs?: number;
+  qualityLossPercent?: number;
+  qualityBaselineMs?: number;
+  qualityState?: 'unknown' | 'warming' | 'healthy' | 'degraded';
+  qualityBadCount?: number;
+  qualityGoodCount?: number;
+  qualityLastError?: string;
+  qualityCheckedAt?: number;
   lastError?: string;
   lastCheckedAt?: number;
 }
@@ -671,6 +679,20 @@ export interface CrossEntryGroup {
   cooldownSeconds: number;
   autoFailback: boolean | number;
   routingMode?: 'failover' | 'active_active';
+  qualityEnabled?: boolean | number;
+  qualityProbeSourceType?: 'panel' | 'node' | 'connector';
+  qualityProbeSourceId?: number;
+  qualityProbeCount?: number;
+  qualityDegradeThresholdMs?: number;
+  qualityRecoverThresholdMs?: number;
+  qualityDegradeFactor?: number;
+  qualityRecoverFactor?: number;
+  qualityDegradeSamples?: number;
+  qualityRecoverSamples?: number;
+  qualityLossThresholdPercent?: number;
+  qualityProbeStatus?: 'disabled' | 'pending' | 'ok' | 'warning' | 'failed';
+  qualityProbeError?: string;
+  qualityProbeAt?: number;
   enabled: boolean | number;
   state: 'unknown' | 'healthy' | 'degraded' | 'offline' | 'switching' | 'error';
   activeMemberId?: number;
@@ -706,10 +728,29 @@ export interface CrossEntryEvent {
   createdTime: number;
 }
 
+export interface CrossEntryProbeSource {
+  id: number;
+  name: string;
+  address?: string;
+  status?: number;
+  version?: string;
+  platform?: string;
+  remoteIp?: string;
+  lastSeen?: number;
+}
+
+export interface CrossEntryProbeSourceOverview {
+  nodes: CrossEntryProbeSource[];
+  connectors: CrossEntryProbeSource[];
+  minimumRemoteVersion: string;
+}
+
 export const getCrossEntryGroups = () =>
   Network.post<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>("/cross-entry-failover/list");
 export const getCrossEntryForwardOptions = () =>
   Network.post<CrossEntryForwardOption[]>("/cross-entry-failover/eligible-forwards");
+export const getCrossEntryProbeSources = () =>
+  Network.post<CrossEntryProbeSourceOverview>("/cross-entry-failover/probe-sources");
 export const saveCrossEntryGroup = (data: any) => Network.post<{ id: number }>("/cross-entry-failover/save", data);
 export const deleteCrossEntryGroup = (id: number) => Network.post("/cross-entry-failover/delete", { id });
 export const checkCrossEntryGroup = (id: number) =>

@@ -36,6 +36,12 @@ public class CrossEntryFailoverController {
         return service.listEligibleForwards();
     }
 
+    @PostMapping("/probe-sources")
+    @RequireRole
+    public R probeSources() {
+        return service.listProbeSources();
+    }
+
     @LogAnnotation
     @PostMapping("/save")
     @RequireRole

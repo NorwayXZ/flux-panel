@@ -17,11 +17,13 @@ import {
   getCrossEntryEvents,
   getCrossEntryForwardOptions,
   getCrossEntryGroups,
+  getCrossEntryProbeSources,
   getDnsZoneOptions,
   saveCrossEntryGroup,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
   type CrossEntryGroup,
+  type CrossEntryProbeSourceOverview,
   type CrossEntrySummary,
   type DnsZoneOption,
 } from '@/api';
@@ -37,15 +39,21 @@ const profiles: Record<PresetProfileKey, { label: string; interval: number; time
 };
 
 const emptySummary: CrossEntrySummary = { total: 0, enabled: 0, healthy: 0, degraded: 0, switches: 0 };
+const emptyProbeSources: CrossEntryProbeSourceOverview = { nodes: [], connectors: [], minimumRemoteVersion: '2.19.0' };
 const emptyForm = {
   id: undefined as number | undefined,
   name: '', domain: '', dnsZoneId: '', recordId: '', recordType: 'A' as 'A' | 'AAAA', ttl: '60',
   profile: 'fast' as ProfileKey, probeIntervalMs: '2000', connectTimeoutMs: '1200', failureThreshold: '2',
-  recoveryThreshold: '3', cooldownSeconds: '30', autoFailback: false, routingMode: 'failover' as 'failover' | 'active_active', enabled: true, memberForwardIds: ['', ''],
+  recoveryThreshold: '3', cooldownSeconds: '30', autoFailback: false, routingMode: 'failover' as 'failover' | 'active_active', enabled: true,
+  qualityEnabled: false, qualityProbeSourceType: 'panel' as 'panel' | 'node' | 'connector', qualityProbeSourceId: '',
+  qualityProbeCount: '4', qualityDegradeThresholdMs: '100', qualityRecoverThresholdMs: '60', qualityDegradeFactor: '3',
+  qualityRecoverFactor: '1.8', qualityDegradeSamples: '3', qualityRecoverSamples: '3', qualityLossThresholdPercent: '30',
+  memberForwardIds: ['', ''],
 };
 
 const truthy = (value: boolean | number) => value === true || value === 1;
 const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
+const metricText = (value?: number, unit = '') => typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 10) / 10}${unit}` : '-';
 const eventRouteText = (event?: CrossEntryEvent) => {
   if (!event) return '暂无自动切换';
   const from = event.fromForwardName || event.fromNodeName || '初始状态';
@@ -66,6 +74,19 @@ const stateMeta = (state: CrossEntryGroup['state']) => ({
   error: { label: '切换失败', color: 'danger' as const },
   unknown: { label: '等待检测', color: 'default' as const },
 })[state] || { label: '等待检测', color: 'default' as const };
+const qualityMeta = (state?: CrossEntryGroup['members'][number]['qualityState']) => ({
+  healthy: { label: '质量正常', color: 'success' as const },
+  degraded: { label: '质量劣化', color: 'warning' as const },
+  warming: { label: '学习中', color: 'secondary' as const },
+  unknown: { label: '待学习', color: 'default' as const },
+})[state || 'unknown'] || { label: '待学习', color: 'default' as const };
+const qualityProbeMeta = (status?: CrossEntryGroup['qualityProbeStatus']) => ({
+  ok: { label: '探测正常', color: 'success' as const },
+  warning: { label: '质量告警', color: 'warning' as const },
+  failed: { label: '探测失败', color: 'danger' as const },
+  pending: { label: '等待探测', color: 'secondary' as const },
+  disabled: { label: '未启用', color: 'default' as const },
+})[status || 'disabled'] || { label: '未启用', color: 'default' as const };
 
 export default function CrossEntryFailoverPage() {
   const navigate = useNavigate();
@@ -74,6 +95,7 @@ export default function CrossEntryFailoverPage() {
   const [summary, setSummary] = useState<CrossEntrySummary>(emptySummary);
   const [forwardOptions, setForwardOptions] = useState<CrossEntryForwardOption[]>([]);
   const [zoneOptions, setZoneOptions] = useState<DnsZoneOption[]>([]);
+  const [probeSources, setProbeSources] = useState<CrossEntryProbeSourceOverview>(emptyProbeSources);
   const [formOpen, setFormOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [events, setEvents] = useState<CrossEntryEvent[]>([]);
@@ -84,13 +106,20 @@ export default function CrossEntryFailoverPage() {
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    const [groupRes, optionRes, zoneRes] = await Promise.all([getCrossEntryGroups(), getCrossEntryForwardOptions(), getDnsZoneOptions()]);
+    const [groupRes, optionRes, zoneRes] = await Promise.all([
+      getCrossEntryGroups(),
+      getCrossEntryForwardOptions(),
+      getDnsZoneOptions(),
+    ]);
     if (groupRes.code === 0) {
       setGroups(groupRes.data?.groups || []);
       setSummary(groupRes.data?.summary || emptySummary);
     } else if (!quiet) toast.error(groupRes.msg || '加载入口容灾失败');
     if (optionRes.code === 0) setForwardOptions(optionRes.data || []);
     if (zoneRes.code === 0) setZoneOptions(zoneRes.data || []);
+    void getCrossEntryProbeSources().then(response => {
+      if (response.code === 0) setProbeSources(response.data || emptyProbeSources);
+    });
     if (!quiet) setLoading(false);
   }, []);
 
@@ -128,7 +157,19 @@ export default function CrossEntryFailoverPage() {
       recordType: group.recordType, ttl: String(group.ttl), profile, probeIntervalMs: String(group.probeIntervalMs),
       connectTimeoutMs: String(group.connectTimeoutMs), failureThreshold: String(group.failureThreshold),
       recoveryThreshold: String(group.recoveryThreshold), cooldownSeconds: String(group.cooldownSeconds),
-      autoFailback: truthy(group.autoFailback), routingMode: group.routingMode || 'failover', enabled: truthy(group.enabled), memberForwardIds: group.members.map(item => String(item.forwardId)),
+      autoFailback: truthy(group.autoFailback), routingMode: group.routingMode || 'failover', enabled: truthy(group.enabled),
+      qualityEnabled: truthy(group.qualityEnabled || false),
+      qualityProbeSourceType: group.qualityProbeSourceType || 'panel',
+      qualityProbeSourceId: group.qualityProbeSourceId ? String(group.qualityProbeSourceId) : '',
+      qualityProbeCount: String(group.qualityProbeCount || 4),
+      qualityDegradeThresholdMs: String(group.qualityDegradeThresholdMs || 100),
+      qualityRecoverThresholdMs: String(group.qualityRecoverThresholdMs || 60),
+      qualityDegradeFactor: String(group.qualityDegradeFactor || 3),
+      qualityRecoverFactor: String(group.qualityRecoverFactor || 1.8),
+      qualityDegradeSamples: String(group.qualityDegradeSamples || 3),
+      qualityRecoverSamples: String(group.qualityRecoverSamples || 3),
+      qualityLossThresholdPercent: String(group.qualityLossThresholdPercent || 30),
+      memberForwardIds: group.members.map(item => String(item.forwardId)),
     });
     setFormOpen(true);
   };
@@ -151,6 +192,9 @@ export default function CrossEntryFailoverPage() {
   const submit = async () => {
     if (!form.name.trim() || !form.domain.trim() || !form.dnsZoneId) return toast.error('请选择 Cloudflare Zone 并填写业务域名');
     if (selectionProblem) return toast.error(selectionProblem);
+    if (form.routingMode === 'failover' && form.qualityEnabled && form.qualityProbeSourceType !== 'panel' && !form.qualityProbeSourceId) {
+      return toast.error('请选择质量探测源');
+    }
     setSubmitting(true);
     const response = await saveCrossEntryGroup({
       ...form,
@@ -158,6 +202,16 @@ export default function CrossEntryFailoverPage() {
       ttl: Number(form.ttl), probeIntervalMs: Number(form.probeIntervalMs), connectTimeoutMs: Number(form.connectTimeoutMs),
       failureThreshold: Number(form.failureThreshold), recoveryThreshold: Number(form.recoveryThreshold),
       cooldownSeconds: Number(form.cooldownSeconds), memberForwardIds: form.memberForwardIds.map(Number),
+      qualityEnabled: form.routingMode === 'failover' && form.qualityEnabled,
+      qualityProbeSourceId: form.qualityProbeSourceType === 'panel' ? undefined : Number(form.qualityProbeSourceId),
+      qualityProbeCount: Number(form.qualityProbeCount),
+      qualityDegradeThresholdMs: Number(form.qualityDegradeThresholdMs),
+      qualityRecoverThresholdMs: Number(form.qualityRecoverThresholdMs),
+      qualityDegradeFactor: Number(form.qualityDegradeFactor),
+      qualityRecoverFactor: Number(form.qualityRecoverFactor),
+      qualityDegradeSamples: Number(form.qualityDegradeSamples),
+      qualityRecoverSamples: Number(form.qualityRecoverSamples),
+      qualityLossThresholdPercent: Number(form.qualityLossThresholdPercent),
     });
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || '保存入口容灾失败');
@@ -241,11 +295,13 @@ export default function CrossEntryFailoverPage() {
             const meta = truthy(group.enabled) ? stateMeta(group.state) : { label: '已停用', color: 'default' as const };
             const active = group.members.find(item => item.id === group.activeMemberId);
             const activeActive = group.routingMode === 'active_active';
+            const qualityEnabled = truthy(group.qualityEnabled || false);
+            const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip></div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -264,15 +320,17 @@ export default function CrossEntryFailoverPage() {
                   <div className="space-y-2">
                     {group.members.map((member, index) => {
                       const isActive = member.id === group.activeMemberId;
+                      const qMeta = qualityMeta(member.qualityState);
                       return (
                         <div key={member.id} className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
-                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p></div>
-                          <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p><p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p></div>
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p></div>
+                          <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">质量 {metricText(member.qualityLatencyMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}</div>
                         </div>
                       );
                     })}
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-default-500"><span>最近检测：{timeText(group.lastCheckedAt)}</span><span>{activeActive ? '健康入口同时写入 DNS；仅影响新连接' : (truthy(group.autoFailback) ? '主入口恢复后自动回切' : '切换后保持当前入口')}</span></div>
+                  {qualityEnabled && group.qualityProbeError && <p className="rounded-md bg-warning-50 px-3 py-2 text-xs text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">{group.qualityProbeError}</p>}
                   {group.lastError && <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">{group.lastError}</p>}
                 </CardBody>
               </Card>
@@ -350,6 +408,50 @@ export default function CrossEntryFailoverPage() {
             <section className="border-t border-divider pt-4"><h3 className="text-sm font-semibold">失效检测</h3><div className="mt-3 grid grid-cols-3 gap-2">{(Object.keys(profiles) as PresetProfileKey[]).map(key => <button type="button" key={key} onClick={() => selectProfile(key)} className={`min-h-20 rounded-md border p-3 text-left transition-colors ${form.profile === key ? 'border-primary bg-primary-50 dark:bg-primary-500/10' : 'border-divider hover:bg-default-100'}`}><span className="text-sm font-medium">{profiles[key].label}</span><span className="mt-1 block text-xs text-default-500">{profiles[key].note}</span></button>)}</div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Input type="number" label="探测间隔（毫秒）" value={form.probeIntervalMs} onValueChange={probeIntervalMs => setForm({ ...form, profile: 'custom', probeIntervalMs })} /><Input type="number" label="连接超时（毫秒）" value={form.connectTimeoutMs} onValueChange={connectTimeoutMs => setForm({ ...form, profile: 'custom', connectTimeoutMs })} /><Input type="number" label="连续失败次数" value={form.failureThreshold} onValueChange={failureThreshold => setForm({ ...form, profile: 'custom', failureThreshold })} /><Input type="number" label="恢复确认次数" value={form.recoveryThreshold} onValueChange={recoveryThreshold => setForm({ ...form, profile: 'custom', recoveryThreshold })} /><Input type="number" label="回切冷却（秒）" value={form.cooldownSeconds} onValueChange={cooldownSeconds => setForm({ ...form, profile: 'custom', cooldownSeconds })} /></div>
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">{form.routingMode === 'failover' ? <Switch isSelected={form.autoFailback} onValueChange={autoFailback => setForm({ ...form, autoFailback })}>主入口恢复后自动回切</Switch> : <span className="text-xs text-default-500">多入口模式不回切，健康成员会自动恢复到 DNS 记录。</span>}<Switch isSelected={form.enabled} onValueChange={enabled => setForm({ ...form, enabled })}>启用自动检测</Switch></div>
+            </section>
+
+            <section className="border-t border-divider pt-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div><h3 className="text-sm font-semibold">质量容灾</h3><p className="mt-1 text-xs text-default-500">TCP 延迟或丢包连续超过阈值时，切到质量正常的下一条入口。</p></div>
+                <Switch isSelected={form.routingMode === 'failover' && form.qualityEnabled} isDisabled={form.routingMode !== 'failover'} onValueChange={qualityEnabled => setForm({ ...form, qualityEnabled })}>启用质量切换</Switch>
+              </div>
+              {form.routingMode !== 'failover' ? (
+                <p className="mt-3 text-xs text-default-500">多入口同时运行由 DNS 返回健康入口，质量切换只应用在主备容灾模式。</p>
+              ) : form.qualityEnabled && (
+                <div className="mt-3 grid gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Select
+                      label="质量探测源"
+                      selectedKeys={[form.qualityProbeSourceType]}
+                      onSelectionChange={keys => setForm({ ...form, qualityProbeSourceType: String(Array.from(keys)[0] || 'panel') as 'panel' | 'node' | 'connector', qualityProbeSourceId: '' })}
+                    >
+                      <SelectItem key="panel">面板服务器</SelectItem>
+                      <SelectItem key="node">指定 Agent 节点</SelectItem>
+                      <SelectItem key="connector">指定 Connector</SelectItem>
+                    </Select>
+                    {form.qualityProbeSourceType === 'node' && (
+                      <Select label="Agent 节点" placeholder={`Agent ≥ ${probeSources.minimumRemoteVersion}`} selectedKeys={form.qualityProbeSourceId ? [form.qualityProbeSourceId] : []} onSelectionChange={keys => setForm({ ...form, qualityProbeSourceId: String(Array.from(keys)[0] || '') })}>
+                        {probeSources.nodes.map(source => <SelectItem key={String(source.id)} textValue={`${source.name} ${source.address || ''}`}>{source.name} · {source.address || '无地址'} · {source.version || '-'}</SelectItem>)}
+                      </Select>
+                    )}
+                    {form.qualityProbeSourceType === 'connector' && (
+                      <Select label="Connector" placeholder={`Connector ≥ ${probeSources.minimumRemoteVersion}`} selectedKeys={form.qualityProbeSourceId ? [form.qualityProbeSourceId] : []} onSelectionChange={keys => setForm({ ...form, qualityProbeSourceId: String(Array.from(keys)[0] || '') })}>
+                        {probeSources.connectors.map(source => <SelectItem key={String(source.id)} textValue={`${source.name} ${source.platform || ''}`}>{source.name} · {source.platform || '-'} · {source.version || '-'}</SelectItem>)}
+                      </Select>
+                    )}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Input type="number" label="TCP 次数" min={2} max={10} value={form.qualityProbeCount} onValueChange={qualityProbeCount => setForm({ ...form, qualityProbeCount })} />
+                    <Input type="number" label="劣化延迟 ms" min={20} value={form.qualityDegradeThresholdMs} onValueChange={qualityDegradeThresholdMs => setForm({ ...form, qualityDegradeThresholdMs })} />
+                    <Input type="number" label="恢复延迟 ms" min={10} value={form.qualityRecoverThresholdMs} onValueChange={qualityRecoverThresholdMs => setForm({ ...form, qualityRecoverThresholdMs })} />
+                    <Input type="number" label="丢包阈值 %" min={1} max={100} value={form.qualityLossThresholdPercent} onValueChange={qualityLossThresholdPercent => setForm({ ...form, qualityLossThresholdPercent })} />
+                    <Input type="number" label="基线劣化倍数" min={1.2} step={0.1} value={form.qualityDegradeFactor} onValueChange={qualityDegradeFactor => setForm({ ...form, qualityDegradeFactor })} />
+                    <Input type="number" label="基线恢复倍数" min={1} step={0.1} value={form.qualityRecoverFactor} onValueChange={qualityRecoverFactor => setForm({ ...form, qualityRecoverFactor })} />
+                    <Input type="number" label="劣化确认次数" min={1} max={20} value={form.qualityDegradeSamples} onValueChange={qualityDegradeSamples => setForm({ ...form, qualityDegradeSamples })} />
+                    <Input type="number" label="恢复确认次数" min={1} max={20} value={form.qualityRecoverSamples} onValueChange={qualityRecoverSamples => setForm({ ...form, qualityRecoverSamples })} />
+                  </div>
+                </div>
+              )}
             </section>
 
             <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">面板会自动创建或更新仅 DNS 记录，不开启 Cloudflare 代理。请确保面板服务器能访问各公网入口端口。检测和 DNS 更新可在数秒内完成，但运营商及客户端 DNS 缓存仍可能延迟实际生效；已经建立的连接需要重新连接。</div>

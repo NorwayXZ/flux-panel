@@ -38,6 +38,19 @@ public class CrossEntryFailoverSaveDto {
     /** failover keeps one DNS answer; active_active publishes every healthy entry. */
     private String routingMode = "failover";
 
+    /** Switches a still-reachable primary when latency/loss is persistently worse than baseline. */
+    private Boolean qualityEnabled = false;
+    private String qualityProbeSourceType = "panel";
+    private Long qualityProbeSourceId;
+    private Integer qualityProbeCount = 4;
+    private Integer qualityDegradeThresholdMs = 100;
+    private Integer qualityRecoverThresholdMs = 60;
+    private Double qualityDegradeFactor = 3.0;
+    private Double qualityRecoverFactor = 1.8;
+    private Integer qualityDegradeSamples = 3;
+    private Integer qualityRecoverSamples = 3;
+    private Double qualityLossThresholdPercent = 30.0;
+
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;
 

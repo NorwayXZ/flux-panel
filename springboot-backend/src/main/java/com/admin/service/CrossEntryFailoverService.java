@@ -1,8 +1,10 @@
 package com.admin.service;
 
 import com.admin.common.dto.CrossEntryFailoverSaveDto;
+import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.AESCrypto;
+import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.CrossEntryFailoverPolicy;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
@@ -57,6 +59,7 @@ import java.util.stream.Collectors;
 public class CrossEntryFailoverService {
     private static final String CF_API = "https://api.cloudflare.com/client/v4";
     private static final int MAX_GROUPS_PER_TICK = 50;
+    private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -89,12 +92,30 @@ public class CrossEntryFailoverService {
                 + "ORDER BY f.created_time DESC"));
     }
 
+    public R listProbeSources() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("nodes", jdbcTemplate.queryForList(
+                "SELECT id,name,COALESCE(NULLIF(server_ip,''),ip) AS address,status,version "
+                        + "FROM node ORDER BY status DESC,name,id"));
+        result.put("connectors", jdbcTemplate.queryForList(
+                "SELECT id,name,platform,version,remote_ip AS remoteIp,last_seen AS lastSeen,status "
+                        + "FROM internal_connector WHERE status=1 ORDER BY last_seen DESC,name,id"));
+        result.put("minimumRemoteVersion", MIN_REMOTE_QUALITY_VERSION);
+        return R.ok(result);
+    }
+
     public R listGroups() {
         List<Map<String, Object>> groups = jdbcTemplate.queryForList(
                 "SELECT g.id,g.name,g.domain,g.dns_zone_id AS dnsZoneId,g.zone_id AS zoneId,z.zone_name AS zoneName,g.record_id AS recordId,g.record_type AS recordType,g.ttl,"
                         + "probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                         + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,"
                         + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,"
+                        + "quality_enabled AS qualityEnabled,quality_probe_source_type AS qualityProbeSourceType,quality_probe_source_id AS qualityProbeSourceId,"
+                        + "quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
+                        + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
+                        + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
+                        + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_probe_status AS qualityProbeStatus,"
+                        + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
                         + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
                         + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
@@ -174,20 +195,31 @@ public class CrossEntryFailoverService {
             if (id == null) {
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_group "
                                 + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
-                                + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,routing_mode,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                + "failure_threshold,recovery_threshold,cooldown_seconds,auto_failback,routing_mode,quality_enabled,quality_probe_source_type,"
+                                + "quality_probe_source_id,quality_probe_count,quality_degrade_threshold_ms,quality_recover_threshold_ms,quality_degrade_factor,"
+                                + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,quality_probe_status,enabled,state,created_time,updated_time) "
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
                         dto.getFailureThreshold(), dto.getRecoveryThreshold(), dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(),
-                        dto.getEnabled(), "unknown", now, now);
+                        dto.getQualityEnabled(), dto.getQualityProbeSourceType(), dto.getQualityProbeSourceId(), dto.getQualityProbeCount(),
+                        dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(), dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(),
+                        dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(), dto.getQualityLossThresholdPercent(),
+                        dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } else {
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,dns_zone_id=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
                                 + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,cooldown_seconds=?,"
-                                + "auto_failback=?,routing_mode=?,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
+                                + "auto_failback=?,routing_mode=?,quality_enabled=?,quality_probe_source_type=?,quality_probe_source_id=?,"
+                                + "quality_probe_count=?,quality_degrade_threshold_ms=?,quality_recover_threshold_ms=?,quality_degrade_factor=?,"
+                                + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
+                                + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
                         dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId, encryptedToken, dto.getRecordType(), dto.getTtl(),
                         dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(), dto.getFailureThreshold(), dto.getRecoveryThreshold(),
-                        dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(), dto.getEnabled(), now, id);
+                        dto.getCooldownSeconds(), dto.getAutoFailback(), dto.getRoutingMode(), dto.getQualityEnabled(), dto.getQualityProbeSourceType(),
+                        dto.getQualityProbeSourceId(), dto.getQualityProbeCount(), dto.getQualityDegradeThresholdMs(), dto.getQualityRecoverThresholdMs(),
+                        dto.getQualityDegradeFactor(), dto.getQualityRecoverFactor(), dto.getQualityDegradeSamples(), dto.getQualityRecoverSamples(),
+                        dto.getQualityLossThresholdPercent(), dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
@@ -332,6 +364,13 @@ public class CrossEntryFailoverService {
         for (ProbeResult result : results) updateMemberHealth(result, failureThreshold, now);
 
         members = loadMembers(groupId);
+        boolean qualityDecisionEnabled = false;
+        if (qualityEnabledForFailover(group)) {
+            qualityDecisionEnabled = updateQuality(group, members, timeout, now);
+            members = loadMembers(groupId);
+        } else {
+            markQualityDisabledIfNeeded(group, now);
+        }
         Map<String, Object> active = memberById(members, nullableLong(group.get("activeMemberId")));
         if (active == null && !members.isEmpty()) active = members.get(0);
         if ("active_active".equals(Objects.toString(group.get("routingMode"), "failover"))) {
@@ -339,10 +378,13 @@ public class CrossEntryFailoverService {
             return;
         }
         boolean activeFailed = active == null || "unhealthy".equals(active.get("status"));
+        final boolean useQualityDecision = qualityDecisionEnabled;
+        boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
         List<CrossEntryFailoverPolicy.Member> snapshots = members.stream()
                 .map(member -> new CrossEntryFailoverPolicy.Member(
                         number(member.get("id")).longValue(), number(member.get("priority")).intValue(),
-                        "healthy".equals(member.get("status")), number(member.get("successCount")).intValue()))
+                        "healthy".equals(member.get("status")), number(member.get("successCount")).intValue(),
+                        useQualityDecision && isQualityDegraded(member)))
                 .collect(Collectors.toList());
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 snapshots, active == null ? null : number(active.get("id")).longValue(), bool(group.get("autoFailback")),
@@ -353,11 +395,199 @@ public class CrossEntryFailoverService {
             switchEntry(group, active, target, decision.reason(), now);
         } else {
             long healthy = members.stream().filter(member -> "healthy".equals(member.get("status"))).count();
-            String state = activeFailed ? (healthy > 0 ? "degraded" : "offline") : (healthy == members.size() ? "healthy" : "degraded");
-            String error = activeFailed && healthy == 0 ? "所有入口均不可用" : null;
+            String state = activeFailed ? (healthy > 0 ? "degraded" : "offline")
+                    : (activeQualityDegraded || healthy != members.size() ? "degraded" : "healthy");
+            String error = activeFailed && healthy == 0 ? "所有入口均不可用"
+                    : (activeQualityDegraded ? decision.reason() : null);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
                     state, error, now, now, groupId);
         }
+    }
+
+    private boolean updateQuality(Map<String, Object> group, List<Map<String, Object>> members, int timeoutMs, long now) {
+        long groupId = number(group.get("id")).longValue();
+        String sourceError = qualitySourceError(group);
+        if (sourceError != null) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
+                    shorten(sourceError, 500), now, now, groupId);
+            return false;
+        }
+        List<Map<String, Object>> enabledMembers = members.stream().filter(member -> bool(member.get("enabled"))).collect(Collectors.toList());
+        if (enabledMembers.isEmpty()) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error='没有可探测的入口成员',quality_probe_at=?,updated_time=? WHERE id=?",
+                    now, now, groupId);
+            return false;
+        }
+        int count = number(group.get("qualityProbeCount")).intValue();
+        List<CompletableFuture<QualityProbeResult>> futures = enabledMembers.stream()
+                .map(member -> CompletableFuture.supplyAsync(() -> probeQuality(group, member, count, timeoutMs), probeExecutor))
+                .collect(Collectors.toList());
+        List<QualityProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+
+        int degraded = 0;
+        int failures = 0;
+        List<String> errors = new ArrayList<>();
+        for (QualityProbeResult result : results) {
+            String state = updateMemberQuality(group, result, now);
+            if ("degraded".equals(state)) degraded++;
+            if (!result.success()) failures++;
+            if (StringUtils.isNotBlank(result.error())) {
+                errors.add(Objects.toString(result.member().get("nodeName"), "入口") + "：" + result.error());
+            }
+        }
+        String status = degraded > 0 || failures > 0 ? "warning" : "ok";
+        String error = errors.isEmpty() ? null : shorten(errors.get(0) + (errors.size() > 1 ? " 等 " + errors.size() + " 条" : ""), 500);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status=?,quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
+                status, error, now, now, groupId);
+        return true;
+    }
+
+    private QualityProbeResult probeQuality(Map<String, Object> group, Map<String, Object> member, int count, int timeoutMs) {
+        String address = Objects.toString(member.get("entryAddress"));
+        int port = number(member.get("entryPort")).intValue();
+        String sourceType = Objects.toString(group.get("qualityProbeSourceType"), "panel");
+        if ("panel".equals(sourceType)) return tcpPingLocal(member, address, port, count, timeoutMs);
+
+        JSONObject request = new JSONObject();
+        request.put("ip", address);
+        request.put("port", port);
+        request.put("count", count);
+        request.put("timeout", timeoutMs);
+        long timeoutSeconds = Math.max(5L, (long) Math.ceil((count * (timeoutMs + 150.0)) / 1000.0) + 3L);
+        GostDto response = "node".equals(sourceType)
+                ? WebSocketServer.send_msg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds)
+                : WebSocketServer.sendConnectorMsg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds);
+        if (response == null || !"OK".equals(response.getMsg())) {
+            return new QualityProbeResult(member, false, null, 100.0,
+                    response == null ? "探测源无响应" : response.getMsg());
+        }
+        JSONObject data = responseData(response.getData());
+        if (data == null) return new QualityProbeResult(member, false, null, 100.0, "探测源返回为空");
+        boolean success = data.getBooleanValue("success");
+        double loss = data.containsKey("packetLoss") ? data.getDoubleValue("packetLoss") : (success ? 0.0 : 100.0);
+        Integer latency = success && data.containsKey("averageTime")
+                ? Math.max(1, (int) Math.round(data.getDoubleValue("averageTime")))
+                : null;
+        String error = success ? null : StringUtils.defaultIfBlank(data.getString("errorMessage"), "TCP 探测失败");
+        return new QualityProbeResult(member, success, latency, loss, error);
+    }
+
+    private QualityProbeResult tcpPingLocal(Map<String, Object> member, String address, int port, int count, int timeoutMs) {
+        int success = 0;
+        long totalMs = 0;
+        String lastError = null;
+        for (int i = 0; i < count; i++) {
+            long started = System.nanoTime();
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(address, port), timeoutMs);
+                totalMs += Math.max(1, (System.nanoTime() - started) / 1_000_000L);
+                success++;
+            } catch (Exception e) {
+                lastError = "TCP 探测失败";
+            }
+            if (i < count - 1) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    lastError = "质量探测被中断";
+                    break;
+                }
+            }
+        }
+        double loss = count <= 0 ? 100.0 : (count - success) * 100.0 / count;
+        if (success == 0) return new QualityProbeResult(member, false, null, 100.0,
+                StringUtils.defaultIfBlank(lastError, "所有 TCP 探测失败"));
+        return new QualityProbeResult(member, true, Math.max(1, (int) Math.round(totalMs * 1.0 / success)), loss, null);
+    }
+
+    private String updateMemberQuality(Map<String, Object> group, QualityProbeResult result, long now) {
+        Map<String, Object> member = result.member();
+        String oldState = Objects.toString(member.get("qualityState"), "unknown");
+        Integer oldBaseline = nullableInt(member.get("qualityBaselineMs"));
+        Integer latency = result.latencyMs();
+        Double loss = result.lossPercent();
+        Integer baseline = oldBaseline;
+        if (result.success() && latency != null) {
+            if (baseline == null) baseline = latency;
+            else if (latency < baseline) baseline = latency;
+        }
+
+        double lossThreshold = doubleNumber(group.get("qualityLossThresholdPercent"));
+        int degradeThreshold = number(group.get("qualityDegradeThresholdMs")).intValue();
+        int recoverThreshold = number(group.get("qualityRecoverThresholdMs")).intValue();
+        double degradeFactor = doubleNumber(group.get("qualityDegradeFactor"));
+        double recoverFactor = doubleNumber(group.get("qualityRecoverFactor"));
+        boolean lossBad = loss != null && loss >= lossThreshold;
+        boolean latencyBad = result.success() && latency != null
+                && (latency >= degradeThreshold
+                || (baseline != null && latency >= Math.max(recoverThreshold, baseline * degradeFactor)));
+        boolean bad = !result.success() || lossBad || latencyBad;
+        boolean good = result.success() && latency != null && !lossBad
+                && (baseline == null || latency <= recoverThreshold || latency <= baseline * recoverFactor);
+
+        int badCount = number(member.get("qualityBadCount")).intValue();
+        int goodCount = number(member.get("qualityGoodCount")).intValue();
+        String nextState = StringUtils.defaultIfBlank(oldState, "unknown");
+        if (bad) {
+            badCount++;
+            goodCount = 0;
+            if (badCount >= number(group.get("qualityDegradeSamples")).intValue()) {
+                nextState = "degraded";
+            } else if (!"healthy".equals(nextState) && !"degraded".equals(nextState)) {
+                nextState = "warming";
+            }
+        } else if (good) {
+            goodCount++;
+            badCount = 0;
+            if (goodCount >= number(group.get("qualityRecoverSamples")).intValue()) {
+                nextState = "healthy";
+            } else if (!"degraded".equals(nextState)) {
+                nextState = "warming";
+            }
+            if (baseline != null && latency != null && latency <= Math.max(recoverThreshold, baseline * recoverFactor)) {
+                baseline = (int) Math.round(baseline * 0.9 + latency * 0.1);
+            }
+        }
+        if (loss == null) loss = result.success() ? 0.0 : 100.0;
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
+                        + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
+                latency, loss, baseline, nextState, badCount, goodCount, shorten(result.error(), 500), now, now, member.get("id"));
+        return nextState;
+    }
+
+    private String qualitySourceError(Map<String, Object> group) {
+        String sourceType = Objects.toString(group.get("qualityProbeSourceType"), "panel");
+        Long sourceId = nullableLong(group.get("qualityProbeSourceId"));
+        if ("panel".equals(sourceType)) return null;
+        if (sourceId == null) return "质量探测源未配置";
+        if ("node".equals(sourceType)) {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT name,version FROM node WHERE id=?", sourceId);
+            if (rows.isEmpty()) return "质量探测节点不存在";
+            if (!WebSocketServer.isNodeOnline(sourceId)) return "质量探测节点离线";
+            String version = Objects.toString(rows.get(0).get("version"), "");
+            if (!AgentVersionUtil.isAtLeast(version, MIN_REMOTE_QUALITY_VERSION)) {
+                return "质量探测节点 Agent 需要升级到 " + MIN_REMOTE_QUALITY_VERSION;
+            }
+            return null;
+        }
+        if ("connector".equals(sourceType)) {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT name,version FROM internal_connector WHERE id=? AND status=1", sourceId);
+            if (rows.isEmpty()) return "质量探测 Connector 不存在";
+            if (!WebSocketServer.isConnectorOnline(sourceId)) return "质量探测 Connector 离线";
+            String version = Objects.toString(rows.get(0).get("version"), "");
+            if (!AgentVersionUtil.isAtLeast(version, MIN_REMOTE_QUALITY_VERSION)) {
+                return "质量探测 Connector 需要升级到 " + MIN_REMOTE_QUALITY_VERSION;
+            }
+            return null;
+        }
+        return "质量探测源类型不正确";
+    }
+
+    private void markQualityDisabledIfNeeded(Map<String, Object> group, long now) {
+        if ("disabled".equals(Objects.toString(group.get("qualityProbeStatus"), "disabled"))) return;
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='disabled',quality_probe_error=NULL,quality_probe_at=?,updated_time=? WHERE id=?",
+                now, now, group.get("id"));
     }
 
     private ProbeResult probe(Map<String, Object> member, int timeoutMs) {
@@ -586,13 +816,47 @@ public class CrossEntryFailoverService {
         dto.setRoutingMode(routingMode);
         dto.setAutoFailback(Boolean.TRUE.equals(dto.getAutoFailback()));
         dto.setEnabled(!Boolean.FALSE.equals(dto.getEnabled()));
+        dto.setQualityEnabled(Boolean.TRUE.equals(dto.getQualityEnabled()));
+        if ("active_active".equals(routingMode)) dto.setQualityEnabled(false);
+        dto.setQualityProbeSourceType(StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getQualityProbeSourceType(), "panel"), Locale.ROOT));
+        if (!Set.of("panel", "node", "connector").contains(dto.getQualityProbeSourceType())) {
+            throw new IllegalArgumentException("质量探测源类型不正确");
+        }
+        if (dto.getQualityEnabled() && !"panel".equals(dto.getQualityProbeSourceType()) && dto.getQualityProbeSourceId() == null) {
+            throw new IllegalArgumentException("请选择质量探测源");
+        }
+        if (dto.getQualityEnabled() && "node".equals(dto.getQualityProbeSourceType())) {
+            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM node WHERE id=?", Integer.class, dto.getQualityProbeSourceId());
+            if (count == null || count == 0) throw new IllegalArgumentException("质量探测节点不存在");
+        }
+        if (dto.getQualityEnabled() && "connector".equals(dto.getQualityProbeSourceType())) {
+            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1", Integer.class, dto.getQualityProbeSourceId());
+            if (count == null || count == 0) throw new IllegalArgumentException("质量探测 Connector 不存在");
+        }
+        if (!dto.getQualityEnabled() || "panel".equals(dto.getQualityProbeSourceType())) dto.setQualityProbeSourceId(null);
+        dto.setQualityProbeCount(clamp(dto.getQualityProbeCount(), 2, 10));
+        dto.setQualityDegradeThresholdMs(clamp(dto.getQualityDegradeThresholdMs(), 20, 30000));
+        dto.setQualityRecoverThresholdMs(clamp(dto.getQualityRecoverThresholdMs(), 10, 30000));
+        if (dto.getQualityRecoverThresholdMs() > dto.getQualityDegradeThresholdMs()) {
+            dto.setQualityRecoverThresholdMs(dto.getQualityDegradeThresholdMs());
+        }
+        dto.setQualityDegradeFactor(clampDouble(dto.getQualityDegradeFactor(), 1.2, 20.0));
+        dto.setQualityRecoverFactor(clampDouble(dto.getQualityRecoverFactor(), 1.0, dto.getQualityDegradeFactor()));
+        dto.setQualityDegradeSamples(clamp(dto.getQualityDegradeSamples(), 1, 20));
+        dto.setQualityRecoverSamples(clamp(dto.getQualityRecoverSamples(), 1, 20));
+        dto.setQualityLossThresholdPercent(clampDouble(dto.getQualityLossThresholdPercent(), 1.0, 100.0));
     }
 
     private Map<String, Object> loadGroup(long id) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,name,domain,dns_zone_id AS dnsZoneId,zone_id AS zoneId,record_id AS recordId,api_token AS apiToken,"
                 + "record_type AS recordType,ttl,probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                 + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,cooldown_seconds AS cooldownSeconds,"
-                + "auto_failback AS autoFailback,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
+                + "auto_failback AS autoFailback,routing_mode AS routingMode,quality_enabled AS qualityEnabled,quality_probe_source_type AS qualityProbeSourceType,"
+                + "quality_probe_source_id AS qualityProbeSourceId,quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
+                + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
+                + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"
+                + "quality_loss_threshold_percent AS qualityLossThresholdPercent,quality_probe_status AS qualityProbeStatus,"
+                + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);
@@ -601,7 +865,10 @@ public class CrossEntryFailoverService {
     private List<Map<String, Object>> loadMembers(long groupId) {
         return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
                 + "entry_host AS entryHost,entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
-                + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,last_error AS lastError,"
+                + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,quality_latency_ms AS qualityLatencyMs,"
+                + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_state AS qualityState,"
+                + "quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,quality_last_error AS qualityLastError,"
+                + "quality_checked_at AS qualityCheckedAt,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt "
                 + "FROM cross_entry_failover_member WHERE group_id=? ORDER BY priority", groupId);
     }
@@ -691,6 +958,15 @@ public class CrossEntryFailoverService {
         return value == null ? 0 : Long.parseLong(value.toString());
     }
 
+    private double doubleNumber(Object value) {
+        if (value instanceof Number) return ((Number) value).doubleValue();
+        return value == null ? 0.0 : Double.parseDouble(value.toString());
+    }
+
+    private Integer nullableInt(Object value) {
+        return value == null ? null : number(value).intValue();
+    }
+
     private Long nullableLong(Object value) {
         return value == null ? null : number(value).longValue();
     }
@@ -703,6 +979,26 @@ public class CrossEntryFailoverService {
 
     private int clamp(Integer value, int min, int max) {
         return Math.max(min, Math.min(max, value == null ? min : value));
+    }
+
+    private double clampDouble(Double value, double min, double max) {
+        double current = value == null || value.isNaN() || value.isInfinite() ? min : value;
+        return Math.max(min, Math.min(max, current));
+    }
+
+    private boolean qualityEnabledForFailover(Map<String, Object> group) {
+        return bool(group.get("qualityEnabled")) && "failover".equals(Objects.toString(group.get("routingMode"), "failover"));
+    }
+
+    private boolean isQualityDegraded(Map<String, Object> member) {
+        return member != null && "degraded".equals(Objects.toString(member.get("qualityState"), "unknown"));
+    }
+
+    private JSONObject responseData(Object data) {
+        if (data instanceof JSONObject) return (JSONObject) data;
+        if (data instanceof Map<?, ?> map) return new JSONObject((Map<String, Object>) map);
+        if (data instanceof String text && StringUtils.isNotBlank(text)) return JSON.parseObject(text);
+        return null;
     }
 
     private int memberWeight(CrossEntryFailoverSaveDto dto, int index) {
@@ -723,4 +1019,7 @@ public class CrossEntryFailoverService {
     }
 
     private record ProbeResult(Map<String, Object> member, boolean healthy, Integer latencyMs, String error) {}
+
+    private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
+                                      Double lossPercent, String error) {}
 }

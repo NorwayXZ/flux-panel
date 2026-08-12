@@ -44,7 +44,37 @@ class CrossEntryFailoverPolicyTests {
         assertEquals(1L, decision.targetId());
     }
 
+    @Test
+    void switchesAwayFromDegradedActiveEntryAfterCooldown() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 10), member(2, 1, true, 5)), 1L, false, 3, true);
+
+        assertTrue(decision.switchRequired());
+        assertEquals(2L, decision.targetId());
+    }
+
+    @Test
+    void doesNotFailbackToDegradedPrimary() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 8), member(2, 1, true, 8)), 2L, true, 3, true);
+
+        assertFalse(decision.switchRequired());
+    }
+
+    @Test
+    void staysOnDegradedActiveWhenNoHealthyQualityBackupExists() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(degradedMember(1, 0, true, 10), degradedMember(2, 1, true, 10)), 1L, false, 3, true);
+
+        assertFalse(decision.switchRequired());
+        assertEquals("当前入口质量劣化，但没有质量正常的备用入口", decision.reason());
+    }
+
     private CrossEntryFailoverPolicy.Member member(long id, int priority, boolean healthy, int successCount) {
-        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount);
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false);
+    }
+
+    private CrossEntryFailoverPolicy.Member degradedMember(long id, int priority, boolean healthy, int successCount) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, true);
     }
 }

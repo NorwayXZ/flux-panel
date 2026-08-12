@@ -52,8 +52,30 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "dns_zone_id", "bigint DEFAULT NULL AFTER domain");
             // Default stays failover so upgrading never changes existing DNS behaviour.
             ensureColumn("cross_entry_failover_group", "routing_mode", "varchar(24) NOT NULL DEFAULT 'failover' AFTER auto_failback");
+            ensureColumn("cross_entry_failover_group", "quality_enabled", "tinyint NOT NULL DEFAULT 0 AFTER routing_mode");
+            ensureColumn("cross_entry_failover_group", "quality_probe_source_type", "varchar(16) NOT NULL DEFAULT 'panel' AFTER quality_enabled");
+            ensureColumn("cross_entry_failover_group", "quality_probe_source_id", "bigint DEFAULT NULL AFTER quality_probe_source_type");
+            ensureColumn("cross_entry_failover_group", "quality_probe_count", "int NOT NULL DEFAULT 4 AFTER quality_probe_source_id");
+            ensureColumn("cross_entry_failover_group", "quality_degrade_threshold_ms", "int NOT NULL DEFAULT 100 AFTER quality_probe_count");
+            ensureColumn("cross_entry_failover_group", "quality_recover_threshold_ms", "int NOT NULL DEFAULT 60 AFTER quality_degrade_threshold_ms");
+            ensureColumn("cross_entry_failover_group", "quality_degrade_factor", "decimal(8,2) NOT NULL DEFAULT 3.00 AFTER quality_recover_threshold_ms");
+            ensureColumn("cross_entry_failover_group", "quality_recover_factor", "decimal(8,2) NOT NULL DEFAULT 1.80 AFTER quality_degrade_factor");
+            ensureColumn("cross_entry_failover_group", "quality_degrade_samples", "int NOT NULL DEFAULT 3 AFTER quality_recover_factor");
+            ensureColumn("cross_entry_failover_group", "quality_recover_samples", "int NOT NULL DEFAULT 3 AFTER quality_degrade_samples");
+            ensureColumn("cross_entry_failover_group", "quality_loss_threshold_percent", "decimal(8,2) NOT NULL DEFAULT 30.00 AFTER quality_recover_samples");
+            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER quality_loss_threshold_percent");
+            ensureColumn("cross_entry_failover_group", "quality_probe_error", "varchar(500) DEFAULT NULL AFTER quality_probe_status");
+            ensureColumn("cross_entry_failover_group", "quality_probe_at", "bigint DEFAULT NULL AFTER quality_probe_error");
             ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");
             ensureColumn("cross_entry_failover_member", "enabled", "tinyint NOT NULL DEFAULT 1 AFTER weight");
+            ensureColumn("cross_entry_failover_member", "quality_latency_ms", "int DEFAULT NULL AFTER latency_ms");
+            ensureColumn("cross_entry_failover_member", "quality_loss_percent", "decimal(8,2) DEFAULT NULL AFTER quality_latency_ms");
+            ensureColumn("cross_entry_failover_member", "quality_baseline_ms", "int DEFAULT NULL AFTER quality_loss_percent");
+            ensureColumn("cross_entry_failover_member", "quality_state", "varchar(24) NOT NULL DEFAULT 'unknown' AFTER quality_baseline_ms");
+            ensureColumn("cross_entry_failover_member", "quality_bad_count", "int NOT NULL DEFAULT 0 AFTER quality_state");
+            ensureColumn("cross_entry_failover_member", "quality_good_count", "int NOT NULL DEFAULT 0 AFTER quality_bad_count");
+            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_good_count");
+            ensureColumn("cross_entry_failover_member", "quality_checked_at", "bigint DEFAULT NULL AFTER quality_last_error");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"
                     + "provider_record_id varchar(64) NOT NULL,content varchar(255) NOT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"

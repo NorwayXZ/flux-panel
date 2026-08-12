@@ -1,3 +1,10 @@
+## 2.49.3 Cross-entry quality failover
+
+- Adds optional quality failover for Cross-entry Failover groups. Existing groups keep the original outage-only behavior until quality failover is explicitly enabled.
+- Tracks TCP connect latency, packet loss, learned baseline, quality state, bad samples, and recovery samples for each entry member. A reachable but persistently slow primary can switch to the next healthy, quality-normal backup after cooldown, then fail back only after the primary quality recovers.
+- Adds panel, Agent node, and Connector probe-source choices. Remote probes reuse the existing `TcpPing` command and require Agent/Connector `2.19.0+`; no Agent rebuild or mandatory node upgrade is included in this panel release.
+- Stores only additive database columns. Existing nodes, tunnels, forwards, DNS records, certificates, proxy services, Docker apps, CloudFront resources, and Agent runtimes are not rebuilt by the update.
+
 ## 2.49.2 Cross-entry failover ordering
 
 - Adds up and down controls to the Cross-entry Failover edit form so entry members can be reordered without removing and recreating them.
