@@ -412,7 +412,7 @@ export default function CrossEntryFailoverPage() {
 
             <section className="border-t border-divider pt-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div><h3 className="text-sm font-semibold">质量容灾</h3><p className="mt-1 text-xs text-default-500">TCP 延迟或丢包连续超过阈值时，切到质量正常的下一条入口。</p></div>
+                <div><h3 className="text-sm font-semibold">质量容灾</h3><p className="mt-1 text-xs text-default-500">按每条入口自己的基线判断劣化，绝对延迟只作为兜底阈值。</p></div>
                 <Switch isSelected={form.routingMode === 'failover' && form.qualityEnabled} isDisabled={form.routingMode !== 'failover'} onValueChange={qualityEnabled => setForm({ ...form, qualityEnabled })}>启用质量切换</Switch>
               </div>
               {form.routingMode !== 'failover' ? (
@@ -442,8 +442,8 @@ export default function CrossEntryFailoverPage() {
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <Input type="number" label="TCP 次数" min={2} max={10} value={form.qualityProbeCount} onValueChange={qualityProbeCount => setForm({ ...form, qualityProbeCount })} />
-                    <Input type="number" label="劣化延迟 ms" min={20} value={form.qualityDegradeThresholdMs} onValueChange={qualityDegradeThresholdMs => setForm({ ...form, qualityDegradeThresholdMs })} />
-                    <Input type="number" label="恢复延迟 ms" min={10} value={form.qualityRecoverThresholdMs} onValueChange={qualityRecoverThresholdMs => setForm({ ...form, qualityRecoverThresholdMs })} />
+                    <Input type="number" label="兜底劣化 ms" min={20} value={form.qualityDegradeThresholdMs} onValueChange={qualityDegradeThresholdMs => setForm({ ...form, qualityDegradeThresholdMs })} />
+                    <Input type="number" label="恢复参考 ms" min={10} value={form.qualityRecoverThresholdMs} onValueChange={qualityRecoverThresholdMs => setForm({ ...form, qualityRecoverThresholdMs })} />
                     <Input type="number" label="丢包阈值 %" min={1} max={100} value={form.qualityLossThresholdPercent} onValueChange={qualityLossThresholdPercent => setForm({ ...form, qualityLossThresholdPercent })} />
                     <Input type="number" label="基线劣化倍数" min={1.2} step={0.1} value={form.qualityDegradeFactor} onValueChange={qualityDegradeFactor => setForm({ ...form, qualityDegradeFactor })} />
                     <Input type="number" label="基线恢复倍数" min={1} step={0.1} value={form.qualityRecoverFactor} onValueChange={qualityRecoverFactor => setForm({ ...form, qualityRecoverFactor })} />

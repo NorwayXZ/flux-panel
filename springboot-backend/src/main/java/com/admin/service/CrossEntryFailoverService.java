@@ -6,6 +6,7 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.CrossEntryFailoverPolicy;
+import com.admin.common.utils.CrossEntryQualityEvaluator;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.alibaba.fastjson.JSON;
@@ -504,56 +505,21 @@ public class CrossEntryFailoverService {
     private String updateMemberQuality(Map<String, Object> group, QualityProbeResult result, long now) {
         Map<String, Object> member = result.member();
         String oldState = Objects.toString(member.get("qualityState"), "unknown");
-        Integer oldBaseline = nullableInt(member.get("qualityBaselineMs"));
         Integer latency = result.latencyMs();
         Double loss = result.lossPercent();
-        Integer baseline = oldBaseline;
-        if (result.success() && latency != null) {
-            if (baseline == null) baseline = latency;
-            else if (latency < baseline) baseline = latency;
-        }
-
-        double lossThreshold = doubleNumber(group.get("qualityLossThresholdPercent"));
-        int degradeThreshold = number(group.get("qualityDegradeThresholdMs")).intValue();
-        int recoverThreshold = number(group.get("qualityRecoverThresholdMs")).intValue();
-        double degradeFactor = doubleNumber(group.get("qualityDegradeFactor"));
-        double recoverFactor = doubleNumber(group.get("qualityRecoverFactor"));
-        boolean lossBad = loss != null && loss >= lossThreshold;
-        boolean latencyBad = result.success() && latency != null
-                && (latency >= degradeThreshold
-                || (baseline != null && latency >= Math.max(recoverThreshold, baseline * degradeFactor)));
-        boolean bad = !result.success() || lossBad || latencyBad;
-        boolean good = result.success() && latency != null && !lossBad
-                && (baseline == null || latency <= recoverThreshold || latency <= baseline * recoverFactor);
-
-        int badCount = number(member.get("qualityBadCount")).intValue();
-        int goodCount = number(member.get("qualityGoodCount")).intValue();
-        String nextState = StringUtils.defaultIfBlank(oldState, "unknown");
-        if (bad) {
-            badCount++;
-            goodCount = 0;
-            if (badCount >= number(group.get("qualityDegradeSamples")).intValue()) {
-                nextState = "degraded";
-            } else if (!"healthy".equals(nextState) && !"degraded".equals(nextState)) {
-                nextState = "warming";
-            }
-        } else if (good) {
-            goodCount++;
-            badCount = 0;
-            if (goodCount >= number(group.get("qualityRecoverSamples")).intValue()) {
-                nextState = "healthy";
-            } else if (!"degraded".equals(nextState)) {
-                nextState = "warming";
-            }
-            if (baseline != null && latency != null && latency <= Math.max(recoverThreshold, baseline * recoverFactor)) {
-                baseline = (int) Math.round(baseline * 0.9 + latency * 0.1);
-            }
-        }
+        CrossEntryQualityEvaluator.Decision decision = CrossEntryQualityEvaluator.evaluate(
+                new CrossEntryQualityEvaluator.Snapshot(oldState, nullableInt(member.get("qualityBaselineMs")), latency, loss,
+                        result.success(), number(member.get("qualityBadCount")).intValue(), number(member.get("qualityGoodCount")).intValue()),
+                new CrossEntryQualityEvaluator.Settings(number(group.get("qualityDegradeThresholdMs")).intValue(),
+                        number(group.get("qualityRecoverThresholdMs")).intValue(), doubleNumber(group.get("qualityDegradeFactor")),
+                        doubleNumber(group.get("qualityRecoverFactor")), number(group.get("qualityDegradeSamples")).intValue(),
+                        number(group.get("qualityRecoverSamples")).intValue(), doubleNumber(group.get("qualityLossThresholdPercent"))));
         if (loss == null) loss = result.success() ? 0.0 : 100.0;
         jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
                         + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
-                latency, loss, baseline, nextState, badCount, goodCount, shorten(result.error(), 500), now, now, member.get("id"));
-        return nextState;
+                latency, loss, decision.baselineMs(), decision.state(), decision.badCount(), decision.goodCount(),
+                shorten(result.error(), 500), now, now, member.get("id"));
+        return decision.state();
     }
 
     private String qualitySourceError(Map<String, Object> group) {

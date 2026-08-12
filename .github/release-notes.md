@@ -1,3 +1,9 @@
+## 2.49.4 Cross-entry quality baseline tuning
+
+- Changes quality failover to evaluate latency primarily against each entry member's learned baseline. A high-latency route such as US West to Hong Kong no longer degrades merely because its normal latency is above the default 100 ms fallback threshold.
+- Keeps the absolute latency threshold as a fallback guardrail only when it is higher than the member's learned baseline, while low-latency routes can still degrade quickly by their own baseline multiplier.
+- Adds unit coverage for mixed-latency groups such as US West to Hong Kong and Hong Kong to Hong Kong. This is a panel-only release; Agent and Connector remain `2.49.1`.
+
 ## 2.49.3 Cross-entry quality failover
 
 - Adds optional quality failover for Cross-entry Failover groups. Existing groups keep the original outage-only behavior until quality failover is explicitly enabled.
