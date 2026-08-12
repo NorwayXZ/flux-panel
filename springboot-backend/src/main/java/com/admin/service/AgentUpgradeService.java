@@ -27,12 +27,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class AgentUpgradeService {
     public static final String TARGET_VERSION = "2.49.1";
+    private static final String INSTALLER_RELEASE = "2.49.6";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";
     private static final long TASK_TIMEOUT_MS = 5 * 60_000L;
     private static final String RELEASE_SCRIPT = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/"
-            + TARGET_VERSION + "/install.sh";
+            + INSTALLER_RELEASE + "/install.sh";
     private static final List<String> ACTIVE_STATES = List.of(
             "queued", "bootstrapping", "accepted", "preflight", "downloading", "verified", "restarting", "installing");
 

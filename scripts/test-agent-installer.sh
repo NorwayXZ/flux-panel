@@ -102,6 +102,46 @@ EOF
   test ! -e "$case_root/run/gost.pid"
 }
 
+run_procd_test() {
+  case_root="$TEST_ROOT/procd"
+  mock_dir="$case_root/bin"
+  event_log="$case_root/events.log"
+  make_mock_commands "$mock_dir"
+
+  mkdir -p "$case_root/etc/flux-connector" "$case_root/etc/init.d" "$case_root/run"
+  cat > "$case_root/etc/rc.common" <<EOF
+#!/bin/sh
+service="\${1:-}"
+action="\${2:-}"
+printf 'procd %s %s\n' "\$(basename "\$service")" "\$action" >> "$event_log"
+exit 0
+EOF
+  chmod 755 "$case_root/etc/rc.common"
+
+  PATH="$mock_dir:$PATH" \
+    GOST_KEEP_SCRIPT=1 \
+    GOST_SERVICE_MANAGER=procd \
+    GOST_DOWNLOAD_URL=https://example.invalid/gost \
+    GOST_INSTALL_DIR="$case_root/etc/flux-connector" \
+    GOST_PROCD_DIR="$case_root/etc/init.d" \
+    GOST_PROCD_RC_COMMON="$case_root/etc/rc.common" \
+    GOST_PID_FILE="$case_root/run/flux-connector.pid" \
+    sh "$PROJECT_DIR/install.sh" -a 127.0.0.1:6365 -s test-secret -r connector >/dev/null
+
+  test -x "$case_root/etc/init.d/flux-connector"
+  grep -Fq "#!/bin/sh $case_root/etc/rc.common" "$case_root/etc/init.d/flux-connector"
+  grep -Fq 'USE_PROCD=1' "$case_root/etc/init.d/flux-connector"
+  grep -Fq "procd_set_param command \"$case_root/etc/flux-connector/gost\" -C \"$case_root/etc/flux-connector/gost.json\"" "$case_root/etc/init.d/flux-connector"
+  grep -Fq 'procd_set_param respawn 3600 5 0' "$case_root/etc/init.d/flux-connector"
+  grep -Fq "procd_set_param pidfile \"$case_root/run/flux-connector.pid\"" "$case_root/etc/init.d/flux-connector"
+  grep -Fq 'procd_running "flux-connector"' "$case_root/etc/init.d/flux-connector"
+  grep -Fq '"addr": "127.0.0.1:6365"' "$case_root/etc/flux-connector/config.json"
+  grep -Fq '"role": "connector"' "$case_root/etc/flux-connector/config.json"
+  grep -Fq 'procd flux-connector enable' "$event_log"
+  grep -Fq 'procd flux-connector start' "$event_log"
+  grep -Fq 'procd flux-connector status' "$event_log"
+}
+
 run_systemd_test() {
   case_root="$TEST_ROOT/systemd"
   mock_dir="$case_root/bin"
@@ -459,6 +499,7 @@ grep -Fq 'New-Service -Name $ServiceName' "$PROJECT_DIR/install-connector.ps1"
 grep -Fq 'gost-windows-$arch.exe' "$PROJECT_DIR/install-connector.ps1"
 grep -Fq 'if ($Uninstall)' "$PROJECT_DIR/install-connector.ps1"
 run_openrc_test
+run_procd_test
 run_systemd_test
 run_systemd_update_test
 run_systemd_update_rollback_test

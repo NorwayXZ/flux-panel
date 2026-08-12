@@ -1,3 +1,9 @@
+## 2.49.6 OpenWrt connector installer support
+
+- Adds OpenWrt/iStoreOS `procd` service support to the Linux Agent/Connector installer, so home devices can be installed as `/etc/init.d/flux-connector` and managed with the router's native service system.
+- Updates panel-generated node and home-device install commands to download the current panel release installer instead of the older pinned installer script.
+- Agent and Connector binaries remain `2.49.1`; this release fixes the installer wrapper only and does not rebuild or change existing running services until an administrator installs or updates them.
+
 ## 2.49.5 Fixed latency target for cross-entry quality failover
 
 - Adds an optional fixed latency target for Cross-entry Failover quality mode. Low-latency groups can now treat sustained latency above a configured target, such as 20 ms, as quality degradation even when baseline-relative rules would still allow it.

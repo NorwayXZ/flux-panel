@@ -7,6 +7,8 @@ AGENT_REPOSITORY="${FLUX_PANEL_AGENT_REPOSITORY:-NorwayXZ/flux-panel}"
 INSTALL_DIR="${GOST_INSTALL_DIR:-/etc/gost}"
 SYSTEMD_DIR="${GOST_SYSTEMD_DIR:-/etc/systemd/system}"
 OPENRC_DIR="${GOST_OPENRC_DIR:-/etc/init.d}"
+PROCD_DIR="${GOST_PROCD_DIR:-/etc/init.d}"
+PROCD_RC_COMMON="${GOST_PROCD_RC_COMMON:-/etc/rc.common}"
 SERVICE_NAME="gost"
 PID_FILE="${GOST_PID_FILE:-/run/gost.pid}"
 PROC_ROOT="${GOST_PROC_ROOT:-/proc}"
@@ -87,12 +89,14 @@ detect_service_manager() {
     SERVICE_MANAGER="systemd"
   elif command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
     SERVICE_MANAGER="openrc"
+  elif [ -f /etc/openwrt_release ] && [ -f "$PROCD_RC_COMMON" ]; then
+    SERVICE_MANAGER="procd"
   else
-    fail "未检测到可用的服务管理器；支持 systemd 和 Alpine/OpenRC"
+    fail "未检测到可用的服务管理器；支持 systemd、Alpine/OpenRC 和 OpenWrt/procd"
   fi
 
   case "$SERVICE_MANAGER" in
-    systemd|openrc) ;;
+    systemd|openrc|procd) ;;
     *) fail "不支持的服务管理器: $SERVICE_MANAGER" ;;
   esac
 }
@@ -101,6 +105,7 @@ service_exists() {
   case "$SERVICE_MANAGER" in
     systemd) [ -f "$SYSTEMD_DIR/$SERVICE_NAME.service" ] ;;
     openrc) [ -f "$OPENRC_DIR/$SERVICE_NAME" ] ;;
+    procd) [ -f "$PROCD_DIR/$SERVICE_NAME" ] ;;
   esac
 }
 
@@ -111,6 +116,7 @@ stop_service() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true ;;
     openrc) rc-service "$SERVICE_NAME" stop >/dev/null 2>&1 || true ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" stop >/dev/null 2>&1 || true ;;
   esac
 }
 
@@ -156,6 +162,7 @@ disable_service() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true ;;
     openrc) rc-update del "$SERVICE_NAME" default >/dev/null 2>&1 || true ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" disable >/dev/null 2>&1 || true ;;
   esac
 }
 
@@ -163,6 +170,7 @@ enable_service() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl enable "$SERVICE_NAME" >/dev/null ;;
     openrc) rc-update add "$SERVICE_NAME" default >/dev/null ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" enable >/dev/null ;;
   esac
 }
 
@@ -170,6 +178,7 @@ start_service() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl start "$SERVICE_NAME" ;;
     openrc) rc-service "$SERVICE_NAME" start ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" start ;;
   esac
 }
 
@@ -177,6 +186,7 @@ service_is_active() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl is-active --quiet "$SERVICE_NAME" ;;
     openrc) rc-service "$SERVICE_NAME" status >/dev/null 2>&1 ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" status >/dev/null 2>&1 ;;
   esac
 }
 
@@ -184,6 +194,7 @@ service_status_text() {
   case "$SERVICE_MANAGER" in
     systemd) systemctl is-active "$SERVICE_NAME" 2>/dev/null || true ;;
     openrc) rc-service "$SERVICE_NAME" status 2>&1 || true ;;
+    procd) "$PROCD_DIR/$SERVICE_NAME" status 2>&1 || true ;;
   esac
 }
 
@@ -191,6 +202,7 @@ print_log_hint() {
   case "$SERVICE_MANAGER" in
     systemd) log "请执行: journalctl -u $SERVICE_NAME -f" ;;
     openrc) log "请执行: rc-service $SERVICE_NAME status && tail -f /var/log/gost.log" ;;
+    procd) log "请执行: /etc/init.d/$SERVICE_NAME status && logread -f" ;;
   esac
 }
 
@@ -238,6 +250,33 @@ depend() {
 EOF
       chmod 755 "$OPENRC_DIR/$SERVICE_NAME"
       ;;
+    procd)
+      mkdir -p "$PROCD_DIR"
+      cat > "$PROCD_DIR/$SERVICE_NAME" <<EOF
+#!/bin/sh $PROCD_RC_COMMON
+
+USE_PROCD=1
+START=99
+STOP=10
+
+name="Gost Proxy Service"
+
+start_service() {
+  procd_open_instance
+  procd_set_param command "$INSTALL_DIR/gost" -C "$INSTALL_DIR/gost.json"
+  procd_set_param respawn 3600 5 0
+  procd_set_param stdout 1
+  procd_set_param stderr 1
+  procd_set_param pidfile "$PID_FILE"
+  procd_close_instance
+}
+
+status_service() {
+  procd_running "$SERVICE_NAME"
+}
+EOF
+      chmod 755 "$PROCD_DIR/$SERVICE_NAME"
+      ;;
   esac
 }
 
@@ -249,6 +288,9 @@ remove_service_definition() {
       ;;
     openrc)
       rm -f "$OPENRC_DIR/$SERVICE_NAME"
+      ;;
+    procd)
+      rm -f "$PROCD_DIR/$SERVICE_NAME"
       ;;
   esac
 }
