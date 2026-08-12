@@ -1,3 +1,9 @@
+## 2.50.3 Cross-entry primary failback tolerance
+
+- Changes Cross-entry Failover primary failback so a recovered primary can return after stability and cooldown when it is equal to, faster than, or only slightly slower than the active backup.
+- Keeps backup-to-backup switching conservative: backups still need a meaningful quality benefit before replacing the current active entry.
+- Lowers the default primary failback tolerance to `5 ms` or `15%` and updates existing untouched defaults from the older `10 ms` / `20%` values.
+
 ## 2.50.2 Cross-entry topology-isolated preheat
 
 - Tightens Cross-entry Failover topology avoidance so `8.218.x.x`-style same large IPv4 ranges are treated as the same risk group instead of only comparing `/24` subnets.

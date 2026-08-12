@@ -64,8 +64,8 @@ public class CrossEntryFailoverSaveDto {
     private Boolean sameFaultAvoidanceEnabled = true;
     private Boolean topologyAvoidanceEnabled = true;
     private Integer minResidencySeconds = 300;
-    private Integer failbackGainMs = 10;
-    private Double failbackGainPercent = 20.0;
+    private Integer failbackGainMs = 5;
+    private Double failbackGainPercent = 15.0;
     private Boolean preheatEnabled = true;
     private Integer preheatBackupCount = 3;
     private Boolean preheatStrictIsolation = true;

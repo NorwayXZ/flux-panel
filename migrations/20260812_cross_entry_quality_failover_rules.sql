@@ -106,11 +106,11 @@ SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLU
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='failback_gain_ms');
-SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `failback_gain_ms` int NOT NULL DEFAULT 10 AFTER `min_residency_seconds`', 'SELECT 1');
+SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `failback_gain_ms` int NOT NULL DEFAULT 5 AFTER `min_residency_seconds`', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='failback_gain_percent');
-SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `failback_gain_percent` decimal(8,2) NOT NULL DEFAULT 20.00 AFTER `failback_gain_ms`', 'SELECT 1');
+SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `failback_gain_percent` decimal(8,2) NOT NULL DEFAULT 15.00 AFTER `failback_gain_ms`', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='preheat_enabled');
@@ -148,6 +148,10 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='quality_probe_error');
 SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `quality_probe_error` varchar(500) DEFAULT NULL AFTER `quality_probe_status`', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE `cross_entry_failover_group`
+SET `failback_gain_ms`=5, `failback_gain_percent`=15.00
+WHERE `failback_gain_ms`=10 AND `failback_gain_percent`=20.00;
 
 SET @col_exists := (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='quality_probe_at');
 SET @sql := IF(@col_exists=0, 'ALTER TABLE `cross_entry_failover_group` ADD COLUMN `quality_probe_at` bigint DEFAULT NULL AFTER `quality_probe_error`', 'SELECT 1');

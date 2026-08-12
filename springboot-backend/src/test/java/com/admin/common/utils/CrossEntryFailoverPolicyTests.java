@@ -152,31 +152,45 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
-    void failbackRequiresMeaningfulLatencyBenefit() {
+    void failbackDoesNotRequireMeaningfulLatencyBenefit() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(
-                        qualityMember(1, 0, true, 5, false, true, false, 45, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(1, 0, true, 5, false, true, false, 50, 0.0, 0, 0, 10, "203.0.113.10", "none"),
                         qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
                 ),
                 2L,
-                settings(true, 3, true, true, true, true, true, 10, 20.0, "auto", null));
-
-        assertFalse(decision.switchRequired());
-        assertEquals("主入口恢复但收益不足", decision.reason());
-    }
-
-    @Test
-    void failbackSucceedsWhenLatencyBenefitIsLargeEnough() {
-        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
-                List.of(
-                        qualityMember(1, 0, true, 5, false, true, false, 35, 0.0, 0, 0, 10, "203.0.113.10", "none"),
-                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
-                ),
-                2L,
-                settings(true, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+                settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
 
         assertTrue(decision.switchRequired());
         assertEquals(1L, decision.targetId());
+    }
+
+    @Test
+    void failbackAllowsPrimaryThatIsOnlySlightlySlower() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 53, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                2L,
+                settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(1L, decision.targetId());
+    }
+
+    @Test
+    void failbackStaysOnBackupWhenPrimaryIsClearlySlower() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 70, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 8, false, true, false, 50, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                2L,
+                settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("主入口恢复但明显慢于当前入口", decision.reason());
     }
 
     @Test

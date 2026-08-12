@@ -77,8 +77,8 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "same_fault_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER degraded_fallback_enabled");
             ensureColumn("cross_entry_failover_group", "topology_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER same_fault_avoidance_enabled");
             ensureColumn("cross_entry_failover_group", "min_residency_seconds", "int NOT NULL DEFAULT 300 AFTER topology_avoidance_enabled");
-            ensureColumn("cross_entry_failover_group", "failback_gain_ms", "int NOT NULL DEFAULT 10 AFTER min_residency_seconds");
-            ensureColumn("cross_entry_failover_group", "failback_gain_percent", "decimal(8,2) NOT NULL DEFAULT 20.00 AFTER failback_gain_ms");
+            ensureColumn("cross_entry_failover_group", "failback_gain_ms", "int NOT NULL DEFAULT 5 AFTER min_residency_seconds");
+            ensureColumn("cross_entry_failover_group", "failback_gain_percent", "decimal(8,2) NOT NULL DEFAULT 15.00 AFTER failback_gain_ms");
             ensureColumn("cross_entry_failover_group", "preheat_enabled", "tinyint NOT NULL DEFAULT 1 AFTER failback_gain_percent");
             ensureColumn("cross_entry_failover_group", "preheat_backup_count", "int NOT NULL DEFAULT 3 AFTER preheat_enabled");
             ensureColumn("cross_entry_failover_group", "preheat_strict_isolation", "tinyint NOT NULL DEFAULT 1 AFTER preheat_backup_count");
@@ -113,6 +113,7 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_dns_member (group_id,member_id),"
                     + "UNIQUE KEY uk_cross_entry_dns_provider (provider_record_id),KEY idx_cross_entry_dns_group (group_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            normalizeFailbackToleranceDefaults();
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);
         }
@@ -123,5 +124,11 @@ public class CrossEntryFailoverSchemaInitializer {
                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?",
                 Integer.class, table, column);
         if (count == null || count == 0) jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
+    }
+
+    private void normalizeFailbackToleranceDefaults() {
+        jdbcTemplate.update("UPDATE cross_entry_failover_group "
+                + "SET failback_gain_ms=5,failback_gain_percent=15.00 "
+                + "WHERE failback_gain_ms=10 AND failback_gain_percent=20.00");
     }
 }
