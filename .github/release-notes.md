@@ -1,3 +1,8 @@
+## 2.51.4 Release warning cleanup
+
+- Removes the remaining Lombok equals/hashCode warning from the release workflow after the `2.51.3` dependency maintenance run.
+- Keeps Agent and Connector target binaries at `2.51.3`; this panel release reuses the security-updated Agent assets from the current release flow.
+
 ## 2.51.3 Dependency and workflow maintenance
 
 - Clears current frontend dependency audit findings by updating `react-router`/`react-router-dom`, `postcss`, `js-yaml`, and scoped `brace-expansion` overrides while keeping the existing React 18 application surface unchanged.

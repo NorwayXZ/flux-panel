@@ -1,12 +1,14 @@
 package com.admin.common.dto;
 
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 import javax.validation.constraints.Max;
 import javax.validation.constraints.Min;
 import javax.validation.constraints.NotNull;
 
 @Data
+@EqualsAndHashCode(callSuper = false)
 public class PrivateProxyGrantDto extends PrivateProxyCreateDto {
     @NotNull
     private Integer targetUserId;
