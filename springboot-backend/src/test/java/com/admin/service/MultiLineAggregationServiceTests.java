@@ -22,7 +22,7 @@ class MultiLineAggregationServiceTests {
     void setUp() {
         tunnelService = mock(TunnelService.class);
         service = new MultiLineAggregationService(mock(JdbcTemplate.class), tunnelService,
-                mock(NodeService.class), mock(ForwardService.class));
+                mock(NodeService.class), mock(ForwardService.class), mock(SchedulingConflictService.class));
     }
 
     @Test

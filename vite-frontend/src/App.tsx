@@ -41,7 +41,7 @@ const HomeAccessPage = lazy(() => import("@/pages/home-access"));
 const HomeDevicesPage = lazy(() => import("@/pages/home-devices"));
 const GuidePage = lazy(() => import("@/pages/guide"));
 const SystemSelfCheckPage = lazy(() => import("@/pages/system-self-check"));
-const SettingsPage = lazy(() =>
+const PanelAddressPage = lazy(() =>
   import("@/pages/settings").then(module => ({ default: module.SettingsPage }))
 );
 
@@ -317,10 +317,8 @@ function App() {
         path="/port-resources"
         element={<ProtectedRoute useSimpleLayout={true}><PortResourcesPage /></ProtectedRoute>}
       />
-      <Route 
-        path="/settings" 
-        element={<SettingsPage />}
-      />
+      <Route path="/panel-addresses" element={<PanelAddressPage />} />
+      <Route path="/settings" element={<Navigate to="/panel-addresses" replace />} />
       </Routes>
     </Suspense>
   );

@@ -1,3 +1,11 @@
+## 2.51.1 Panel cleanup and scheduler ownership protection
+
+- Keeps the existing `/virtual-lan` compatibility redirect while removing the unused duplicate page; separates the WebView/App panel-address screen from the administrator website settings page.
+- Shows multi-line concurrent dispatch ownership in the global port ledger instead of presenting its managed listener as an unrelated ordinary forward.
+- Adds bidirectional scheduler conflict checks across Smart Entry, Cross-entry Failover, Source-IP Entry, and Multi-line Concurrent Dispatch, including the underlying tunnel set rather than only forward IDs.
+- Extends the Routing Dispatch Center to detect overlapping underlying tunnel sets and clarifies that legacy DDNS credentials remain compatible while new DNS credentials are maintained from Domain Management.
+- Panel-only release; Agent remains `2.50.4`. iOS App changes and local Agent binaries are not included in this release.
+
 ## 2.51.0 Panel organization and scheduling guard rails
 
 - Adds a **Routing Dispatch Center** that explains the relationship between Smart Entry, Source-IP Entry, Cross-entry Failover, and Multi-line Concurrent Dispatch, and flags DNS, port-ledger, and forward-set ownership overlaps.

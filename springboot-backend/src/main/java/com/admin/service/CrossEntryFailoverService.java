@@ -177,6 +177,7 @@ public class CrossEntryFailoverService {
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
             schedulingConflictService.assertDnsRecordAvailable("cross_entry", dto.getId(), dto.getDomain(), dto.getRecordType());
             schedulingConflictService.assertForwardSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
+            schedulingConflictService.assertForwardBackedTunnelSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
             long now = System.currentTimeMillis();
             boolean managedDns = dto.getDnsZoneId() != null;
             DnsProviderService.ZoneAccess zoneAccess = managedDns ? dnsProviderService.loadZoneAccess(dto.getDnsZoneId()) : null;

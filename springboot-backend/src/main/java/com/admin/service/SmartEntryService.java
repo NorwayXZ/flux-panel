@@ -117,6 +117,8 @@ public class SmartEntryService {
             schedulingConflictService.assertDnsRecordAvailable("smart_entry", id, normalized.domain, normalized.recordType);
             schedulingConflictService.assertForwardSetAvailable("smart_entry", id,
                     normalized.routes.stream().map(route -> route.forwardId).collect(Collectors.toList()));
+            schedulingConflictService.assertForwardBackedTunnelSetAvailable("smart_entry", id,
+                    normalized.routes.stream().map(route -> route.forwardId).collect(Collectors.toList()));
 
             boolean sameIdentity = oldGroup != null
                     && normalized.providerId == number(oldGroup.get("provider_ref_id"))

@@ -161,4 +161,8 @@ public class ForwardWithTunnelDto {
     private Integer inx;
 
     private String interfaceName;
+
+    private String managedType;
+
+    private String managedName;
 }

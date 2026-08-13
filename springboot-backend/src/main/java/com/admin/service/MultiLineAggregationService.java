@@ -42,14 +42,17 @@ public class MultiLineAggregationService {
     private final TunnelService tunnelService;
     private final NodeService nodeService;
     private final ForwardService forwardService;
+    private final SchedulingConflictService schedulingConflictService;
     private final AtomicBoolean recalculating = new AtomicBoolean(false);
 
     public MultiLineAggregationService(JdbcTemplate jdbcTemplate, TunnelService tunnelService,
-                                       NodeService nodeService, ForwardService forwardService) {
+                                       NodeService nodeService, ForwardService forwardService,
+                                       SchedulingConflictService schedulingConflictService) {
         this.jdbcTemplate = jdbcTemplate;
         this.tunnelService = tunnelService;
         this.nodeService = nodeService;
         this.forwardService = forwardService;
+        this.schedulingConflictService = schedulingConflictService;
     }
 
     public R overview() {
@@ -370,6 +373,8 @@ public class MultiLineAggregationService {
         }
         Node entry = nodeService.getById(entryNodeId);
         if (entry == null) throw new IllegalArgumentException("入口节点不存在");
+        schedulingConflictService.assertTunnelSetAvailable("multi_line_aggregation", dto.getId(),
+                tunnels.stream().map(Tunnel::getId).collect(Collectors.toList()));
         String mode = normalizeMode(dto.getMode());
         int minimum = dto.getMinimumHealthyPaths() == null ? 1 : dto.getMinimumHealthyPaths();
         if (minimum > tunnels.size()) throw new IllegalArgumentException("最少健康线路不能超过所选线路数");

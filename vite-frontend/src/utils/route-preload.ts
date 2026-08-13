@@ -35,6 +35,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   '/dynamic-dns': () => import('@/pages/dynamic-dns'),
   '/home-access': () => import('@/pages/home-access'),
   '/home-devices': () => import('@/pages/home-devices'),
+  '/panel-addresses': () => import('@/pages/settings'),
   '/guide': () => import('@/pages/guide'),
   '/system-self-check': () => import('@/pages/system-self-check'),
 };

@@ -33,6 +33,8 @@
             f.out_flow AS outFlow,
             f.inx AS inx,
             f.interface_name AS interfaceName,
+            CASE WHEN ag.id IS NULL THEN NULL ELSE 'multi_line_aggregation' END AS managedType,
+            ag.name AS managedName,
             t.name AS tunnelName,
             t.in_ip AS inIp,
             t.out_ip AS outIp,
@@ -47,6 +49,8 @@
             forward f
         LEFT JOIN
             tunnel t ON f.tunnel_id = t.id
+        LEFT JOIN
+            aggregation_group ag ON ag.forward_id = f.id
         LEFT JOIN
             node in_node ON t.in_node_id = in_node.id
         LEFT JOIN
@@ -86,6 +90,8 @@
             f.route_switch_count AS routeSwitchCount,
             f.inx AS inx,
             f.interface_name AS interfaceName,
+            CASE WHEN ag.id IS NULL THEN NULL ELSE 'multi_line_aggregation' END AS managedType,
+            ag.name AS managedName,
             t.name AS tunnelName,
             t.in_ip AS inIp,
             t.out_ip AS outIp,
@@ -100,6 +106,8 @@
             forward f
         LEFT JOIN
             tunnel t ON f.tunnel_id = t.id
+        LEFT JOIN
+            aggregation_group ag ON ag.forward_id = f.id
         LEFT JOIN
             node in_node ON t.in_node_id = in_node.id
         LEFT JOIN

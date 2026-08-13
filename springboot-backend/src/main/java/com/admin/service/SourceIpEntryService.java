@@ -172,6 +172,8 @@ public class SourceIpEntryService {
         if (duplicate != null && duplicate > 0) return R.err("统一入口节点的该 TCP 端口已被另一个来源 IP 分流占用");
         schedulingConflictService.assertForwardSetAvailable("source_ip_entry", dto.getId(),
                 normalized.routes.stream().map(route -> route.backendForwardId).collect(Collectors.toList()));
+        schedulingConflictService.assertForwardBackedTunnelSetAvailable("source_ip_entry", dto.getId(),
+                normalized.routes.stream().map(route -> route.backendForwardId).collect(Collectors.toList()));
 
         boolean listenerChanged = oldGroup == null
                 || number(oldGroup.get("ingress_node_id")) != normalized.ingressNodeId

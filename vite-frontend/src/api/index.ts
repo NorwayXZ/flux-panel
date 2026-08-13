@@ -1512,7 +1512,7 @@ export interface ManagedCertificate {
   updatedTime: number;
 }
 
-export type PortLedgerType = 'forward_entry' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy' | 'source_ip_entry' | 'nft_forward';
+export type PortLedgerType = 'forward_entry' | 'multi_line_aggregation' | 'tunnel_hop' | 'pool_range' | 'pool_control' | 'user_grant' | 'published_service' | 'domain_ingress' | 'home_proxy' | 'source_ip_entry' | 'nft_forward';
 
 export interface PortLedgerEntry {
   key: string;

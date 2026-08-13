@@ -149,6 +149,7 @@ const capabilityRows: CapabilityRow[] = [
 
 const typeLabel: Record<string, string> = {
   forward_entry: '转发入口',
+  multi_line_aggregation: '多线路并发调度',
   source_ip_entry: '来源 IP 分流',
   nft_forward: 'nftables 转发',
   private_proxy: '私人代理',
@@ -264,20 +265,62 @@ export default function RoutingOverviewPage() {
     }
 
     const forwardSetOwners = new Map<string, Array<{ module: string; name: string; path: string }>>();
+    const forwardTunnelMap = new Map<number, number[]>();
+    const tunnelSetOwners = new Map<string, Array<{ module: string; name: string; path: string }>>();
+    const parseTunnelIds = (forward: any) => {
+      const ids = new Set<number>();
+      const primary = Number(forward.tunnelId ?? forward.tunnel_id);
+      if (Number.isFinite(primary) && primary > 0) ids.add(primary);
+      const raw = forward.routeConfig ?? forward.route_config;
+      if (raw) {
+        try {
+          const routes = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (Array.isArray(routes)) {
+            routes.forEach((route: any) => {
+              const routeTunnel = Number(route.tunnelId ?? route.tunnel_id);
+              if (Number.isFinite(routeTunnel) && routeTunnel > 0) ids.add(routeTunnel);
+            });
+          }
+        } catch {
+          // Ignore malformed historical route snapshots; the backend save guard still blocks new conflicts.
+        }
+      }
+      return Array.from(ids).sort((a, b) => a - b);
+    };
+    for (const forward of snapshot.forwards) {
+      const id = Number(forward.id);
+      if (Number.isFinite(id) && id > 0) forwardTunnelMap.set(id, parseTunnelIds(forward));
+    }
     const addForwardSet = (module: string, name: string, path: string, ids: Array<number | string | undefined>) => {
       const normalized = Array.from(new Set(ids.map(Number).filter(id => Number.isFinite(id) && id > 0))).sort((a, b) => a - b);
       if (normalized.length < 2) return;
       const key = normalized.join(',');
       forwardSetOwners.set(key, [...(forwardSetOwners.get(key) || []), { module, name, path }]);
     };
+    const addTunnelSet = (module: string, name: string, path: string, ids: Array<number | string | undefined>) => {
+      const normalized = Array.from(new Set(ids.map(Number).filter(id => Number.isFinite(id) && id > 0))).sort((a, b) => a - b);
+      if (normalized.length < 2) return;
+      const key = normalized.join(',');
+      tunnelSetOwners.set(key, [...(tunnelSetOwners.get(key) || []), { module, name, path }]);
+    };
+    const tunnelIdsForForwardIds = (ids: Array<number | string | undefined>) => ids.flatMap(id => forwardTunnelMap.get(Number(id)) || []);
     for (const group of snapshot.smartGroups) {
-      addForwardSet('三网优化', group.name, '/smart-entry', (group.routes || []).map((route: any) => route.forwardId));
+      const forwardIds = (group.routes || []).map((route: any) => route.forwardId);
+      addForwardSet('三网优化', group.name, '/smart-entry', forwardIds);
+      addTunnelSet('三网优化', group.name, '/smart-entry', tunnelIdsForForwardIds(forwardIds));
     }
     for (const group of snapshot.failoverGroups) {
-      addForwardSet('入口容灾', group.name, '/cross-entry-failover', (group.members || []).map((member: any) => member.forwardId));
+      const forwardIds = (group.members || []).map((member: any) => member.forwardId);
+      addForwardSet('入口容灾', group.name, '/cross-entry-failover', forwardIds);
+      addTunnelSet('入口容灾', group.name, '/cross-entry-failover', tunnelIdsForForwardIds(forwardIds));
     }
     for (const group of snapshot.sourceGroups) {
-      addForwardSet('来源 IP 分流', group.name, '/source-ip-entry', (group.routes || []).map((route: any) => route.backendForwardId));
+      const forwardIds = (group.routes || []).map((route: any) => route.backendForwardId);
+      addForwardSet('来源 IP 分流', group.name, '/source-ip-entry', forwardIds);
+      addTunnelSet('来源 IP 分流', group.name, '/source-ip-entry', tunnelIdsForForwardIds(forwardIds));
+    }
+    for (const group of snapshot.aggregationGroups) {
+      addTunnelSet('多线路并发调度', group.name, '/multi-line-aggregation', (group.members || []).map((member: any) => member.tunnel_id ?? member.tunnelId));
     }
     for (const [forwardIds, owners] of forwardSetOwners) {
       if (new Set(owners.map(owner => owner.module)).size < 2) continue;
@@ -285,6 +328,15 @@ export default function RoutingOverviewPage() {
         level: 'warning',
         title: `同一组入口转发被多个调度策略接管：${forwardIds}`,
         detail: owners.map(owner => `${owner.module}：${owner.name}`).join('；') + '。新保存操作会阻断这种配置，现有配置请确认保留哪个调度策略。',
+        links: Array.from(new Map(owners.map(owner => [owner.path, { label: owner.module, path: owner.path }])).values()),
+      });
+    }
+    for (const [tunnelIds, owners] of tunnelSetOwners) {
+      if (new Set(owners.map(owner => owner.module)).size < 2) continue;
+      result.push({
+        level: 'warning',
+        title: `同一组底层线路被多个调度策略接管：${tunnelIds}`,
+        detail: owners.map(owner => `${owner.module}：${owner.name}`).join('；') + '。后端保存校验会阻断新的重复接管，现有配置建议只保留一个自动调度策略。',
         links: Array.from(new Map(owners.map(owner => [owner.path, { label: owner.module, path: owner.path }])).values()),
       });
     }

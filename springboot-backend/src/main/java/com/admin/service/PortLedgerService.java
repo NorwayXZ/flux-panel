@@ -68,6 +68,7 @@ public class PortLedgerService {
         Map<Long, Node> nodeMap = nodes.stream().collect(Collectors.toMap(Node::getId, Function.identity(), (a, b) -> a));
         Map<Long, Tunnel> tunnelMap = tunnelMapper.selectList(null).stream()
                 .collect(Collectors.toMap(Tunnel::getId, Function.identity(), (a, b) -> a));
+        Map<Long, Map<String, Object>> aggregationByForwardId = loadAggregationForwardOwners();
         Map<Integer, User> userMap = userMapper.selectList(null).stream()
                 .collect(Collectors.toMap(user -> user.getId().intValue(), Function.identity(), (a, b) -> a));
         List<PortPool> pools = poolMapper.selectList(new QueryWrapper<PortPool>().eq("status", 1));
@@ -76,7 +77,7 @@ public class PortLedgerService {
                 .collect(Collectors.toMap(PublishedService::getId, Function.identity(), (a, b) -> a));
 
         List<PortLedgerEntryDto> entries = new ArrayList<>();
-        addForwards(entries, nodeMap, tunnelMap);
+        addForwards(entries, nodeMap, tunnelMap, aggregationByForwardId);
         addPools(entries, nodeMap, pools);
         addGrants(entries, nodeMap, poolMap, userMap);
         addLeases(entries, nodeMap, poolMap, publishedMap, userMap);
@@ -126,14 +127,22 @@ public class PortLedgerService {
         return result;
     }
 
-    private void addForwards(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Long, Tunnel> tunnels) {
+    private void addForwards(List<PortLedgerEntryDto> entries, Map<Long, Node> nodes, Map<Long, Tunnel> tunnels,
+                             Map<Long, Map<String, Object>> aggregationByForwardId) {
         List<Forward> forwards = forwardMapper.selectList(new QueryWrapper<Forward>().ne("status", -1));
         for (Forward forward : forwards) {
             Tunnel primary = tunnels.get(Long.valueOf(forward.getTunnelId()));
             if (primary == null) continue;
-            add(entries, nodeEntry("forward_entry", "occupied", nodes.get(primary.getInNodeId()), forward.getInPort(), forward.getInPort(),
-                    forward.getProtocolMode(), forward.getUserId(), forward.getUserName(), forward.getId(), forward.getName(),
-                    "转发入口 · " + primary.getName(), forward.getCreatedTime(), null));
+            Map<String, Object> aggregationOwner = aggregationByForwardId.get(forward.getId());
+            boolean managedByAggregation = aggregationOwner != null;
+            Long resourceId = managedByAggregation ? longNumber(aggregationOwner.get("id")) : forward.getId();
+            String resourceName = managedByAggregation
+                    ? Objects.toString(aggregationOwner.get("name"), "多线路并发调度")
+                    : forward.getName();
+            add(entries, nodeEntry(managedByAggregation ? "multi_line_aggregation" : "forward_entry", "occupied",
+                    nodes.get(primary.getInNodeId()), forward.getInPort(), forward.getInPort(),
+                    forward.getProtocolMode(), forward.getUserId(), forward.getUserName(), resourceId, resourceName,
+                    (managedByAggregation ? "多线路并发调度入口 · " : "转发入口 · ") + primary.getName(), forward.getCreatedTime(), null));
 
             for (ForwardRouteDto route : routes(forward, primary)) {
                 Tunnel tunnel = tunnels.get(Long.valueOf(route.getTunnelId()));
@@ -143,10 +152,23 @@ public class PortLedgerService {
                 for (int i = 1; i < path.size() && i - 1 < hopPorts.size(); i++) {
                     String protocol = "quic".equalsIgnoreCase(tunnel.getProtocol()) ? "udp" : "tcp";
                     add(entries, nodeEntry("tunnel_hop", "occupied", nodes.get(path.get(i)), hopPorts.get(i - 1), hopPorts.get(i - 1),
-                            protocol, forward.getUserId(), forward.getUserName(), forward.getId(), forward.getName(),
-                            "隧道跳点 " + i + " · " + tunnel.getName(), forward.getCreatedTime(), null));
+                            protocol, forward.getUserId(), forward.getUserName(), resourceId, resourceName,
+                            (managedByAggregation ? "并发调度隧道跳点 " : "隧道跳点 ") + i + " · " + tunnel.getName(),
+                            forward.getCreatedTime(), null));
                 }
             }
+        }
+    }
+
+    private Map<Long, Map<String, Object>> loadAggregationForwardOwners() {
+        if (jdbcTemplate == null) return Map.of();
+        try {
+            return jdbcTemplate.queryForList("SELECT id,name,forward_id AS forwardId FROM aggregation_group WHERE forward_id IS NOT NULL")
+                    .stream()
+                    .filter(row -> row.get("forwardId") instanceof Number)
+                    .collect(Collectors.toMap(row -> ((Number) row.get("forwardId")).longValue(), Function.identity(), (a, b) -> a));
+        } catch (DataAccessException ignored) {
+            return Map.of();
         }
     }
 
@@ -422,5 +444,10 @@ public class PortLedgerService {
         if (value instanceof Boolean bool) return bool;
         if (value instanceof Number number) return number.intValue() != 0;
         return value != null && ("true".equalsIgnoreCase(value.toString()) || "1".equals(value.toString()));
+    }
+
+    private long longNumber(Object value) {
+        if (value instanceof Number number) return number.longValue();
+        return Long.parseLong(Objects.toString(value, "0"));
     }
 }

@@ -221,6 +221,7 @@ export default function PortResourcesPage() {
           <Select label="记录类型" selectedKeys={[filters.type]} onSelectionChange={keys => setFilters({ ...filters, type: String(Array.from(keys)[0] || 'all') })}>
             <SelectItem key="all">全部类型</SelectItem>
             <SelectItem key="forward_entry">转发入口</SelectItem>
+            <SelectItem key="multi_line_aggregation">多线路并发调度</SelectItem>
             <SelectItem key="tunnel_hop">隧道跳点</SelectItem>
             <SelectItem key="published_service">内网映射</SelectItem>
             <SelectItem key="home_proxy">家庭代理</SelectItem>
@@ -287,7 +288,7 @@ export default function PortResourcesPage() {
 }
 
 const typeLabels: Record<string, string> = {
-  forward_entry: '转发入口', tunnel_hop: '隧道跳点', published_service: '内网映射', home_proxy: '家庭代理',
+  forward_entry: '转发入口', multi_line_aggregation: '多线路并发调度', tunnel_hop: '隧道跳点', published_service: '内网映射', home_proxy: '家庭代理',
   pool_control: '控制端口', pool_range: '端口池范围', user_grant: '用户授权', domain_ingress: '域名入口', source_ip_entry: '来源 IP 分流',
   nft_forward: 'nftables 转发',
 };

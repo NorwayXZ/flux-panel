@@ -92,7 +92,7 @@ export const SettingsPage = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </Button>
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">面板设置</h1>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">面板地址</h1>
           </div>
         </div>
       </div>
@@ -103,7 +103,7 @@ export const SettingsPage = () => {
           {/* 添加新地址 */}
           <Card className="border border-gray-200 dark:border-gray-700">
             <CardBody className="p-6">
-              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">添加新面板地址</h2>
+              <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">添加面板地址</h2>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <Input
