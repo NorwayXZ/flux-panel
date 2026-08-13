@@ -353,7 +353,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Transactional(rollbackFor = Exception.class)
     public R updateForward(ForwardUpdateDto forwardUpdateDto) {
         if (isManagedByAggregation(forwardUpdateDto.getId())) {
-            return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面编辑");
+            return R.err("该转发由多线路并发调度模块托管，请在多线路并发调度页面编辑");
         }
         return updateForwardInternal(forwardUpdateDto, getCurrentUserInfo());
     }
@@ -520,7 +520,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Override
     public R deleteForward(Long id) {
         if (isManagedByAggregation(id)) {
-            return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面删除");
+            return R.err("该转发由多线路并发调度模块托管，请在多线路并发调度页面删除");
         }
         return deleteForwardInternal(id, getCurrentUserInfo());
     }
@@ -586,13 +586,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
     @Override
     public R pauseForward(Long id) {
-        if (isManagedByAggregation(id)) return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面暂停");
+        if (isManagedByAggregation(id)) return R.err("该转发由多线路并发调度模块托管，请在多线路并发调度页面暂停");
         return changeForwardStatus(id, FORWARD_STATUS_PAUSED, "暂停", "PauseService", getCurrentUserInfo());
     }
 
     @Override
     public R resumeForward(Long id) {
-        if (isManagedByAggregation(id)) return R.err("该转发由多线路聚合模块托管，请在多线路聚合页面恢复");
+        if (isManagedByAggregation(id)) return R.err("该转发由多线路并发调度模块托管，请在多线路并发调度页面恢复");
         return changeForwardStatus(id, FORWARD_STATUS_ACTIVE, "恢复", "ResumeService", getCurrentUserInfo());
     }
 
@@ -616,7 +616,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Override
     public R forceDeleteForward(Long id) {
         if (isManagedByAggregation(id)) {
-            return R.err("该转发由多线路聚合模块托管，不能在转发页面强制删除");
+            return R.err("该转发由多线路并发调度模块托管，不能在转发页面强制删除");
         }
         // 1. 获取当前用户信息
         UserInfo currentUser = getCurrentUserInfo();

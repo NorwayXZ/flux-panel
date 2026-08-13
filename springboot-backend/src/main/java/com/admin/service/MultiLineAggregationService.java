@@ -110,17 +110,17 @@ public class MultiLineAggregationService {
 
     public R deploy(long id) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         try {
             List<Tunnel> tunnels = loadGroupTunnels(id);
-            if (tunnels.size() < 2) return R.err("聚合组至少需要两条线路");
+            if (tunnels.size() < 2) return R.err("并发调度组至少需要两条线路");
             Map<Long, Integer> weights = refreshMetricsAndWeights(group, tunnels, true);
             R result = group.get("forward_id") == null
                     ? createUnderlyingForward(id, group, tunnels, weights)
                     : updateUnderlyingForward(group, tunnels, weights);
             if (result.getCode() == 0) {
                 jdbcTemplate.update("UPDATE aggregation_group SET state='active',enabled=1,last_error=NULL,updated_time=? WHERE id=?", System.currentTimeMillis(), id);
-                event(id, "deploy", "success", "聚合入口已部署", snapshot(group, weights));
+                event(id, "deploy", "success", "并发调度入口已部署", snapshot(group, weights));
                 return overview();
             }
             markError(id, result.getMsg());
@@ -138,36 +138,36 @@ public class MultiLineAggregationService {
 
     public R toggle(long id, boolean enabled) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         Long forwardId = nullableLong(group.get("forward_id"));
-        if (forwardId == null) return enabled ? deploy(id) : R.err("聚合入口尚未部署");
+        if (forwardId == null) return enabled ? deploy(id) : R.err("并发调度入口尚未部署");
         R result = enabled ? forwardService.resumeManagedForward(forwardId) : forwardService.pauseManagedForward(forwardId);
         if (result.getCode() != 0) return result;
         long now = System.currentTimeMillis();
         jdbcTemplate.update("UPDATE aggregation_group SET enabled=?,state=?,last_error=NULL,updated_time=? WHERE id=?",
                 enabled ? 1 : 0, enabled ? "active" : "paused", now, id);
-        event(id, enabled ? "resume" : "pause", "success", enabled ? "聚合入口已恢复" : "聚合入口已暂停", null);
+        event(id, enabled ? "resume" : "pause", "success", enabled ? "并发调度入口已恢复" : "并发调度入口已暂停", null);
         return overview();
     }
 
     public R test(long id) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         Long forwardId = nullableLong(group.get("forward_id"));
-        if (forwardId == null) return R.err("请先部署聚合入口");
+        if (forwardId == null) return R.err("请先部署并发调度入口");
         R result = forwardService.diagnoseForward(forwardId);
         event(id, "validation", result.getCode() == 0 ? "success" : "failed",
-                result.getCode() == 0 ? "聚合线路验证完成" : result.getMsg(), JSON.toJSONString(result.getData()));
+                result.getCode() == 0 ? "并发调度线路验证完成" : result.getMsg(), JSON.toJSONString(result.getData()));
         if (result.getCode() != 0) return result;
         return R.ok(Map.of("diagnosis", result.getData(), "testedAt", System.currentTimeMillis()));
     }
 
     public R repair(long id) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         try {
             List<Tunnel> tunnels = loadGroupTunnels(id);
-            if (tunnels.size() < 2) return R.err("聚合组至少需要两条线路");
+            if (tunnels.size() < 2) return R.err("并发调度组至少需要两条线路");
             Map<Long, Integer> weights = refreshMetricsAndWeights(group, tunnels, true);
             R deployResult = group.get("forward_id") == null
                     ? createUnderlyingForward(id, group, tunnels, weights)
@@ -198,18 +198,18 @@ public class MultiLineAggregationService {
     }
 
     public R events(long id) {
-        if (findGroup(id) == null) return R.err("聚合组不存在");
+        if (findGroup(id) == null) return R.err("并发调度组不存在");
         return R.ok(jdbcTemplate.queryForList("SELECT id,group_id AS groupId,event_type AS eventType,status,detail,snapshot_json AS snapshotJson,"
                 + "created_time AS createdTime FROM aggregation_event WHERE group_id=? ORDER BY created_time DESC LIMIT 100", id));
     }
 
     public R delete(long id) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         Long forwardId = nullableLong(group.get("forward_id"));
         if (forwardId != null) {
             R result = forwardService.deleteManagedForward(forwardId);
-            if (result.getCode() != 0) return R.err("底层转发删除失败，聚合组已保留：" + result.getMsg());
+            if (result.getCode() != 0) return R.err("底层转发删除失败，并发调度组已保留：" + result.getMsg());
         }
         jdbcTemplate.update("DELETE FROM aggregation_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM aggregation_event WHERE group_id=?", id);
@@ -252,16 +252,16 @@ public class MultiLineAggregationService {
         if (result.getCode() != 0) {
             markError(id, result.getMsg());
             event(id, "create", "failed", result.getMsg(), snapshot(group, weights));
-            return R.err("聚合组已保存，但入口部署失败：" + result.getMsg());
+            return R.err("并发调度组已保存，但入口部署失败：" + result.getMsg());
         }
         jdbcTemplate.update("UPDATE aggregation_group SET state='active',last_error=NULL,updated_time=? WHERE id=?", System.currentTimeMillis(), id);
-        event(id, "create", "success", "并发会话聚合入口创建成功", snapshot(group, weights));
+        event(id, "create", "success", "多线路并发调度入口创建成功", snapshot(group, weights));
         return overview();
     }
 
     private R update(long id, NormalizedConfig config) {
         Map<String, Object> oldGroup = findGroup(id);
-        if (oldGroup == null) return R.err("聚合组不存在");
+        if (oldGroup == null) return R.err("并发调度组不存在");
         List<Map<String, Object>> oldMembers = loadMemberRows(id);
         Map<Long, Integer> newWeights = calculateWeights(config.mode(), config.autoWeight(), config.tunnels(), config.manualWeights(), oldMembers);
         Map<String, Object> desired = new HashMap<>(oldGroup);
@@ -287,7 +287,7 @@ public class MultiLineAggregationService {
 
     private R recalculateGroup(long id, boolean scheduled) {
         Map<String, Object> group = findGroup(id);
-        if (group == null) return R.err("聚合组不存在");
+        if (group == null) return R.err("并发调度组不存在");
         if (!bool(group.get("auto_weight"))) return R.ok();
         List<Tunnel> tunnels = loadGroupTunnels(id);
         Map<Long, Integer> oldWeights = loadMemberRows(id).stream().collect(Collectors.toMap(
@@ -321,7 +321,7 @@ public class MultiLineAggregationService {
 
     private R createUnderlyingForward(long groupId, Map<String, Object> group, List<Tunnel> tunnels, Map<Long, Integer> weights) {
         ForwardDto dto = new ForwardDto();
-        dto.setName(managedName(groupId, Objects.toString(group.get("name"), "聚合线路")));
+        dto.setName(managedName(groupId, Objects.toString(group.get("name"), "并发调度线路")));
         dto.setTunnelId(tunnels.get(0).getId().intValue());
         dto.setRouteTunnelIds(tunnels.stream().map(tunnel -> tunnel.getId().intValue()).collect(Collectors.toList()));
         dto.setRouteWeights(integerWeights(weights));
@@ -346,7 +346,7 @@ public class MultiLineAggregationService {
         if (existing == null) return R.err("底层转发记录已丢失，请重新部署");
         ForwardUpdateDto dto = new ForwardUpdateDto();
         dto.setId(forwardId); dto.setUserId(existing.getUserId());
-        dto.setName(managedName(longNumber(group.get("id")), Objects.toString(group.get("name"), "聚合线路")));
+        dto.setName(managedName(longNumber(group.get("id")), Objects.toString(group.get("name"), "并发调度线路")));
         dto.setTunnelId(tunnels.get(0).getId().intValue());
         dto.setRouteTunnelIds(tunnels.stream().map(tunnel -> tunnel.getId().intValue()).collect(Collectors.toList()));
         dto.setRouteWeights(integerWeights(weights)); dto.setInPort(intNumber(group.get("listen_port"), existing.getInPort()));
@@ -358,15 +358,15 @@ public class MultiLineAggregationService {
 
     private NormalizedConfig normalizeAndValidate(MultiLineAggregationDto dto) {
         if (dto.getTunnelIds() == null || new LinkedHashSet<>(dto.getTunnelIds()).size() < 2) throw new IllegalArgumentException("至少选择两条不同线路");
-        if (dto.getListenPort() == null) throw new IllegalArgumentException("请输入聚合入口端口");
+        if (dto.getListenPort() == null) throw new IllegalArgumentException("请输入并发调度入口端口");
         List<Tunnel> tunnels = new LinkedHashSet<>(dto.getTunnelIds()).stream().map(tunnelService::getById).collect(Collectors.toList());
         if (tunnels.stream().anyMatch(Objects::isNull)) throw new IllegalArgumentException("所选线路中存在已删除的隧道");
         if (tunnels.stream().anyMatch(tunnel -> !Objects.equals(tunnel.getType(), 2))) {
-            throw new IllegalArgumentException("多线路聚合当前仅支持隧道转发线路");
+            throw new IllegalArgumentException("多线路并发调度当前仅支持隧道转发线路");
         }
         Long entryNodeId = tunnels.get(0).getInNodeId();
         if (entryNodeId == null || tunnels.stream().anyMatch(tunnel -> !Objects.equals(entryNodeId, tunnel.getInNodeId()))) {
-            throw new IllegalArgumentException("多线路聚合要求所有隧道使用同一个入口节点");
+            throw new IllegalArgumentException("多线路并发调度要求所有隧道使用同一个入口节点");
         }
         Node entry = nodeService.getById(entryNodeId);
         if (entry == null) throw new IllegalArgumentException("入口节点不存在");
@@ -579,7 +579,7 @@ public class MultiLineAggregationService {
         weights.forEach((id, weight) -> result.put(id.intValue(), weight)); return result;
     }
 
-    private String managedName(long id, String name) { return "[聚合#" + id + "] " + name; }
+    private String managedName(long id, String name) { return "[并发调度#" + id + "] " + name; }
     private String normalizeMode(String mode) { return Set.of("speed", "balanced", "stability").contains(mode) ? mode : "balanced"; }
     private String normalizeProtocol(String protocol) { return Set.of("tcp", "udp", "tcp_udp").contains(protocol) ? protocol : "tcp_udp"; }
     private String pair(Long a, Long b) { return pair(a == null ? 0 : a, b == null ? 0 : b); }

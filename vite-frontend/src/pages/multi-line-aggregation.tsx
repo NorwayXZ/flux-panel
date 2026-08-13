@@ -57,7 +57,7 @@ export default function MultiLineAggregationPage() {
   const load = async () => {
     setError('');
     try { const response = await getAggregationOverview(); if (response.code === 0) setData(response.data); else setError(response.msg); }
-    catch (reason: any) { setError(reason?.message || '加载多线路聚合失败'); }
+    catch (reason: any) { setError(reason?.message || '加载多线路并发调度失败'); }
   };
   useEffect(() => { void load(); }, []);
 
@@ -83,7 +83,7 @@ export default function MultiLineAggregationPage() {
     const tunnel = data?.tunnels.find(item => item.id === id); if (!tunnel) return;
     const selectedEntry = data?.tunnels.find(item => form.tunnelIds.includes(item.id))?.entryNodeId;
     if (!form.tunnelIds.includes(id) && selectedEntry != null && selectedEntry !== tunnel.entryNodeId) {
-      setError('同一个聚合组的所有线路必须使用相同入口节点'); return;
+      setError('同一个并发调度组的所有线路必须使用相同入口节点'); return;
     }
     setError('');
     setForm(current => ({ ...current,
@@ -128,26 +128,26 @@ export default function MultiLineAggregationPage() {
   };
 
   const remove = async (group: AggregationGroup) => {
-    if (!window.confirm(`删除聚合组“${group.name}”及其底层转发？`)) return;
+    if (!window.confirm(`删除并发调度组“${group.name}”及其底层转发？`)) return;
     await action(`delete-${group.id}`, () => deleteAggregation(group.id));
   };
 
   return <div className="space-y-6 pb-10">
     <div className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
-      <div><div className="flex items-center gap-2"><Route className="h-6 w-6 text-primary" /><h1 className="text-2xl font-semibold">多线路聚合</h1></div>
-        <p className="mt-1 text-sm text-default-500">一个公网入口，自适应调度多条完整线路上的并发连接。</p></div>
+      <div><div className="flex items-center gap-2"><Route className="h-6 w-6 text-primary" /><h1 className="text-2xl font-semibold">多线路并发调度</h1></div>
+        <p className="mt-1 text-sm text-default-500">一个公网入口，自适应调度多条完整线路上的并发连接；单个 TCP 连接不会被拆分到多条线路。</p></div>
       <div className="flex gap-2"><Button isIconOnly variant="flat" title="刷新" onPress={() => void load()}><RefreshCw className="h-4 w-4" /></Button>
-        <Button color="primary" startContent={<Plus className="h-4 w-4" />} onPress={openCreate}>新建聚合</Button></div>
+        <Button color="primary" startContent={<Plus className="h-4 w-4" />} onPress={openCreate}>新建调度组</Button></div>
     </div>
 
     {error && <div className="flex items-center justify-between border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700 dark:bg-danger-950/30"><span>{error}</span><Button isIconOnly size="sm" variant="light" onPress={() => setError('')}><X className="h-4 w-4" /></Button></div>}
 
     <div className="grid grid-cols-2 gap-px overflow-hidden border border-divider bg-divider sm:grid-cols-5">
-      {[['聚合组', data?.summary.groups || 0], ['运行中', data?.summary.active || 0], ['健康线路', data?.summary.healthyPaths || 0], ['预估总容量', speed(data?.summary.estimatedCapacityMbps)], ['降级组', data?.summary.degraded || 0]].map(([label, value]) =>
+      {[['调度组', data?.summary.groups || 0], ['运行中', data?.summary.active || 0], ['健康线路', data?.summary.healthyPaths || 0], ['预估并发容量', speed(data?.summary.estimatedCapacityMbps)], ['降级组', data?.summary.degraded || 0]].map(([label, value]) =>
         <div key={String(label)} className="bg-content1 px-4 py-4"><div className="text-xs text-default-500">{label}</div><div className="mt-1 text-xl font-semibold">{value}</div></div>)}</div>
 
     {!data ? <div className="py-24 text-center text-default-400">正在加载...</div> : data.groups.length === 0 ?
-      <div className="border-y border-divider py-20 text-center"><Gauge className="mx-auto h-9 w-9 text-default-300" /><div className="mt-3 font-medium">尚未创建聚合入口</div></div> :
+      <div className="border-y border-divider py-20 text-center"><Gauge className="mx-auto h-9 w-9 text-default-300" /><div className="mt-3 font-medium">尚未创建并发调度入口</div></div> :
       <div className="space-y-5">{data.groups.map(group => <section key={group.id} className="border-y border-divider bg-content1">
         <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{group.name}</h2>
@@ -177,14 +177,14 @@ export default function MultiLineAggregationPage() {
       </section>)}</div>}
 
     <Modal isOpen={formModal.isOpen} onOpenChange={formModal.onOpenChange} size="3xl" scrollBehavior="inside">
-      <ModalContent><ModalHeader>{form.id ? '编辑聚合组' : '新建多线路聚合'}</ModalHeader><ModalBody className="gap-5">
+      <ModalContent><ModalHeader>{form.id ? '编辑并发调度组' : '新建多线路并发调度'}</ModalHeader><ModalBody className="gap-5">
         <div className="grid gap-4 sm:grid-cols-2"><Input label="名称" value={form.name} onValueChange={value => setForm({ ...form, name: value })} /><Input label="公网入口端口" type="number" min={1} max={65535} value={form.listenPort} onValueChange={value => setForm({ ...form, listenPort: value })} /></div>
         <Input label="最终目标地址" placeholder="host:port" value={form.remoteAddr} onValueChange={value => setForm({ ...form, remoteAddr: value })} />
         <div className="grid gap-4 sm:grid-cols-3"><Select label="入口协议" selectedKeys={[form.protocolMode]} onSelectionChange={keys => setForm({ ...form, protocolMode: String(Array.from(keys)[0] || 'tcp_udp') as AggregationProtocol })}><SelectItem key="tcp_udp">TCP + UDP</SelectItem><SelectItem key="tcp">TCP</SelectItem><SelectItem key="udp">UDP</SelectItem></Select>
           <Select label="调度模式" selectedKeys={[form.mode]} onSelectionChange={keys => setForm({ ...form, mode: String(Array.from(keys)[0] || 'balanced') as AggregationMode })}><SelectItem key="speed">速度优先</SelectItem><SelectItem key="balanced">均衡</SelectItem><SelectItem key="stability">稳定优先</SelectItem></Select>
           <Input label="最低健康线路" type="number" min={1} max={Math.max(1, form.tunnelIds.length)} value={form.minimumHealthyPaths} onValueChange={value => setForm({ ...form, minimumHealthyPaths: value })} /></div>
         <div className="flex items-center justify-between border-y border-divider py-3"><div><div className="text-sm font-medium">自动权重</div><div className="text-xs text-default-500">综合最近带宽、延迟、丢包和抖动</div></div><Switch isSelected={form.autoWeight} onValueChange={value => setForm({ ...form, autoWeight: value })} /></div>
-        <div><div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">聚合线路</span><span className="text-xs text-default-500">已选 {form.tunnelIds.length} 条</span></div>
+        <div><div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">调度线路</span><span className="text-xs text-default-500">已选 {form.tunnelIds.length} 条</span></div>
           <div className="max-h-72 overflow-y-auto border border-divider">{groupedTunnels.map(([entryId, group]) => <div key={entryId} className="border-b border-divider last:border-0"><div className="bg-default-100 px-3 py-2 text-xs font-medium">入口：{group.name}</div>{group.items.map(tunnel => {
             const selected = form.tunnelIds.includes(tunnel.id); const selectedEntry = data?.tunnels.find(item => form.tunnelIds.includes(item.id))?.entryNodeId;
             const disabled = !selected && selectedEntry != null && selectedEntry !== tunnel.entryNodeId;

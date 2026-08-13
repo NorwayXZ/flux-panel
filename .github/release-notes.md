@@ -1,3 +1,12 @@
+## 2.51.0 Panel organization and scheduling guard rails
+
+- Adds a **Routing Dispatch Center** that explains the relationship between Smart Entry, Source-IP Entry, Cross-entry Failover, and Multi-line Concurrent Dispatch, and flags DNS, port-ledger, and forward-set ownership overlaps.
+- Adds scheduler conflict protection so the same DNS record or exact same forward set cannot be silently managed by multiple dispatch strategies.
+- Reorganizes the resource entry points: DNS, DDNS, AWS accounts, home devices, and port resources now sit under Resource Center; Virtual LAN is folded into **Private Network and Exit** while keeping the old `/virtual-lan` route as a redirect.
+- Renames **Multi-line Aggregation** to **Multi-line Concurrent Dispatch** in the UI to avoid implying guaranteed bandwidth multiplication, while keeping existing APIs and database names compatible.
+- Adds a feature capability matrix covering required Agent version, DNS dependency, UDP support, middlebox traffic, and ordinary-user authorization support.
+- Panel-only release; Agent and Connector binaries remain `2.50.4`. Existing nodes, tunnels, forwards, ports, DNS records, certificates, private proxies, Docker apps, and running Agent services are not restarted or rewritten during upgrade.
+
 ## 2.50.9 Cross-entry escalating quality penalty
 
 - Adds an escalating quality penalty guard for Cross-entry Failover: repeated quality degradation episodes now progress through L1-L5 protection instead of always using one fixed window.

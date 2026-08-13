@@ -63,11 +63,14 @@ public class SourceIpEntryService {
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
+    private final SchedulingConflictService schedulingConflictService;
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
 
-    public SourceIpEntryService(JdbcTemplate jdbcTemplate, RestTemplate restTemplate) {
+    public SourceIpEntryService(JdbcTemplate jdbcTemplate, RestTemplate restTemplate,
+                                SchedulingConflictService schedulingConflictService) {
         this.jdbcTemplate = jdbcTemplate;
         this.restTemplate = restTemplate;
+        this.schedulingConflictService = schedulingConflictService;
     }
 
     public R overview() {
@@ -167,6 +170,8 @@ public class SourceIpEntryService {
                 "SELECT COUNT(*) FROM source_ip_entry_group WHERE ingress_node_id=? AND listen_port=? AND state<>'deleted' AND (? IS NULL OR id<>?)",
                 Integer.class, normalized.ingressNodeId, normalized.listenPort, dto.getId(), dto.getId());
         if (duplicate != null && duplicate > 0) return R.err("统一入口节点的该 TCP 端口已被另一个来源 IP 分流占用");
+        schedulingConflictService.assertForwardSetAvailable("source_ip_entry", dto.getId(),
+                normalized.routes.stream().map(route -> route.backendForwardId).collect(Collectors.toList()));
 
         boolean listenerChanged = oldGroup == null
                 || number(oldGroup.get("ingress_node_id")) != normalized.ingressNodeId

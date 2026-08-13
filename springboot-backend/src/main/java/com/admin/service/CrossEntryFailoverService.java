@@ -69,6 +69,7 @@ public class CrossEntryFailoverService {
     private final RestTemplate restTemplate;
     private final TelegramNotificationService telegramNotificationService;
     private final DnsProviderService dnsProviderService;
+    private final SchedulingConflictService schedulingConflictService;
     private final ExecutorService probeExecutor = boundedExecutor(8, 64, "cross-entry-probe");
     private final ExecutorService groupExecutor = boundedExecutor(4, 100, "cross-entry-group");
     private final AtomicBoolean checking = new AtomicBoolean(false);
@@ -80,11 +81,13 @@ public class CrossEntryFailoverService {
 
     public CrossEntryFailoverService(JdbcTemplate jdbcTemplate, RestTemplate restTemplate,
                                      TelegramNotificationService telegramNotificationService,
-                                     DnsProviderService dnsProviderService) {
+                                     DnsProviderService dnsProviderService,
+                                     SchedulingConflictService schedulingConflictService) {
         this.jdbcTemplate = jdbcTemplate;
         this.restTemplate = restTemplate;
         this.telegramNotificationService = telegramNotificationService;
         this.dnsProviderService = dnsProviderService;
+        this.schedulingConflictService = schedulingConflictService;
     }
 
     public R listEligibleForwards() {
@@ -172,6 +175,8 @@ public class CrossEntryFailoverService {
                     Integer.class, dto.getDomain(), dto.getRecordType(), dto.getId());
             if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该域名已配置跨入口容灾");
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
+            schedulingConflictService.assertDnsRecordAvailable("cross_entry", dto.getId(), dto.getDomain(), dto.getRecordType());
+            schedulingConflictService.assertForwardSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
             long now = System.currentTimeMillis();
             boolean managedDns = dto.getDnsZoneId() != null;
             DnsProviderService.ZoneAccess zoneAccess = managedDns ? dnsProviderService.loadZoneAccess(dto.getDnsZoneId()) : null;

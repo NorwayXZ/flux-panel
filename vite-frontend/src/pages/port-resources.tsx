@@ -5,8 +5,9 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@herou
 import { Select, SelectItem } from '@heroui/select';
 import { Spinner } from '@heroui/spinner';
 import { Chip } from '@heroui/chip';
-import { Boxes, CircleGauge, Plus, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Boxes, CircleGauge, CloudCog, Globe2, Laptop, Plus, RefreshCw, Search, Share2, ShieldCheck, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 import AccessResourceTabs from '@/components/access-resource-tabs';
 
 import {
@@ -25,7 +26,16 @@ import {
 
 interface NodeOption { id: number; name: string; ip?: string; serverIp?: string; status: number }
 
+const resourceCards = [
+  { title: '端口资源', detail: '端口池、用户授权、全局端口账本', path: '/port-resources', icon: Boxes },
+  { title: '家庭设备', detail: 'Windows、macOS、Linux Connector 接入', path: '/home-devices', icon: Laptop },
+  { title: '域名管理', detail: 'Cloudflare、DNSPod、阿里云 DNS 凭据', path: '/dns-settings', icon: Globe2 },
+  { title: '动态解析', detail: '公网 IP 变化后自动更新 A/AAAA', path: '/dynamic-dns', icon: RefreshCw },
+  { title: 'AWS 账号', detail: 'CloudFront、ACM、Route53 自动化凭据', path: '/aws-access', icon: CloudCog },
+];
+
 export default function PortResourcesPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -113,9 +123,40 @@ export default function PortResourcesPage() {
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
       <AccessResourceTabs />
       <header className="flex items-end justify-between border-b border-divider pb-5">
-        <div><p className="text-sm text-default-500">资源中心</p><h1 className="mt-1 text-2xl font-semibold">端口资源</h1></div>
+        <div>
+          <p className="text-sm text-default-500">资源中心</p>
+          <h1 className="mt-1 text-2xl font-semibold">资源中心</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">统一管理端口、域名、DDNS、AWS 凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。</p>
+        </div>
         <Button color="primary" startContent={<Plus size={18} />} onPress={() => setModalOpen(true)}>新建端口池</Button>
       </header>
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="资源中心入口">
+        {resourceCards.map(item => {
+          const Icon = item.icon;
+          const active = item.path === '/port-resources';
+          return (
+            <button
+              key={item.path}
+              type="button"
+              onClick={() => navigate(item.path)}
+              className={`min-h-28 border p-4 text-left transition-colors ${active ? 'border-primary bg-primary-50/70 dark:bg-primary-500/10' : 'border-divider bg-content1 hover:bg-default-50 dark:hover:bg-default-100/5'}`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">{item.title}</span>
+                <span className={`flex h-9 w-9 items-center justify-center rounded-md ${active ? 'bg-primary text-white' : 'bg-default-100 text-default-500'}`}><Icon size={18} /></span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-default-500">{item.detail}</p>
+            </button>
+          );
+        })}
+      </section>
+
+      <section className="space-y-1">
+        <h2 className="text-base font-semibold">端口资源</h2>
+        <p className="text-xs text-default-500">端口池、用户分享范围和端口账本是所有发布类功能的基础资源。</p>
+      </section>
+
       {loading ? <div className="flex min-h-64 items-center justify-center"><Spinner /></div> : pools.length === 0 ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500"><Boxes size={30} /><span>暂无端口池</span></div>
       ) : (

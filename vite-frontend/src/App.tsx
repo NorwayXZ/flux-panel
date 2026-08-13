@@ -8,6 +8,7 @@ import IndexPage from "@/pages/index";
 const ChangePasswordPage = lazy(() => import("@/pages/change-password"));
 const DashboardPage = lazy(() => import("@/pages/dashboard"));
 const ForwardPage = lazy(() => import("@/pages/forward"));
+const RoutingOverviewPage = lazy(() => import("@/pages/routing-overview"));
 const NftForwardPage = lazy(() => import("@/pages/nft-forward"));
 const TunnelPage = lazy(() => import("@/pages/tunnel"));
 const NodePage = lazy(() => import("@/pages/node"));
@@ -33,7 +34,6 @@ const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
 const UdpQuicDiagnosticPage = lazy(() => import("@/pages/udp-quic-diagnostic"));
 const MultiLineAggregationPage = lazy(() => import("@/pages/multi-line-aggregation"));
 const IpQualityPage = lazy(() => import("@/pages/ip-quality"));
-const VirtualLanPage = lazy(() => import("@/pages/virtual-lan"));
 const PrivateNetworkPage = lazy(() => import("@/pages/private-network"));
 const ServerAssetsPage = lazy(() => import("@/pages/server-assets"));
 const DynamicDnsPage = lazy(() => import("@/pages/dynamic-dns"));
@@ -212,6 +212,7 @@ function App() {
           </ProtectedRoute>
         } 
       />
+      <Route path="/routing-overview" element={<ProtectedRoute><RoutingOverviewPage /></ProtectedRoute>} />
       <Route path="/nft-forward" element={<ProtectedRoute><NftForwardPage /></ProtectedRoute>} />
       <Route
         path="/smart-entry"
@@ -309,7 +310,7 @@ function App() {
       <Route path="/udp-quic-diagnostic" element={<ProtectedRoute><UdpQuicDiagnosticPage /></ProtectedRoute>} />
       <Route path="/multi-line-aggregation" element={<ProtectedRoute><MultiLineAggregationPage /></ProtectedRoute>} />
       <Route path="/ip-quality" element={<ProtectedRoute><IpQualityPage /></ProtectedRoute>} />
-      <Route path="/virtual-lan" element={<ProtectedRoute><VirtualLanPage /></ProtectedRoute>} />
+      <Route path="/virtual-lan" element={<ProtectedRoute><Navigate to="/private-network?section=virtual-lan" replace /></ProtectedRoute>} />
       <Route path="/private-network" element={<ProtectedRoute><PrivateNetworkPage /></ProtectedRoute>} />
       <Route path="/guide" element={<ProtectedRoute useSimpleLayout={true}><GuidePage /></ProtectedRoute>} />
       <Route

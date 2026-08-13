@@ -29,6 +29,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { useLocation } from "react-router-dom";
 
 import {
   createNetworkRouteApplication,
@@ -36,6 +37,7 @@ import {
   deleteNetworkRouteApplication,
   deletePrivateNetwork,
   deleteVirtualLan,
+  deployVirtualLan,
   deployNetworkRouteApplication,
   getNetworkRouteApplications,
   getAwsAccessAccounts,
@@ -43,10 +45,12 @@ import {
   getPrivateNetworkOverview,
   getVirtualLanOverview,
   NetworkRouteApplication,
+  pauseVirtualLan,
   pauseNetworkRouteApplication,
   PrivateNetworkGroup,
   PrivateNetworkOverview,
   refreshVirtualLan,
+  resumeVirtualLan,
   resumeNetworkRouteApplication,
   savePrivateNetwork,
   testNetworkRouteApplication,
@@ -146,6 +150,7 @@ const timeText = (value?: number) =>
   value ? new Date(value).toLocaleString() : "-";
 
 export default function PrivateNetworkPage() {
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [native, setNative] = useState<PrivateNetworkOverview>({
     minimumAgentVersion: "",
@@ -174,6 +179,29 @@ export default function PrivateNetworkPage() {
   const onlineNodes = useMemo(
     () => native.nodes.filter((node) => node.status === 1),
     [native.nodes],
+  );
+  const automaticMemberOptions = useMemo(
+    () => [
+      ...automatic.nodes
+        .filter((node) => node.status === 1)
+        .map((node) => ({
+          key: `node:${node.id}`,
+          label: node.name,
+          detail: `服务器 Agent · ${node.serverIp || node.ip || "在线"}`,
+        })),
+      ...automatic.connectors
+        .filter(
+          (connector) =>
+            connector.status === 1 &&
+            connector.platform.toLowerCase() === "linux",
+        )
+        .map((connector) => ({
+          key: `connector:${connector.id}`,
+          label: connector.name,
+          detail: `Linux Connector · ${connector.remoteIp || "在线"}`,
+        })),
+    ],
+    [automatic.connectors, automatic.nodes],
   );
 
   const load = async (blocking = false) => {
@@ -214,6 +242,14 @@ export default function PrivateNetworkPage() {
   useEffect(() => {
     void load(true);
   }, []);
+
+  useEffect(() => {
+    if (loading || new URLSearchParams(location.search).get("section") !== "virtual-lan") return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("agent-virtual-lan")?.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, location.search]);
 
   useEffect(() => {
     if (!applicationOpen || applicationForm.proxyType !== "vless_xhttp_tls") return;
@@ -304,10 +340,13 @@ export default function PrivateNetworkPage() {
         cidr: automaticForm.cidr.trim(),
         hubNodeId: Number(automaticForm.hubNodeId),
         listenPort: Number(automaticForm.listenPort),
-        members: members.map((id) => ({
-          targetType: "node",
-          targetId: Number(id),
-        })),
+        members: members.map((value) => {
+          const [targetType, targetId] = value.split(":");
+          return {
+            targetType: targetType as "node" | "connector",
+            targetId: Number(targetId),
+          };
+        }),
       });
       if (result.code !== 0) return toast.error(result.msg || "自动组网失败");
       setAutomatic(result.data);
@@ -320,17 +359,37 @@ export default function PrivateNetworkPage() {
 
   const automaticAction = async (
     network: VirtualLanNetwork,
-    action: "refresh" | "delete",
+    action: "refresh" | "pause" | "resume" | "deploy" | "delete",
   ) => {
+    if (
+      action === "delete" &&
+      !window.confirm(`删除“${network.name}”并清理所有成员上的 WireGuard 接口？`)
+    )
+      return;
     setBusy(`auto-${action}-${network.id}`);
     try {
-      const result =
-        action === "refresh"
-          ? await refreshVirtualLan(network.id)
-          : await deleteVirtualLan(network.id);
+      const result = action === "refresh"
+        ? await refreshVirtualLan(network.id)
+        : action === "pause"
+          ? await pauseVirtualLan(network.id)
+          : action === "resume"
+            ? await resumeVirtualLan(network.id)
+            : action === "deploy"
+              ? await deployVirtualLan(network.id)
+              : await deleteVirtualLan(network.id);
       if (result.code !== 0) return toast.error(result.msg || "操作失败");
       setAutomatic(result.data);
-      toast.success(action === "refresh" ? "组网状态已刷新" : "自动组网已删除");
+      toast.success(
+        action === "refresh"
+          ? "组网状态已刷新"
+          : action === "delete"
+            ? "自动组网已删除"
+            : action === "pause"
+              ? "自动组网已暂停"
+              : action === "resume"
+                ? "自动组网已恢复"
+                : "自动组网已重新部署",
+      );
     } finally {
       setBusy("");
     }
@@ -517,9 +576,9 @@ export default function PrivateNetworkPage() {
     <div className="mx-auto w-full max-w-7xl space-y-6 px-3 py-4 sm:px-6">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-divider pb-5">
         <div>
-          <h1 className="text-2xl font-semibold">内网组建</h1>
+          <h1 className="text-2xl font-semibold">内网组建与出口</h1>
           <p className="mt-1 text-sm text-default-500">
-            自动建立服务器内网，并直接应用到 B→C 或 B→C→D 的代理出口。
+            登记原生内网或自动组建虚拟内网，并直接应用到 B→C 或 B→C→D 的代理出口。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -575,7 +634,7 @@ export default function PrivateNetworkPage() {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section id="agent-virtual-lan" className="scroll-mt-6 space-y-3">
         <div className="flex items-center gap-2">
           <Network size={18} />
           <h2 className="font-semibold">Agent 自动组网</h2>
@@ -625,6 +684,39 @@ export default function PrivateNetworkPage() {
                       onPress={() => void automaticAction(network, "refresh")}
                     >
                       <RefreshCw size={16} />
+                    </Button>
+                    {network.state === "paused" ? (
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="light"
+                        title="恢复组网"
+                        isLoading={busy === `auto-resume-${network.id}`}
+                        onPress={() => void automaticAction(network, "resume")}
+                      >
+                        <Play size={16} />
+                      </Button>
+                    ) : (
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="light"
+                        title="暂停组网"
+                        isLoading={busy === `auto-pause-${network.id}`}
+                        onPress={() => void automaticAction(network, "pause")}
+                      >
+                        <Pause size={16} />
+                      </Button>
+                    )}
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="light"
+                      title="重新部署"
+                      isLoading={busy === `auto-deploy-${network.id}`}
+                      onPress={() => void automaticAction(network, "deploy")}
+                    >
+                      <RotateCw size={16} />
                     </Button>
                     <Button
                       isIconOnly
@@ -996,18 +1088,30 @@ export default function PrivateNetworkPage() {
             </div>
             <Select
               selectionMode="multiple"
-              label="组网服务器"
+              label="网络成员"
+              description="支持服务器 Agent 和在线 Linux Connector"
               selectedKeys={automaticForm.members}
               onSelectionChange={(keys) => {
                 const members = new Set(Array.from(keys).map(String));
-                const hubNodeId = members.has(automaticForm.hubNodeId)
+                const currentHubKey = automaticForm.hubNodeId
+                  ? `node:${automaticForm.hubNodeId}`
+                  : "";
+                const firstNodeKey = Array.from(members).find((item) =>
+                  item.startsWith("node:"),
+                );
+                const hubNodeId = members.has(currentHubKey)
                   ? automaticForm.hubNodeId
-                  : Array.from(members)[0] || "";
+                  : firstNodeKey?.split(":")[1] || "";
                 setAutomaticForm({ ...automaticForm, members, hubNodeId });
               }}
             >
-              {onlineNodes.map((node) => (
-                <SelectItem key={String(node.id)}>{node.name}</SelectItem>
+              {automaticMemberOptions.map((option) => (
+                <SelectItem key={option.key} textValue={`${option.label} ${option.detail}`}>
+                  <div>
+                    <p>{option.label}</p>
+                    <p className="text-xs text-default-400">{option.detail}</p>
+                  </div>
+                </SelectItem>
               ))}
             </Select>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -1024,7 +1128,9 @@ export default function PrivateNetworkPage() {
                 }
               >
                 {onlineNodes
-                  .filter((node) => automaticForm.members.has(String(node.id)))
+                  .filter((node) =>
+                    automaticForm.members.has(`node:${node.id}`),
+                  )
                   .map((node) => (
                     <SelectItem key={String(node.id)}>{node.name}</SelectItem>
                   ))}

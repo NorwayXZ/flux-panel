@@ -41,13 +41,16 @@ public class SmartEntryService {
 
     private final JdbcTemplate jdbcTemplate;
     private final DynamicDnsService dynamicDnsService;
+    private final SchedulingConflictService schedulingConflictService;
     private final AtomicBoolean checking = new AtomicBoolean(false);
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
     private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
 
-    public SmartEntryService(JdbcTemplate jdbcTemplate, DynamicDnsService dynamicDnsService) {
+    public SmartEntryService(JdbcTemplate jdbcTemplate, DynamicDnsService dynamicDnsService,
+                             SchedulingConflictService schedulingConflictService) {
         this.jdbcTemplate = jdbcTemplate;
         this.dynamicDnsService = dynamicDnsService;
+        this.schedulingConflictService = schedulingConflictService;
     }
 
     public R overview() {
@@ -111,6 +114,9 @@ public class SmartEntryService {
                     : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=? AND id<>?",
                     Integer.class, normalized.providerId, normalized.zoneName, normalized.domain, normalized.recordType, id);
             if (duplicate != null && duplicate > 0) return R.err("该业务域名已经配置三网优化");
+            schedulingConflictService.assertDnsRecordAvailable("smart_entry", id, normalized.domain, normalized.recordType);
+            schedulingConflictService.assertForwardSetAvailable("smart_entry", id,
+                    normalized.routes.stream().map(route -> route.forwardId).collect(Collectors.toList()));
 
             boolean sameIdentity = oldGroup != null
                     && normalized.providerId == number(oldGroup.get("provider_ref_id"))

@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/d
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from "@heroui/modal";
 import { Input } from "@heroui/input";
 import { toast } from 'react-hot-toast';
-import { ArrowRightLeft, BellRing, BookOpen, Boxes, Combine, FlaskConical, Gauge, Home, LockKeyhole, MapPinned, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
+import { ArrowRightLeft, BellRing, BookOpen, Boxes, ChevronDown, ChevronRight, Combine, FlaskConical, Gauge, Home, LockKeyhole, MapPinned, Network, RadioTower, SearchCheck, Server, ShieldCheck, Waypoints, Wrench } from 'lucide-react';
 
 import { Logo } from '@/components/icons';
 import { updatePassword } from '@/api';
@@ -43,6 +43,7 @@ export default function AdminLayout({
   const [username, setUsername] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const { count: unreadAlertCount } = useAlertUnreadCount();
   const [passwordForm, setPasswordForm] = useState<PasswordForm>({
     newUsername: '',
@@ -61,6 +62,12 @@ export default function AdminLayout({
           <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
         </svg>
       )
+    },
+    {
+      path: '/routing-overview',
+      label: '线路调度中心',
+      icon: <Waypoints className="h-5 w-5" />,
+      adminOnly: true
     },
     {
       path: '/forward',
@@ -152,7 +159,7 @@ export default function AdminLayout({
     },
     {
       path: '/multi-line-aggregation',
-      label: '多线路聚合',
+      label: '多线路并发调度',
       icon: <Combine className="h-5 w-5" />,
       adminOnly: true
     },
@@ -166,12 +173,7 @@ export default function AdminLayout({
       path: '/private-network',
       label: '内网组建与出口',
       icon: <Waypoints className="h-5 w-5" />,
-      adminOnly: true
-    },
-    {
-      path: '/virtual-lan',
-      label: '虚拟局域网',
-      icon: <Network className="h-5 w-5" />,
+      activePaths: ['/private-network', '/virtual-lan'],
       adminOnly: true
     },
     {
@@ -249,10 +251,11 @@ export default function AdminLayout({
   ];
 
   const menuGroups = [
-    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward', '/smart-entry', '/source-ip-entry', '/cross-entry-failover'] },
-    { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/docker-apps', '/home-access', '/private-network', '/virtual-lan'] },
-    { label: '实用工具', paths: ['/private-proxy', '/network-tools', '/quality-lab', '/bandwidth-test', '/udp-quic-diagnostic', '/multi-line-aggregation', '/ip-quality'] },
-    { label: '系统管理', paths: ['/topology', '/system-self-check', '/monitoring', '/server-assets', '/user', '/config'] },
+    { label: '核心业务', paths: ['/dashboard', '/node', '/tunnel', '/forward', '/nft-forward'] },
+    { label: '线路调度', paths: ['/routing-overview', '/smart-entry', '/source-ip-entry', '/cross-entry-failover', '/multi-line-aggregation'] },
+    { label: '接入与发布', paths: ['/port-resources', '/service-publishing', '/docker-apps', '/private-proxy', '/home-access', '/private-network'] },
+    { label: '诊断与观测', paths: ['/monitoring', '/topology', '/network-tools', '/quality-lab', '/bandwidth-test', '/udp-quic-diagnostic', '/ip-quality', '/system-self-check'] },
+    { label: '系统管理', paths: ['/server-assets', '/user', '/config'] },
     { label: '版本维护', paths: ['/update'] },
     { label: '帮助', paths: ['/guide'] }
   ];
@@ -290,6 +293,17 @@ export default function AdminLayout({
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('cloudnest.admin.collapsed-groups') || '{}');
+      if (saved && typeof saved === 'object') {
+        setCollapsedGroups(saved);
+      }
+    } catch {
+      // Ignore an invalid preference and use the expanded default.
+    }
+  }, []);
+
   // 退出登录
   const handleLogout = () => {
     safeLogout();
@@ -312,6 +326,14 @@ export default function AdminLayout({
     if (isMobile) {
       hideMobileMenu();
     }
+  };
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups(current => {
+      const next = { ...current, [label]: !current[label] };
+      localStorage.setItem('cloudnest.admin.collapsed-groups', JSON.stringify(next));
+      return next;
+    });
   };
 
   // 密码表单验证
@@ -426,41 +448,51 @@ export default function AdminLayout({
            <div className="space-y-6">
             {filteredMenuGroups.map((group) => (
               <section key={group.label} aria-label={group.label}>
-                <h2 className="px-4 mb-2 text-[11px] font-semibold tracking-wide text-gray-400 dark:text-gray-500">
-                  {group.label}
-                </h2>
-                <ul className="space-y-1">
-                  {group.items.map((item) => {
-                    const isActive = (item.activePaths || [item.path]).includes(location.pathname);
-                    return (
-                      <li key={item.path}>
-                     <button
-                       onClick={() => handleMenuClick(item.path)}
-                       onMouseEnter={() => preloadRoute(item.path)}
-                       onFocus={() => preloadRoute(item.path)}
-                     className={`
-                       w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left
-                       transition-colors duration-200 min-h-[44px]
-                       ${isActive 
-                         ? 'bg-primary-100 dark:bg-primary-600/20 text-primary-600 dark:text-primary-300' 
-                         : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-900'
-                       }
-                     `}
-                   >
-                     <div className="flex-shrink-0">
-                       {item.icon}
-                     </div>
-                   <span className="min-w-0 flex-1 font-medium text-sm">{item.label}</span>
-                   {item.path === '/monitoring' && unreadAlertCount > 0 && (
-                     <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">
-                       {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
-                     </span>
-                   )}
-                   </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.label)}
+                  aria-expanded={collapsedGroups[group.label] !== true || group.items.some(item => (item.activePaths || [item.path]).includes(location.pathname))}
+                  className="mb-1 flex min-h-8 w-full items-center gap-2 rounded-md px-3 text-left text-[11px] font-semibold tracking-wide text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-900 dark:hover:text-gray-300"
+                >
+                  {collapsedGroups[group.label] === true && !group.items.some(item => (item.activePaths || [item.path]).includes(location.pathname))
+                    ? <ChevronRight className="h-3.5 w-3.5" />
+                    : <ChevronDown className="h-3.5 w-3.5" />}
+                  <span>{group.label}</span>
+                </button>
+                {(collapsedGroups[group.label] !== true || group.items.some(item => (item.activePaths || [item.path]).includes(location.pathname))) && (
+                  <ul className="space-y-1">
+                    {group.items.map((item) => {
+                      const isActive = (item.activePaths || [item.path]).includes(location.pathname);
+                      return (
+                        <li key={item.path}>
+                          <button
+                            onClick={() => handleMenuClick(item.path)}
+                            onMouseEnter={() => preloadRoute(item.path)}
+                            onFocus={() => preloadRoute(item.path)}
+                            className={`
+                              w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left
+                              transition-colors duration-200 min-h-[44px]
+                              ${isActive
+                                ? 'bg-primary-100 dark:bg-primary-600/20 text-primary-600 dark:text-primary-300'
+                                : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-900'
+                              }
+                            `}
+                          >
+                            <div className="flex-shrink-0">
+                              {item.icon}
+                            </div>
+                            <span className="min-w-0 flex-1 font-medium text-sm">{item.label}</span>
+                            {item.path === '/monitoring' && unreadAlertCount > 0 && (
+                              <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">
+                                {unreadAlertCount > 99 ? '99+' : unreadAlertCount}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </section>
             ))}
           </div>
