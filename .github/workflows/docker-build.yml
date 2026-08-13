@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve and validate version
         id: version
@@ -49,7 +49,7 @@ jobs:
           docker compose --env-file .env.example -f docker-compose-build.yml config --quiet
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -70,7 +70,7 @@ jobs:
         run: bash scripts/test-backend-runtime.sh
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20.19.0"
           cache: npm
@@ -83,7 +83,7 @@ jobs:
           npm run build
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go-gost/go.mod
           cache-dependency-path: go-gost/go.sum
@@ -110,20 +110,20 @@ jobs:
           sha256sum gost-amd64 gost-arm64 gost-windows-amd64.exe gost-windows-arm64.exe gost-darwin-amd64 gost-darwin-arm64 > SHA256SUMS
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push backend runtime images
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: springboot-backend
           file: springboot-backend/Dockerfile.runtime
@@ -140,7 +140,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend-runtime
 
       - name: Build and push frontend runtime images
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: vite-frontend
           file: vite-frontend/Dockerfile.runtime

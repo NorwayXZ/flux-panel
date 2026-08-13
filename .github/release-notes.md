@@ -1,3 +1,10 @@
+## 2.51.3 Dependency and workflow maintenance
+
+- Clears current frontend dependency audit findings by updating `react-router`/`react-router-dom`, `postcss`, `js-yaml`, and scoped `brace-expansion` overrides while keeping the existing React 18 application surface unchanged.
+- Updates Agent Go dependencies that triggered Dependabot alerts, including `golang.org/x/net`, `golang.org/x/crypto`, `github.com/pion/dtls/v3`, and `github.com/pion/stun/v3`.
+- Refreshes the GitHub Actions release workflow to current major versions for checkout, Java, Node, Go, QEMU, Buildx, registry login, and Docker build/push actions.
+- Rebuilds Agent and Connector binaries as `2.51.3` so nodes can receive the security-updated Go dependency set through the normal Agent upgrade page.
+
 ## 2.51.2 Access boundary and load cleanup
 
 - Tightens administrator-only routes so topology, scheduler, diagnostics, Docker apps, resource management, monitoring, user management, and update pages no longer rely on stale browser role flags.

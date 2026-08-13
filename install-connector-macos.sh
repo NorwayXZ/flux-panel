@@ -2,7 +2,7 @@
 
 set -eu
 
-RELEASE="${FLUX_PANEL_CONNECTOR_RELEASE:-2.50.4}"
+RELEASE="${FLUX_PANEL_CONNECTOR_RELEASE:-2.51.3}"
 INSTALL_DIR="${FLUX_CONNECTOR_INSTALL_DIR:-/Library/Application Support/FluxConnector}"
 SERVICE_LABEL="com.fluxpanel.connector"
 PLIST_PATH="${FLUX_CONNECTOR_PLIST_PATH:-/Library/LaunchDaemons/$SERVICE_LABEL.plist}"
