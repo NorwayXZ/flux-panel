@@ -663,6 +663,11 @@ export interface CrossEntryMember {
   qualityFlapWindowStartedAt?: number;
   qualitySuppressedUntil?: number;
   qualitySuppressedReason?: string;
+  qualityPenaltyLevel?: number;
+  qualityPenaltyEpisodeCount?: number;
+  qualityPenaltyWindowStartedAt?: number;
+  qualityPenaltyLastAt?: number;
+  qualityRecoveryObserveUntil?: number;
   qualityLastError?: string;
   qualityCheckedAt?: number;
   faultEpisodeCount?: number;
@@ -717,6 +722,9 @@ export interface CrossEntryGroup {
   qualityFlapWindowSeconds?: number;
   qualityFlapThreshold?: number;
   qualityFlapSuppressSeconds?: number;
+  qualityPenaltyEnabled?: boolean | number;
+  qualityPenaltyResetSeconds?: number;
+  qualityPenaltyObserveSeconds?: number;
   smartSelectionEnabled?: boolean | number;
   tcpLatencySelectionEnabled?: boolean | number;
   tcpLatencySwitchThresholdMs?: number;

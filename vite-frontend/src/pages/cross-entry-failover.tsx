@@ -51,6 +51,7 @@ const emptyForm = {
   qualityP95ThresholdMs: '100', qualityJitterThresholdMs: '50',
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
+  qualityPenaltyEnabled: true, qualityPenaltyResetSeconds: '86400', qualityPenaltyObserveSeconds: '900',
   smartSelectionEnabled: true, tcpLatencySelectionEnabled: false, tcpLatencySwitchThresholdMs: '5',
   tcpPrimaryPreferenceToleranceMs: '10',
   degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
@@ -91,6 +92,7 @@ const faultSummaryText = (member: CrossEntryGroup['members'][number]) => {
     ['抖动', member.jitterFaultCount],
     ['丢包', member.lossFaultCount],
     ['保护', member.flapFaultCount],
+    ['惩罚', member.qualityPenaltyEpisodeCount],
     ['切换', member.switchTriggerCount],
   ]
     .filter(([, count]) => typeof count === 'number' && count > 0)
@@ -222,6 +224,9 @@ export default function CrossEntryFailoverPage() {
       qualityFlapWindowSeconds: String(group.qualityFlapWindowSeconds || 900),
       qualityFlapThreshold: String(group.qualityFlapThreshold || 3),
       qualityFlapSuppressSeconds: String(group.qualityFlapSuppressSeconds || 1800),
+      qualityPenaltyEnabled: tcpLatencySelectionEnabled ? false : (!Number.isFinite(Number(group.qualityPenaltyEnabled)) ? truthy(group.qualityPenaltyEnabled ?? true) : Number(group.qualityPenaltyEnabled) !== 0),
+      qualityPenaltyResetSeconds: String(group.qualityPenaltyResetSeconds || 86400),
+      qualityPenaltyObserveSeconds: String(group.qualityPenaltyObserveSeconds ?? 900),
       smartSelectionEnabled: tcpLatencySelectionEnabled ? false : (!Number.isFinite(Number(group.smartSelectionEnabled)) ? truthy(group.smartSelectionEnabled ?? true) : Number(group.smartSelectionEnabled) !== 0),
       tcpLatencySelectionEnabled,
       tcpLatencySwitchThresholdMs: String(group.tcpLatencySwitchThresholdMs ?? 5),
@@ -255,6 +260,7 @@ export default function CrossEntryFailoverPage() {
       qualityEnabled: enabled ? false : current.qualityEnabled,
       qualityFixedTargetEnabled: enabled ? false : current.qualityFixedTargetEnabled,
       qualityFlapGuardEnabled: enabled ? false : current.qualityFlapGuardEnabled,
+      qualityPenaltyEnabled: enabled ? false : current.qualityPenaltyEnabled,
       smartSelectionEnabled: enabled ? false : current.smartSelectionEnabled,
       degradedFallbackEnabled: enabled ? false : current.degradedFallbackEnabled,
       sameFaultAvoidanceEnabled: enabled ? false : current.sameFaultAvoidanceEnabled,
@@ -309,6 +315,9 @@ export default function CrossEntryFailoverPage() {
       qualityFlapWindowSeconds: Number(form.qualityFlapWindowSeconds),
       qualityFlapThreshold: Number(form.qualityFlapThreshold),
       qualityFlapSuppressSeconds: Number(form.qualityFlapSuppressSeconds),
+      qualityPenaltyEnabled: form.qualityFlapGuardEnabled && form.qualityPenaltyEnabled,
+      qualityPenaltyResetSeconds: Number(form.qualityPenaltyResetSeconds),
+      qualityPenaltyObserveSeconds: Number(form.qualityPenaltyObserveSeconds),
       smartSelectionEnabled: form.smartSelectionEnabled,
       tcpLatencySelectionEnabled: form.routingMode === 'failover' && form.tcpLatencySelectionEnabled,
       tcpLatencySwitchThresholdMs: Number(form.tcpLatencySwitchThresholdMs),
@@ -411,6 +420,7 @@ export default function CrossEntryFailoverPage() {
             const qualityEnabled = !tcpLatencySelectionEnabled && truthy(group.qualityEnabled || false);
             const fixedTargetEnabled = qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
             const flapGuardEnabled = qualityEnabled && truthy(group.qualityFlapGuardEnabled ?? true);
+            const penaltyEnabled = flapGuardEnabled && truthy(group.qualityPenaltyEnabled ?? true);
             const smartSelectionEnabled = qualityEnabled && truthy(group.smartSelectionEnabled ?? true);
             const detailedProbeEnabled = qualityEnabled || tcpLatencySelectionEnabled;
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
@@ -419,7 +429,7 @@ export default function CrossEntryFailoverPage() {
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{detailedProbeEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{smartSelectionEnabled && <Chip size="sm" variant="flat" color="success">智能选择</Chip>}{tcpLatencySelectionEnabled && <Chip size="sm" variant="flat" color="secondary">TCP 延迟优选</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}{group.manualControlMode && group.manualControlMode !== 'auto' && <Chip size="sm" variant="flat" color={manualMeta.color}>{manualMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{detailedProbeEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{smartSelectionEnabled && <Chip size="sm" variant="flat" color="success">智能选择</Chip>}{tcpLatencySelectionEnabled && <Chip size="sm" variant="flat" color="secondary">TCP 延迟优选</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">{penaltyEnabled ? '阶梯惩罚' : '抖动保护'}</Chip>}{group.manualControlMode && group.manualControlMode !== 'auto' && <Chip size="sm" variant="flat" color={manualMeta.color}>{manualMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -439,11 +449,14 @@ export default function CrossEntryFailoverPage() {
                     {group.members.map((member, index) => {
                       const isActive = member.id === group.activeMemberId;
                       const qMeta = qualityMeta(member.qualityState);
-                      const suppressed = Boolean(member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now());
+                      const now = Date.now();
+                      const suppressed = Boolean(member.qualitySuppressedUntil && member.qualitySuppressedUntil > now);
+                      const observing = !suppressed && Boolean(member.qualityRecoveryObserveUntil && member.qualityRecoveryObserveUntil > now);
                       const preheated = qualityEnabled && truthy(member.qualityPreheated || false);
+                      const penaltyLevel = member.qualityPenaltyLevel || 0;
                       return (
                         <div key={member.id} className={`grid min-h-16 grid-cols-1 gap-3 border-l-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
-                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{preheated && <Chip size="sm" variant="flat" color="success">已预热</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">抖动保护至 {timeText(member.qualitySuppressedUntil)}</p>}</div>
+                          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{preheated && <Chip size="sm" variant="flat" color="success">已预热</Chip>}{penaltyLevel > 0 && <Chip size="sm" variant="flat" color="warning">惩罚 L{penaltyLevel}</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{observing && <Chip size="sm" variant="flat" color="secondary">恢复观察</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">{member.qualitySuppressedReason || '质量惩罚保护'}至 {timeText(member.qualitySuppressedUntil)}</p>}{observing && <p className="mt-1 truncate text-xs text-secondary">恢复观察至 {timeText(member.qualityRecoveryObserveUntil)}</p>}</div>
                           <div className="text-left text-xs sm:text-right"><p className="font-medium">{detailedProbeEnabled ? metricText(member.qualityLatencyMs, ' ms') : (member.latencyMs ? `${member.latencyMs} ms` : '-')}</p>{qualityEnabled ? <p className="mt-1 text-default-500">均值 {metricText(member.qualityLatencyMs, ' ms')} · P95 {metricText(member.qualityP95Ms, ' ms')} · 抖动 {metricText(member.qualityJitterMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : tcpLatencySelectionEnabled ? <p className="mt-1 text-default-500">TCP 多次探测均值 · 主线容忍 {group.tcpPrimaryPreferenceToleranceMs ?? 10} ms</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}<p className="mt-1 text-default-400">{faultSummaryText(member)}</p>{member.lastFaultReason && <p className="mt-1 truncate text-default-400">{member.lastFaultReason}</p>}</div>
                         </div>
                       );
@@ -649,12 +662,19 @@ export default function CrossEntryFailoverPage() {
                     <Switch isSelected={form.qualityFixedTargetStrict} isDisabled={!form.qualityFixedTargetEnabled} onValueChange={qualityFixedTargetStrict => setForm({ ...form, qualityFixedTargetStrict })}>只切到达标备用入口</Switch>
                     <p className="text-xs leading-5 text-default-500">开启后，入口连续超过目标延迟会算作质量劣化；严格模式下，只会切到最近探测延迟小于等于目标值的备用入口。</p>
                   </div>
-                  <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-[minmax(0,1fr)_repeat(3,150px)] sm:items-center">
-                    <Switch isSelected={form.qualityFlapGuardEnabled} onValueChange={qualityFlapGuardEnabled => setForm({ ...form, qualityFlapGuardEnabled })}>启用抖动保护</Switch>
-                    <Input type="number" label="统计窗口（秒）" min={60} value={form.qualityFlapWindowSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapWindowSeconds => setForm({ ...form, qualityFlapWindowSeconds })} />
-                    <Input type="number" label="触发次数" min={2} max={20} value={form.qualityFlapThreshold} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapThreshold => setForm({ ...form, qualityFlapThreshold })} />
-                    <Input type="number" label="保护时长（秒）" min={60} value={form.qualityFlapSuppressSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapSuppressSeconds => setForm({ ...form, qualityFlapSuppressSeconds })} />
-                    <p className="text-xs leading-5 text-default-500 sm:col-span-4">默认规则：{durationText(Number(form.qualityFlapWindowSeconds))}内质量劣化 {form.qualityFlapThreshold || 3} 次，则该入口进入 {durationText(Number(form.qualityFlapSuppressSeconds))} 保护期。保护期内不会自动回切到它，也不会优先切到它，避免主入口 10ms/200ms 来回跳造成体验抖动。</p>
+                  <div className="grid gap-3 border-t border-divider pt-3">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-center">
+                      <Switch isSelected={form.qualityFlapGuardEnabled} onValueChange={qualityFlapGuardEnabled => setForm({ ...form, qualityFlapGuardEnabled, qualityPenaltyEnabled: qualityFlapGuardEnabled ? form.qualityPenaltyEnabled : false })}>启用抖动保护</Switch>
+                      <Input type="number" label="统计窗口（秒）" min={60} value={form.qualityFlapWindowSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapWindowSeconds => setForm({ ...form, qualityFlapWindowSeconds })} />
+                      <Input type="number" label="触发次数" min={2} max={20} value={form.qualityFlapThreshold} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapThreshold => setForm({ ...form, qualityFlapThreshold })} />
+                      <Input type="number" label="基础保护（秒）" min={60} value={form.qualityFlapSuppressSeconds} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityFlapSuppressSeconds => setForm({ ...form, qualityFlapSuppressSeconds })} />
+                    </div>
+                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-center">
+                      <Switch isSelected={form.qualityPenaltyEnabled} isDisabled={!form.qualityFlapGuardEnabled} onValueChange={qualityPenaltyEnabled => setForm({ ...form, qualityPenaltyEnabled })}>启用阶梯惩罚</Switch>
+                      <Input type="number" label="复发记忆（秒）" min={3600} max={604800} value={form.qualityPenaltyResetSeconds} isDisabled={!form.qualityFlapGuardEnabled || !form.qualityPenaltyEnabled} onValueChange={qualityPenaltyResetSeconds => setForm({ ...form, qualityPenaltyResetSeconds })} description="默认 24 小时内复发会升级" />
+                      <Input type="number" label="恢复观察（秒）" min={0} max={86400} value={form.qualityPenaltyObserveSeconds} isDisabled={!form.qualityFlapGuardEnabled || !form.qualityPenaltyEnabled} onValueChange={qualityPenaltyObserveSeconds => setForm({ ...form, qualityPenaltyObserveSeconds })} description="保护后继续确认稳定" />
+                    </div>
+                    <p className="text-xs leading-5 text-default-500">规则：{durationText(Number(form.qualityFlapWindowSeconds))}内质量劣化 {form.qualityFlapThreshold || 3} 次算一次故障事件；开启阶梯惩罚后，短期复发会从 L1 逐级加码到 L5，保护时长约为 {durationText(Number(form.qualityFlapSuppressSeconds))} / 1 小时 / 2 小时 / 6 小时 / 12 小时。保护结束后进入恢复观察，必须达到恢复确认次数才重新参与回切。</p>
                   </div>
                   <div className="grid gap-3 border-t border-divider pt-3">
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

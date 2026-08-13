@@ -123,6 +123,8 @@ public class CrossEntryFailoverService {
                         + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                         + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                         + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
+                        + "quality_penalty_enabled AS qualityPenaltyEnabled,quality_penalty_reset_seconds AS qualityPenaltyResetSeconds,"
+                        + "quality_penalty_observe_seconds AS qualityPenaltyObserveSeconds,"
                         + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
                         + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,"
                         + "tcp_primary_preference_tolerance_ms AS tcpPrimaryPreferenceToleranceMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
@@ -197,6 +199,9 @@ public class CrossEntryFailoverService {
                                 + "quality_state AS qualityState,quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,"
                                 + "quality_flap_count AS qualityFlapCount,quality_flap_window_started_at AS qualityFlapWindowStartedAt,"
                                 + "quality_suppressed_until AS qualitySuppressedUntil,quality_suppressed_reason AS qualitySuppressedReason,"
+                                + "quality_penalty_level AS qualityPenaltyLevel,quality_penalty_episode_count AS qualityPenaltyEpisodeCount,"
+                                + "quality_penalty_window_started_at AS qualityPenaltyWindowStartedAt,quality_penalty_last_at AS qualityPenaltyLastAt,"
+                                + "quality_recovery_observe_until AS qualityRecoveryObserveUntil,"
                                 + "quality_last_error AS qualityLastError,quality_checked_at AS qualityCheckedAt,"
                                 + "fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,latency_fault_count AS latencyFaultCount,"
                                 + "loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,jitter_fault_count AS jitterFaultCount,"
@@ -242,7 +247,8 @@ public class CrossEntryFailoverService {
                                 + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,"
                                 + "quality_p95_threshold_ms,quality_jitter_threshold_ms,quality_fixed_target_enabled,"
                                 + "quality_fixed_target_ms,quality_fixed_target_strict,quality_flap_guard_enabled,quality_flap_window_seconds,"
-                                + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,tcp_latency_selection_enabled,"
+                                + "quality_flap_threshold,quality_flap_suppress_seconds,quality_penalty_enabled,quality_penalty_reset_seconds,"
+                                + "quality_penalty_observe_seconds,smart_selection_enabled,tcp_latency_selection_enabled,"
                                 + "tcp_latency_switch_threshold_ms,degraded_fallback_enabled,"
                                 + "same_fault_avoidance_enabled,topology_avoidance_enabled,min_residency_seconds,failback_gain_ms,"
                                 + "failback_gain_percent,preheat_enabled,preheat_backup_count,preheat_strict_isolation,post_switch_verify_enabled,dns_verify_enabled,"
@@ -253,7 +259,7 @@ public class CrossEntryFailoverService {
                                 + "?,?,?,?,?,?,?,?,?,?,"
                                 + "?,?,?,?,?,?,?,?,?,?,"
                                 + "?,?,?,?,?,?,?,?,?,?,"
-                                + "?,?,?,?,?,?,?"
+                                + "?,?,?,?,?,?,?,?,?,?"
                                 + ")",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
@@ -264,7 +270,8 @@ public class CrossEntryFailoverService {
                         dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getQualityPenaltyEnabled(), dto.getQualityPenaltyResetSeconds(),
+                        dto.getQualityPenaltyObserveSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
                         dto.getTcpLatencySwitchThresholdMs(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
@@ -279,6 +286,7 @@ public class CrossEntryFailoverService {
                                 + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
                                 + "quality_p95_threshold_ms=?,quality_jitter_threshold_ms=?,quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_flap_guard_enabled=?,quality_flap_window_seconds=?,quality_flap_threshold=?,quality_flap_suppress_seconds=?,"
+                                + "quality_penalty_enabled=?,quality_penalty_reset_seconds=?,quality_penalty_observe_seconds=?,"
                                 + "smart_selection_enabled=?,tcp_latency_selection_enabled=?,tcp_latency_switch_threshold_ms=?,"
                                 + "degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
                                 + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,preheat_enabled=?,preheat_backup_count=?,preheat_strict_isolation=?,"
@@ -292,7 +300,8 @@ public class CrossEntryFailoverService {
                         dto.getQualityLossThresholdPercent(), dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getQualityPenaltyEnabled(), dto.getQualityPenaltyResetSeconds(),
+                        dto.getQualityPenaltyObserveSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
                         dto.getTcpLatencySwitchThresholdMs(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
@@ -325,8 +334,9 @@ public class CrossEntryFailoverService {
                     jdbcTemplate.update("UPDATE cross_entry_failover_member SET status=?,fail_count=?,success_count=?,latency_ms=?,last_error=?,last_checked_at=?,"
                                     + "last_healthy_at=?,last_failure_at=?,quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,"
                                     + "quality_baseline_ms=?,quality_preheated=?,quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,"
-                                    + "quality_flap_window_started_at=?,quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,"
-                                    + "quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
+                                    + "quality_flap_window_started_at=?,quality_suppressed_until=?,quality_suppressed_reason=?,quality_penalty_level=?,"
+                                    + "quality_penalty_episode_count=?,quality_penalty_window_started_at=?,quality_penalty_last_at=?,quality_recovery_observe_until=?,"
+                                    + "quality_last_error=?,quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
                                     + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=? WHERE id=?",
                             oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
                             oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
@@ -335,7 +345,9 @@ public class CrossEntryFailoverService {
                             oldFaultStats.get("qualityBaselineMs"), oldFaultStats.get("qualityPreheated"), oldFaultStats.get("qualityState"),
                             oldFaultStats.get("qualityBadCount"), oldFaultStats.get("qualityGoodCount"), oldFaultStats.get("qualityFlapCount"),
                             oldFaultStats.get("qualityFlapWindowStartedAt"), oldFaultStats.get("qualitySuppressedUntil"),
-                            oldFaultStats.get("qualitySuppressedReason"), oldFaultStats.get("qualityLastError"),
+                            oldFaultStats.get("qualitySuppressedReason"), oldFaultStats.get("qualityPenaltyLevel"), oldFaultStats.get("qualityPenaltyEpisodeCount"),
+                            oldFaultStats.get("qualityPenaltyWindowStartedAt"), oldFaultStats.get("qualityPenaltyLastAt"),
+                            oldFaultStats.get("qualityRecoveryObserveUntil"), oldFaultStats.get("qualityLastError"),
                             oldFaultStats.get("qualityCheckedAt"), oldFaultStats.get("faultEpisodeCount"), oldFaultStats.get("connectFaultCount"),
                             oldFaultStats.get("latencyFaultCount"), oldFaultStats.get("lossFaultCount"), oldFaultStats.get("p95FaultCount"),
                             oldFaultStats.get("jitterFaultCount"), oldFaultStats.get("flapFaultCount"), oldFaultStats.get("switchTriggerCount"),
@@ -690,23 +702,31 @@ public class CrossEntryFailoverService {
         CrossEntryQualityFlapGuard.Decision flapDecision = CrossEntryQualityFlapGuard.evaluate(
                 new CrossEntryQualityFlapGuard.Snapshot(oldState, decision.state(),
                         number(member.get("qualityFlapCount")).intValue(), nullableLong(member.get("qualityFlapWindowStartedAt")),
-                        nullableLong(member.get("qualitySuppressedUntil")), Objects.toString(member.get("qualitySuppressedReason"), null), now),
+                        nullableLong(member.get("qualitySuppressedUntil")), Objects.toString(member.get("qualitySuppressedReason"), null),
+                        number(member.get("qualityPenaltyLevel")).intValue(), number(member.get("qualityPenaltyEpisodeCount")).intValue(),
+                        nullableLong(member.get("qualityPenaltyWindowStartedAt")), nullableLong(member.get("qualityPenaltyLastAt")),
+                        nullableLong(member.get("qualityRecoveryObserveUntil")), decision.goodCount(), now),
                 new CrossEntryQualityFlapGuard.Settings(bool(group.get("qualityFlapGuardEnabled")),
                         number(group.get("qualityFlapWindowSeconds")).intValue(), number(group.get("qualityFlapThreshold")).intValue(),
-                        number(group.get("qualityFlapSuppressSeconds")).intValue()));
+                        number(group.get("qualityFlapSuppressSeconds")).intValue(), bool(group.get("qualityPenaltyEnabled")),
+                        number(group.get("qualityPenaltyResetSeconds")).intValue(), number(group.get("qualityPenaltyObserveSeconds")).intValue(),
+                        number(group.get("qualityRecoverSamples")).intValue()));
         if (loss == null) loss = result.success() ? 0.0 : 100.0;
         FaultStatsUpdate faultStats = qualityFaultStatsUpdate(decision, result.success(), result.error(), oldState,
                 "unhealthy".equals(member.get("status")), flapDecision, now);
         jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
                         + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,quality_flap_window_started_at=?,"
-                        + "quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,quality_checked_at=?,"
+                        + "quality_suppressed_until=?,quality_suppressed_reason=?,quality_penalty_level=?,quality_penalty_episode_count=?,"
+                        + "quality_penalty_window_started_at=?,quality_penalty_last_at=?,quality_recovery_observe_until=?,quality_last_error=?,quality_checked_at=?,"
                         + "fault_episode_count=fault_episode_count+?,connect_fault_count=connect_fault_count+?,latency_fault_count=latency_fault_count+?,loss_fault_count=loss_fault_count+?,"
                         + "p95_fault_count=p95_fault_count+?,jitter_fault_count=jitter_fault_count+?,flap_fault_count=flap_fault_count+?,"
                         + "last_fault_type=COALESCE(?,last_fault_type),last_fault_reason=COALESCE(?,last_fault_reason),"
                         + "last_fault_at=COALESCE(?,last_fault_at),updated_time=? WHERE id=?",
                 latency, p95, jitter, loss, decision.baselineMs(), decision.state(), decision.badCount(), decision.goodCount(),
                 flapDecision.flapCount(), flapDecision.windowStartedAt(), flapDecision.suppressedUntil(),
-                flapDecision.suppressedReason(), shorten(result.error(), 500), now,
+                flapDecision.suppressedReason(), flapDecision.penaltyLevel(), flapDecision.penaltyEpisodeCount(),
+                flapDecision.penaltyWindowStartedAt(), flapDecision.penaltyLastAt(), flapDecision.recoveryObserveUntil(),
+                shorten(result.error(), 500), now,
                 faultStats.episodeDelta(), faultStats.connectDelta(), faultStats.latencyDelta(), faultStats.lossDelta(),
                 faultStats.p95Delta(), faultStats.jitterDelta(), faultStats.flapDelta(),
                 faultStats.type(), faultStats.reason(), faultStats.at(), now, member.get("id"));
@@ -773,7 +793,7 @@ public class CrossEntryFailoverService {
                 .filter(member -> "healthy".equals(member.get("status")))
                 .filter(member -> "healthy".equals(member.get("qualityState")))
                 .filter(member -> nullableInt(member.get("qualityLatencyMs")) != null)
-                .filter(member -> !isQualitySuppressed(member, now))
+                .filter(member -> !isQualitySuppressed(group, member, now))
                 .collect(Collectors.toList());
         for (Map<String, Object> member : candidates) {
             long nodeId = number(member.get("entryNodeId")).longValue();
@@ -1236,6 +1256,10 @@ public class CrossEntryFailoverService {
         dto.setQualityFlapWindowSeconds(clamp(dto.getQualityFlapWindowSeconds(), 60, 86400));
         dto.setQualityFlapThreshold(clamp(dto.getQualityFlapThreshold(), 2, 20));
         dto.setQualityFlapSuppressSeconds(clamp(dto.getQualityFlapSuppressSeconds(), 60, 86400));
+        dto.setQualityPenaltyEnabled(!Boolean.FALSE.equals(dto.getQualityPenaltyEnabled()));
+        dto.setQualityPenaltyResetSeconds(clamp(dto.getQualityPenaltyResetSeconds(), 3600, 604800));
+        dto.setQualityPenaltyObserveSeconds(clamp(dto.getQualityPenaltyObserveSeconds(), 0, 86400));
+        if (!dto.getQualityFlapGuardEnabled()) dto.setQualityPenaltyEnabled(false);
         dto.setSmartSelectionEnabled(!Boolean.FALSE.equals(dto.getSmartSelectionEnabled()));
         dto.setTcpLatencySwitchThresholdMs(clamp(dto.getTcpLatencySwitchThresholdMs(), 0, 30000));
         dto.setTcpPrimaryPreferenceToleranceMs(clamp(dto.getTcpPrimaryPreferenceToleranceMs(), 0, 30000));
@@ -1257,6 +1281,7 @@ public class CrossEntryFailoverService {
             dto.setQualityEnabled(false);
             dto.setQualityFixedTargetEnabled(false);
             dto.setQualityFlapGuardEnabled(false);
+            dto.setQualityPenaltyEnabled(false);
             dto.setSmartSelectionEnabled(false);
             dto.setDegradedFallbackEnabled(false);
             dto.setSameFaultAvoidanceEnabled(false);
@@ -1286,6 +1311,8 @@ public class CrossEntryFailoverService {
                 + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                 + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                 + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
+                + "quality_penalty_enabled AS qualityPenaltyEnabled,quality_penalty_reset_seconds AS qualityPenaltyResetSeconds,"
+                + "quality_penalty_observe_seconds AS qualityPenaltyObserveSeconds,"
                 + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
                 + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,"
                 + "tcp_primary_preference_tolerance_ms AS tcpPrimaryPreferenceToleranceMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
@@ -1310,7 +1337,10 @@ public class CrossEntryFailoverService {
                 + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,quality_state AS qualityState,"
                 + "quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,quality_flap_count AS qualityFlapCount,"
                 + "quality_flap_window_started_at AS qualityFlapWindowStartedAt,quality_suppressed_until AS qualitySuppressedUntil,"
-                + "quality_suppressed_reason AS qualitySuppressedReason,quality_last_error AS qualityLastError,"
+                + "quality_suppressed_reason AS qualitySuppressedReason,quality_penalty_level AS qualityPenaltyLevel,"
+                + "quality_penalty_episode_count AS qualityPenaltyEpisodeCount,quality_penalty_window_started_at AS qualityPenaltyWindowStartedAt,"
+                + "quality_penalty_last_at AS qualityPenaltyLastAt,quality_recovery_observe_until AS qualityRecoveryObserveUntil,"
+                + "quality_last_error AS qualityLastError,"
                 + "quality_checked_at AS qualityCheckedAt,fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,"
                 + "latency_fault_count AS latencyFaultCount,loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,"
                 + "jitter_fault_count AS jitterFaultCount,flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,"
@@ -1359,7 +1389,7 @@ public class CrossEntryFailoverService {
                 number(member.get("successCount")).intValue(),
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),
-                useQualityDecision && isQualitySuppressed(member, now),
+                useQualityDecision && isQualitySuppressed(group, member, now),
                 useDetailedLatency && qualityLatency != null
                         ? qualityLatency
                         : (bool(group.get("tcpLatencySelectionEnabled")) ? null : regularLatency),
@@ -1370,7 +1400,8 @@ public class CrossEntryFailoverService {
                 Objects.toString(member.get("entryAddress"), ""),
                 Objects.toString(member.get("topologySignature"), ""),
                 faultKind(group, member, useQualityDecision, now),
-                !useQualityDecision || !bool(group.get("preheatEnabled")) || bool(member.get("qualityPreheated")));
+                !useQualityDecision || !bool(group.get("preheatEnabled")) || bool(member.get("qualityPreheated")),
+                number(member.get("qualityPenaltyLevel")).intValue());
     }
 
     private String faultKind(Map<String, Object> group, Map<String, Object> member, boolean useQualityDecision, long now) {
@@ -1379,7 +1410,7 @@ public class CrossEntryFailoverService {
         if (!useQualityDecision) return "none";
         Double loss = nullableDouble(member.get("qualityLossPercent"));
         if (loss != null && loss >= doubleNumber(group.get("qualityLossThresholdPercent"))) return "loss";
-        if (isQualitySuppressed(member, now)) return "flap";
+        if (isQualitySuppressed(group, member, now)) return "flap";
         if (isQualityDegraded(member)) {
             return nullableInt(member.get("qualityLatencyMs")) == null ? "quality" : "latency";
         }
@@ -1496,8 +1527,18 @@ public class CrossEntryFailoverService {
     }
 
     private boolean isQualitySuppressed(Map<String, Object> member, long now) {
-        Long suppressedUntil = member == null ? null : nullableLong(member.get("qualitySuppressedUntil"));
-        return suppressedUntil != null && suppressedUntil > now;
+        return isQualitySuppressed(null, member, now);
+    }
+
+    private boolean isQualitySuppressed(Map<String, Object> group, Map<String, Object> member, long now) {
+        if (member == null) return false;
+        Long suppressedUntil = nullableLong(member.get("qualitySuppressedUntil"));
+        if (suppressedUntil != null && suppressedUntil > now) return true;
+        Long observeUntil = nullableLong(member.get("qualityRecoveryObserveUntil"));
+        int recoverSamples = group == null ? 3 : Math.max(1, number(group.get("qualityRecoverSamples")).intValue());
+        return observeUntil != null && observeUntil > now
+                && (!"healthy".equals(Objects.toString(member.get("qualityState"), "unknown"))
+                || number(member.get("qualityGoodCount")).intValue() < recoverSamples);
     }
 
     private boolean acceptableForQualitySwitch(Map<String, Object> group, Map<String, Object> member) {

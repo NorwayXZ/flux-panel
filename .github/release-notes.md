@@ -1,3 +1,10 @@
+## 2.50.9 Cross-entry escalating quality penalty
+
+- Adds an escalating quality penalty guard for Cross-entry Failover: repeated quality degradation episodes now progress through L1-L5 protection instead of always using one fixed window.
+- Keeps unstable entries out of automatic failback during recovery observation until configured healthy samples are reached, reducing 10ms/200ms route flapping.
+- Shows penalty level, penalty event count, suppression reason, and recovery observation state on the Cross-entry Failover page, with configurable recurrence memory and observation duration.
+- Panel-only release; Agent and Connector binaries remain `2.50.4`.
+
 ## 2.50.8 Cross-entry TCP selection layout fix
 
 - Refines the Cross-entry Failover editor layout for primary-preferred TCP latency selection. The switch, numeric fields, and explanatory text are separated into clearer rows so the description no longer wraps into a narrow vertical column.

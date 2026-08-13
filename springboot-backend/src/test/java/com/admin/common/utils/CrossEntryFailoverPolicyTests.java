@@ -96,6 +96,21 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
+    void degradedFallbackAvoidsHigherPenaltyWhenMetricsTie() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 10, true, true, false, 180, 0.0, 0, 0, 10, "203.0.113.10", "latency", true, 3),
+                        qualityMember(2, 1, true, 10, true, true, false, 70, 0.0, 0, 0, 11, "198.51.100.20", "latency", true, 2),
+                        qualityMember(3, 2, true, 10, true, true, false, 70, 0.0, 0, 0, 12, "192.0.2.30", "latency", true, 0)
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
+    @Test
     void sameFaultAvoidancePrefersBackupWithoutTheActiveFault() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(
@@ -416,6 +431,15 @@ class CrossEntryFailoverPolicyTests {
                                                          boolean preheated) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, degraded, acceptable, suppressed,
                 latencyMs, lossPercent, flapCount, failCount, nodeId, address, "", faultKind, preheated);
+    }
+
+    private CrossEntryFailoverPolicy.Member qualityMember(long id, int priority, boolean healthy, int successCount,
+                                                         boolean degraded, boolean acceptable, boolean suppressed,
+                                                         Integer latencyMs, Double lossPercent, int flapCount,
+                                                         int failCount, long nodeId, String address, String faultKind,
+                                                         boolean preheated, int penaltyLevel) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, degraded, acceptable, suppressed,
+                latencyMs, lossPercent, flapCount, failCount, nodeId, address, "", faultKind, preheated, penaltyLevel);
     }
 
     private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,

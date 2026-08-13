@@ -59,6 +59,9 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityFlapWindowSeconds = 900;
     private Integer qualityFlapThreshold = 3;
     private Integer qualityFlapSuppressSeconds = 1800;
+    private Boolean qualityPenaltyEnabled = true;
+    private Integer qualityPenaltyResetSeconds = 86400;
+    private Integer qualityPenaltyObserveSeconds = 900;
     private Boolean smartSelectionEnabled = true;
     /** Prefer the lowest measured TCP connect latency among healthy entries. */
     private Boolean tcpLatencySelectionEnabled = false;

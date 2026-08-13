@@ -72,7 +72,10 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "quality_flap_window_seconds", "int NOT NULL DEFAULT 900 AFTER quality_flap_guard_enabled");
             ensureColumn("cross_entry_failover_group", "quality_flap_threshold", "int NOT NULL DEFAULT 3 AFTER quality_flap_window_seconds");
             ensureColumn("cross_entry_failover_group", "quality_flap_suppress_seconds", "int NOT NULL DEFAULT 1800 AFTER quality_flap_threshold");
-            ensureColumn("cross_entry_failover_group", "smart_selection_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_flap_suppress_seconds");
+            ensureColumn("cross_entry_failover_group", "quality_penalty_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_flap_suppress_seconds");
+            ensureColumn("cross_entry_failover_group", "quality_penalty_reset_seconds", "int NOT NULL DEFAULT 86400 AFTER quality_penalty_enabled");
+            ensureColumn("cross_entry_failover_group", "quality_penalty_observe_seconds", "int NOT NULL DEFAULT 900 AFTER quality_penalty_reset_seconds");
+            ensureColumn("cross_entry_failover_group", "smart_selection_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_penalty_observe_seconds");
             ensureColumn("cross_entry_failover_group", "tcp_latency_selection_enabled", "tinyint NOT NULL DEFAULT 0 AFTER smart_selection_enabled");
             ensureColumn("cross_entry_failover_group", "tcp_latency_switch_threshold_ms", "int NOT NULL DEFAULT 5 AFTER tcp_latency_selection_enabled");
             ensureColumn("cross_entry_failover_group", "tcp_primary_preference_tolerance_ms", "int NOT NULL DEFAULT 10 AFTER tcp_latency_switch_threshold_ms");
@@ -108,7 +111,12 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "quality_flap_window_started_at", "bigint DEFAULT NULL AFTER quality_flap_count");
             ensureColumn("cross_entry_failover_member", "quality_suppressed_until", "bigint DEFAULT NULL AFTER quality_flap_window_started_at");
             ensureColumn("cross_entry_failover_member", "quality_suppressed_reason", "varchar(255) DEFAULT NULL AFTER quality_suppressed_until");
-            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_suppressed_reason");
+            ensureColumn("cross_entry_failover_member", "quality_penalty_level", "int NOT NULL DEFAULT 0 AFTER quality_suppressed_reason");
+            ensureColumn("cross_entry_failover_member", "quality_penalty_episode_count", "int NOT NULL DEFAULT 0 AFTER quality_penalty_level");
+            ensureColumn("cross_entry_failover_member", "quality_penalty_window_started_at", "bigint DEFAULT NULL AFTER quality_penalty_episode_count");
+            ensureColumn("cross_entry_failover_member", "quality_penalty_last_at", "bigint DEFAULT NULL AFTER quality_penalty_window_started_at");
+            ensureColumn("cross_entry_failover_member", "quality_recovery_observe_until", "bigint DEFAULT NULL AFTER quality_penalty_last_at");
+            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_recovery_observe_until");
             ensureColumn("cross_entry_failover_member", "quality_checked_at", "bigint DEFAULT NULL AFTER quality_last_error");
             ensureColumn("cross_entry_failover_member", "fault_episode_count", "int NOT NULL DEFAULT 0 AFTER quality_checked_at");
             ensureColumn("cross_entry_failover_member", "connect_fault_count", "int NOT NULL DEFAULT 0 AFTER fault_episode_count");

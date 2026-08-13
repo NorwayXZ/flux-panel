@@ -148,11 +148,21 @@ public final class CrossEntryFailoverPolicy {
     public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                          boolean acceptableForQualitySwitch, boolean suppressed,
                          Integer latencyMs, Double lossPercent, int flapCount, int failCount,
-                         long entryNodeId, String entryAddress, String topologySignature, String faultKind, boolean preheated) {
+                         long entryNodeId, String entryAddress, String topologySignature, String faultKind,
+                         boolean preheated, int penaltyLevel) {
         public Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                       boolean acceptableForQualitySwitch, boolean suppressed) {
             this(id, priority, healthy, successCount, degraded, acceptableForQualitySwitch, suppressed,
-                    null, null, 0, 0, 0L, "", "", "none", true);
+                    null, null, 0, 0, 0L, "", "", "none", true, 0);
+        }
+
+        public Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
+                      boolean acceptableForQualitySwitch, boolean suppressed,
+                      Integer latencyMs, Double lossPercent, int flapCount, int failCount,
+                      long entryNodeId, String entryAddress, String topologySignature, String faultKind, boolean preheated) {
+            this(id, priority, healthy, successCount, degraded, acceptableForQualitySwitch, suppressed,
+                    latencyMs, lossPercent, flapCount, failCount, entryNodeId, entryAddress,
+                    topologySignature, faultKind, preheated, 0);
         }
     }
 
@@ -199,6 +209,7 @@ public final class CrossEntryFailoverPolicy {
                 .comparingInt((Member member) -> preheatPenalty(member, settings))
                 .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
+                .thenComparingInt(Member::penaltyLevel)
                 .thenComparingInt(Member::priority);
     }
 
@@ -209,6 +220,7 @@ public final class CrossEntryFailoverPolicy {
                 .thenComparingDouble(member -> member.lossPercent() == null ? 0.0 : member.lossPercent())
                 .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
+                .thenComparingInt(Member::penaltyLevel)
                 .thenComparingInt(member -> preheatPenalty(member, settings))
                 .thenComparingInt(Member::priority);
     }
@@ -246,6 +258,7 @@ public final class CrossEntryFailoverPolicy {
                 .thenComparingDouble(member -> member.lossPercent() == null ? 0.0 : member.lossPercent())
                 .thenComparingInt(member -> member.latencyMs() == null ? Integer.MAX_VALUE : member.latencyMs())
                 .thenComparingInt(Member::flapCount)
+                .thenComparingInt(Member::penaltyLevel)
                 .thenComparingInt(Member::failCount)
                 .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
