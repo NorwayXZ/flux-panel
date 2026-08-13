@@ -124,7 +124,8 @@ public class CrossEntryFailoverService {
                         + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                         + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
                         + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
-                        + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                        + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,"
+                        + "tcp_primary_preference_tolerance_ms AS tcpPrimaryPreferenceToleranceMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
                         + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                         + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                         + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
@@ -300,6 +301,10 @@ public class CrossEntryFailoverService {
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET tcp_primary_preference_tolerance_ms=?,"
+                            + "quality_probe_status=? WHERE id=?",
+                    dto.getTcpPrimaryPreferenceToleranceMs(),
+                    dto.getQualityEnabled() || dto.getTcpLatencySelectionEnabled() ? "pending" : "disabled", id);
 
             Long primaryMemberId = null;
             Long retainedActiveMemberId = null;
@@ -472,9 +477,15 @@ public class CrossEntryFailoverService {
         for (ProbeResult result : results) updateMemberHealth(result, failureThreshold, now);
 
         members = loadMembers(groupId);
+        boolean tcpLatencySelection = bool(group.get("tcpLatencySelectionEnabled"));
         boolean qualityDecisionEnabled = false;
-        if (qualityEnabledForFailover(group)) {
+        boolean detailedLatencyMeasured = false;
+        if (tcpLatencySelection) {
+            detailedLatencyMeasured = updateTcpLatencyMeasurements(group, members, timeout, now);
+            members = loadMembers(groupId);
+        } else if (qualityEnabledForFailover(group)) {
             qualityDecisionEnabled = updateQuality(group, members, timeout, now);
+            detailedLatencyMeasured = qualityDecisionEnabled;
             members = loadMembers(groupId);
         } else {
             markQualityDisabledIfNeeded(group, now);
@@ -487,12 +498,12 @@ public class CrossEntryFailoverService {
         }
         boolean activeFailed = active == null || "unhealthy".equals(active.get("status"));
         final boolean useQualityDecision = qualityDecisionEnabled;
+        final boolean useDetailedLatency = detailedLatencyMeasured;
         boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
         List<CrossEntryFailoverPolicy.Member> snapshots = members.stream()
-                .map(member -> policyMember(group, member, useQualityDecision, now))
+                .map(member -> policyMember(group, member, useQualityDecision, useDetailedLatency, now))
                 .collect(Collectors.toList());
         boolean smartSelection = useQualityDecision && bool(group.get("smartSelectionEnabled"));
-        boolean tcpLatencySelection = bool(group.get("tcpLatencySelectionEnabled"));
         boolean adaptiveSelection = smartSelection || tcpLatencySelection;
         CrossEntryFailoverPolicy.Settings policySettings = new CrossEntryFailoverPolicy.Settings(
                 bool(group.get("autoFailback")), number(group.get("recoveryThreshold")).intValue(),
@@ -502,6 +513,7 @@ public class CrossEntryFailoverService {
                 smartSelection && bool(group.get("topologyAvoidanceEnabled")),
                 smartSelection && bool(group.get("preheatEnabled")),
                 tcpLatencySelection, number(group.get("tcpLatencySwitchThresholdMs")).intValue(),
+                number(group.get("tcpPrimaryPreferenceToleranceMs")).intValue(),
                 smartSelection ? number(group.get("failbackGainMs")).intValue() : 0,
                 smartSelection ? doubleNumber(group.get("failbackGainPercent")) : 0.0,
                 Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")));
@@ -520,6 +532,39 @@ public class CrossEntryFailoverService {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
                     state, error, now, now, groupId);
         }
+    }
+
+    private boolean updateTcpLatencyMeasurements(Map<String, Object> group, List<Map<String, Object>> members,
+                                                 int timeoutMs, long now) {
+        long groupId = number(group.get("id")).longValue();
+        String sourceError = qualitySourceError(group);
+        if (sourceError != null) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
+                    shorten(sourceError, 500), now, now, groupId);
+            return false;
+        }
+        int count = number(group.get("qualityProbeCount")).intValue();
+        List<CompletableFuture<QualityProbeResult>> futures = members.stream()
+                .filter(member -> bool(member.get("enabled")))
+                .map(member -> CompletableFuture.supplyAsync(() -> probeQuality(group, member, count, timeoutMs), probeExecutor))
+                .collect(Collectors.toList());
+        List<QualityProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+        List<String> errors = new ArrayList<>();
+        for (QualityProbeResult result : results) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,"
+                            + "quality_loss_percent=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
+                    result.latencyMs(), result.p95Ms(), result.jitterMs(), result.lossPercent(),
+                    shorten(result.error(), 500), now, now, result.member().get("id"));
+            if (StringUtils.isNotBlank(result.error())) {
+                errors.add(Objects.toString(result.member().get("nodeName"), "入口") + "：" + result.error());
+            }
+        }
+        long successful = results.stream().filter(result -> result.success() && result.latencyMs() != null).count();
+        String status = successful == 0 ? "failed" : (errors.isEmpty() ? "ok" : "warning");
+        String error = errors.isEmpty() ? null : shorten(errors.get(0) + (errors.size() > 1 ? " 等 " + errors.size() + " 条" : ""), 500);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status=?,quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
+                status, error, now, now, groupId);
+        return successful > 0;
     }
 
     private boolean updateQuality(Map<String, Object> group, List<Map<String, Object>> members, int timeoutMs, long now) {
@@ -1152,22 +1197,25 @@ public class CrossEntryFailoverService {
         dto.setEnabled(!Boolean.FALSE.equals(dto.getEnabled()));
         dto.setQualityEnabled(Boolean.TRUE.equals(dto.getQualityEnabled()));
         if ("active_active".equals(routingMode)) dto.setQualityEnabled(false);
+        dto.setTcpLatencySelectionEnabled(Boolean.TRUE.equals(dto.getTcpLatencySelectionEnabled()));
+        if ("active_active".equals(routingMode)) dto.setTcpLatencySelectionEnabled(false);
         dto.setQualityProbeSourceType(StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getQualityProbeSourceType(), "panel"), Locale.ROOT));
         if (!Set.of("panel", "node", "connector").contains(dto.getQualityProbeSourceType())) {
             throw new IllegalArgumentException("质量探测源类型不正确");
         }
-        if (dto.getQualityEnabled() && !"panel".equals(dto.getQualityProbeSourceType()) && dto.getQualityProbeSourceId() == null) {
+        boolean detailedProbeEnabled = dto.getQualityEnabled() || dto.getTcpLatencySelectionEnabled();
+        if (detailedProbeEnabled && !"panel".equals(dto.getQualityProbeSourceType()) && dto.getQualityProbeSourceId() == null) {
             throw new IllegalArgumentException("请选择质量探测源");
         }
-        if (dto.getQualityEnabled() && "node".equals(dto.getQualityProbeSourceType())) {
+        if (detailedProbeEnabled && "node".equals(dto.getQualityProbeSourceType())) {
             Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM node WHERE id=?", Integer.class, dto.getQualityProbeSourceId());
             if (count == null || count == 0) throw new IllegalArgumentException("质量探测节点不存在");
         }
-        if (dto.getQualityEnabled() && "connector".equals(dto.getQualityProbeSourceType())) {
+        if (detailedProbeEnabled && "connector".equals(dto.getQualityProbeSourceType())) {
             Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1", Integer.class, dto.getQualityProbeSourceId());
             if (count == null || count == 0) throw new IllegalArgumentException("质量探测 Connector 不存在");
         }
-        if (!dto.getQualityEnabled() || "panel".equals(dto.getQualityProbeSourceType())) dto.setQualityProbeSourceId(null);
+        if (!detailedProbeEnabled || "panel".equals(dto.getQualityProbeSourceType())) dto.setQualityProbeSourceId(null);
         dto.setQualityProbeCount(clamp(dto.getQualityProbeCount(), 2, 10));
         dto.setQualityDegradeThresholdMs(clamp(dto.getQualityDegradeThresholdMs(), 20, 30000));
         dto.setQualityRecoverThresholdMs(clamp(dto.getQualityRecoverThresholdMs(), 10, 30000));
@@ -1189,9 +1237,8 @@ public class CrossEntryFailoverService {
         dto.setQualityFlapThreshold(clamp(dto.getQualityFlapThreshold(), 2, 20));
         dto.setQualityFlapSuppressSeconds(clamp(dto.getQualityFlapSuppressSeconds(), 60, 86400));
         dto.setSmartSelectionEnabled(!Boolean.FALSE.equals(dto.getSmartSelectionEnabled()));
-        dto.setTcpLatencySelectionEnabled(Boolean.TRUE.equals(dto.getTcpLatencySelectionEnabled()));
-        if ("active_active".equals(routingMode)) dto.setTcpLatencySelectionEnabled(false);
         dto.setTcpLatencySwitchThresholdMs(clamp(dto.getTcpLatencySwitchThresholdMs(), 0, 30000));
+        dto.setTcpPrimaryPreferenceToleranceMs(clamp(dto.getTcpPrimaryPreferenceToleranceMs(), 0, 30000));
         dto.setDegradedFallbackEnabled(!Boolean.FALSE.equals(dto.getDegradedFallbackEnabled()));
         dto.setSameFaultAvoidanceEnabled(!Boolean.FALSE.equals(dto.getSameFaultAvoidanceEnabled()));
         dto.setTopologyAvoidanceEnabled(!Boolean.FALSE.equals(dto.getTopologyAvoidanceEnabled()));
@@ -1205,6 +1252,18 @@ public class CrossEntryFailoverService {
         dto.setDnsVerifyEnabled(!Boolean.FALSE.equals(dto.getDnsVerifyEnabled()));
         String manualMode = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getManualControlMode(), "auto"), Locale.ROOT);
         if (!Set.of("auto", "pause", "lock").contains(manualMode)) throw new IllegalArgumentException("手动控制模式不正确");
+        if (dto.getTcpLatencySelectionEnabled()) {
+            dto.setAutoFailback(false);
+            dto.setQualityEnabled(false);
+            dto.setQualityFixedTargetEnabled(false);
+            dto.setQualityFlapGuardEnabled(false);
+            dto.setSmartSelectionEnabled(false);
+            dto.setDegradedFallbackEnabled(false);
+            dto.setSameFaultAvoidanceEnabled(false);
+            dto.setTopologyAvoidanceEnabled(false);
+            dto.setPreheatEnabled(false);
+            if ("lock".equals(manualMode)) manualMode = "auto";
+        }
         dto.setManualControlMode(manualMode);
         if ("lock".equals(manualMode)) {
             if (dto.getId() == null) throw new IllegalArgumentException("请先创建容灾组后再锁定入口");
@@ -1228,7 +1287,8 @@ public class CrossEntryFailoverService {
                 + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                 + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
                 + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
-                + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,"
+                + "tcp_primary_preference_tolerance_ms AS tcpPrimaryPreferenceToleranceMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
                 + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                 + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                 + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
@@ -1288,7 +1348,8 @@ public class CrossEntryFailoverService {
     }
 
     private CrossEntryFailoverPolicy.Member policyMember(Map<String, Object> group, Map<String, Object> member,
-                                                        boolean useQualityDecision, long now) {
+                                                        boolean useQualityDecision, boolean useDetailedLatency,
+                                                        long now) {
         Integer qualityLatency = nullableInt(member.get("qualityLatencyMs"));
         Integer regularLatency = nullableInt(member.get("latencyMs"));
         return new CrossEntryFailoverPolicy.Member(
@@ -1299,8 +1360,10 @@ public class CrossEntryFailoverService {
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),
                 useQualityDecision && isQualitySuppressed(member, now),
-                useQualityDecision && qualityLatency != null ? qualityLatency : regularLatency,
-                nullableDouble(member.get("qualityLossPercent")),
+                useDetailedLatency && qualityLatency != null
+                        ? qualityLatency
+                        : (bool(group.get("tcpLatencySelectionEnabled")) ? null : regularLatency),
+                useDetailedLatency ? nullableDouble(member.get("qualityLossPercent")) : null,
                 number(member.get("qualityFlapCount")).intValue(),
                 number(member.get("failCount")).intValue(),
                 number(member.get("entryNodeId")).longValue(),

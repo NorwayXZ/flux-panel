@@ -720,6 +720,7 @@ export interface CrossEntryGroup {
   smartSelectionEnabled?: boolean | number;
   tcpLatencySelectionEnabled?: boolean | number;
   tcpLatencySwitchThresholdMs?: number;
+  tcpPrimaryPreferenceToleranceMs?: number;
   degradedFallbackEnabled?: boolean | number;
   sameFaultAvoidanceEnabled?: boolean | number;
   topologyAvoidanceEnabled?: boolean | number;

@@ -1,3 +1,11 @@
+## 2.50.7 Primary-preferred TCP latency selection
+
+- Changes lowest-TCP-latency selection into a primary-preferred strategy. The primary remains selected while it is within a configurable latency tolerance of the fastest healthy entry; only a larger gap permits switching away.
+- Keeps a separate minimum gain for backup-to-backup changes and the existing minimum residency and cooldown protections, preventing small latency fluctuations from moving traffic repeatedly between backup entries.
+- Gives TCP selection its own panel, Agent, or Connector probe source and multi-sample average. If the selected remote probe source is unavailable, latency-based switching pauses instead of silently measuring from the panel server.
+- Makes TCP selection mutually exclusive with quality failover, fixed latency targets, smart selection, flap protection, preheat, normal auto-failback, and entry locking. The frontend clears and disables conflicts, while backend normalization and runtime precedence protect old clients and legacy records.
+- Hard-outage failover, recovery confirmation, post-switch verification, DNS verification, manual pause, cooldown, and minimum residency remain active. Panel-only release; Agent and Connector binaries remain `2.50.4`.
+
 ## 2.50.6 Optional lowest-TCP-latency entry selection
 
 - Adds a manual “自动选择 TCP 延迟最低线路” switch to Cross-entry Failover for groups whose entries have different network paths, including groups made entirely of US entries.

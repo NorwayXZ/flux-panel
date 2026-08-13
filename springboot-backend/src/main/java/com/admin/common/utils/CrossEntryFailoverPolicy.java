@@ -15,7 +15,7 @@ public final class CrossEntryFailoverPolicy {
     public static Decision select(List<Member> members, Long activeId, boolean autoFailback,
                                   int recoveryThreshold, boolean cooldownElapsed) {
         return select(members, activeId, new Settings(autoFailback, recoveryThreshold, cooldownElapsed,
-                true, false, true, true, true, false, 5, 10, 20.0, "auto", null));
+                true, false, true, true, true, false, 5, 10, 10, 20.0, "auto", null));
     }
 
     public static Decision select(List<Member> members, Long activeId, Settings settings) {
@@ -25,7 +25,9 @@ public final class CrossEntryFailoverPolicy {
         if (MODE_PAUSE.equals(settings.manualControlMode())) {
             return Decision.stay("已暂停自动切换");
         }
-        if (MODE_LOCK.equals(settings.manualControlMode()) && settings.lockedMemberId() != null) {
+        if (!settings.tcpLatencySelectionEnabled()
+                && MODE_LOCK.equals(settings.manualControlMode())
+                && settings.lockedMemberId() != null) {
             Member locked = members.stream().filter(member -> Objects.equals(member.id(), settings.lockedMemberId())).findFirst().orElse(null);
             if (locked == null) return Decision.stay("锁定入口不存在");
             if (active != null && Objects.equals(active.id(), locked.id())) return Decision.stay("已锁定当前入口");
@@ -85,21 +87,41 @@ public final class CrossEntryFailoverPolicy {
             return Decision.stay("当前入口质量劣化，但没有质量正常的备用入口");
         }
         if (settings.tcpLatencySelectionEnabled()) {
-            if (!settings.cooldownElapsed()) return Decision.stay("TCP 延迟优选仍在冷却期");
-            if (!settings.minResidencyElapsed()) return Decision.stay("当前入口驻留时间不足");
-            Member target = members.stream()
+            Member lowestLatency = members.stream()
                     .filter(Member::healthy)
                     .filter(member -> !member.degraded())
                     .filter(member -> !member.suppressed())
                     .filter(Member::acceptableForQualitySwitch)
-                    .filter(member -> member.successCount() >= settings.recoveryThreshold())
+                    .filter(member -> Objects.equals(member.id(), active.id())
+                            || member.successCount() >= settings.recoveryThreshold())
                     .filter(member -> member.latencyMs() != null)
                     .min(tcpLatencyComparator()).orElse(null);
-            if (target == null || Objects.equals(target.id(), active.id())) {
+            if (lowestLatency == null) {
+                return Decision.stay("没有可用于 TCP 延迟优选的稳定入口");
+            }
+            Member target = lowestLatency;
+            if (isStableTcpCandidate(preferred, active, settings)
+                    && preferred.latencyMs() <= lowestLatency.latencyMs() + settings.tcpPrimaryPreferenceToleranceMs()) {
+                target = preferred;
+            }
+            if (Objects.equals(target.id(), active.id())) {
+                if (preferred != null && Objects.equals(target.id(), preferred.id())) {
+                    return Decision.stay("主入口在优先容忍范围内");
+                }
                 return Decision.stay("当前入口 TCP 延迟最低");
             }
-            if (!hasRequiredLatencyGain(active, target, settings.tcpLatencySwitchThresholdMs())) {
-                return Decision.stay("候选入口 TCP 延迟收益不足");
+            if (!settings.cooldownElapsed()) return Decision.stay("TCP 延迟优选仍在冷却期");
+            if (!settings.minResidencyElapsed()) return Decision.stay("当前入口驻留时间不足");
+            if (preferred != null && Objects.equals(target.id(), preferred.id())) {
+                return Decision.switchTo(target.id(), "主入口延迟已回到优先范围，自动回切");
+            }
+            if (preferred == null || !Objects.equals(active.id(), preferred.id())) {
+                if (!hasRequiredLatencyGain(active, target, settings.tcpLatencySwitchThresholdMs())) {
+                    return Decision.stay("候选入口 TCP 延迟收益不足");
+                }
+            } else if (active.latencyMs() == null
+                    || active.latencyMs() - target.latencyMs() <= settings.tcpPrimaryPreferenceToleranceMs()) {
+                return Decision.stay("主入口仍在优先容忍范围内");
             }
             return Decision.switchTo(target.id(), "TCP 延迟优选，自动切换至最低延迟入口");
         }
@@ -139,12 +161,13 @@ public final class CrossEntryFailoverPolicy {
                            boolean sameFaultAvoidanceEnabled, boolean topologyAvoidanceEnabled,
                            boolean preheatPreferred,
                            boolean tcpLatencySelectionEnabled, int tcpLatencySwitchThresholdMs,
-                           int failbackGainMs, double failbackGainPercent,
+                           int tcpPrimaryPreferenceToleranceMs, int failbackGainMs, double failbackGainPercent,
                            String manualControlMode, Long lockedMemberId) {
         public Settings {
             manualControlMode = manualControlMode == null ? "auto" : manualControlMode;
             recoveryThreshold = Math.max(1, recoveryThreshold);
             tcpLatencySwitchThresholdMs = Math.max(0, tcpLatencySwitchThresholdMs);
+            tcpPrimaryPreferenceToleranceMs = Math.max(0, tcpPrimaryPreferenceToleranceMs);
             failbackGainMs = Math.max(0, failbackGainMs);
             failbackGainPercent = Math.max(0.0, failbackGainPercent);
         }
@@ -156,7 +179,7 @@ public final class CrossEntryFailoverPolicy {
                         String manualControlMode, Long lockedMemberId) {
             this(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
                     degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled,
-                    preheatPreferred, false, 5, failbackGainMs, failbackGainPercent,
+                    preheatPreferred, false, 5, 10, failbackGainMs, failbackGainPercent,
                     manualControlMode, lockedMemberId);
         }
     }
@@ -201,6 +224,17 @@ public final class CrossEntryFailoverPolicy {
         if (target.latencyMs() == null) return false;
         if (active.latencyMs() == null) return true;
         return active.latencyMs() - target.latencyMs() >= Math.max(1, thresholdMs);
+    }
+
+    private static boolean isStableTcpCandidate(Member member, Member active, Settings settings) {
+        return member != null
+                && member.healthy()
+                && !member.degraded()
+                && !member.suppressed()
+                && member.acceptableForQualitySwitch()
+                && member.latencyMs() != null
+                && (Objects.equals(member.id(), active.id())
+                || member.successCount() >= settings.recoveryThreshold());
     }
 
     private static Comparator<Member> qualityComparator(Member active, Settings settings) {

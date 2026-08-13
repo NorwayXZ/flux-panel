@@ -63,6 +63,8 @@ public class CrossEntryFailoverSaveDto {
     /** Prefer the lowest measured TCP connect latency among healthy entries. */
     private Boolean tcpLatencySelectionEnabled = false;
     private Integer tcpLatencySwitchThresholdMs = 5;
+    /** Keep the primary when it is no more than this many milliseconds slower than the fastest entry. */
+    private Integer tcpPrimaryPreferenceToleranceMs = 10;
     private Boolean degradedFallbackEnabled = true;
     private Boolean sameFaultAvoidanceEnabled = true;
     private Boolean topologyAvoidanceEnabled = true;
