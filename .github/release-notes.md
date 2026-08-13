@@ -1,3 +1,8 @@
+## 2.50.8 Cross-entry TCP selection layout fix
+
+- Refines the Cross-entry Failover editor layout for primary-preferred TCP latency selection. The switch, numeric fields, and explanatory text are separated into clearer rows so the description no longer wraps into a narrow vertical column.
+- Keeps the 2.50.7 strategy behavior unchanged. Panel-only release; Agent and Connector binaries remain `2.50.4`.
+
 ## 2.50.7 Primary-preferred TCP latency selection
 
 - Changes lowest-TCP-latency selection into a primary-preferred strategy. The primary remains selected while it is within a configurable latency tolerance of the fastest healthy entry; only a larger gap permits switching away.

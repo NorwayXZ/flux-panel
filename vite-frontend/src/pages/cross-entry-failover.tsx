@@ -560,16 +560,16 @@ export default function CrossEntryFailoverPage() {
                 )}
               </div>
               {form.routingMode === 'failover' && (
-                <div className="mt-3 grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_repeat(3,190px)] lg:items-center">
-                  <div>
-                    <Switch isSelected={form.tcpLatencySelectionEnabled} onValueChange={setTcpLatencySelection}>主线路优先的 TCP 延迟优选</Switch>
-                    <p className="mt-1 text-xs leading-5 text-default-500">主入口与最低延迟线的差值在容忍范围内时始终使用主入口；超过范围才选择最低延迟线。开启后会关闭冲突策略。</p>
+                <div className="mt-3 border-t border-divider pt-4">
+                  <Switch isSelected={form.tcpLatencySelectionEnabled} onValueChange={setTcpLatencySelection}>主线路优先的 TCP 延迟优选</Switch>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <Input type="number" label="主线优先容忍（ms）" min={0} max={30000} value={form.tcpPrimaryPreferenceToleranceMs} isDisabled={!form.tcpLatencySelectionEnabled} onValueChange={tcpPrimaryPreferenceToleranceMs => setForm({ ...form, tcpPrimaryPreferenceToleranceMs })} description="例如 20ms：主线最多慢 20ms 仍优先" />
+                    <Input type="number" label="备用切换收益（ms）" min={0} max={30000} value={form.tcpLatencySwitchThresholdMs} isDisabled={!form.tcpLatencySelectionEnabled} onValueChange={tcpLatencySwitchThresholdMs => setForm({ ...form, tcpLatencySwitchThresholdMs })} description="备用之间至少快多少才切换" />
+                    <Input type="number" label="最短驻留（秒）" min={0} max={86400} value={form.minResidencySeconds} isDisabled={!form.tcpLatencySelectionEnabled && !form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} description="切换后至少保持当前线路的时间" />
                   </div>
-                  <Input type="number" label="主线优先容忍（ms）" min={0} max={30000} value={form.tcpPrimaryPreferenceToleranceMs} isDisabled={!form.tcpLatencySelectionEnabled} onValueChange={tcpPrimaryPreferenceToleranceMs => setForm({ ...form, tcpPrimaryPreferenceToleranceMs })} description="例如 20ms：主线最多慢 20ms 仍优先" />
-                  <Input type="number" label="备用切换收益（ms）" min={0} max={30000} value={form.tcpLatencySwitchThresholdMs} isDisabled={!form.tcpLatencySelectionEnabled} onValueChange={tcpLatencySwitchThresholdMs => setForm({ ...form, tcpLatencySwitchThresholdMs })} description="备用之间至少快多少才切换" />
-                  <Input type="number" label="最短驻留（秒）" min={0} max={86400} value={form.minResidencySeconds} isDisabled={!form.tcpLatencySelectionEnabled && !form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} description="切换后至少保持当前线路的时间" />
+                  <p className="mt-3 text-xs leading-5 text-default-500">主入口与最低延迟线路的差值在容忍范围内时，始终使用主入口；超过容忍范围后，才选择 TCP 延迟最低的健康线路。开启后会自动关闭存在冲突的策略。</p>
                   {form.tcpLatencySelectionEnabled && (
-                    <>
+                    <div className="mt-4 grid gap-3 border-t border-divider pt-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-center">
                       <Select
                         label="TCP 探测源"
                         selectedKeys={[form.qualityProbeSourceType]}
@@ -592,9 +592,9 @@ export default function CrossEntryFailoverPage() {
                       <Input type="number" label="每轮 TCP 次数" min={2} max={10} value={form.qualityProbeCount} onValueChange={qualityProbeCount => setForm({ ...form, qualityProbeCount })} description="使用多次均值降低单次抖动影响" />
                       <Switch isSelected={form.postSwitchVerifyEnabled} onValueChange={postSwitchVerifyEnabled => setForm({ ...form, postSwitchVerifyEnabled })}>切换后验证入口</Switch>
                       <Switch isSelected={form.dnsVerifyEnabled} onValueChange={dnsVerifyEnabled => setForm({ ...form, dnsVerifyEnabled })}>DNS 生效确认</Switch>
-                    </>
+                      <p className="text-xs leading-5 text-default-500 sm:col-span-2 lg:col-span-3">此模式已接管自动选线：普通自动回切、质量容灾、固定延迟目标、智能选择、抖动保护、备用预热和锁定入口均不可同时启用。故障切换、冷却、恢复确认、切换后验证与 DNS 确认继续生效。</p>
+                    </div>
                   )}
-                  {form.tcpLatencySelectionEnabled && <p className="text-xs leading-5 text-default-500 lg:col-span-4">此模式已接管自动选线：普通自动回切、质量容灾、固定延迟目标、智能选择、抖动保护、备用预热和锁定入口均不可同时启用。故障切换、冷却、恢复确认、切换后验证与 DNS 确认继续生效。</p>}
                 </div>
               )}
             </section>
