@@ -106,6 +106,7 @@ const copy = async (value: string, label: string) => {
 
 export default function HomeAccessPage() {
   const navigate = useNavigate();
+  const adminMode = isAdmin();
   const [loading, setLoading] = useState(true);
   const [formOptionsLoading, setFormOptionsLoading] = useState(false);
   const [formOptionsLoaded, setFormOptionsLoaded] = useState(false);
@@ -137,7 +138,6 @@ export default function HomeAccessPage() {
     if (formOptionsLoading) return;
     setFormOptionsLoading(true);
     setFormOptionsError('');
-    const adminMode = isAdmin();
     const results = await Promise.allSettled([
       getInternalConnectors(), getPublishingPortPools(), getTunnelList(), getNodeList(),
       adminMode ? getDynamicDnsOverview() : Promise.resolve({ code: 0, msg: '', data: { rules: [] } }),
@@ -327,14 +327,14 @@ export default function HomeAccessPage() {
               </div>
               <div className="mt-4"><div className="mb-1 text-xs text-default-500">{smart ? '公司设备本地 SOCKS5 地址' : '代理访问地址'}</div><div className="rounded-md bg-default-100 px-3 py-3 font-mono text-sm">{endpoint}</div></div>
               <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-                <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : smart ? '失败回退入口' : '访问入口端口池'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : (route.ingressPoolName || '未知')}</div></div>
-                <div><div className="text-default-500">{route.egressMode === 'tunnel' ? '隧道出口' : '指定服务器出口'}</div><div className="mt-1 font-medium">{route.egressMode === 'tunnel' ? (route.egressTunnelName || '隧道已删除') : (route.egressNodeName || route.egressPoolName || '出口已删除')}</div></div>
+                <div><div className="text-default-500">{direct ? `家庭公网 ${ipv6Direct ? 'IPv6' : 'IPv4'}` : smart ? '失败回退入口' : '访问入口'}</div><div className="mt-1 break-all font-medium">{direct ? (directAddress || '等待检测') : adminMode ? (route.ingressPoolName || '未知') : '已配置'}</div></div>
+                <div><div className="text-default-500">{route.egressMode === 'tunnel' ? '出口路径' : '出口服务器'}</div><div className="mt-1 font-medium">{adminMode ? (route.egressMode === 'tunnel' ? (route.egressTunnelName || '隧道已删除') : (route.egressNodeName || route.egressPoolName || '出口已删除')) : (route.egressMode === 'tunnel' ? '已配置多跳出口' : '已配置出口')}</div></div>
                 <div><div className="text-default-500">家庭设备状态</div><div className={`mt-1 font-medium ${route.connectorOnline ? 'text-success' : 'text-danger'}`}>{route.connectorOnline ? '在线' : '离线'}</div></div>
                 {smart && <div><div className="text-default-500">公司接入设备</div><div className={`mt-1 font-medium ${route.sourceConnectorOnline ? 'text-success' : 'text-danger'}`}>{route.sourceConnectorName || '设备已删除'} · {route.sourceConnectorOnline ? '在线' : '离线'}</div></div>}
                 <div><div className="text-default-500">{direct ? '公网地址最近检测' : '客户端认证'}</div><div className="mt-1 font-medium">{direct ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt) : (route.authEnabled ? '已启用' : '未启用')}</div></div>
                 {direct && <div className="md:col-span-2"><div className="text-default-500">动态 DNS</div><div className="mt-1 break-all font-medium">{route.publicDomain ? `${route.publicDomain} · 已绑定` : '未绑定，使用裸 IP 地址'}</div></div>}
                 {route.transportMode === 'vless_reality' && <div className="md:col-span-2"><div className="text-default-500">家庭到首个出口</div><div className="mt-1 font-medium">VLESS + REALITY · 伪装域名 {route.realityServerName || 'www.cloudflare.com'}</div></div>}
-                {route.egressMode === 'tunnel' && <div className="md:col-span-2"><div className="text-default-500">出口隧道</div><div className="mt-1 font-medium">{route.egressTunnelName || '隧道已删除'}</div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(route.egressPathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents">{index > 0 && <span className="text-default-400">→</span>}<Chip size="sm" variant="flat" color={node.status === 1 ? (index === (route.egressPathNodeDetails?.length || 0) - 1 ? 'success' : 'default') : 'danger'}>{node.name}{index === (route.egressPathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}</div></div>}
+                {adminMode && route.egressMode === 'tunnel' && <div className="md:col-span-2"><div className="text-default-500">出口隧道</div><div className="mt-1 font-medium">{route.egressTunnelName || '隧道已删除'}</div><div className="mt-2 flex flex-wrap items-center gap-1.5">{(route.egressPathNodeDetails || []).map((node, index) => <span key={node.nodeId} className="contents">{index > 0 && <span className="text-default-400">→</span>}<Chip size="sm" variant="flat" color={node.status === 1 ? (index === (route.egressPathNodeDetails?.length || 0) - 1 ? 'success' : 'default') : 'danger'}>{node.name}{index === (route.egressPathNodeDetails?.length || 0) - 1 ? ' · 落地' : ''}</Chip></span>)}</div></div>}
               </div>
               {smart && <section className="mt-4 border-y border-divider py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="text-xs text-default-500">当前访问路径</div><div className={`mt-1 font-semibold ${route.activeAccessPath === 'udp_direct' ? 'text-success' : 'text-warning'}`}>{natPathLabel(route)}</div></div><Chip size="sm" variant="flat" color={route.activeAccessPath === 'udp_direct' ? 'success' : 'warning'}>{route.natType || 'NAT 类型待检测'}</Chip></div>
@@ -369,7 +369,7 @@ export default function HomeAccessPage() {
 
       <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
         <div className="flex items-center gap-2 font-medium text-foreground"><Route size={16} /> 使用方式</div>
-        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。公司到家庭仍使用 SOCKS5；家庭到首个出口可选择 SOCKS5 或 VLESS + REALITY。指定服务器模式由所选节点直接落地，隧道模式依次经过路径节点并由最后一个节点出口。</p>
+        <p className="mt-2">在公司电脑的浏览器、系统代理或代理客户端中填写上方 SOCKS5 地址。公司到家庭仍使用 SOCKS5；家庭之后按已配置出口访问公网。</p>
       </div>
 
       <Modal isOpen={modalOpen} onOpenChange={setModalOpen} size="3xl" scrollBehavior="inside">
@@ -405,7 +405,7 @@ export default function HomeAccessPage() {
           </div>
           {form.accessMode === 'smart_nat' && <div className="grid gap-4 md:grid-cols-2">
             <Select label="公司接入设备" description="公司网络中已安装 Agent 的电脑；浏览器连接该设备的本地 SOCKS 地址" selectedKeys={form.sourceConnectorId ? [form.sourceConnectorId] : []} onSelectionChange={keys => setForm({ ...form, sourceConnectorId: String(Array.from(keys)[0] || '') })}>
-              {connectors.filter(item => String(item.id) !== form.connectorId).map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'} · Agent {item.version || '未知'}</SelectItem>)}
+              {connectors.filter(item => String(item.id) !== form.connectorId).map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.platform} · {item.online ? '在线' : '离线'}{adminMode ? ` · Agent ${item.version || '未知'}` : ''}</SelectItem>)}
             </Select>
             <Input label="公司本地 SOCKS5 端口" description="只监听 127.0.0.1，不暴露到公司局域网或公网" type="number" min={1024} max={65535} value={form.sourceListenPort} onValueChange={value => setForm({ ...form, sourceListenPort: value })} />
           </div>}
@@ -414,7 +414,7 @@ export default function HomeAccessPage() {
               <Input label={`家庭 ${form.accessMode === 'ipv4_direct' ? 'IPv4' : 'IPv6'} 监听端口`} description={form.accessMode === 'ipv4_direct' ? '路由器需转发 WAN TCP 到家庭设备' : '路由器和系统防火墙需放行 TCP'} type="number" min={1024} max={65535} value={form.directPort} onValueChange={value => setForm({ ...form, directPort: value })} />
             ) : (
               <Select label="公网入口端口池" description="公司电脑首先连接的入口 VPS" selectedKeys={form.ingressPoolKey ? [form.ingressPoolKey] : []} onSelectionChange={keys => setForm({ ...form, ingressPoolKey: String(Array.from(keys)[0] || '') })}>
-                {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {item.publicHost} · 可用 {item.availablePorts}</SelectItem>)}
+                {ingressPools.map(item => <SelectItem key={poolKey(item)} textValue={item.name}>{item.name} · {adminMode ? `${item.publicHost} · ` : ''}可用 {item.availablePorts}</SelectItem>)}
               </Select>
             )}
             <div className="space-y-2">
@@ -432,7 +432,7 @@ export default function HomeAccessPage() {
             })}
           </Select>}
           {form.egressMode === 'single' && <Select label="指定出口服务器" description="可选择任意在线且有权限的节点，端口由系统从节点范围自动分配" selectedKeys={form.egressNodeId ? [form.egressNodeId] : []} onSelectionChange={keys => setForm({ ...form, egressNodeId: String(Array.from(keys)[0] || '') })}>
-            {egressNodes.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name} · {item.serverIp || item.ip} · Agent {item.version || '未知'}{item.accessType === 'shared' ? ` · ${item.ownerUserName || '管理员'}共享` : ''}</SelectItem>)}
+            {egressNodes.map(item => <SelectItem key={String(item.id)} textValue={item.name}>{item.name}{adminMode ? ` · ${item.serverIp || item.ip} · Agent ${item.version || '未知'}${item.accessType === 'shared' ? ` · ${item.ownerUserName || '管理员'}共享` : ''}` : ` · ${item.status === 1 ? '在线' : '离线'}`}</SelectItem>)}
           </Select>}
           <div className="space-y-2">
             <div className="text-sm font-medium">家庭到出口协议</div>

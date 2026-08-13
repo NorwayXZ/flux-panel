@@ -16,6 +16,7 @@ import {
   getPrivateProxyClientConfig, pausePrivateProxy, resumePrivateProxy,
   type PrivateProxyClientConfig, type PrivateProxyItem, type PrivateProxyType,
 } from '@/api';
+import { isAdmin as isAdminUser } from '@/utils/auth';
 
 interface NodeOption {
   id: number; name: string; ip?: string; serverIp?: string; status: number; version?: string;
@@ -82,13 +83,22 @@ const formatBytes = (value = 0) => {
   return `${size >= 100 || unit === 0 ? size.toFixed(0) : size.toFixed(2)} ${units[unit]}`;
 };
 
+const formatRemainingTime = (milliseconds?: number) => {
+  if (milliseconds === undefined || milliseconds === null) return '永久';
+  if (milliseconds <= 0) return '已到期';
+  const days = Math.floor(milliseconds / 86400000);
+  if (days > 0) return `${days} 天`;
+  const hours = Math.max(1, Math.ceil(milliseconds / 3600000));
+  return `${hours} 小时`;
+};
+
 const copyText = async (value: string, label: string) => {
   await navigator.clipboard.writeText(value);
   toast.success(`${label}已复制`);
 };
 
 export default function PrivateProxyPage() {
-  const isAdmin = localStorage.getItem('admin') === 'true';
+  const isAdmin = isAdminUser();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -250,7 +260,7 @@ export default function PrivateProxyPage() {
                       <span className="min-w-0 break-words font-semibold">{group.nodeName}</span>
                       <Chip className="flex-none" size="sm" variant="flat" color={group.nodeOnline ? 'success' : 'danger'}>{group.nodeOnline ? '在线' : '离线'}</Chip>
                     </div>
-                    <p className="mt-1 truncate font-mono text-xs font-normal text-default-500">{group.publicHost || '未设置公网地址'}</p>
+                    {isAdmin && <p className="mt-1 truncate font-mono text-xs font-normal text-default-500">{group.publicHost || '未设置公网地址'}</p>}
                     <p className="mt-1 line-clamp-2 break-words text-xs font-normal text-default-500">{group.protocols.join(' · ')}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -262,15 +272,16 @@ export default function PrivateProxyPage() {
               }
             >
               <div className="min-w-0 overflow-hidden border-t border-divider">
-                <div className="hidden grid-cols-[1.3fr_1fr_1.1fr_1fr_auto] gap-4 bg-default-50 px-4 py-3 text-xs text-default-500 lg:grid"><span>代理</span><span>公网入口</span><span>访问控制</span><span>有效期</span><span>操作</span></div>
+                <div className={`hidden gap-4 bg-default-50 px-4 py-3 text-xs text-default-500 lg:grid ${isAdmin ? 'grid-cols-[1.3fr_1fr_1.1fr_1fr_auto]' : 'grid-cols-[1.35fr_1fr_1.35fr_1fr_auto]'}`}><span>代理</span><span>连接地址</span><span>{isAdmin ? '访问控制' : '流量额度'}</span><span>有效期</span><span>操作</span></div>
                 {group.proxies.map(item => {
                   const meta = stateMeta[item.state];
                   const protocol = protocolMeta[item.proxyType];
-                  return <div key={item.id} className="grid min-w-0 gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1.1fr_1fr_auto] lg:items-center">
-                    <div className="min-w-0"><div className="flex min-w-0 flex-wrap items-center gap-2 font-medium"><span className="min-w-0 break-all">{item.name}</span><Chip className="flex-none" size="sm" variant="flat" color={meta.color}>{meta.label}</Chip>{item.granted && <Chip className="flex-none" size="sm" variant="flat" color="secondary">管理员授权</Chip>}</div><div className="mt-1 break-words text-xs text-default-500">{protocol.label} · {item.ownerUserName}</div><div className="mt-1 break-words text-xs text-default-500">{isAdvancedRuntime(item.proxyType) && !item.granted ? '管理员自有高级代理不计入用户额度' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div>{item.granted && <div className="mt-1 break-words text-xs text-default-500">{item.flowUnlimited === 1 ? '流量不限' : `剩余 ${formatBytes(item.remainingFlow)}`} · {item.flowResetDay ? `每月 ${item.flowResetDay} 日重置` : '不重置'}</div>}</div>
+                  const usedFlow = (item.inFlow || 0) + (item.outFlow || 0);
+                  return <div key={item.id} className={`grid min-w-0 gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:items-center ${isAdmin ? 'lg:grid-cols-[1.3fr_1fr_1.1fr_1fr_auto]' : 'lg:grid-cols-[1.35fr_1fr_1.35fr_1fr_auto]'}`}>
+                    <div className="min-w-0"><div className="flex min-w-0 flex-wrap items-center gap-2 font-medium"><span className="min-w-0 break-all">{item.name}</span><Chip className="flex-none" size="sm" variant="flat" color={meta.color}>{meta.label}</Chip>{isAdmin && item.granted && <Chip className="flex-none" size="sm" variant="flat" color="secondary">管理员授权</Chip>}</div><div className="mt-1 break-words text-xs text-default-500">{protocol.label}{isAdmin ? ` · ${item.ownerUserName}` : ''}</div><div className="mt-1 break-words text-xs text-default-500">{isAdmin && isAdvancedRuntime(item.proxyType) && !item.granted ? '管理员自有高级代理不计入用户额度' : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}</div>{item.granted && <div className="mt-1 break-words text-xs text-default-500">{item.flowUnlimited === 1 ? '流量不限' : `剩余 ${formatBytes(item.remainingFlow)}`} · {item.flowResetDay ? `每月 ${item.flowResetDay} 日重置` : '不重置'}</div>}</div>
                     <div className="min-w-0"><div className="break-all font-mono text-sm">{item.publicHost || '未设置'}:{item.listenPort}</div><div className="mt-1 text-xs text-default-500">{['hysteria2', 'tuic', 'wireguard'].includes(item.proxyType) ? 'UDP' : 'TCP'}</div></div>
-                    <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div>
-                    <div className="flex items-center gap-2 text-sm"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</div>
+                    {isAdmin ? <div><div className="text-sm">{protocol.access}</div><div className="mt-1 text-xs text-default-500">{item.allowedCidrs ? `白名单 ${item.allowedCidrs.split(',').length} 条` : '允许任意来源 IP'}</div></div> : <div><div className="text-sm">{item.flowUnlimited === 1 ? '流量不限' : `总额度 ${item.flowLimit || 0} GB`}</div><div className="mt-1 text-xs text-default-500">已用 {formatBytes(usedFlow)}{item.flowUnlimited === 1 ? '' : ` · 剩余 ${formatBytes(item.remainingFlow || 0)}`}</div><div className="mt-1 text-xs text-default-500">{item.flowResetDay ? `每月 ${item.flowResetDay} 日重置` : '不重置'}</div></div>}
+                    <div className="flex flex-col gap-1 text-sm"><span className="flex items-center gap-2"><Clock3 size={15} className="shrink-0 text-default-400" />{item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</span>{!isAdmin && <span className="text-xs text-default-500">剩余 {formatRemainingTime(item.remainingTime)}</span>}</div>
                     <div className="flex gap-1">
                       <Button isIconOnly size="sm" variant="light" aria-label={`查看 ${item.name} 连接信息`} title="连接信息" isLoading={configLoading} onPress={() => showClientConfig(item)}><KeyRound size={17} /></Button>
                       {(isAdmin || !item.granted) && item.state === 'active' && <Button isIconOnly size="sm" variant="light" aria-label={`暂停 ${item.name}`} title="暂停代理" onPress={() => control(item, 'pause')}><Pause size={17} /></Button>}

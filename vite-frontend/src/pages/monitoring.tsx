@@ -52,6 +52,7 @@ import {
   type TelegramNotificationSettings,
 } from '@/api';
 import { notifyAlertCountChanged } from '@/hooks/use-alert-unread-count';
+import { isAdmin as isAdminUser } from '@/utils/auth';
 
 const EMPTY_OVERVIEW: MonitoringOverview = {
   range: '24h',
@@ -189,7 +190,7 @@ export default function MonitoringPage() {
   const [page, setPage] = useState(1);
   const [apiTiming, setApiTiming] = useState<ApiTimingOverview>(EMPTY_API_TIMING);
   const [apiTimingLoading, setApiTimingLoading] = useState(false);
-  const isAdmin = localStorage.getItem('admin') === 'true';
+  const isAdmin = isAdminUser();
 
   const loadOverview = useCallback(async (selectedRange: MonitoringRange, silent = false) => {
     if (!silent) setLoading(true);

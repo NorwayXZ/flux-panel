@@ -49,7 +49,7 @@ import AdminLayout from "@/layouts/admin";
 import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
 
-import { isLoggedIn } from "@/utils/auth";
+import { isAdmin, isLoggedIn } from "@/utils/auth";
 import { getCachedConfig, siteConfig } from "@/config/site";
 
 // 检测是否为H5模式
@@ -91,8 +91,28 @@ const useH5Mode = () => {
 };
 
 // 简化的路由保护组件 - 使用 React Router 导航避免循环
-const ProtectedRoute = ({ children, useSimpleLayout = false, skipLayout = false }: { children: React.ReactNode, useSimpleLayout?: boolean, skipLayout?: boolean }) => {
+const AccessDenied = () => (
+  <div className="flex min-h-[50vh] items-center justify-center px-4">
+    <div className="w-full max-w-md border border-divider bg-content1 px-5 py-6 text-center">
+      <h1 className="text-base font-semibold text-foreground">当前账号没有管理员权限</h1>
+      <p className="mt-2 text-sm leading-6 text-default-500">这个页面只允许管理员打开。普通用户可以继续使用已授权的转发、私人代理、内网映射和家庭网络中转。</p>
+    </div>
+  </div>
+);
+
+const ProtectedRoute = ({
+  children,
+  useSimpleLayout = false,
+  skipLayout = false,
+  adminOnly = false
+}: {
+  children: React.ReactNode,
+  useSimpleLayout?: boolean,
+  skipLayout?: boolean,
+  adminOnly?: boolean
+}) => {
   const authenticated = isLoggedIn();
+  const allowed = !adminOnly || isAdmin();
   const isH5 = useH5Mode();
   const navigate = useNavigate();
   
@@ -111,7 +131,7 @@ const ProtectedRoute = ({ children, useSimpleLayout = false, skipLayout = false 
     );
   }
 
-  const content = <Suspense fallback={<PageLoading />}>{children}</Suspense>;
+  const content = <Suspense fallback={<PageLoading />}>{allowed ? children : <AccessDenied />}</Suspense>;
 
   // 如果跳过布局，直接返回子组件
   if (skipLayout) {
@@ -212,29 +232,29 @@ function App() {
           </ProtectedRoute>
         } 
       />
-      <Route path="/routing-overview" element={<ProtectedRoute><RoutingOverviewPage /></ProtectedRoute>} />
-      <Route path="/nft-forward" element={<ProtectedRoute><NftForwardPage /></ProtectedRoute>} />
+      <Route path="/routing-overview" element={<ProtectedRoute adminOnly><RoutingOverviewPage /></ProtectedRoute>} />
+      <Route path="/nft-forward" element={<ProtectedRoute adminOnly><NftForwardPage /></ProtectedRoute>} />
       <Route
         path="/smart-entry"
-        element={<ProtectedRoute><SmartEntryPage /></ProtectedRoute>}
+        element={<ProtectedRoute adminOnly><SmartEntryPage /></ProtectedRoute>}
       />
       <Route
         path="/cross-entry-failover"
-        element={<ProtectedRoute><CrossEntryFailoverPage /></ProtectedRoute>}
+        element={<ProtectedRoute adminOnly><CrossEntryFailoverPage /></ProtectedRoute>}
       />
       <Route
         path="/source-ip-entry"
-        element={<ProtectedRoute><SourceIpEntryPage /></ProtectedRoute>}
+        element={<ProtectedRoute adminOnly><SourceIpEntryPage /></ProtectedRoute>}
       />
-      <Route path="/topology" element={<ProtectedRoute><TopologyPage /></ProtectedRoute>} />
-      <Route path="/system-self-check" element={<ProtectedRoute><SystemSelfCheckPage /></ProtectedRoute>} />
+      <Route path="/topology" element={<ProtectedRoute adminOnly><TopologyPage /></ProtectedRoute>} />
+      <Route path="/system-self-check" element={<ProtectedRoute adminOnly><SystemSelfCheckPage /></ProtectedRoute>} />
       <Route
         path="/dns-settings"
-        element={<ProtectedRoute useSimpleLayout={true}><DnsSettingsPage /></ProtectedRoute>}
+        element={<ProtectedRoute useSimpleLayout={true} adminOnly><DnsSettingsPage /></ProtectedRoute>}
       />
-      <Route path="/aws-access" element={<ProtectedRoute useSimpleLayout={true}><AwsAccessPage /></ProtectedRoute>} />
-      <Route path="/dynamic-dns" element={<ProtectedRoute useSimpleLayout={true}><DynamicDnsPage /></ProtectedRoute>} />
-      <Route path="/server-assets" element={<ProtectedRoute useSimpleLayout={true}><ServerAssetsPage /></ProtectedRoute>} />
+      <Route path="/aws-access" element={<ProtectedRoute useSimpleLayout={true} adminOnly><AwsAccessPage /></ProtectedRoute>} />
+      <Route path="/dynamic-dns" element={<ProtectedRoute useSimpleLayout={true} adminOnly><DynamicDnsPage /></ProtectedRoute>} />
+      <Route path="/server-assets" element={<ProtectedRoute useSimpleLayout={true} adminOnly><ServerAssetsPage /></ProtectedRoute>} />
       <Route 
         path="/tunnel" 
         element={
@@ -258,7 +278,7 @@ function App() {
       <Route 
         path="/user" 
         element={
-          <ProtectedRoute useSimpleLayout={true}>
+          <ProtectedRoute useSimpleLayout={true} adminOnly>
             <UserPage />
           </ProtectedRoute>
         } 
@@ -275,7 +295,7 @@ function App() {
       <Route 
         path="/config" 
         element={
-          <ProtectedRoute useSimpleLayout={true}>
+          <ProtectedRoute useSimpleLayout={true} adminOnly>
             <ConfigPage />
           </ProtectedRoute>
         } 
@@ -283,7 +303,7 @@ function App() {
       <Route
         path="/monitoring"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute adminOnly>
             <MonitoringPage />
           </ProtectedRoute>
         }
@@ -291,7 +311,7 @@ function App() {
       <Route
         path="/update"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute adminOnly>
             <UpdatePage />
           </ProtectedRoute>
         }
@@ -300,25 +320,25 @@ function App() {
         path="/service-publishing"
         element={<ProtectedRoute><ServicePublishingPage /></ProtectedRoute>}
       />
-      <Route path="/docker-apps" element={<ProtectedRoute><DockerAppsPage /></ProtectedRoute>} />
+      <Route path="/docker-apps" element={<ProtectedRoute adminOnly><DockerAppsPage /></ProtectedRoute>} />
       <Route path="/private-proxy" element={<ProtectedRoute><PrivateProxyPage /></ProtectedRoute>} />
       <Route path="/home-access" element={<ProtectedRoute><HomeAccessPage /></ProtectedRoute>} />
       <Route path="/home-devices" element={<ProtectedRoute useSimpleLayout={true}><HomeDevicesPage /></ProtectedRoute>} />
-      <Route path="/network-tools" element={<ProtectedRoute><NetworkToolsPage /></ProtectedRoute>} />
-      <Route path="/quality-lab" element={<ProtectedRoute><QualityLabPage /></ProtectedRoute>} />
-      <Route path="/bandwidth-test" element={<ProtectedRoute><BandwidthTestPage /></ProtectedRoute>} />
-      <Route path="/udp-quic-diagnostic" element={<ProtectedRoute><UdpQuicDiagnosticPage /></ProtectedRoute>} />
-      <Route path="/multi-line-aggregation" element={<ProtectedRoute><MultiLineAggregationPage /></ProtectedRoute>} />
-      <Route path="/ip-quality" element={<ProtectedRoute><IpQualityPage /></ProtectedRoute>} />
-      <Route path="/virtual-lan" element={<ProtectedRoute><Navigate to="/private-network?section=virtual-lan" replace /></ProtectedRoute>} />
-      <Route path="/private-network" element={<ProtectedRoute><PrivateNetworkPage /></ProtectedRoute>} />
+      <Route path="/network-tools" element={<ProtectedRoute adminOnly><NetworkToolsPage /></ProtectedRoute>} />
+      <Route path="/quality-lab" element={<ProtectedRoute adminOnly><QualityLabPage /></ProtectedRoute>} />
+      <Route path="/bandwidth-test" element={<ProtectedRoute adminOnly><BandwidthTestPage /></ProtectedRoute>} />
+      <Route path="/udp-quic-diagnostic" element={<ProtectedRoute adminOnly><UdpQuicDiagnosticPage /></ProtectedRoute>} />
+      <Route path="/multi-line-aggregation" element={<ProtectedRoute adminOnly><MultiLineAggregationPage /></ProtectedRoute>} />
+      <Route path="/ip-quality" element={<ProtectedRoute adminOnly><IpQualityPage /></ProtectedRoute>} />
+      <Route path="/virtual-lan" element={<ProtectedRoute adminOnly><Navigate to="/private-network?section=virtual-lan" replace /></ProtectedRoute>} />
+      <Route path="/private-network" element={<ProtectedRoute adminOnly><PrivateNetworkPage /></ProtectedRoute>} />
       <Route path="/guide" element={<ProtectedRoute useSimpleLayout={true}><GuidePage /></ProtectedRoute>} />
       <Route
         path="/port-resources"
-        element={<ProtectedRoute useSimpleLayout={true}><PortResourcesPage /></ProtectedRoute>}
+        element={<ProtectedRoute useSimpleLayout={true} adminOnly><PortResourcesPage /></ProtectedRoute>}
       />
       <Route path="/panel-addresses" element={<PanelAddressPage />} />
-      <Route path="/settings" element={<Navigate to="/panel-addresses" replace />} />
+      <Route path="/settings" element={<ProtectedRoute adminOnly><Navigate to="/panel-addresses" replace /></ProtectedRoute>} />
       </Routes>
     </Suspense>
   );

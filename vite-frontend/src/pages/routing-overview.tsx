@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@heroui/button';
 import { Chip } from '@heroui/chip';
 import { AlertTriangle, CheckCircle2, CircleHelp, ExternalLink, RefreshCw, Route, ShieldCheck, Split, Workflow } from 'lucide-react';
@@ -47,6 +47,15 @@ const emptySnapshot: Snapshot = {
   aggregationGroups: [],
   ledger: [],
 };
+
+const hasSnapshotData = (snapshot: Snapshot) => (
+  snapshot.forwards.length > 0
+  || snapshot.smartGroups.length > 0
+  || snapshot.sourceGroups.length > 0
+  || snapshot.failoverGroups.length > 0
+  || snapshot.aggregationGroups.length > 0
+  || snapshot.ledger.length > 0
+);
 
 const modules = [
   {
@@ -182,13 +191,25 @@ const routePath = (path: string, navigate: ReturnType<typeof useNavigate>) => (
 export default function RoutingOverviewPage() {
   const navigate = useNavigate();
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot);
+  const snapshotRef = useRef<Snapshot>(emptySnapshot);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [refreshedAt, setRefreshedAt] = useState<number>();
 
   const load = useCallback(async () => {
-    setLoading(true);
-    const next = { ...emptySnapshot };
+    const firstLoad = !hasSnapshotData(snapshotRef.current);
+    if (firstLoad) setLoading(true);
+    else setRefreshing(true);
+    const current = snapshotRef.current;
+    const next: Snapshot = {
+      forwards: current.forwards,
+      smartGroups: current.smartGroups,
+      sourceGroups: current.sourceGroups,
+      failoverGroups: current.failoverGroups,
+      aggregationGroups: current.aggregationGroups,
+      ledger: current.ledger,
+    };
     const nextErrors: string[] = [];
 
     const read = async <T,>(label: string, task: () => Promise<{ code: number; msg?: string; data?: T }>, assign: (value: T) => void) => {
@@ -213,10 +234,12 @@ export default function RoutingOverviewPage() {
       read('全局端口账本', () => getPortLedger(), value => { next.ledger = value?.entries || []; }),
     ]);
 
+    snapshotRef.current = next;
     setSnapshot(next);
     setErrors(nextErrors);
     setRefreshedAt(Date.now());
     setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => {
@@ -377,6 +400,8 @@ export default function RoutingOverviewPage() {
     ['入口容灾', snapshot.failoverGroups.length, '/cross-entry-failover'],
     ['并发调度', snapshot.aggregationGroups.length, '/multi-line-aggregation'],
   ];
+  const blockingLoading = loading && !hasSnapshotData(snapshot);
+  const refreshingNow = refreshing && hasSnapshotData(snapshot);
 
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-6 p-4 sm:p-6">
@@ -390,7 +415,7 @@ export default function RoutingOverviewPage() {
         </div>
         <div className="flex items-center gap-3">
           {refreshedAt && <span className="text-xs text-default-500">更新于 {new Date(refreshedAt).toLocaleTimeString('zh-CN', { hour12: false })}</span>}
-          <Button isIconOnly variant="flat" aria-label="刷新调度总览" title="刷新调度总览" isLoading={loading} onPress={() => void load()}>
+          <Button isIconOnly variant="flat" aria-label="刷新调度总览" title="刷新调度总览" isLoading={refreshingNow || blockingLoading} onPress={() => void load()}>
             <RefreshCw size={17} />
           </Button>
         </div>
@@ -415,7 +440,7 @@ export default function RoutingOverviewPage() {
             onClick={() => navigate(path)}
             className={`flex min-h-24 items-center justify-between px-4 py-4 text-left transition-colors hover:bg-default-50 dark:hover:bg-default-100/5 sm:px-6 ${index < counts.length - 1 ? 'border-r border-divider' : ''}`}
           >
-            <div><p className="text-xs text-default-500">{label}</p><p className="mt-1 text-2xl font-semibold">{loading ? '-' : value}</p></div>
+            <div><p className="text-xs text-default-500">{label}</p><p className="mt-1 text-2xl font-semibold">{blockingLoading ? '-' : value}</p></div>
             <ExternalLink className="h-4 w-4 text-default-400" />
           </button>
         ))}

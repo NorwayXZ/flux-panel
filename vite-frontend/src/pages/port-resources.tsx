@@ -52,11 +52,15 @@ export default function PortResourcesPage() {
   });
 
   const loadData = async () => {
-    setLoading(true);
-    const [poolRes, grantRes, nodeRes] = await Promise.all([getPublishingPortPools(), getPublishingPortGrants(), getNodeList()]);
-    if (poolRes.code === 0) setPools(poolRes.data || []); else toast.error(poolRes.msg || '加载端口池失败');
-    if (grantRes.code === 0) setGrants(grantRes.data || []); else toast.error(grantRes.msg || '加载端口授权失败');
-    if (nodeRes.code === 0) setNodes(nodeRes.data || []);
+    setLoading(pools.length === 0 && grants.length === 0);
+    const results = await Promise.allSettled([getPublishingPortPools(), getPublishingPortGrants(), getNodeList()]);
+    const [poolRes, grantRes, nodeRes] = results;
+    if (poolRes.status === 'fulfilled' && poolRes.value.code === 0) setPools(poolRes.value.data || []);
+    else toast.error(poolRes.status === 'fulfilled' ? poolRes.value.msg || '加载端口池失败' : '加载端口池失败');
+    if (grantRes.status === 'fulfilled' && grantRes.value.code === 0) setGrants(grantRes.value.data || []);
+    else console.warn('加载端口授权失败:', grantRes.status === 'fulfilled' ? grantRes.value.msg : grantRes.reason);
+    if (nodeRes.status === 'fulfilled' && nodeRes.value.code === 0) setNodes(nodeRes.value.data || []);
+    else console.warn('加载节点列表失败:', nodeRes.status === 'fulfilled' ? nodeRes.value.msg : nodeRes.reason);
     setLoading(false);
   };
   const loadLedger = async () => {
@@ -108,7 +112,7 @@ export default function PortResourcesPage() {
     if (res.code !== 0) return toast.error(res.msg || '创建端口池失败');
     toast.success('端口池已创建');
     setModalOpen(false);
-    loadData();
+    void loadData();
   };
 
   const remove = async (id: number) => {
@@ -116,7 +120,7 @@ export default function PortResourcesPage() {
     const res = await deletePublishingPortPool(id);
     if (res.code !== 0) return toast.error(res.msg || '删除失败');
     toast.success('端口池已删除');
-    loadData();
+    void loadData();
   };
 
   return (

@@ -65,6 +65,7 @@ import {
   type PublishingPortPool,
   type DnsZoneOption,
 } from '@/api';
+import { isAdmin as isAdminUser } from '@/utils/auth';
 
 interface EntryNodeOption {
   id: number;
@@ -213,7 +214,7 @@ export default function ServicePublishingPage() {
   const [connectorForm, setConnectorForm] = useState<{ name: string; allowedCidrs: string; platform: ConnectorPlatform }>({
     name: '', allowedCidrs: '', platform: 'linux',
   });
-  const isAdmin = localStorage.getItem('admin') === 'true' || localStorage.getItem('role_id') === '0';
+  const isAdmin = isAdminUser();
   const emptyDomainForm = () => ({
     name: '', domain: '', pathPrefix: '/', publishedServiceId: '', backendType: 'mapping' as 'mapping' | 'direct',
     backendNodeId: '', backendHost: '127.0.0.1', backendPort: '', backendScheme: 'http' as 'http' | 'https',
@@ -727,7 +728,7 @@ export default function ServicePublishingPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-semibold">{service.name}</h2>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500"><span>{service.ownerRoleId === 1 ? `普通用户 · ${service.ownerUserName}` : '管理员'}</span><Chip size="sm" variant="flat">{service.protocol?.toUpperCase() || 'TCP'}</Chip>{service.grantId && <Chip size="sm" color="secondary" variant="flat">共享端口</Chip>}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500">{isAdmin && <span>{service.ownerRoleId === 1 ? `普通用户 · ${service.ownerUserName}` : '管理员'}</span>}<Chip size="sm" variant="flat">{service.protocol?.toUpperCase() || 'TCP'}</Chip>{service.grantId && <Chip size="sm" color="secondary" variant="flat">{isAdmin ? '共享端口' : '授权端口'}</Chip>}</div>
                       </div>
                       <Chip size="sm" color={meta.color} variant="flat">{meta.label}</Chip>
                     </div>
@@ -737,7 +738,7 @@ export default function ServicePublishingPage() {
                       {service.targetHost}:{service.targetPort}
                     </div>
                     <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                      <div><dt className="text-default-500">端口资源</dt><dd className="mt-1 truncate">{service.poolName}{service.grantStartPort ? ` · ${service.grantStartPort}-${service.grantEndPort}` : ''}</dd></div>
+                      <div><dt className="text-default-500">端口资源</dt><dd className="mt-1 truncate">{isAdmin ? `${service.poolName}${service.grantStartPort ? ` · ${service.grantStartPort}-${service.grantEndPort}` : ''}` : service.grantId ? '已授权端口' : '已分配端口'}</dd></div>
                       <div><dt className="text-default-500">内网接入端</dt><dd className="mt-1 flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${service.connectorOnline ? 'bg-success' : 'bg-danger'}`} />{service.connectorName}</dd></div>
                       <div className="col-span-2"><dt className="text-default-500">有效期</dt><dd className="mt-1">{service.permanent ? '永久有效' : formatTime(service.expiresAt)}</dd></div>
                     </dl>
@@ -792,14 +793,14 @@ export default function ServicePublishingPage() {
                         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-semibold">{first.nodeName}</span>
+                              <span className="font-semibold">{isAdmin ? first.nodeName : '域名入口'}</span>
                               <Chip size="sm" variant="flat" color={managedHttps ? 'success' : 'primary'}>{managedHttps ? '托管 HTTPS' : 'TLS 透传'}</Chip>
                               <Chip size="sm" variant="flat" color={groupStatus.color}>{groupStatus.label}</Chip>
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-default-500">
-                              <span className="font-mono text-default-700 dark:text-default-300">{first.publicHost || '公网地址未配置'}:{first.listenPort}</span>
+                              <span className="font-mono text-default-700 dark:text-default-300">{isAdmin ? `${first.publicHost || '公网地址未配置'}:${first.listenPort}` : `${first.domain}:${first.listenPort}`}</span>
                               <span>共用 {group.routes.length} 个域名入口</span>
-                              <span>{first.nodeOnline ? '入口节点在线' : '入口节点离线'}</span>
+                              {isAdmin && <span>{first.nodeOnline ? '入口节点在线' : '入口节点离线'}</span>}
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2 text-xs text-default-500">
@@ -823,11 +824,11 @@ export default function ServicePublishingPage() {
                                 <a className="flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline" href={`https://${route.domain}${route.listenPort === 443 ? '' : `:${route.listenPort}`}${managedRoute ? route.pathPrefix || '/' : ''}`} target="_blank" rel="noreferrer">
                                   <span className="truncate">{route.domain}{managedRoute ? route.pathPrefix || '/' : ''}</span><ExternalLink className="shrink-0" size={13} />
                                 </a>
-                                <div className="mt-1 truncate text-xs text-default-500">{route.name} · {route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
+                                <div className="mt-1 truncate text-xs text-default-500">{isAdmin ? `${route.name} · ${route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}` : route.name}</div>
                               </div>
                               <div className="min-w-0 text-sm">
                                 <div className="flex min-w-0 items-center gap-2"><span className="truncate">{route.backendType === 'direct' ? route.backendNodeName || '节点本机服务' : route.mappingName}</span><Chip size="sm" variant="flat" color={route.backendType === 'direct' ? 'secondary' : 'default'}>{route.backendType === 'direct' ? '本机' : '映射'}</Chip></div>
-                                <div className="mt-1 truncate font-mono text-xs text-default-500">{route.backendType === 'direct' ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}` : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
+                                <div className="mt-1 truncate font-mono text-xs text-default-500">{isAdmin ? (route.backendType === 'direct' ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}` : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`) : route.backendType === 'direct' ? '节点后端已配置' : '映射后端已配置'}</div>
                               </div>
                               <div className="min-w-0 text-sm"><div>{stats?.currentConnections || 0} 个连接</div><div className="mt-1 truncate text-xs text-default-500">↑ {formatSpeed(stats?.uploadSpeed)} · ↓ {formatSpeed(stats?.downloadSpeed)}</div></div>
                               <div className="min-w-0"><Chip size="sm" variant="flat" color={routeStatus.color}>{routeStatus.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{routeStatus.detail}</div></div>
@@ -864,17 +865,19 @@ export default function ServicePublishingPage() {
                       <a className="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline" href={`https://${route.domain}${route.listenPort === 443 ? '' : `:${route.listenPort}`}${managedHttps ? route.pathPrefix || '/' : ''}`} target="_blank" rel="noreferrer">
                         <span className="truncate">{route.domain}{route.listenPort === 443 ? '' : `:${route.listenPort}`}{managedHttps ? route.pathPrefix || '/' : ''}</span><ExternalLink className="shrink-0" size={13} />
                       </a>
-                      <div className="mt-1 text-xs text-default-500">{route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>
+                      {isAdmin && <div className="mt-1 text-xs text-default-500">{route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : '管理员'}</div>}
                     </div>
                     <div className="min-w-0 text-sm">
                       <div className="truncate font-mono">{route.domain}:{route.listenPort}</div>
-                      <div className="mt-1 truncate text-xs text-default-500">DNS → {route.publicHost || '未配置'}</div>
+                      <div className="mt-1 truncate text-xs text-default-500">{isAdmin ? `DNS → ${route.publicHost || '未配置'}` : '入口已配置'}</div>
                     </div>
                     <div className="min-w-0 text-sm">
                       <div className="flex min-w-0 items-center gap-2"><span className="truncate">{route.backendType === 'direct' ? route.backendNodeName || '节点本机服务' : route.mappingName}</span><Chip size="sm" variant="flat" color={route.backendType === 'direct' ? 'secondary' : 'default'}>{route.backendType === 'direct' ? '本机' : '映射'}</Chip></div>
-                      <div className="mt-1 truncate font-mono text-xs text-default-500">{route.backendType === 'direct'
-                        ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}`
-                        : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`}</div>
+                      <div className="mt-1 truncate font-mono text-xs text-default-500">{isAdmin
+                        ? (route.backendType === 'direct'
+                          ? `${route.backendScheme || 'http'}://${route.backendHost}:${route.backendPort}${route.backendPath || '/'}`
+                          : `${route.mappingPublicHost || '映射地址不可用'}:${route.mappingPublicPort}`)
+                        : route.backendType === 'direct' ? '节点后端已配置' : '映射后端已配置'}</div>
                     </div>
                     <div className="min-w-0 text-sm"><div>{stats?.currentConnections || 0} 个连接</div><div className="mt-1 truncate text-xs text-default-500">↑ {formatSpeed(stats?.uploadSpeed)} · ↓ {formatSpeed(stats?.downloadSpeed)}</div></div>
                     <div className="min-w-0"><Chip size="sm" variant="flat" color={status.color}>{status.label}</Chip><div className="mt-1 truncate text-xs text-default-500">{status.detail}</div></div>
@@ -942,7 +945,7 @@ export default function ServicePublishingPage() {
                       <span className="truncate font-medium">{connector.name}</span>
                       <Chip size="sm" variant="flat">{platformMeta[connector.platform || 'linux'].label}</Chip>
                     </div>
-                    <div className="mt-1 text-xs text-default-500">{connector.ownerUserName}</div>
+                    {isAdmin && <div className="mt-1 text-xs text-default-500">{connector.ownerUserName}</div>}
                   </div>
                   <div className="flex items-center gap-2 text-sm"><span className={`h-2 w-2 rounded-full ${connector.online ? 'bg-success' : 'bg-default-400'}`} />{connector.online ? '在线' : '离线'}</div>
                   <div className="text-sm text-default-500">{connector.remoteIp || '尚未连接'}</div>
@@ -964,7 +967,7 @@ export default function ServicePublishingPage() {
             {telemetryLoading && !telemetryDetail ? <div className="flex min-h-48 items-center justify-center"><Spinner /></div> : telemetryDetail && (
               <>
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-divider pb-4">
-                  <div className="min-w-0"><h3 className="truncate text-lg font-semibold">{telemetryDetail.name}</h3><div className="mt-1 text-sm text-default-500">创建者 · {telemetryDetail.ownerUserName} · {formatTime(telemetryDetail.createdTime)}</div></div>
+                  <div className="min-w-0"><h3 className="truncate text-lg font-semibold">{telemetryDetail.name}</h3><div className="mt-1 text-sm text-default-500">{isAdmin ? `创建者 · ${telemetryDetail.ownerUserName} · ` : ''}{formatTime(telemetryDetail.createdTime)}</div></div>
                   <Chip size="sm" variant="flat" color={telemetryDetail.updatedAt && Date.now() - telemetryDetail.updatedAt < 20000 ? 'success' : 'default'}>{telemetryDetail.updatedAt ? `更新于 ${formatTime(telemetryDetail.updatedAt)}` : '等待 Agent 数据'}</Chip>
                 </div>
                 {telemetryDetail.sharedIngress && <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-700 dark:text-warning-400">该域名与其他域名共用同一 HTTPS 入口。连接数和字节数是入口汇总；下方域名记录用于确认实际访问分布。</div>}
@@ -1155,7 +1158,7 @@ export default function ServicePublishingPage() {
                 {pools.map(item => {
                   const key = `${item.id}:${item.grantId || 'admin'}`;
                   const range = item.grantId ? `${item.grantStartPort}-${item.grantEndPort}` : `${item.startPort}-${item.endPort}`;
-                  return <SelectItem key={key} textValue={`${item.name} ${range}`}>{item.name} · {item.nodeName} · {range} · 剩余 {item.availablePorts}</SelectItem>;
+                  return <SelectItem key={key} textValue={`${item.name} ${range}`}>{item.name}{isAdmin ? ` · ${item.nodeName} · ${range}` : ''} · 剩余 {item.availablePorts}</SelectItem>;
                 })}
               </Select>
               <Input label="内网目标 IP" value={serviceForm.targetHost} onValueChange={value => setServiceForm({ ...serviceForm, targetHost: value })} />

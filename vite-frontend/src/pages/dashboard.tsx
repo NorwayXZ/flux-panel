@@ -25,6 +25,7 @@ import {
   type PrivateProxyItem,
 } from "@/api";
 import type { User } from '@/types';
+import { isAdmin as isAdminUser } from '@/utils/auth';
 
 interface UserInfo {
   flow: number;
@@ -260,17 +261,17 @@ export default function DashboardPage() {
     setAdminForwards([]);
     setAdminUsers([]);
 
-    // 检查用户是否是管理员
-    const adminStatus = localStorage.getItem('admin');
-    setIsAdmin(adminStatus === 'true');
+    // 管理员身份只从当前有效 JWT 读取，避免旧缓存导致页面显示错位。
+    const adminStatus = isAdminUser();
+    setIsAdmin(adminStatus);
 
-    loadPackageData();
+    loadPackageData(adminStatus);
     localStorage.setItem('e', '/dashboard');
   }, []);
 
-  const loadPackageData = async () => {
+  const loadPackageData = async (adminOverride = isAdminUser()) => {
     setLoading(true);
-    const admin = localStorage.getItem('admin') === 'true';
+    const admin = adminOverride;
 
     try {
       const res = await getUserPackageInfo();
@@ -965,7 +966,7 @@ export default function DashboardPage() {
                   const used = (proxy.inFlow || 0) + (proxy.outFlow || 0);
                   return <div className={`rounded-lg border p-3 lg:p-4 ${proxy.available ? 'border-gray-200 bg-content1 dark:border-default-100' : 'border-danger-200 bg-danger-50/40 dark:border-danger-500/30 dark:bg-danger-500/5'}`}>
                     <div className="grid gap-4 lg:grid-cols-[minmax(220px,1.2fr)_repeat(4,minmax(120px,1fr))_auto] lg:items-center">
-                      <div className="flex min-w-0 items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${proxy.available ? 'bg-secondary-100 text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300' : 'bg-danger-100 text-danger'}`}><KeyRound className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{proxy.name}</h3><span className={`rounded-md px-2 py-0.5 text-xs ${proxy.available ? 'bg-success-100 text-success-700 dark:bg-success-500/15 dark:text-success-300' : 'bg-danger-100 text-danger-700 dark:bg-danger-500/15 dark:text-danger-300'}`}>{proxy.available ? '可用' : '不可用'}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{proxy.nodeName} · {proxyProtocolLabel[proxy.proxyType]} · {proxy.publicHost}:{proxy.listenPort}</p>{!proxy.available && <p className="mt-1 text-xs text-danger">{proxy.unavailableReason}</p>}</div></div>
+                      <div className="flex min-w-0 items-start gap-3"><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${proxy.available ? 'bg-secondary-100 text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300' : 'bg-danger-100 text-danger'}`}><KeyRound className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{proxy.name}</h3><span className={`rounded-md px-2 py-0.5 text-xs ${proxy.available ? 'bg-success-100 text-success-700 dark:bg-success-500/15 dark:text-success-300' : 'bg-danger-100 text-danger-700 dark:bg-danger-500/15 dark:text-danger-300'}`}>{proxy.available ? '可用' : '不可用'}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{proxyProtocolLabel[proxy.proxyType]} · {['hysteria2', 'tuic', 'wireguard'].includes(proxy.proxyType) ? 'UDP' : 'TCP'} · 端口 {proxy.listenPort}</p>{!proxy.available && <p className="mt-1 text-xs text-danger">{proxy.unavailableReason}</p>}</div></div>
                       <div><p className="text-xs text-default-500">剩余流量</p><p className="mt-1 text-sm font-medium">{proxy.flowUnlimited === 1 ? '无限制' : formatFlow(proxy.remainingFlow || 0)}</p><p className="mt-1 text-xs text-default-500">{proxy.flowUnlimited === 1 ? `已用 ${formatFlow(used)}` : `总额度 ${proxy.flowLimit || 0} GB · 已用 ${formatFlow(used)}`}</p></div>
                       <div><p className="text-xs text-default-500">剩余时间</p><p className="mt-1 text-sm font-medium">{formatRemainingTime(proxy.remainingTime)}</p></div>
                       <div><p className="text-xs text-default-500">到期时间</p><p className="mt-1 text-sm font-medium">{proxy.expiresAt ? new Date(proxy.expiresAt).toLocaleDateString() : '永久'}</p></div>
@@ -994,7 +995,7 @@ export default function DashboardPage() {
                 renderItem={(grant, dragHandle) => (
                   <div className="rounded-lg border border-gray-200 bg-content1 p-3 dark:border-default-100 lg:p-4">
                     <div className="grid gap-4 lg:grid-cols-[minmax(230px,1fr)_minmax(520px,2fr)] lg:items-center">
-                      <div className="flex min-w-0 items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warning-100 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300"><Boxes className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{grant.poolName}</h3><span className="rounded-md bg-secondary-100 px-2 py-0.5 text-xs text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300">共享 · {grant.ownerUserName}</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">{grant.nodeName} · {grant.publicHost}</p></div></div>
+                      <div className="flex min-w-0 items-start gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-warning-100 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300"><Boxes className="h-5 w-5" /></span><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-semibold">{grant.poolName}</h3><span className="rounded-md bg-secondary-100 px-2 py-0.5 text-xs text-secondary-700 dark:bg-secondary-500/15 dark:text-secondary-300">已授权</span>{dragHandle}</div><p className="mt-1 truncate text-xs text-default-500">可用于创建内网映射和发布服务</p></div></div>
                       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><div><p className="text-xs text-default-500">授权范围</p><p className="mt-1 truncate font-mono text-sm">{grant.startPort}-{grant.endPort}</p></div><div><p className="text-xs text-default-500">端口总数</p><p className="mt-1 text-sm font-medium">{grant.totalPorts}</p></div><div><p className="text-xs text-default-500">已发布</p><p className="mt-1 text-sm font-medium">{grant.usedPorts}</p></div><div><p className="text-xs text-default-500">剩余可用</p><p className="mt-1 text-sm font-medium text-success">{grant.availablePorts}</p></div></div>
                     </div>
                   </div>
@@ -1030,13 +1031,12 @@ export default function DashboardPage() {
                 <SortableCardGrid
                   items={orderedSharedNodes}
                   getId={node => node.id}
-                  onMove={sharedNodeOrder.moveCard}
-                  className="space-y-3"
-                  renderItem={(node, dragHandle) => {
-                    const online = node.status === 1;
-                    const entranceIp = node.ip?.split(',')[0]?.trim() || '-';
-                    const additionalIpCount = Math.max((node.ip?.split(',').length || 1) - 1, 0);
-                    const portRange = node.portSta && node.portEnd ? `${node.portSta}-${node.portEnd}` : '-';
+                onMove={sharedNodeOrder.moveCard}
+                className="space-y-3"
+                renderItem={(node, dragHandle) => {
+                  const online = node.status === 1;
+                    const quotaLimitBytes = (node.quotaFlow || 0) * 1073741824;
+                    const quotaRemaining = Math.max(0, quotaLimitBytes - (node.quotaUsedFlow || 0));
 
                     return (
                       <div className="rounded-lg border border-gray-200 bg-content1 p-3 transition-colors hover:bg-default-50/70 dark:border-default-100 dark:hover:bg-default-100/40 lg:p-4">
@@ -1051,34 +1051,34 @@ export default function DashboardPage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <h3 className="font-semibold text-foreground truncate" title={node.name}>{node.name}</h3>
                                 <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-secondary-100 dark:bg-secondary-500/15 text-secondary-700 dark:text-secondary-300">
-                                  共享 · {node.ownerUserName || '管理员'}
+                                  已授权
                                 </span>
                                 <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${online ? 'bg-success-100 dark:bg-success-500/15 text-success-700 dark:text-success-300' : 'bg-danger-100/70 dark:bg-danger-500/10 text-danger-700 dark:text-danger-300'}`}>
                                   {online ? '在线' : '离线'}
                                 </span>
                                 {dragHandle}
                               </div>
-                              <p className="text-xs text-default-500 mt-1">节点 ID: {node.id} · 只读共享</p>
+                              <p className="text-xs text-default-500 mt-1">可用于创建转发和选择出口</p>
                               {node.quotaAvailable === false && <p className="text-xs text-danger mt-1">{node.unavailableReason}</p>}
                             </div>
                           </div>
 
                           <div className="grid min-w-0 grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-3 xl:grid-cols-5">
                             <div className="min-w-0">
-                              <p className="text-xs text-default-500 mb-0.5">入口 IP</p>
-                              <p className="text-sm font-mono text-foreground truncate" title={node.ip || '-'}>
-                                {entranceIp}{additionalIpCount > 0 ? ` +${additionalIpCount}` : ''}
+                              <p className="text-xs text-default-500 mb-0.5">授权状态</p>
+                              <p className="text-sm text-foreground truncate">
+                                {online ? '在线可用' : '暂不可用'}
                               </p>
                             </div>
                             <div className="min-w-0">
-                              <p className="text-xs text-default-500 mb-0.5">端口范围</p>
-                              <p className="text-sm font-mono text-foreground truncate" title={portRange}>{portRange}</p>
+                              <p className="text-xs text-default-500 mb-0.5">剩余流量</p>
+                              <p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? '无限制' : formatFlow(quotaRemaining)}</p>
                             </div>
                             <div className="min-w-0 col-span-2 sm:col-span-1">
-                              <p className="text-xs text-default-500 mb-0.5">节点版本</p>
-                              <p className="text-sm text-foreground truncate" title={node.version || '未知'}>{node.version || '未知'}</p>
+                              <p className="text-xs text-default-500 mb-0.5">已用 / 总额</p>
+                              <p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? formatFlow(node.quotaUsedFlow || 0) : `${formatFlow(node.quotaUsedFlow || 0)} / ${node.quotaFlow || 0} GB`}</p>
                             </div>
-                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">流量额度</p><p className="text-sm text-foreground truncate">{node.quotaFlowUnlimited ? '无限制' : `${((node.quotaUsedFlow || 0) / 1073741824).toFixed(1)} / ${node.quotaFlow || 0} GB`}</p><p className="mt-0.5 truncate text-xs text-default-500">{formatResetTime(node.quotaFlowResetTime ?? 0)}</p></div>
+                            <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">流量重置</p><p className="text-sm text-foreground truncate">{formatResetTime(node.quotaFlowResetTime ?? 0) || '不重置'}</p></div>
                             <div className="min-w-0"><p className="text-xs text-default-500 mb-0.5">转发名额</p><p className="text-sm text-foreground truncate">{node.quotaForwardUnlimited ? '无限制' : `${node.quotaForwardUsed || 0} / ${node.quotaForwardLimit || 0} 个`}</p><p className="mt-0.5 truncate text-xs text-default-500">{node.quotaForwardUnlimited ? '不计名额' : `剩余 ${Math.max(0, (node.quotaForwardLimit || 0) - (node.quotaForwardUsed || 0))} 个`}</p></div>
                           </div>
                         </div>

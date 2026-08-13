@@ -1,4 +1,4 @@
-import { getRoleIdFromToken, isTokenValid } from './jwt';
+import { getRoleIdFromToken, getUsernameFromToken, isTokenValid } from './jwt';
 
 /**
  * 权限工具类
@@ -22,6 +22,18 @@ export function getCurrentUserRoleId(): number | null {
     return null;
   }
   return getRoleIdFromToken(token);
+}
+
+/**
+ * 获取当前用户名称
+ * @returns 用户名称
+ */
+export function getCurrentUsername(): string | null {
+  const token = getToken();
+  if (!token || !isTokenValid(token)) {
+    return null;
+  }
+  return getUsernameFromToken(token);
 }
 
 /**
@@ -69,4 +81,4 @@ export function requireAdmin<T extends (...args: any[]) => any>(
     }
     return fn(...args);
   }) as T;
-} 
+}

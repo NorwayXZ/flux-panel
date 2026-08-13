@@ -1,3 +1,11 @@
+## 2.51.2 Access boundary and load cleanup
+
+- Tightens administrator-only routes so topology, scheduler, diagnostics, Docker apps, resource management, monitoring, user management, and update pages no longer rely on stale browser role flags.
+- Keeps ordinary-user pages focused on usable address, port, traffic quota, reset day, remaining flow, and expiry information while hiding owner names, backend nodes, internal route paths, DNS targets, and other administrative topology details.
+- Makes the Routing Dispatch Center and Resource Center tolerate partial API failures and refreshes without replacing the whole page with a spinner when existing data is already available.
+- Keeps the local App/WebView panel-address page available while keeping website settings/admin navigation protected.
+- Panel-only release; Agent and Connector binaries remain `2.50.4`. iOS App changes and local Agent binaries are not included in this release.
+
 ## 2.51.1 Panel cleanup and scheduler ownership protection
 
 - Keeps the existing `/virtual-lan` compatibility redirect while removing the unused duplicate page; separates the WebView/App panel-address screen from the administrator website settings page.

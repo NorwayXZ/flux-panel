@@ -1,5 +1,6 @@
 package com.admin.controller;
 
+import com.admin.common.annotation.RequireRole;
 import com.admin.common.lang.R;
 import com.admin.service.TopologyService;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -17,6 +18,7 @@ public class TopologyController {
         this.service = service;
     }
 
+    @RequireRole
     @PostMapping("/graph")
     public R graph() {
         return service.graph();

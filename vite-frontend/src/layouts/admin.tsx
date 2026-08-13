@@ -13,6 +13,7 @@ import { safeLogout } from '@/utils/logout';
 import { siteConfig } from '@/config/site';
 import { useAlertUnreadCount } from '@/hooks/use-alert-unread-count';
 import { preloadRoute } from '@/utils/route-preload';
+import { getCurrentUsername, isAdmin as isAdminUser } from '@/utils/auth';
 
 interface MenuItem {
   path: string;
@@ -269,20 +270,9 @@ export default function AdminLayout({
   };
 
   useEffect(() => {
-    // 获取用户信息
-    const name = localStorage.getItem('name') || 'Admin';
-    
-    // 兼容处理：如果没有admin字段，根据role_id判断（0为管理员）
-    let adminFlag = localStorage.getItem('admin') === 'true';
-    if (localStorage.getItem('admin') === null) {
-      const roleId = parseInt(localStorage.getItem('role_id') || '1', 10);
-      adminFlag = roleId === 0;
-      // 补充设置admin字段，避免下次再次判断
-      localStorage.setItem('admin', adminFlag.toString());
-    }
-    
-    setUsername(name);
-    setIsAdmin(adminFlag);
+    // 以当前有效 JWT 为准，旧 localStorage 标记只作为历史兼容数据。
+    setUsername(getCurrentUsername() || localStorage.getItem('name') || 'Admin');
+    setIsAdmin(isAdminUser());
 
     // 响应式检查
     checkMobile();
