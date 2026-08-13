@@ -107,6 +107,17 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "quality_suppressed_reason", "varchar(255) DEFAULT NULL AFTER quality_suppressed_until");
             ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_suppressed_reason");
             ensureColumn("cross_entry_failover_member", "quality_checked_at", "bigint DEFAULT NULL AFTER quality_last_error");
+            ensureColumn("cross_entry_failover_member", "fault_episode_count", "int NOT NULL DEFAULT 0 AFTER quality_checked_at");
+            ensureColumn("cross_entry_failover_member", "connect_fault_count", "int NOT NULL DEFAULT 0 AFTER fault_episode_count");
+            ensureColumn("cross_entry_failover_member", "latency_fault_count", "int NOT NULL DEFAULT 0 AFTER connect_fault_count");
+            ensureColumn("cross_entry_failover_member", "loss_fault_count", "int NOT NULL DEFAULT 0 AFTER latency_fault_count");
+            ensureColumn("cross_entry_failover_member", "p95_fault_count", "int NOT NULL DEFAULT 0 AFTER loss_fault_count");
+            ensureColumn("cross_entry_failover_member", "jitter_fault_count", "int NOT NULL DEFAULT 0 AFTER p95_fault_count");
+            ensureColumn("cross_entry_failover_member", "flap_fault_count", "int NOT NULL DEFAULT 0 AFTER jitter_fault_count");
+            ensureColumn("cross_entry_failover_member", "switch_trigger_count", "int NOT NULL DEFAULT 0 AFTER flap_fault_count");
+            ensureColumn("cross_entry_failover_member", "last_fault_type", "varchar(32) DEFAULT NULL AFTER switch_trigger_count");
+            ensureColumn("cross_entry_failover_member", "last_fault_reason", "varchar(255) DEFAULT NULL AFTER last_fault_type");
+            ensureColumn("cross_entry_failover_member", "last_fault_at", "bigint DEFAULT NULL AFTER last_fault_reason");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"
                     + "provider_record_id varchar(64) NOT NULL,content varchar(255) NOT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"

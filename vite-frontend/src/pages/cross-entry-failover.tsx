@@ -81,6 +81,24 @@ const eventEndpointText = (event?: CrossEntryEvent) => {
   const to = event.toEntryAddress && event.toEntryPort ? `${event.toEntryAddress}:${event.toEntryPort}` : '';
   return from && to ? `${from} → ${to}` : to || from;
 };
+const faultSummaryText = (member: CrossEntryGroup['members'][number]) => {
+  const parts = [
+    ['连接', member.connectFaultCount],
+    ['延迟', member.latencyFaultCount],
+    ['P95', member.p95FaultCount],
+    ['抖动', member.jitterFaultCount],
+    ['丢包', member.lossFaultCount],
+    ['保护', member.flapFaultCount],
+    ['切换', member.switchTriggerCount],
+  ]
+    .filter(([, count]) => typeof count === 'number' && count > 0)
+    .map(([label, count]) => `${label} ${count}`);
+  const total = typeof member.faultEpisodeCount === 'number' ? member.faultEpisodeCount : 0;
+  if (!parts.length && total <= 0) return '故障：暂无';
+  const detail = parts.length ? ` · ${parts.join(' · ')}` : '';
+  const lastFault = member.lastFaultAt ? ` · 最近 ${timeText(member.lastFaultAt)}` : '';
+  return `故障总计 ${total}${detail}${lastFault}`;
+};
 const stateMeta = (state: CrossEntryGroup['state']) => ({
   healthy: { label: '运行正常', color: 'success' as const },
   degraded: { label: '部分异常', color: 'warning' as const },
@@ -392,9 +410,9 @@ export default function CrossEntryFailoverPage() {
                       const suppressed = Boolean(member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now());
                       const preheated = qualityEnabled && truthy(member.qualityPreheated || false);
                       return (
-                        <div key={member.id} className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
+                        <div key={member.id} className={`grid min-h-16 grid-cols-1 gap-3 border-l-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${isActive ? 'border-primary bg-primary-50/50 dark:bg-primary-500/5' : 'border-divider'}`}>
                           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{member.nodeName}</span><Chip size="sm" variant="flat" color={member.status === 'healthy' ? 'success' : member.status === 'unhealthy' ? 'danger' : 'default'}>{member.status === 'healthy' ? '可用' : member.status === 'unhealthy' ? '不可用' : '检测中'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={qMeta.color}>{qMeta.label}</Chip>}{preheated && <Chip size="sm" variant="flat" color="success">已预热</Chip>}{suppressed && <Chip size="sm" variant="flat" color="warning">保护中</Chip>}{isActive && <Chip size="sm" color="primary" variant="flat">{activeActive ? 'DNS 锚点' : '当前承载'}</Chip>}</div><p className="mt-1 truncate text-xs text-default-500">{activeActive ? `入口 ${index + 1}` : (index === 0 ? '主入口' : `备用 ${index}`)} · {member.entryAddress}:{member.entryPort} · {member.forwardName}</p>{suppressed && <p className="mt-1 truncate text-xs text-warning">抖动保护至 {timeText(member.qualitySuppressedUntil)}</p>}</div>
-                          <div className="text-right text-xs"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">均值 {metricText(member.qualityLatencyMs, ' ms')} · P95 {metricText(member.qualityP95Ms, ' ms')} · 抖动 {metricText(member.qualityJitterMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}</div>
+                          <div className="text-left text-xs sm:text-right"><p className="font-medium">{member.latencyMs ? `${member.latencyMs} ms` : '-'}</p>{qualityEnabled ? <p className="mt-1 text-default-500">均值 {metricText(member.qualityLatencyMs, ' ms')} · P95 {metricText(member.qualityP95Ms, ' ms')} · 抖动 {metricText(member.qualityJitterMs, ' ms')} · 丢包 {metricText(member.qualityLossPercent, '%')} · 基线 {metricText(member.qualityBaselineMs, ' ms')}</p> : <p className="mt-1 text-default-500">失败 {member.failCount}/{group.failureThreshold}</p>}<p className="mt-1 text-default-400">{faultSummaryText(member)}</p>{member.lastFaultReason && <p className="mt-1 truncate text-default-400">{member.lastFaultReason}</p>}</div>
                         </div>
                       );
                     })}

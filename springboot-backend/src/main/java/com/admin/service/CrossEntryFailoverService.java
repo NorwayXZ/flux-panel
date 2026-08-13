@@ -178,6 +178,7 @@ public class CrossEntryFailoverService {
             String previousActiveName = null;
             Long requestedLockedForwardId = null;
             String requestedRecordId = dto.getRecordId();
+            Map<Long, Map<String, Object>> previousMemberFaultStats = new LinkedHashMap<>();
             if (id == null) {
                 if (!managedDns) return R.err("请选择已在 DNS 与域名中登记的 Cloudflare Zone");
             } else {
@@ -186,6 +187,21 @@ public class CrossEntryFailoverService {
                                 + "FROM cross_entry_failover_group g LEFT JOIN cross_entry_failover_member m ON m.id=g.active_member_id WHERE g.id=?", id);
                 if (existing.isEmpty()) return R.err("容灾组不存在");
                 Map<String, Object> old = existing.get(0);
+                jdbcTemplate.queryForList(
+                        "SELECT forward_id AS forwardId,status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,"
+                                + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt,"
+                                + "quality_latency_ms AS qualityLatencyMs,quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
+                                + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,"
+                                + "quality_state AS qualityState,quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,"
+                                + "quality_flap_count AS qualityFlapCount,quality_flap_window_started_at AS qualityFlapWindowStartedAt,"
+                                + "quality_suppressed_until AS qualitySuppressedUntil,quality_suppressed_reason AS qualitySuppressedReason,"
+                                + "quality_last_error AS qualityLastError,quality_checked_at AS qualityCheckedAt,"
+                                + "fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,latency_fault_count AS latencyFaultCount,"
+                                + "loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,jitter_fault_count AS jitterFaultCount,"
+                                + "flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,last_fault_type AS lastFaultType,"
+                                + "last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt "
+                                + "FROM cross_entry_failover_member WHERE group_id=?", id)
+                        .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
                 previousActiveName = Objects.toString(old.get("activeName"), null);
                 if (!managedDns) {
@@ -294,6 +310,27 @@ public class CrossEntryFailoverService {
                         number(forward.get("inPort")).intValue(),
                         forward.get("name"), forward.get("nodeName"), now, now);
                 Long memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+                Map<String, Object> oldFaultStats = previousMemberFaultStats.get(forwardId);
+                if (oldFaultStats != null) {
+                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET status=?,fail_count=?,success_count=?,latency_ms=?,last_error=?,last_checked_at=?,"
+                                    + "last_healthy_at=?,last_failure_at=?,quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,"
+                                    + "quality_baseline_ms=?,quality_preheated=?,quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,"
+                                    + "quality_flap_window_started_at=?,quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,"
+                                    + "quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
+                                    + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=? WHERE id=?",
+                            oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
+                            oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
+                            oldFaultStats.get("lastHealthyAt"), oldFaultStats.get("lastFailureAt"), oldFaultStats.get("qualityLatencyMs"),
+                            oldFaultStats.get("qualityP95Ms"), oldFaultStats.get("qualityJitterMs"), oldFaultStats.get("qualityLossPercent"),
+                            oldFaultStats.get("qualityBaselineMs"), oldFaultStats.get("qualityPreheated"), oldFaultStats.get("qualityState"),
+                            oldFaultStats.get("qualityBadCount"), oldFaultStats.get("qualityGoodCount"), oldFaultStats.get("qualityFlapCount"),
+                            oldFaultStats.get("qualityFlapWindowStartedAt"), oldFaultStats.get("qualitySuppressedUntil"),
+                            oldFaultStats.get("qualitySuppressedReason"), oldFaultStats.get("qualityLastError"),
+                            oldFaultStats.get("qualityCheckedAt"), oldFaultStats.get("faultEpisodeCount"), oldFaultStats.get("connectFaultCount"),
+                            oldFaultStats.get("latencyFaultCount"), oldFaultStats.get("lossFaultCount"), oldFaultStats.get("p95FaultCount"),
+                            oldFaultStats.get("jitterFaultCount"), oldFaultStats.get("flapFaultCount"), oldFaultStats.get("switchTriggerCount"),
+                            oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"), memberId);
+                }
                 if (priority == 0) primaryMemberId = memberId;
                 if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
                     retainedActiveMemberId = memberId;
@@ -605,13 +642,59 @@ public class CrossEntryFailoverService {
                         number(group.get("qualityFlapWindowSeconds")).intValue(), number(group.get("qualityFlapThreshold")).intValue(),
                         number(group.get("qualityFlapSuppressSeconds")).intValue()));
         if (loss == null) loss = result.success() ? 0.0 : 100.0;
+        FaultStatsUpdate faultStats = qualityFaultStatsUpdate(decision, result.success(), result.error(), oldState,
+                "unhealthy".equals(member.get("status")), flapDecision, now);
         jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,quality_baseline_ms=?,"
                         + "quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,quality_flap_window_started_at=?,"
-                        + "quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,quality_checked_at=?,updated_time=? WHERE id=?",
+                        + "quality_suppressed_until=?,quality_suppressed_reason=?,quality_last_error=?,quality_checked_at=?,"
+                        + "fault_episode_count=fault_episode_count+?,connect_fault_count=connect_fault_count+?,latency_fault_count=latency_fault_count+?,loss_fault_count=loss_fault_count+?,"
+                        + "p95_fault_count=p95_fault_count+?,jitter_fault_count=jitter_fault_count+?,flap_fault_count=flap_fault_count+?,"
+                        + "last_fault_type=COALESCE(?,last_fault_type),last_fault_reason=COALESCE(?,last_fault_reason),"
+                        + "last_fault_at=COALESCE(?,last_fault_at),updated_time=? WHERE id=?",
                 latency, p95, jitter, loss, decision.baselineMs(), decision.state(), decision.badCount(), decision.goodCount(),
                 flapDecision.flapCount(), flapDecision.windowStartedAt(), flapDecision.suppressedUntil(),
-                flapDecision.suppressedReason(), shorten(result.error(), 500), now, now, member.get("id"));
+                flapDecision.suppressedReason(), shorten(result.error(), 500), now,
+                faultStats.episodeDelta(), faultStats.connectDelta(), faultStats.latencyDelta(), faultStats.lossDelta(),
+                faultStats.p95Delta(), faultStats.jitterDelta(), faultStats.flapDelta(),
+                faultStats.type(), faultStats.reason(), faultStats.at(), now, member.get("id"));
         return decision.state();
+    }
+
+    static FaultStatsUpdate qualityFaultStatsUpdate(CrossEntryQualityEvaluator.Decision decision,
+                                                    boolean probeSuccess, String probeError,
+                                                    String oldState, boolean healthFaultAlreadyCounted,
+                                                    CrossEntryQualityFlapGuard.Decision flapDecision,
+                                                    long now) {
+        boolean newlyDegraded = decision != null
+                && "degraded".equals(decision.state())
+                && !"degraded".equals(oldState);
+        int connect = newlyDegraded && !probeSuccess && !healthFaultAlreadyCounted ? 1 : 0;
+        int latency = newlyDegraded && decision.latencyBad() ? 1 : 0;
+        int loss = newlyDegraded && probeSuccess && decision.lossBad() ? 1 : 0;
+        int p95 = newlyDegraded && decision.p95Bad() ? 1 : 0;
+        int jitter = newlyDegraded && decision.jitterBad() ? 1 : 0;
+        int flap = flapDecision != null && flapDecision.newlySuppressed() ? 1 : 0;
+        String type = null;
+        if (connect > 0) type = "connect";
+        else if (loss > 0) type = "loss";
+        else if (p95 > 0) type = "p95";
+        else if (jitter > 0) type = "jitter";
+        else if (latency > 0) type = "latency";
+        else if (flap > 0) type = "flap";
+        String reason = type == null ? null : qualityFaultReason(type, decision, probeError);
+        int episode = newlyDegraded && !(connect == 0 && !probeSuccess && healthFaultAlreadyCounted) ? 1 : 0;
+        return new FaultStatsUpdate(episode, connect, latency, loss, p95, jitter, flap, type, reason,
+                type == null ? null : now);
+    }
+
+    private static String qualityFaultReason(String type, CrossEntryQualityEvaluator.Decision decision, String probeError) {
+        if ("connect".equals(type)) return StringUtils.defaultIfBlank(probeError, "质量探测连接失败");
+        if ("loss".equals(type)) return "丢包超过质量阈值";
+        if ("p95".equals(type)) return "P95 延迟超过质量阈值";
+        if ("jitter".equals(type)) return "抖动超过质量阈值";
+        if ("latency".equals(type)) return "延迟超过质量阈值";
+        if ("flap".equals(type)) return "质量抖动保护触发";
+        return StringUtils.defaultIfBlank(probeError, "质量探测异常");
     }
 
     private void markPreheatedBackups(Map<String, Object> group, long now) {
@@ -715,6 +798,7 @@ public class CrossEntryFailoverService {
     private void updateMemberHealth(ProbeResult result, int failureThreshold, long now) {
         int oldFails = number(result.member().get("failCount")).intValue();
         int oldSuccess = number(result.member().get("successCount")).intValue();
+        String oldStatus = Objects.toString(result.member().get("status"), "unknown");
         if (result.healthy()) {
             jdbcTemplate.update("UPDATE cross_entry_failover_member SET status='healthy',fail_count=0,success_count=?,latency_ms=?,"
                             + "last_error=NULL,last_checked_at=?,last_healthy_at=?,updated_time=? WHERE id=?",
@@ -722,9 +806,20 @@ public class CrossEntryFailoverService {
         } else {
             int failures = oldFails + 1;
             String status = failures >= failureThreshold ? "unhealthy" : Objects.toString(result.member().get("status"), "unknown");
+            boolean newConnectFault = "unhealthy".equals(status) && !"unhealthy".equals(oldStatus);
+            boolean qualityFaultActive = isQualityDegraded(result.member());
+            boolean connectCauseAlreadyCounted = qualityFaultActive
+                    && "connect".equals(Objects.toString(result.member().get("lastFaultType"), ""));
+            int episodeDelta = newConnectFault && !qualityFaultActive ? 1 : 0;
+            int connectDelta = newConnectFault && !connectCauseAlreadyCounted ? 1 : 0;
             jdbcTemplate.update("UPDATE cross_entry_failover_member SET status=?,fail_count=?,success_count=0,latency_ms=NULL,"
-                            + "last_error=?,last_checked_at=?,last_failure_at=?,updated_time=? WHERE id=?",
-                    status, failures, result.error(), now, now, now, result.member().get("id"));
+                            + "last_error=?,last_checked_at=?,last_failure_at=?,fault_episode_count=fault_episode_count+?,connect_fault_count=connect_fault_count+?,"
+                            + "last_fault_type=COALESCE(?,last_fault_type),last_fault_reason=COALESCE(?,last_fault_reason),"
+                            + "last_fault_at=COALESCE(?,last_fault_at),updated_time=? WHERE id=?",
+                    status, failures, result.error(), now, now, episodeDelta, connectDelta,
+                    connectDelta > 0 ? "connect" : null,
+                    connectDelta > 0 ? shorten(StringUtils.defaultIfBlank(result.error(), "入口连接失败"), 255) : null,
+                    connectDelta > 0 ? now : null, now, result.member().get("id"));
         }
     }
 
@@ -733,6 +828,9 @@ public class CrossEntryFailoverService {
         boolean dnsChanged = false;
         try {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='switching',updated_time=? WHERE id=?", now, groupId);
+            if (from != null && ("unhealthy".equals(from.get("status")) || isQualityDegraded(from))) {
+                recordSwitchTrigger(from, reason, now);
+            }
             updateCloudflareDns(group, to);
             dnsChanged = true;
             if (bool(group.get("postSwitchVerifyEnabled"))) {
@@ -784,8 +882,16 @@ public class CrossEntryFailoverService {
 
     private void markPostSwitchRejected(Map<String, Object> member, String error, long now) {
         jdbcTemplate.update("UPDATE cross_entry_failover_member SET status='unhealthy',fail_count=fail_count+1,success_count=0,"
-                        + "last_error=?,last_checked_at=?,last_failure_at=?,updated_time=? WHERE id=?",
-                shorten(StringUtils.defaultIfBlank(error, "切换后目标入口验证失败"), 500), now, now, now, member.get("id"));
+                        + "last_error=?,last_checked_at=?,last_failure_at=?,fault_episode_count=fault_episode_count+1,connect_fault_count=connect_fault_count+1,"
+                        + "last_fault_type='connect',last_fault_reason=?,last_fault_at=?,updated_time=? WHERE id=?",
+                shorten(StringUtils.defaultIfBlank(error, "切换后目标入口验证失败"), 500),
+                now, now, shorten(StringUtils.defaultIfBlank(error, "切换后目标入口验证失败"), 255),
+                now, now, member.get("id"));
+    }
+
+    private void recordSwitchTrigger(Map<String, Object> member, String reason, long now) {
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET switch_trigger_count=switch_trigger_count+1,updated_time=? WHERE id=?",
+                now, member.get("id"));
     }
 
     /** Active-active DNS is connection selection at resolver time, not a TCP connection migrator. */
@@ -1133,7 +1239,11 @@ public class CrossEntryFailoverService {
                 + "quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,quality_flap_count AS qualityFlapCount,"
                 + "quality_flap_window_started_at AS qualityFlapWindowStartedAt,quality_suppressed_until AS qualitySuppressedUntil,"
                 + "quality_suppressed_reason AS qualitySuppressedReason,quality_last_error AS qualityLastError,"
-                + "quality_checked_at AS qualityCheckedAt,last_error AS lastError,"
+                + "quality_checked_at AS qualityCheckedAt,fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,"
+                + "latency_fault_count AS latencyFaultCount,loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,"
+                + "jitter_fault_count AS jitterFaultCount,flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,"
+                + "last_fault_type AS lastFaultType,last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt,"
+                + "last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt "
                 + "FROM cross_entry_failover_member WHERE group_id=? ORDER BY priority", groupId);
     }
@@ -1409,6 +1519,8 @@ public class CrossEntryFailoverService {
 
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
                                       Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
+    record FaultStatsUpdate(int episodeDelta, int connectDelta, int latencyDelta, int lossDelta, int p95Delta,
+                            int jitterDelta, int flapDelta, String type, String reason, Long at) {}
     private record DnsVerification(boolean providerMatched, boolean publicMatched, String message) {}
     private record PublicDnsVerification(boolean matched, String detail) {}
 }

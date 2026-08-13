@@ -1,3 +1,10 @@
+## 2.50.5 Cross-entry fault statistics
+
+- Adds persistent per-entry fault episode totals and separate connection, latency, P95, jitter, packet-loss, flap-protection, and switch-trigger counters.
+- Counts confirmed fault episodes instead of every probe tick, records the latest fault time and reason, and avoids double-counting the same connection outage in health and quality probes.
+- Preserves accumulated statistics and current health-learning state when administrators reorder primary and backup entries. The failover page now shows these statistics responsively for later route-priority decisions.
+- Panel-only release. Agent and Connector binaries remain `2.50.4`.
+
 ## 2.50.4 Cross-entry primary-priority failback
 
 - Changes Cross-entry Failover primary failback to use the primary entry's own recovery state instead of comparing its latency with the active backup.

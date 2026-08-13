@@ -665,6 +665,17 @@ export interface CrossEntryMember {
   qualitySuppressedReason?: string;
   qualityLastError?: string;
   qualityCheckedAt?: number;
+  faultEpisodeCount?: number;
+  connectFaultCount?: number;
+  latencyFaultCount?: number;
+  lossFaultCount?: number;
+  p95FaultCount?: number;
+  jitterFaultCount?: number;
+  flapFaultCount?: number;
+  switchTriggerCount?: number;
+  lastFaultType?: string;
+  lastFaultReason?: string;
+  lastFaultAt?: number;
   lastError?: string;
   lastCheckedAt?: number;
 }
