@@ -15,7 +15,7 @@ public final class CrossEntryFailoverPolicy {
     public static Decision select(List<Member> members, Long activeId, boolean autoFailback,
                                   int recoveryThreshold, boolean cooldownElapsed) {
         return select(members, activeId, new Settings(autoFailback, recoveryThreshold, cooldownElapsed,
-                true, false, true, true, true, 10, 20.0, "auto", null));
+                true, false, true, true, true, false, 5, 10, 20.0, "auto", null));
     }
 
     public static Decision select(List<Member> members, Long activeId, Settings settings) {
@@ -39,14 +39,14 @@ public final class CrossEntryFailoverPolicy {
                     .filter(member -> !member.degraded())
                     .filter(member -> !member.suppressed())
                     .filter(Member::acceptableForQualitySwitch)
-                    .min(Comparator.comparingInt(Member::priority)).orElse(null);
+                    .min(candidateComparator(active, settings)).orElse(null);
             if (target == null && settings.degradedFallbackEnabled()) {
                 target = members.stream().filter(Member::healthy).filter(member -> !member.suppressed())
                         .min(qualityComparator(active, settings)).orElse(null);
             }
             if (target == null) {
                 target = members.stream().filter(Member::healthy).filter(member -> !member.suppressed())
-                        .min(Comparator.comparingInt(Member::priority)).orElse(null);
+                        .min(candidateComparator(active, settings)).orElse(null);
             }
             if (target == null) {
                 target = members.stream().filter(Member::healthy)
@@ -66,7 +66,7 @@ public final class CrossEntryFailoverPolicy {
                     .filter(member -> member.healthy() && !member.degraded() && !Objects.equals(member.id(), active.id()))
                     .filter(member -> !member.suppressed())
                     .filter(Member::acceptableForQualitySwitch)
-                    .min(cleanComparator(active, settings)).orElse(null);
+                    .min(candidateComparator(active, settings)).orElse(null);
             if (target != null) return Decision.switchTo(target.id(), "当前入口质量劣化，自动切换");
 
             if (settings.degradedFallbackEnabled()) {
@@ -83,6 +83,25 @@ public final class CrossEntryFailoverPolicy {
                             && member.suppressed());
             if (hasSuppressedBackup) return Decision.stay("当前入口质量劣化，但备用入口处于抖动保护期");
             return Decision.stay("当前入口质量劣化，但没有质量正常的备用入口");
+        }
+        if (settings.tcpLatencySelectionEnabled()) {
+            if (!settings.cooldownElapsed()) return Decision.stay("TCP 延迟优选仍在冷却期");
+            if (!settings.minResidencyElapsed()) return Decision.stay("当前入口驻留时间不足");
+            Member target = members.stream()
+                    .filter(Member::healthy)
+                    .filter(member -> !member.degraded())
+                    .filter(member -> !member.suppressed())
+                    .filter(Member::acceptableForQualitySwitch)
+                    .filter(member -> member.successCount() >= settings.recoveryThreshold())
+                    .filter(member -> member.latencyMs() != null)
+                    .min(tcpLatencyComparator()).orElse(null);
+            if (target == null || Objects.equals(target.id(), active.id())) {
+                return Decision.stay("当前入口 TCP 延迟最低");
+            }
+            if (!hasRequiredLatencyGain(active, target, settings.tcpLatencySwitchThresholdMs())) {
+                return Decision.stay("候选入口 TCP 延迟收益不足");
+            }
+            return Decision.switchTo(target.id(), "TCP 延迟优选，自动切换至最低延迟入口");
         }
         if (!settings.autoFailback() || preferred == null || Objects.equals(preferred.id(), active.id())) {
             return Decision.stay("保持当前入口");
@@ -119,13 +138,26 @@ public final class CrossEntryFailoverPolicy {
                            boolean minResidencyElapsed, boolean degradedFallbackEnabled,
                            boolean sameFaultAvoidanceEnabled, boolean topologyAvoidanceEnabled,
                            boolean preheatPreferred,
+                           boolean tcpLatencySelectionEnabled, int tcpLatencySwitchThresholdMs,
                            int failbackGainMs, double failbackGainPercent,
                            String manualControlMode, Long lockedMemberId) {
         public Settings {
             manualControlMode = manualControlMode == null ? "auto" : manualControlMode;
             recoveryThreshold = Math.max(1, recoveryThreshold);
+            tcpLatencySwitchThresholdMs = Math.max(0, tcpLatencySwitchThresholdMs);
             failbackGainMs = Math.max(0, failbackGainMs);
             failbackGainPercent = Math.max(0.0, failbackGainPercent);
+        }
+
+        public Settings(boolean autoFailback, int recoveryThreshold, boolean cooldownElapsed,
+                        boolean minResidencyElapsed, boolean degradedFallbackEnabled,
+                        boolean sameFaultAvoidanceEnabled, boolean topologyAvoidanceEnabled,
+                        boolean preheatPreferred, int failbackGainMs, double failbackGainPercent,
+                        String manualControlMode, Long lockedMemberId) {
+            this(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
+                    degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled,
+                    preheatPreferred, false, 5, failbackGainMs, failbackGainPercent,
+                    manualControlMode, lockedMemberId);
         }
     }
 
@@ -145,6 +177,30 @@ public final class CrossEntryFailoverPolicy {
                 .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
                 .thenComparingInt(member -> topologyPenalty(active, member, settings))
                 .thenComparingInt(Member::priority);
+    }
+
+    private static Comparator<Member> candidateComparator(Member active, Settings settings) {
+        if (!settings.tcpLatencySelectionEnabled()) return cleanComparator(active, settings);
+        return Comparator
+                .comparingInt((Member member) -> member.latencyMs() == null ? Integer.MAX_VALUE : member.latencyMs())
+                .thenComparingDouble(member -> member.lossPercent() == null ? 0.0 : member.lossPercent())
+                .thenComparingInt(member -> sameFaultPenalty(active, member, settings))
+                .thenComparingInt(member -> topologyPenalty(active, member, settings))
+                .thenComparingInt(member -> preheatPenalty(member, settings))
+                .thenComparingInt(Member::priority);
+    }
+
+    private static Comparator<Member> tcpLatencyComparator() {
+        return Comparator
+                .comparingInt((Member member) -> member.latencyMs() == null ? Integer.MAX_VALUE : member.latencyMs())
+                .thenComparingDouble(member -> member.lossPercent() == null ? 0.0 : member.lossPercent())
+                .thenComparingInt(Member::priority);
+    }
+
+    private static boolean hasRequiredLatencyGain(Member active, Member target, int thresholdMs) {
+        if (target.latencyMs() == null) return false;
+        if (active.latencyMs() == null) return true;
+        return active.latencyMs() - target.latencyMs() >= Math.max(1, thresholdMs);
     }
 
     private static Comparator<Member> qualityComparator(Member active, Settings settings) {

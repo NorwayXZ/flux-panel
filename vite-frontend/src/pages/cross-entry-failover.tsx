@@ -51,7 +51,8 @@ const emptyForm = {
   qualityP95ThresholdMs: '100', qualityJitterThresholdMs: '50',
   qualityFixedTargetEnabled: false, qualityFixedTargetMs: '20', qualityFixedTargetStrict: true,
   qualityFlapGuardEnabled: true, qualityFlapWindowSeconds: '900', qualityFlapThreshold: '3', qualityFlapSuppressSeconds: '1800',
-  smartSelectionEnabled: true, degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
+  smartSelectionEnabled: true, tcpLatencySelectionEnabled: false, tcpLatencySwitchThresholdMs: '5',
+  degradedFallbackEnabled: true, sameFaultAvoidanceEnabled: true, topologyAvoidanceEnabled: true,
   minResidencySeconds: '300',
   preheatEnabled: true, preheatBackupCount: '3', preheatStrictIsolation: true, postSwitchVerifyEnabled: true, dnsVerifyEnabled: true,
   manualControlMode: 'auto' as 'auto' | 'pause' | 'lock', lockedMemberId: '',
@@ -218,6 +219,8 @@ export default function CrossEntryFailoverPage() {
       qualityFlapThreshold: String(group.qualityFlapThreshold || 3),
       qualityFlapSuppressSeconds: String(group.qualityFlapSuppressSeconds || 1800),
       smartSelectionEnabled: !Number.isFinite(Number(group.smartSelectionEnabled)) ? truthy(group.smartSelectionEnabled ?? true) : Number(group.smartSelectionEnabled) !== 0,
+      tcpLatencySelectionEnabled: !Number.isFinite(Number(group.tcpLatencySelectionEnabled)) ? truthy(group.tcpLatencySelectionEnabled ?? false) : Number(group.tcpLatencySelectionEnabled) !== 0,
+      tcpLatencySwitchThresholdMs: String(group.tcpLatencySwitchThresholdMs ?? 5),
       degradedFallbackEnabled: !Number.isFinite(Number(group.degradedFallbackEnabled)) ? truthy(group.degradedFallbackEnabled ?? true) : Number(group.degradedFallbackEnabled) !== 0,
       sameFaultAvoidanceEnabled: !Number.isFinite(Number(group.sameFaultAvoidanceEnabled)) ? truthy(group.sameFaultAvoidanceEnabled ?? true) : Number(group.sameFaultAvoidanceEnabled) !== 0,
       topologyAvoidanceEnabled: !Number.isFinite(Number(group.topologyAvoidanceEnabled)) ? truthy(group.topologyAvoidanceEnabled ?? true) : Number(group.topologyAvoidanceEnabled) !== 0,
@@ -283,6 +286,8 @@ export default function CrossEntryFailoverPage() {
       qualityFlapThreshold: Number(form.qualityFlapThreshold),
       qualityFlapSuppressSeconds: Number(form.qualityFlapSuppressSeconds),
       smartSelectionEnabled: form.smartSelectionEnabled,
+      tcpLatencySelectionEnabled: form.routingMode === 'failover' && form.tcpLatencySelectionEnabled,
+      tcpLatencySwitchThresholdMs: Number(form.tcpLatencySwitchThresholdMs),
       degradedFallbackEnabled: form.degradedFallbackEnabled,
       sameFaultAvoidanceEnabled: form.sameFaultAvoidanceEnabled,
       topologyAvoidanceEnabled: form.topologyAvoidanceEnabled,
@@ -381,13 +386,14 @@ export default function CrossEntryFailoverPage() {
             const fixedTargetEnabled = qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
             const flapGuardEnabled = qualityEnabled && truthy(group.qualityFlapGuardEnabled ?? true);
             const smartSelectionEnabled = qualityEnabled && truthy(group.smartSelectionEnabled ?? true);
+            const tcpLatencySelectionEnabled = !activeActive && truthy(group.tcpLatencySelectionEnabled ?? false);
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             const manualMeta = manualControlMeta(group.manualControlMode);
             return (
               <Card key={group.id} radius="sm" shadow="none" className="border border-divider bg-content1">
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{smartSelectionEnabled && <Chip size="sm" variant="flat" color="success">智能选择</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}{group.manualControlMode && group.manualControlMode !== 'auto' && <Chip size="sm" variant="flat" color={manualMeta.color}>{manualMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-base font-semibold">{group.name}</h2><Chip size="sm" variant="flat" color={meta.color}>{meta.label}</Chip><Chip size="sm" variant="flat" color={activeActive ? 'secondary' : 'default'}>{activeActive ? '多入口同时运行' : '主备容灾'}</Chip>{qualityEnabled && <Chip size="sm" variant="flat" color={probeMeta.color}>{probeMeta.label}</Chip>}{smartSelectionEnabled && <Chip size="sm" variant="flat" color="success">智能选择</Chip>}{tcpLatencySelectionEnabled && <Chip size="sm" variant="flat" color="secondary">TCP 延迟优选</Chip>}{fixedTargetEnabled && <Chip size="sm" variant="flat" color="secondary">目标 ≤ {group.qualityFixedTargetMs || 20} ms</Chip>}{flapGuardEnabled && <Chip size="sm" variant="flat" color="warning">抖动保护</Chip>}{group.manualControlMode && group.manualControlMode !== 'auto' && <Chip size="sm" variant="flat" color={manualMeta.color}>{manualMeta.label}</Chip>}</div><p className="mt-1 truncate text-sm text-default-500">{group.domain}:{group.members[0]?.entryPort || '-'}</p></div>
                     <div className="flex items-center gap-1">
                       <Button isIconOnly size="sm" variant="light" title="立即检测" aria-label="立即检测" isLoading={checkingId === group.id} onPress={() => checkNow(group.id)}><RefreshCw size={17} /></Button>
                       <Button isIconOnly size="sm" variant="light" title="切换历史" aria-label="切换历史" onPress={() => showHistory(group)}><History size={17} /></Button>
@@ -519,6 +525,16 @@ export default function CrossEntryFailoverPage() {
                   </Select>
                 )}
               </div>
+              {form.routingMode === 'failover' && (
+                <div className="mt-3 grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_220px_220px] lg:items-center">
+                  <div>
+                    <Switch isSelected={form.tcpLatencySelectionEnabled} onValueChange={tcpLatencySelectionEnabled => setForm({ ...form, tcpLatencySelectionEnabled })}>自动选择 TCP 延迟最低线路</Switch>
+                    <p className="mt-1 text-xs leading-5 text-default-500">开启后，在健康且稳定的入口中自动选择 TCP 建连延迟最低者。适合入口都在美国等物理距离较远、但不同线路质量差异明显的场景。</p>
+                  </div>
+                  <Input type="number" label="最低切换收益（ms）" min={0} max={30000} value={form.tcpLatencySwitchThresholdMs} isDisabled={!form.tcpLatencySelectionEnabled} onValueChange={tcpLatencySwitchThresholdMs => setForm({ ...form, tcpLatencySwitchThresholdMs })} description="默认 5ms，过滤瞬时测量噪声" />
+                  <Input type="number" label="最短驻留（秒）" min={0} max={86400} value={form.minResidencySeconds} isDisabled={!form.tcpLatencySelectionEnabled && !form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} description="切换后至少保持当前线路的时间" />
+                </div>
+              )}
             </section>
 
             <section className="border-t border-divider pt-4">
@@ -583,9 +599,6 @@ export default function CrossEntryFailoverPage() {
                       <Switch isSelected={form.sameFaultAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={sameFaultAvoidanceEnabled => setForm({ ...form, sameFaultAvoidanceEnabled })}>避开同类故障</Switch>
                       <Switch isSelected={form.topologyAvoidanceEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={topologyAvoidanceEnabled => setForm({ ...form, topologyAvoidanceEnabled })}>避开同节点/同大网段</Switch>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      <Input type="number" label="最短驻留（秒）" min={0} value={form.minResidencySeconds} isDisabled={!form.smartSelectionEnabled} onValueChange={minResidencySeconds => setForm({ ...form, minResidencySeconds })} />
-                    </div>
                     <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-5">
                       <Switch isSelected={form.preheatEnabled} isDisabled={!form.smartSelectionEnabled} onValueChange={preheatEnabled => setForm({ ...form, preheatEnabled })}>备用线路预热</Switch>
                       <Input type="number" label="预热备用数" min={1} max={9} value={form.preheatBackupCount} isDisabled={!form.smartSelectionEnabled || !form.preheatEnabled} onValueChange={preheatBackupCount => setForm({ ...form, preheatBackupCount })} />
@@ -593,7 +606,7 @@ export default function CrossEntryFailoverPage() {
                       <Switch isSelected={form.postSwitchVerifyEnabled} onValueChange={postSwitchVerifyEnabled => setForm({ ...form, postSwitchVerifyEnabled })}>切换后验证入口</Switch>
                       <Switch isSelected={form.dnsVerifyEnabled} onValueChange={dnsVerifyEnabled => setForm({ ...form, dnsVerifyEnabled })}>DNS 生效确认</Switch>
                     </div>
-                    <p className="text-xs leading-5 text-default-500">智能选择会同时参考所有入口的健康、质量、丢包、均值延迟、P95、抖动、失败次数和拓扑关系。备用之间切换才需要明显收益；主入口回切只看主入口自身是否持续稳定、质量正常，并且已过冷却和驻留时间，不会因为备用入口延迟更低而阻止回主线。备用预热会优先保留不同节点、不同云厂商/ASN、不同 IPv4 /16 或 IPv6 /48 且最近质量正常的备用线路；严格隔离开启时，不会为了凑满数量而预热同类线路。</p>
+                    <p className="text-xs leading-5 text-default-500">智能选择会继续负责同类故障、拓扑隔离、预热和差中选优等保护规则。TCP 延迟优选是上方独立开关；若同时启用质量容灾，会使用所选探测源看到的 TCP 延迟，否则使用面板服务器的 TCP 探测。</p>
                   </div>
                 </div>
               )}

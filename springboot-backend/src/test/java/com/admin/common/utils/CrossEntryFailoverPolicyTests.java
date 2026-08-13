@@ -251,6 +251,65 @@ class CrossEntryFailoverPolicyTests {
         assertEquals(3L, decision.targetId());
     }
 
+    @Test
+    void tcpLatencySelectionChoosesLowestStableHealthyEntry() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 180, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 5, false, true, false, 95, 0.0, 0, 0, 11, "198.51.100.20", "none"),
+                        qualityMember(3, 2, true, 5, false, true, false, 70, 0.0, 0, 0, 12, "192.0.2.30", "none")
+                ),
+                1L,
+                settingsWithTcpLatency(true, 3, true, true, 5));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+        assertEquals("TCP 延迟优选，自动切换至最低延迟入口", decision.reason());
+    }
+
+    @Test
+    void tcpLatencySelectionIgnoresUnstableCandidate() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 80, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 2, false, true, false, 20, 0.0, 0, 0, 11, "198.51.100.20", "none"),
+                        qualityMember(3, 2, true, 3, false, true, false, 60, 0.0, 0, 0, 12, "192.0.2.30", "none")
+                ),
+                1L,
+                settingsWithTcpLatency(true, 3, true, true, 5));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(3L, decision.targetId());
+    }
+
+    @Test
+    void tcpLatencySelectionRequiresConfiguredGain() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 30, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 5, false, true, false, 27, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                1L,
+                settingsWithTcpLatency(true, 3, true, true, 5));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("候选入口 TCP 延迟收益不足", decision.reason());
+    }
+
+    @Test
+    void disabledTcpLatencySelectionKeepsPriorityOrder() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 80, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 5, false, true, false, 20, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                1L,
+                settings(false, 3, true, true, true, true, true, 10, 20.0, "auto", null));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("保持当前入口", decision.reason());
+    }
+
     private CrossEntryFailoverPolicy.Member member(long id, int priority, boolean healthy, int successCount) {
         return new CrossEntryFailoverPolicy.Member(id, priority, healthy, successCount, false, true, false);
     }
@@ -292,6 +351,14 @@ class CrossEntryFailoverPolicyTests {
         return settings(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
                 degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled, true, failbackGainMs,
                 failbackGainPercent, manualControlMode, lockedMemberId);
+    }
+
+    private CrossEntryFailoverPolicy.Settings settingsWithTcpLatency(boolean autoFailback, int recoveryThreshold,
+                                                                     boolean cooldownElapsed, boolean minResidencyElapsed,
+                                                                     int switchThresholdMs) {
+        return new CrossEntryFailoverPolicy.Settings(autoFailback, recoveryThreshold, cooldownElapsed,
+                minResidencyElapsed, true, true, true, true, true, switchThresholdMs,
+                5, 15.0, "auto", null);
     }
 
     private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,

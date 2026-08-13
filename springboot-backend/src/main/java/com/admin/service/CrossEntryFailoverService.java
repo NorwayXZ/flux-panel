@@ -123,7 +123,8 @@ public class CrossEntryFailoverService {
                         + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                         + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                         + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
-                        + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                        + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
+                        + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
                         + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                         + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                         + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
@@ -240,7 +241,8 @@ public class CrossEntryFailoverService {
                                 + "quality_recover_factor,quality_degrade_samples,quality_recover_samples,quality_loss_threshold_percent,"
                                 + "quality_p95_threshold_ms,quality_jitter_threshold_ms,quality_fixed_target_enabled,"
                                 + "quality_fixed_target_ms,quality_fixed_target_strict,quality_flap_guard_enabled,quality_flap_window_seconds,"
-                                + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,degraded_fallback_enabled,"
+                                + "quality_flap_threshold,quality_flap_suppress_seconds,smart_selection_enabled,tcp_latency_selection_enabled,"
+                                + "tcp_latency_switch_threshold_ms,degraded_fallback_enabled,"
                                 + "same_fault_avoidance_enabled,topology_avoidance_enabled,min_residency_seconds,failback_gain_ms,"
                                 + "failback_gain_percent,preheat_enabled,preheat_backup_count,preheat_strict_isolation,post_switch_verify_enabled,dns_verify_enabled,"
                                 + "manual_control_mode,locked_member_id,quality_probe_status,enabled,state,created_time,updated_time) "
@@ -250,7 +252,7 @@ public class CrossEntryFailoverService {
                                 + "?,?,?,?,?,?,?,?,?,?,"
                                 + "?,?,?,?,?,?,?,?,?,?,"
                                 + "?,?,?,?,?,?,?,?,?,?,"
-                                + "?,?,?,?,?"
+                                + "?,?,?,?,?,?,?"
                                 + ")",
                         JwtUtil.getUserIdFromToken(), dto.getName().trim(), dto.getDomain(), dto.getDnsZoneId(), providerZoneId, recordId,
                         encryptedToken, dto.getRecordType(), dto.getTtl(), dto.getProbeIntervalMs(), dto.getConnectTimeoutMs(),
@@ -261,7 +263,8 @@ public class CrossEntryFailoverService {
                         dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
+                        dto.getTcpLatencySwitchThresholdMs(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
                         dto.getPreheatStrictIsolation(), dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
@@ -275,7 +278,8 @@ public class CrossEntryFailoverService {
                                 + "quality_recover_factor=?,quality_degrade_samples=?,quality_recover_samples=?,quality_loss_threshold_percent=?,"
                                 + "quality_p95_threshold_ms=?,quality_jitter_threshold_ms=?,quality_fixed_target_enabled=?,quality_fixed_target_ms=?,quality_fixed_target_strict=?,"
                                 + "quality_flap_guard_enabled=?,quality_flap_window_seconds=?,quality_flap_threshold=?,quality_flap_suppress_seconds=?,"
-                                + "smart_selection_enabled=?,degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
+                                + "smart_selection_enabled=?,tcp_latency_selection_enabled=?,tcp_latency_switch_threshold_ms=?,"
+                                + "degraded_fallback_enabled=?,same_fault_avoidance_enabled=?,topology_avoidance_enabled=?,"
                                 + "min_residency_seconds=?,failback_gain_ms=?,failback_gain_percent=?,preheat_enabled=?,preheat_backup_count=?,preheat_strict_isolation=?,"
                                 + "post_switch_verify_enabled=?,dns_verify_enabled=?,manual_control_mode=?,locked_member_id=?,"
                                 + "quality_probe_status=?,quality_probe_error=NULL,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
@@ -287,7 +291,8 @@ public class CrossEntryFailoverService {
                         dto.getQualityLossThresholdPercent(), dto.getQualityP95ThresholdMs(), dto.getQualityJitterThresholdMs(),
                         dto.getQualityFixedTargetEnabled(), dto.getQualityFixedTargetMs(), dto.getQualityFixedTargetStrict(),
                         dto.getQualityFlapGuardEnabled(), dto.getQualityFlapWindowSeconds(), dto.getQualityFlapThreshold(),
-                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getDegradedFallbackEnabled(),
+                        dto.getQualityFlapSuppressSeconds(), dto.getSmartSelectionEnabled(), dto.getTcpLatencySelectionEnabled(),
+                        dto.getTcpLatencySwitchThresholdMs(), dto.getDegradedFallbackEnabled(),
                         dto.getSameFaultAvoidanceEnabled(), dto.getTopologyAvoidanceEnabled(), dto.getMinResidencySeconds(),
                         dto.getFailbackGainMs(), dto.getFailbackGainPercent(), dto.getPreheatEnabled(), dto.getPreheatBackupCount(),
                         dto.getPreheatStrictIsolation(), dto.getPostSwitchVerifyEnabled(), dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(),
@@ -487,13 +492,16 @@ public class CrossEntryFailoverService {
                 .map(member -> policyMember(group, member, useQualityDecision, now))
                 .collect(Collectors.toList());
         boolean smartSelection = useQualityDecision && bool(group.get("smartSelectionEnabled"));
+        boolean tcpLatencySelection = bool(group.get("tcpLatencySelectionEnabled"));
+        boolean adaptiveSelection = smartSelection || tcpLatencySelection;
         CrossEntryFailoverPolicy.Settings policySettings = new CrossEntryFailoverPolicy.Settings(
                 bool(group.get("autoFailback")), number(group.get("recoveryThreshold")).intValue(),
-                cooldownElapsed(group, now), !smartSelection || minResidencyElapsed(group, now),
+                cooldownElapsed(group, now), !adaptiveSelection || minResidencyElapsed(group, now),
                 smartSelection && bool(group.get("degradedFallbackEnabled")),
                 smartSelection && bool(group.get("sameFaultAvoidanceEnabled")),
                 smartSelection && bool(group.get("topologyAvoidanceEnabled")),
                 smartSelection && bool(group.get("preheatEnabled")),
+                tcpLatencySelection, number(group.get("tcpLatencySwitchThresholdMs")).intValue(),
                 smartSelection ? number(group.get("failbackGainMs")).intValue() : 0,
                 smartSelection ? doubleNumber(group.get("failbackGainPercent")) : 0.0,
                 Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")));
@@ -1181,6 +1189,9 @@ public class CrossEntryFailoverService {
         dto.setQualityFlapThreshold(clamp(dto.getQualityFlapThreshold(), 2, 20));
         dto.setQualityFlapSuppressSeconds(clamp(dto.getQualityFlapSuppressSeconds(), 60, 86400));
         dto.setSmartSelectionEnabled(!Boolean.FALSE.equals(dto.getSmartSelectionEnabled()));
+        dto.setTcpLatencySelectionEnabled(Boolean.TRUE.equals(dto.getTcpLatencySelectionEnabled()));
+        if ("active_active".equals(routingMode)) dto.setTcpLatencySelectionEnabled(false);
+        dto.setTcpLatencySwitchThresholdMs(clamp(dto.getTcpLatencySwitchThresholdMs(), 0, 30000));
         dto.setDegradedFallbackEnabled(!Boolean.FALSE.equals(dto.getDegradedFallbackEnabled()));
         dto.setSameFaultAvoidanceEnabled(!Boolean.FALSE.equals(dto.getSameFaultAvoidanceEnabled()));
         dto.setTopologyAvoidanceEnabled(!Boolean.FALSE.equals(dto.getTopologyAvoidanceEnabled()));
@@ -1216,7 +1227,8 @@ public class CrossEntryFailoverService {
                 + "quality_fixed_target_ms AS qualityFixedTargetMs,quality_fixed_target_strict AS qualityFixedTargetStrict,"
                 + "quality_flap_guard_enabled AS qualityFlapGuardEnabled,quality_flap_window_seconds AS qualityFlapWindowSeconds,"
                 + "quality_flap_threshold AS qualityFlapThreshold,quality_flap_suppress_seconds AS qualityFlapSuppressSeconds,"
-                + "smart_selection_enabled AS smartSelectionEnabled,degraded_fallback_enabled AS degradedFallbackEnabled,"
+                + "smart_selection_enabled AS smartSelectionEnabled,tcp_latency_selection_enabled AS tcpLatencySelectionEnabled,"
+                + "tcp_latency_switch_threshold_ms AS tcpLatencySwitchThresholdMs,degraded_fallback_enabled AS degradedFallbackEnabled,"
                 + "same_fault_avoidance_enabled AS sameFaultAvoidanceEnabled,topology_avoidance_enabled AS topologyAvoidanceEnabled,"
                 + "min_residency_seconds AS minResidencySeconds,failback_gain_ms AS failbackGainMs,"
                 + "failback_gain_percent AS failbackGainPercent,preheat_enabled AS preheatEnabled,preheat_backup_count AS preheatBackupCount,"
@@ -1287,7 +1299,7 @@ public class CrossEntryFailoverService {
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),
                 useQualityDecision && isQualitySuppressed(member, now),
-                qualityLatency != null ? qualityLatency : regularLatency,
+                useQualityDecision && qualityLatency != null ? qualityLatency : regularLatency,
                 nullableDouble(member.get("qualityLossPercent")),
                 number(member.get("qualityFlapCount")).intValue(),
                 number(member.get("failCount")).intValue(),

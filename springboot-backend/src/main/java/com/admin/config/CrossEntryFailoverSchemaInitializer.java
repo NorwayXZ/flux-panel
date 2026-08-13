@@ -73,7 +73,9 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "quality_flap_threshold", "int NOT NULL DEFAULT 3 AFTER quality_flap_window_seconds");
             ensureColumn("cross_entry_failover_group", "quality_flap_suppress_seconds", "int NOT NULL DEFAULT 1800 AFTER quality_flap_threshold");
             ensureColumn("cross_entry_failover_group", "smart_selection_enabled", "tinyint NOT NULL DEFAULT 1 AFTER quality_flap_suppress_seconds");
-            ensureColumn("cross_entry_failover_group", "degraded_fallback_enabled", "tinyint NOT NULL DEFAULT 1 AFTER smart_selection_enabled");
+            ensureColumn("cross_entry_failover_group", "tcp_latency_selection_enabled", "tinyint NOT NULL DEFAULT 0 AFTER smart_selection_enabled");
+            ensureColumn("cross_entry_failover_group", "tcp_latency_switch_threshold_ms", "int NOT NULL DEFAULT 5 AFTER tcp_latency_selection_enabled");
+            ensureColumn("cross_entry_failover_group", "degraded_fallback_enabled", "tinyint NOT NULL DEFAULT 1 AFTER tcp_latency_switch_threshold_ms");
             ensureColumn("cross_entry_failover_group", "same_fault_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER degraded_fallback_enabled");
             ensureColumn("cross_entry_failover_group", "topology_avoidance_enabled", "tinyint NOT NULL DEFAULT 1 AFTER same_fault_avoidance_enabled");
             ensureColumn("cross_entry_failover_group", "min_residency_seconds", "int NOT NULL DEFAULT 300 AFTER topology_avoidance_enabled");

@@ -60,6 +60,9 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityFlapThreshold = 3;
     private Integer qualityFlapSuppressSeconds = 1800;
     private Boolean smartSelectionEnabled = true;
+    /** Prefer the lowest measured TCP connect latency among healthy entries. */
+    private Boolean tcpLatencySelectionEnabled = false;
+    private Integer tcpLatencySwitchThresholdMs = 5;
     private Boolean degradedFallbackEnabled = true;
     private Boolean sameFaultAvoidanceEnabled = true;
     private Boolean topologyAvoidanceEnabled = true;

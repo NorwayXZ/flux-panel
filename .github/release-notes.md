@@ -1,3 +1,11 @@
+## 2.50.6 Optional lowest-TCP-latency entry selection
+
+- Adds a manual “自动选择 TCP 延迟最低线路” switch to Cross-entry Failover for groups whose entries have different network paths, including groups made entirely of US entries.
+- Selects only healthy, stable, non-degraded, non-suppressed entries with enough recovery confirmations; the measured TCP connect latency is the primary sort key.
+- Uses the selected quality probe source's TCP latency when quality probing is enabled, otherwise uses the panel server's TCP probe; keeps cooldown, minimum residency, post-switch verification, DNS verification, and emergency failover protections.
+- Adds a configurable minimum latency gain, defaulting to 5 ms, to avoid switching on measurement noise. Existing groups keep their previous priority-based behaviour because the switch is disabled by default.
+- Panel-only release. Agent and Connector binaries remain `2.50.4`.
+
 ## 2.50.5 Cross-entry fault statistics
 
 - Adds persistent per-entry fault episode totals and separate connection, latency, P95, jitter, packet-loss, flap-protection, and switch-trigger counters.

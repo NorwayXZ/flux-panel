@@ -718,6 +718,8 @@ export interface CrossEntryGroup {
   qualityFlapThreshold?: number;
   qualityFlapSuppressSeconds?: number;
   smartSelectionEnabled?: boolean | number;
+  tcpLatencySelectionEnabled?: boolean | number;
+  tcpLatencySwitchThresholdMs?: number;
   degradedFallbackEnabled?: boolean | number;
   sameFaultAvoidanceEnabled?: boolean | number;
   topologyAvoidanceEnabled?: boolean | number;
