@@ -18,6 +18,7 @@ import {
 import { Input } from "@heroui/input";
 import { toast } from "react-hot-toast";
 import {
+  Activity,
   ArrowRightLeft,
   BellRing,
   BookOpen,
@@ -191,6 +192,12 @@ export default function AdminLayout({
       adminOnly: true,
     },
     {
+      path: "/client-speed-test",
+      label: "本机单线程测速",
+      icon: <Activity className="h-5 w-5" />,
+      adminOnly: true,
+    },
+    {
       path: "/udp-quic-diagnostic",
       label: "UDP / QUIC 诊断",
       icon: <RadioTower className="h-5 w-5" />,
@@ -351,6 +358,7 @@ export default function AdminLayout({
         "/network-tools",
         "/quality-lab",
         "/bandwidth-test",
+        "/client-speed-test",
         "/udp-quic-diagnostic",
         "/ip-quality",
         "/system-self-check",

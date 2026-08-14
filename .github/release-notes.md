@@ -1,3 +1,9 @@
+## 2.51.8 本机单线程测速
+
+- 新增“本机单线程测速”页面，浏览器直连 Cloudflare 测速端点。
+- 单请求计速，详细显示 Mbps / Gbps、下载量、耗时和历史结果。
+- 适合查看本地电脑到边缘节点的单线程吞吐，避免大于 1Gbps 时只看到笼统结果。
+
 ## 2.51.7 Source-IP ASN prefix automation
 
 - Adds automatic ASN prefix expansion to Source-IP Entry rules. ASN rules now fetch current announced prefixes from RIPEstat, cache them locally, and save the expanded CIDR snapshot for Agent runtime matching.

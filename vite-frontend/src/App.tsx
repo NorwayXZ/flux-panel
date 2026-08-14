@@ -33,6 +33,7 @@ const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
 const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
+const ClientSpeedTestPage = lazy(() => import("@/pages/client-speed-test"));
 const UdpQuicDiagnosticPage = lazy(() => import("@/pages/udp-quic-diagnostic"));
 const MultiLineAggregationPage = lazy(
   () => import("@/pages/multi-line-aggregation"),
@@ -511,6 +512,14 @@ function App() {
               </ProtectedRoute>
             }
             path="/bandwidth-test"
+          />
+          <Route
+            element={
+              <ProtectedRoute adminOnly>
+                <ClientSpeedTestPage />
+              </ProtectedRoute>
+            }
+            path="/client-speed-test"
           />
           <Route
             element={
