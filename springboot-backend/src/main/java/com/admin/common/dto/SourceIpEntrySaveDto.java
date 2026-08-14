@@ -55,7 +55,7 @@ public class SourceIpEntrySaveDto {
         @NotNull(message = "请选择后端入口转发")
         private Long backendForwardId;
 
-        /** Required for manual rules; carrier routes use the cached carrier database when blank. */
+        /** Required for manual rules; carrier and ASN routes use cached prefix databases when blank. */
         private String cidrs;
 
         @Size(max = 100, message = "地区说明不能超过100个字符")

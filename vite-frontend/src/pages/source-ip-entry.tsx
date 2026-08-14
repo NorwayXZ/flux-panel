@@ -34,9 +34,11 @@ import {
   debugSourceIpEntry,
   deleteSourceIpEntry,
   getSourceIpEntryOverview,
+  refreshSourceIpAsns,
   refreshSourceIpCarriers,
   saveSourceIpEntry,
   type SourceIpBackendForward,
+  type SourceIpAsnDatabase,
   type SourceIpDebugResult,
   type SourceIpCarrierDatabase,
   type SourceIpEntryGroup,
@@ -182,7 +184,7 @@ function qualityPolicyText(policy?: string) {
 }
 
 function routeNeedsCidrs(route: FormRoute) {
-  return !["default", "carrier"].includes(route.ruleType);
+  return !["default", "carrier", "asn"].includes(route.ruleType);
 }
 
 function routeTitle(route: FormRoute) {
@@ -190,8 +192,16 @@ function routeTitle(route: FormRoute) {
     route.ruleName ||
     (route.ruleType === "carrier"
       ? carrierText(route.carrier)
-      : ruleTypeText(route.ruleType))
+      : route.ruleType === "asn" && route.asn.trim()
+        ? normalizeAsnKey(route.asn)
+        : ruleTypeText(route.ruleType))
   );
+}
+
+function normalizeAsnKey(value: string) {
+  const text = value.trim().toUpperCase().replace(/^ASN/, "AS");
+
+  return /^\d+$/.test(text) ? `AS${text}` : text;
 }
 
 export default function SourceIpEntryPage() {
@@ -200,6 +210,7 @@ export default function SourceIpEntryPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [carrierRefreshing, setCarrierRefreshing] = useState(false);
+  const [asnRefreshing, setAsnRefreshing] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
   const [debugging, setDebugging] = useState(false);
   const [debugSourceIp, setDebugSourceIp] = useState("");
@@ -235,6 +246,10 @@ export default function SourceIpEntryPage() {
   );
   const carrierMap = useMemo(
     () => new Map((data?.carriers || []).map((item) => [item.carrier, item])),
+    [data],
+  );
+  const asnMap = useMemo(
+    () => new Map((data?.asns || []).map((item) => [item.asn, item])),
     [data],
   );
 
@@ -322,6 +337,8 @@ export default function SourceIpEntryPage() {
           );
         systemCarriers.add(route.carrier);
       }
+      if (route.ruleType === "asn" && !route.asn.trim())
+        return toast.error("ASN 规则必须填写 ASN，例如 AS4134");
       if (!route.backendForwardId)
         return toast.error(`${routeTitle(route)} 未选择后端入口转发`);
       if (routeNeedsCidrs(route) && !route.cidrs.trim())
@@ -350,7 +367,10 @@ export default function SourceIpEntryPage() {
         ruleName: route.ruleName.trim(),
         priority: Number(route.priority || 100),
         backendForwardId: Number(route.backendForwardId),
-        cidrs: route.ruleType === "carrier" ? "" : route.cidrs,
+        cidrs:
+          route.ruleType === "carrier" || route.ruleType === "asn"
+            ? ""
+            : route.cidrs,
         region: route.region.trim(),
         asn: route.asn.trim(),
         tags: route.tags.trim(),
@@ -404,6 +424,17 @@ export default function SourceIpEntryPage() {
     void load(true);
   };
 
+  const refreshAsns = async () => {
+    setAsnRefreshing(true);
+    const response = await refreshSourceIpAsns();
+
+    setAsnRefreshing(false);
+    if (response.code !== 0)
+      return toast.error(response.msg || "ASN 前缀库刷新失败");
+    toast.success("ASN 前缀库已刷新并同步规则");
+    void load(true);
+  };
+
   const runDebug = async () => {
     if (!debugSourceIp.trim()) return toast.error("请输入要调试的来源 IP");
     setDebugging(true);
@@ -448,6 +479,14 @@ export default function SourceIpEntryPage() {
             onPress={refreshCarriers}
           >
             刷新运营商 IP 库
+          </Button>
+          <Button
+            isLoading={asnRefreshing}
+            startContent={<RefreshCw size={17} />}
+            variant="flat"
+            onPress={refreshAsns}
+          >
+            刷新 ASN 库
           </Button>
           <Button
             color="primary"
@@ -674,6 +713,57 @@ export default function SourceIpEntryPage() {
               </div>
             );
           })}
+        </div>
+      </section>
+
+      <section className="border-y border-divider py-4">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">ASN 前缀库</h2>
+            <p className="mt-1 text-xs text-default-500">
+              ASN 规则保存时会自动从 RIPEstat
+              拉取当前公告前缀并缓存；手动刷新会同步到已启用的来源 IP 分流。
+            </p>
+          </div>
+          <span className="text-xs text-default-500">来源：RIPEstat</span>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {(data?.asns || []).length === 0 ? (
+            <div className="border border-divider px-3 py-3 text-sm text-default-500 md:col-span-3">
+              暂无 ASN 缓存。创建 ASN 规则并保存后，面板会自动拉取前缀。
+            </div>
+          ) : (
+            (data?.asns || []).map((item: SourceIpAsnDatabase) => (
+              <div
+                key={item.asn}
+                className="flex items-center justify-between border border-divider px-3 py-2 text-sm"
+              >
+                <div>
+                  <p className="font-medium">{item.asn}</p>
+                  <p className="mt-1 text-xs text-default-500">
+                    {item.state === "ready"
+                      ? `${item.prefixCount} 条前缀 · IPv4 ${item.ipv4Count} · IPv6 ${item.ipv6Count}`
+                      : item.lastError || "尚未同步"}
+                  </p>
+                </div>
+                <Chip
+                  color={
+                    item.state === "ready"
+                      ? "success"
+                      : item.state === "error"
+                        ? "danger"
+                        : "default"
+                  }
+                  size="sm"
+                  variant="flat"
+                >
+                  {item.state === "ready"
+                    ? timeText(item.updatedTime)
+                    : "待同步"}
+                </Chip>
+              </div>
+            ))
+          )}
         </div>
       </section>
 
@@ -943,7 +1033,9 @@ export default function SourceIpEntryPage() {
                                     : route.carrier
                                   : "custom",
                             cidrs:
-                              ruleType === "default" || ruleType === "carrier"
+                              ruleType === "default" ||
+                              ruleType === "carrier" ||
+                              ruleType === "asn"
                                 ? ""
                                 : route.cidrs,
                             priority:
@@ -958,7 +1050,7 @@ export default function SourceIpEntryPage() {
                         <SelectItem key="default">默认回退</SelectItem>
                         <SelectItem key="carrier">运营商</SelectItem>
                         <SelectItem key="cidr">CIDR/IP 段</SelectItem>
-                        <SelectItem key="asn">ASN</SelectItem>
+                        <SelectItem key="asn">ASN 自动展开</SelectItem>
                         <SelectItem key="region">地区</SelectItem>
                         <SelectItem key="vip">VIP 来源</SelectItem>
                         <SelectItem key="customer">专属客户</SelectItem>
@@ -1008,7 +1100,9 @@ export default function SourceIpEntryPage() {
                           value={
                             route.ruleType === "default"
                               ? "未命中回退"
-                              : "CIDR 最长前缀"
+                              : route.ruleType === "asn"
+                                ? "ASN 自动展开"
+                                : "CIDR 最长前缀"
                           }
                         />
                       )}
@@ -1079,6 +1173,11 @@ export default function SourceIpEntryPage() {
                           }
                         />
                         <Input
+                          description={
+                            route.ruleType === "asn"
+                              ? "可填 AS4134 或 4134，保存时自动拉取当前公告前缀"
+                              : undefined
+                          }
                           label="ASN"
                           placeholder="AS4134"
                           value={route.asn}
@@ -1121,6 +1220,16 @@ export default function SourceIpEntryPage() {
                       <p className="mt-2 text-xs text-default-500">
                         default 不匹配来源
                         IP，作为后端失败和未知来源的回退线路。
+                      </p>
+                    ) : route.ruleType === "asn" ? (
+                      <p className="mt-2 text-xs text-default-500">
+                        保存时自动联网查询 {route.asn || "该 ASN"}{" "}
+                        当前公告前缀并缓存； 当前缓存{" "}
+                        {route.asn
+                          ? asnMap.get(normalizeAsnKey(route.asn))
+                              ?.prefixCount || 0
+                          : 0}{" "}
+                        条前缀。可通过页面顶部按钮刷新并同步。
                       </p>
                     ) : (
                       <p className="mt-2 text-xs text-default-500">

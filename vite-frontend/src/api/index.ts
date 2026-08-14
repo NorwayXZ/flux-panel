@@ -1850,11 +1850,24 @@ export interface SourceIpCarrierDatabase {
   lastError?: string;
 }
 
+export interface SourceIpAsnDatabase {
+  asn: string;
+  label: string;
+  state: "pending" | "ready" | "error";
+  ipv4Count: number;
+  ipv6Count: number;
+  prefixCount: number;
+  sourceUrl?: string;
+  updatedTime?: number;
+  lastError?: string;
+}
+
 export interface SourceIpEntryOverview {
   groups: SourceIpEntryGroup[];
   ingressNodes: SourceIpEntryNode[];
   backendForwards: SourceIpBackendForward[];
   carriers: SourceIpCarrierDatabase[];
+  asns: SourceIpAsnDatabase[];
   ruleTypes?: { key: string; label: string; description: string }[];
   qualityPolicies?: { key: string; label: string; description: string }[];
   capabilities?: { key: string; name: string; detail: string }[];
@@ -1920,6 +1933,8 @@ export const deleteSourceIpEntry = (id: number) =>
   Network.post("/source-ip-entry/delete", { id });
 export const refreshSourceIpCarriers = () =>
   Network.post("/source-ip-entry/carriers/refresh");
+export const refreshSourceIpAsns = () =>
+  Network.post("/source-ip-entry/asn/refresh");
 export const debugSourceIpEntry = (data: {
   sourceIp: string;
   groupId?: number;

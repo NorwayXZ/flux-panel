@@ -1,3 +1,10 @@
+## 2.51.7 Source-IP ASN prefix automation
+
+- Adds automatic ASN prefix expansion to Source-IP Entry rules. ASN rules now fetch current announced prefixes from RIPEstat, cache them locally, and save the expanded CIDR snapshot for Agent runtime matching.
+- Adds an ASN prefix cache table, manual refresh endpoint, and scheduled refresh. Refreshing updates enabled ASN rules and re-syncs affected Source-IP Entry groups to the ingress Agent.
+- Shows ASN cache status in the Source-IP Entry page and lets administrators refresh the ASN library from the UI. CIDR input is no longer required for ASN rules.
+- Panel-only release; Agent and Connector target binaries remain unchanged because runtime selection still uses the existing CIDR-based Source-IP selector.
+
 ## 2.51.4 Release warning cleanup
 
 - Removes the remaining Lombok equals/hashCode warning from the release workflow after the `2.51.3` dependency maintenance run.

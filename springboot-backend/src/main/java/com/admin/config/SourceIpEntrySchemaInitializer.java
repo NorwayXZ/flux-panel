@@ -49,6 +49,12 @@ public class SourceIpEntrySchemaInitializer {
                     + "source_urls text,last_error varchar(500) DEFAULT NULL,state varchar(24) NOT NULL DEFAULT 'pending',"
                     + "updated_time bigint NOT NULL,PRIMARY KEY(id),UNIQUE KEY uk_source_ip_carrier(carrier),KEY idx_source_ip_carrier_state(state)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS source_ip_asn_database ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,asn varchar(64) NOT NULL,cidrs longtext NOT NULL,"
+                    + "ipv4_count int NOT NULL DEFAULT 0,ipv6_count int NOT NULL DEFAULT 0,prefix_count int NOT NULL DEFAULT 0,"
+                    + "source_url text,last_error varchar(500) DEFAULT NULL,state varchar(24) NOT NULL DEFAULT 'pending',"
+                    + "updated_time bigint NOT NULL,PRIMARY KEY(id),UNIQUE KEY uk_source_ip_asn(asn),KEY idx_source_ip_asn_state(state)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("source_ip_entry_route", "rule_type", "varchar(24) NOT NULL DEFAULT 'carrier' AFTER carrier");
             ensureColumn("source_ip_entry_route", "rule_name", "varchar(100) DEFAULT NULL AFTER rule_type");
             ensureColumn("source_ip_entry_route", "priority", "int NOT NULL DEFAULT 100 AFTER rule_name");

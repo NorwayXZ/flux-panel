@@ -9,6 +9,8 @@ import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.TunnelRouteUtil;
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,6 +21,11 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.InetAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -52,6 +59,9 @@ public class SourceIpEntryService {
     private static final List<String> SYSTEM_CARRIERS = List.of("telecom", "unicom", "mobile");
     private static final List<String> RULE_TYPES = List.of("default", "carrier", "cidr", "asn", "region", "vip", "customer", "gray", "risk");
     private static final List<String> QUALITY_POLICIES = List.of("static", "quality_aware", "prefer_primary", "quarantine");
+    private static final String RIPESTAT_ASN_API = "https://stat.ripe.net/data/announced-prefixes/data.json?resource=%s";
+    private static final long ASN_CACHE_TTL_MS = 24L * 60L * 60L * 1000L;
+    private static final int MAX_PREFIXES_PER_ASN = 20_000;
     private static final Map<String, List<String>> CARRIER_URLS = Map.of(
             "telecom", List.of(
                     "https://gaoyifan.github.io/china-operator-ip/chinanet.txt",
@@ -66,6 +76,10 @@ public class SourceIpEntryService {
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
     private final SchedulingConflictService schedulingConflictService;
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
 
@@ -95,11 +109,12 @@ public class SourceIpEntryService {
         result.put("ingressNodes", loadIngressNodes());
         result.put("backendForwards", loadBackendForwards());
         result.put("carriers", loadCarrierDatabase());
+        result.put("asns", loadAsnDatabase());
         result.put("ruleTypes", ruleTypeOptions());
         result.put("qualityPolicies", qualityPolicyOptions());
         result.put("capabilities", List.of(
                 Map.of("key", "carrier", "name", "运营商分流", "detail", "电信、联通、移动使用内置运营商 CIDR 库自动展开"),
-                Map.of("key", "geo-asn", "name", "地区 / ASN / 客户规则", "detail", "面板按你维护的 CIDR 规则编排，Agent 按最长前缀实时命中"),
+                Map.of("key", "geo-asn", "name", "地区 / ASN / 客户规则", "detail", "ASN 规则会自动联网展开成当前公告前缀并缓存到面板"),
                 Map.of("key", "debug", "name", "来源 IP 调试", "detail", "输入来源 IP 即可看到命中的规则、后端入口和回退原因"),
                 Map.of("key", "quality", "name", "质量策略标记", "detail", "来源 IP 决定第一跳，链路质量容灾建议放在后端入口或入口容灾层处理")));
         result.put("minimumAgentVersion", MIN_AGENT_VERSION);
@@ -164,6 +179,15 @@ public class SourceIpEntryService {
         try {
             int updated = refreshCarrierDatabase();
             return R.ok(Map.of("updated", updated, "carriers", loadCarrierDatabase()));
+        } catch (IllegalStateException e) {
+            return R.err(e.getMessage());
+        }
+    }
+
+    public R refreshAsns() {
+        try {
+            int updated = refreshAsnDatabase();
+            return R.ok(Map.of("updated", updated, "asns", loadAsnDatabase()));
         } catch (IllegalStateException e) {
             return R.err(e.getMessage());
         }
@@ -413,6 +437,12 @@ public class SourceIpEntryService {
             } else if ("carrier".equals(ruleType) && cidrs.isBlank()) {
                 cidrs = carrierCidrs(carrier);
                 if (cidrs.isBlank()) throw new IllegalArgumentException(carrierLabel(carrier) + " IP 库尚未同步，请先刷新运营商 IP 库或手动填写 CIDR");
+            } else if ("asn".equals(ruleType)) {
+                String asn = normalizeAsn(route.getAsn());
+                if (StringUtils.isBlank(asn)) throw new IllegalArgumentException("ASN 规则必须填写 ASN，例如 AS4134");
+                route.setAsn(asn);
+                cidrs = asnCidrs(asn);
+                if (cidrs.isBlank()) throw new IllegalArgumentException(asn + " 前缀库尚未同步，请先刷新 ASN 库或稍后再试");
             } else if (cidrs.isBlank()) {
                 throw new IllegalArgumentException(ruleTypeLabel(ruleType) + "规则必须填写 CIDR，例如 203.0.113.0/24");
             } else {
@@ -594,6 +624,15 @@ public class SourceIpEntryService {
         }
     }
 
+    @Scheduled(initialDelay = 35_000L, fixedDelay = 24L * 60L * 60L * 1000L)
+    public void scheduledAsnRefresh() {
+        try {
+            refreshAsnDatabase();
+        } catch (Exception e) {
+            log.warn("ASN 前缀库自动刷新失败：{}", e.getMessage());
+        }
+    }
+
     private int refreshCarrierDatabase() {
         int updated = 0;
         for (Map.Entry<String, List<String>> entry : CARRIER_URLS.entrySet()) {
@@ -635,9 +674,151 @@ public class SourceIpEntryService {
                             + "VALUES (?,?,?,?,?,?, 'ready',NULL,?) ON DUPLICATE KEY UPDATE cidrs=VALUES(cidrs),ipv4_count=VALUES(ipv4_count),"
                             + "ipv6_count=VALUES(ipv6_count),cidr_count=VALUES(cidr_count),source_urls=VALUES(source_urls),state='ready',last_error=NULL,updated_time=VALUES(updated_time)",
                     carrier, String.join("\n", cidrs), ipv4, ipv6, cidrs.size(), String.join("\n", successfulUrls), now);
+            updateManagedRouteSnapshots("carrier", carrier, cidrs);
             updated++;
         }
         return updated;
+    }
+
+    private int refreshAsnDatabase() {
+        List<String> asns = jdbcTemplate.queryForList(
+                "SELECT DISTINCT asn FROM source_ip_entry_route WHERE rule_type='asn' AND enabled=1 AND asn<>'' ORDER BY asn",
+                String.class);
+        int updated = 0;
+        LinkedHashSet<String> normalizedAsns = asns.stream()
+                .map(this::normalizeAsn)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (String asn : normalizedAsns) {
+            if (refreshAsnDatabase(asn, true)) updated++;
+        }
+        return updated;
+    }
+
+    private boolean refreshAsnDatabase(String asn, boolean syncRoutes) {
+        String normalizedAsn = normalizeAsn(asn);
+        if (StringUtils.isBlank(normalizedAsn)) return false;
+        try {
+            List<String> cidrs = fetchAsnCidrs(normalizedAsn);
+            int ipv4 = (int) cidrs.stream().filter(item -> !item.contains(":")).count();
+            int ipv6 = cidrs.size() - ipv4;
+            long now = System.currentTimeMillis();
+            jdbcTemplate.update("INSERT INTO source_ip_asn_database "
+                            + "(asn,cidrs,ipv4_count,ipv6_count,prefix_count,source_url,state,last_error,updated_time) "
+                            + "VALUES (?,?,?,?,?,?, 'ready',NULL,?) ON DUPLICATE KEY UPDATE cidrs=VALUES(cidrs),ipv4_count=VALUES(ipv4_count),"
+                            + "ipv6_count=VALUES(ipv6_count),prefix_count=VALUES(prefix_count),source_url=VALUES(source_url),state='ready',last_error=NULL,updated_time=VALUES(updated_time)",
+                    normalizedAsn, String.join("\n", cidrs), ipv4, ipv6, cidrs.size(), ripeStatAsnUrl(normalizedAsn), now);
+            if (syncRoutes) updateManagedRouteSnapshots("asn", normalizedAsn, cidrs);
+            return true;
+        } catch (RestClientException | IllegalStateException e) {
+            jdbcTemplate.update("INSERT INTO source_ip_asn_database "
+                            + "(asn,cidrs,ipv4_count,ipv6_count,prefix_count,source_url,state,last_error,updated_time) "
+                            + "VALUES (?,?,?,?,?,?, 'error',?,?) ON DUPLICATE KEY UPDATE last_error=VALUES(last_error),state='error',updated_time=VALUES(updated_time),source_url=VALUES(source_url)",
+                    normalizedAsn, "", 0, 0, 0, ripeStatAsnUrl(normalizedAsn), shorten(e.getMessage()), System.currentTimeMillis());
+            log.warn("下载 {} ASN 前缀库失败：{}", normalizedAsn, e.getMessage());
+            return false;
+        }
+    }
+
+    private String asnCidrs(String asn) {
+        String normalizedAsn = normalizeAsn(asn);
+        if (StringUtils.isBlank(normalizedAsn)) return "";
+        Map<String, Object> row = one("SELECT cidrs,state,updated_time AS updatedTime FROM source_ip_asn_database WHERE asn=?", normalizedAsn);
+        long updatedTime = row == null ? 0L : number(row.get("updatedTime"));
+        boolean stale = row == null || !"ready".equals(Objects.toString(row.get("state"), "")) ||
+                System.currentTimeMillis() - updatedTime > ASN_CACHE_TTL_MS;
+        if (stale) {
+            try {
+                refreshAsnDatabase(normalizedAsn, false);
+                row = one("SELECT cidrs,state FROM source_ip_asn_database WHERE asn=?", normalizedAsn);
+            } catch (Exception ignored) {
+            }
+        }
+        return row == null ? "" : Objects.toString(row.get("cidrs"), "");
+    }
+
+    private List<Map<String, Object>> loadAsnDatabase() {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT asn,state,ipv4_count AS ipv4Count,ipv6_count AS ipv6Count,prefix_count AS prefixCount,"
+                        + "source_url AS sourceUrl,last_error AS lastError,updated_time AS updatedTime "
+                        + "FROM source_ip_asn_database ORDER BY asn");
+        for (Map<String, Object> row : rows) {
+            row.put("label", Objects.toString(row.get("asn"), ""));
+        }
+        return rows;
+    }
+
+    private void updateManagedRouteSnapshots(String ruleType, String key, List<String> cidrs) {
+        if (StringUtils.isBlank(ruleType) || StringUtils.isBlank(key) || cidrs == null) return;
+        String normalized = "asn".equals(ruleType) ? normalizeAsn(key) : StringUtils.lowerCase(StringUtils.trimToEmpty(key), Locale.ROOT);
+        String serialized = String.join("\n", new LinkedHashSet<>(cidrs));
+        if (serialized.isBlank()) return;
+        String sql = switch (ruleType) {
+            case "carrier" -> "UPDATE source_ip_entry_route SET cidrs=?,updated_time=? WHERE rule_type='carrier' AND carrier=?";
+            case "asn" -> "UPDATE source_ip_entry_route SET cidrs=?,updated_time=? WHERE rule_type='asn' AND asn=?";
+            default -> null;
+        };
+        if (sql == null) return;
+        jdbcTemplate.update(sql, serialized, System.currentTimeMillis(), normalized);
+        resyncManagedRouteGroups(ruleType, normalized);
+    }
+
+    private void resyncManagedRouteGroups(String ruleType, String key) {
+        String sql = switch (ruleType) {
+            case "carrier" -> "SELECT DISTINCT group_id FROM source_ip_entry_route WHERE rule_type='carrier' AND carrier=? AND enabled=1";
+            case "asn" -> "SELECT DISTINCT group_id FROM source_ip_entry_route WHERE rule_type='asn' AND asn=? AND enabled=1";
+            default -> null;
+        };
+        if (sql == null || StringUtils.isBlank(key)) return;
+        Object lookupKey = "asn".equals(ruleType) ? normalizeAsn(key) : StringUtils.lowerCase(StringUtils.trimToEmpty(key), Locale.ROOT);
+        List<Long> groupIds = jdbcTemplate.queryForList(sql, Long.class, lookupKey);
+        for (Long groupId : new LinkedHashSet<>(groupIds)) {
+            try {
+                check(groupId);
+            } catch (Exception e) {
+                log.warn("刷新 {} {} 后同步来源 IP 分流 {} 失败：{}", ruleType, key, groupId, e.getMessage());
+            }
+        }
+    }
+
+    private String ripeStatAsnUrl(String asn) {
+        return String.format(Locale.ROOT, RIPESTAT_ASN_API, normalizeAsn(asn));
+    }
+
+    protected List<String> fetchAsnCidrs(String asn) {
+        String normalized = normalizeAsn(asn);
+        if (StringUtils.isBlank(normalized)) return List.of();
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(ripeStatAsnUrl(normalized)))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("HTTP " + response.statusCode());
+            }
+            JSONObject root = JSON.parseObject(response.body());
+            JSONObject data = root == null ? null : root.getJSONObject("data");
+            if (data == null) throw new IllegalStateException("ASN 服务未返回 data");
+            JSONArray prefixes = data.getJSONArray("prefixes");
+            if (prefixes == null || prefixes.isEmpty()) throw new IllegalStateException("ASN 服务未返回前缀");
+            LinkedHashSet<String> cidrs = new LinkedHashSet<>();
+            for (int i = 0; i < prefixes.size(); i++) {
+                JSONObject item = prefixes.getJSONObject(i);
+                if (item == null) continue;
+                String prefix = StringUtils.trimToEmpty(item.getString("prefix"));
+                if (isCidr(prefix)) cidrs.add(prefix);
+            }
+            if (cidrs.isEmpty()) throw new IllegalStateException("ASN 服务没有返回有效前缀");
+            if (cidrs.size() > MAX_PREFIXES_PER_ASN) {
+                throw new IllegalStateException("ASN 前缀数量 " + cidrs.size() + " 超过单条线路上限 " + MAX_PREFIXES_PER_ASN);
+            }
+            return new ArrayList<>(cidrs);
+        } catch (Exception e) {
+            if (e instanceof IllegalStateException illegalStateException) throw illegalStateException;
+            throw new IllegalStateException(shorten(e.getMessage()));
+        }
     }
 
     private String carrierCidrs(String carrier) {
@@ -825,6 +1006,10 @@ public class SourceIpEntryService {
         String requested = trim(route.getRuleName(), 100);
         if (StringUtils.isNotBlank(requested)) return requested;
         if ("carrier".equals(ruleType) || "default".equals(ruleType)) return carrierLabel(carrier);
+        if ("asn".equals(ruleType)) {
+            String asn = normalizeAsn(route.getAsn());
+            return StringUtils.isNotBlank(asn) ? asn : ruleTypeLabel(ruleType);
+        }
         return ruleTypeLabel(ruleType);
     }
 
@@ -843,7 +1028,7 @@ public class SourceIpEntryService {
                 Map.of("key", "default", "label", "默认回退", "description", "没有命中任何规则时使用"),
                 Map.of("key", "carrier", "label", "运营商", "description", "使用电信/联通/移动 CIDR 库"),
                 Map.of("key", "cidr", "label", "CIDR/IP 段", "description", "手动维护 IP 或网段"),
-                Map.of("key", "asn", "label", "ASN", "description", "把某个 ASN 的 CIDR 粘贴进规则"),
+                Map.of("key", "asn", "label", "ASN", "description", "自动联网拉取 ASN 当前公告前缀并缓存"),
                 Map.of("key", "region", "label", "地区", "description", "把某个地区的 CIDR 归入同一线路"),
                 Map.of("key", "vip", "label", "VIP 来源", "description", "VIP/精品客户来源 IP 走专线"),
                 Map.of("key", "customer", "label", "专属客户", "description", "家庭/公司/客户固定出口 IP 绑定线路"),

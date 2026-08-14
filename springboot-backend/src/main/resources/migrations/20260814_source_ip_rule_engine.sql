@@ -40,3 +40,19 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @idx_exists := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='source_ip_entry_route' AND index_name='idx_source_ip_entry_carrier');
 SET @sql := IF(@idx_exists=0, 'ALTER TABLE `source_ip_entry_route` ADD INDEX `idx_source_ip_entry_carrier` (`group_id`,`carrier`)', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS source_ip_asn_database (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  asn varchar(64) NOT NULL,
+  cidrs longtext NOT NULL,
+  ipv4_count int NOT NULL DEFAULT 0,
+  ipv6_count int NOT NULL DEFAULT 0,
+  prefix_count int NOT NULL DEFAULT 0,
+  source_url text,
+  last_error varchar(500) DEFAULT NULL,
+  state varchar(24) NOT NULL DEFAULT 'pending',
+  updated_time bigint NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_source_ip_asn (asn),
+  KEY idx_source_ip_asn_state (state)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

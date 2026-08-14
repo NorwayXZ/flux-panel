@@ -57,6 +57,13 @@ public class SourceIpEntryController {
         return service.refreshCarriers();
     }
 
+    @LogAnnotation
+    @PostMapping("/asn/refresh")
+    @RequireRole
+    public R refreshAsns() {
+        return service.refreshAsns();
+    }
+
     @PostMapping("/debug")
     @RequireRole
     public R debug(@RequestBody Map<String, Object> body) {
