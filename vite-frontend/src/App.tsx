@@ -30,7 +30,6 @@ const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
 const AwsAccessPage = lazy(() => import("@/pages/aws-access"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
-const ProtocolProbePage = lazy(() => import("@/pages/protocol-probe"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
 const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
@@ -477,7 +476,7 @@ function App() {
           <Route
             element={
               <ProtectedRoute>
-                <ProtocolProbePage />
+                <Navigate replace to="/dashboard" />
               </ProtectedRoute>
             }
             path="/protocol-probe"

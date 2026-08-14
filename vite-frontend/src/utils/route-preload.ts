@@ -23,7 +23,6 @@ const routeLoaders: Record<string, RouteLoader> = {
   "/dns-settings": () => import("@/pages/dns-settings"),
   "/aws-access": () => import("@/pages/aws-access"),
   "/private-proxy": () => import("@/pages/private-proxy"),
-  "/protocol-probe": () => import("@/pages/protocol-probe"),
   "/network-tools": () => import("@/pages/network-tools"),
   "/quality-lab": () => import("@/pages/quality-lab"),
   "/bandwidth-test": () => import("@/pages/bandwidth-test"),

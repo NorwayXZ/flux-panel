@@ -1,3 +1,8 @@
+## 2.51.14 Remove protocol probe center
+
+- Removes the protocol probe center frontend, API, backend service, schema initializer, and test harness.
+- Keeps local single-thread speed testing and other network diagnostics intact.
+
 ## 2.51.13 Protocol probe page compatibility
 
 - Fixes the `/protocol-probe` frontend regression where rendering could crash on `targetType` when the backend payload is flat instead of nested.
