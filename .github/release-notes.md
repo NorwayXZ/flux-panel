@@ -1,3 +1,10 @@
+## 2.51.9 Cloudflare-style local speed quality
+
+- Upgrades the local browser speed test into a CloudNest native speed center with oversized single-thread download profiles up to 64 GB.
+- Adds the official `@cloudflare/speedtest` engine for Cloudflare-style quality metrics, including latency, jitter, loaded latency, download/upload measurement points and AIM experience scores.
+- Shows Cloudflare edge metadata from the speed endpoint, including public IP, IP version, ASN when exposed, edge colo, country/city and protocol details.
+- Adds HTTP request failure-rate probing as a browser-safe packet-loss approximation while clearly separating it from strict UDP/TURN packet loss.
+
 ## 2.51.8 本机单线程测速
 
 - 新增“本机单线程测速”页面，浏览器直连 Cloudflare 测速端点。
