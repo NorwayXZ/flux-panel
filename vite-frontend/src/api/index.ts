@@ -796,10 +796,22 @@ export interface ProtocolProbeCapability {
   message: string;
 }
 
+export interface ProtocolProbeTarget {
+  targetType: "created" | "external";
+  targetId: number;
+  name: string;
+  proxyType: string;
+  host?: string;
+  port?: number;
+  nodeName?: string;
+  source?: string;
+}
+
 export interface ProtocolProbeRun {
   id?: number;
   runId?: number;
-  proxyId?: number;
+  targetType?: "created" | "external";
+  targetId?: number;
   status?: "running" | "success" | "failed";
   available?: boolean;
   targetUrl?: string;
@@ -817,37 +829,82 @@ export interface ProtocolProbeRun {
   downloadError?: string;
   uploadError?: string;
   agentVersion?: string;
+  probeSource?: string;
+  clientEngine?: string;
+  clientEngineVersion?: string;
   startedAt?: number;
   finishedAt?: number;
 }
 
 export interface ProtocolProbeOverviewItem {
-  proxy: PrivateProxyItem;
+  target: ProtocolProbeTarget;
   capability: ProtocolProbeCapability;
   latest?: ProtocolProbeRun | null;
 }
 
 export interface ProtocolProbeOverview {
-  minimumAgentVersion: string;
   downloadUrl: string;
   uploadUrl: string;
+  probeSource: string;
+  clientEngine: string;
+  clientEngineVersion: string;
   items: ProtocolProbeOverviewItem[];
 }
 
 export const getProtocolProbeOverview = () =>
   Network.post<ProtocolProbeOverview>("/protocol-probe/overview");
 export const runProtocolProbe = (data: {
-  proxyId: number;
+  targetType: "created" | "external";
+  targetId: number;
   downloadBytes: number;
   uploadBytes: number;
   downloadUrl?: string;
   uploadUrl?: string;
 }) => Network.post<ProtocolProbeRun>("/protocol-probe/run", data);
-export const getProtocolProbeHistory = (proxyId: number, limit = 30) =>
+export const getProtocolProbeHistory = (
+  targetType: "created" | "external",
+  targetId: number,
+  limit = 30,
+) =>
   Network.post<ProtocolProbeRun[]>("/protocol-probe/history", {
-    proxyId,
+    targetType,
+    targetId,
     limit,
   });
+
+export interface ProtocolProbeExternalCreateRequest {
+  name?: string;
+  proxyType: "socks5" | "http";
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+}
+
+export interface ProtocolProbeExternalTarget {
+  id: number;
+  name: string;
+  proxyType: "socks5" | "http";
+  host: string;
+  port: number;
+  state?: string;
+}
+
+export const getProtocolProbeExternalTargets = () =>
+  Network.post<ProtocolProbeExternalTarget[]>("/protocol-probe/external/list");
+export const saveProtocolProbeExternalTarget = (
+  data: ProtocolProbeExternalCreateRequest,
+) =>
+  Network.mutate<ProtocolProbeExternalTarget>(
+    "/protocol-probe/external/save",
+    data,
+    ["/protocol-probe/overview", "/protocol-probe/external/list"],
+  );
+export const deleteProtocolProbeExternalTarget = (id: number) =>
+  Network.mutate("/protocol-probe/external/delete", { id }, [
+    "/protocol-probe/overview",
+    "/protocol-probe/external/list",
+  ]);
 
 export interface NetworkDiagnosticResult {
   mode: "ping" | "tcp" | "dns" | "trace";

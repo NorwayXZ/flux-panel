@@ -1,10 +1,17 @@
+## 2.51.12 Protocol client probe center
+
+- Moves protocol measurements out of the Agent and into a panel-side independent SOCKS5/HTTP client.
+- Measures the actual protocol path from the panel server to the protocol endpoint before requesting Cloudflare download/upload data.
+- Lists all CloudNest-created protocols and adds encrypted saved external SOCKS5/HTTP targets for friends' protocols.
+- Removes the obsolete Agent `ProtocolProbe` command and keeps unsupported VLESS+REALITY, Shadowsocks, Trojan, Hysteria2, TUIC v5, and WireGuard visibly pending until their independent client engines are integrated.
+- Keeps protocol history with probe source, client engine, HTTP status, handshake latency, first response latency, throughput, and error details.
+
 ## 2.51.11 Protocol probe center and automatic panel updates
 
 - Adds an independent Protocol Probe Center instead of mixing protocol-node measurements into the browser/Cloudflare local speed page.
 - Adds Agent-side availability, handshake latency, first-response latency, download throughput, upload throughput, HTTP status, error reporting, and persistent history for SOCKS5, HTTP, and VLESS+REALITY.
 - Keeps Shadowsocks, Trojan, Hysteria2, TUIC v5, and WireGuard visibly pending until reliable Agent client probes exist; no protocol reports fabricated throughput.
 - Adds a systemd timer that checks the latest GitHub Release every 15 minutes and queues the existing guarded update worker. Health checks, rollback, database-volume preservation, manual updates, and systems without systemd remain supported.
-- Publishes Agent/Connector `2.51.11` because the new `ProtocolProbe` command is implemented in the Agent runtime.
 
 ## 2.51.10 Client speed display fix
 

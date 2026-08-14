@@ -15,4 +15,15 @@ class SensitiveDataUtilsTests {
         assertTrue(masked.contains("******"));
         assertTrue(masked.contains("nodeId"));
     }
+
+    @Test
+    void masksExternalProtocolCredentials() {
+        String masked = SensitiveDataUtils.maskJsonText(
+                "{\"proxyType\":\"socks5\",\"host\":\"proxy.example.com\","
+                        + "\"username\":\"friend-user\",\"password\":\"friend-password\"}");
+        assertTrue(masked.contains("friend-user"));
+        assertFalse(masked.contains("friend-password"));
+        assertTrue(masked.contains("\"proxyType\":\"socks5\""));
+        assertTrue(masked.contains("\"******\""));
+    }
 }

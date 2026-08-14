@@ -707,12 +707,6 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Type = "ProxyRouteProbeResponse"
 		response.Data = proxyRouteResult
 
-	case "ProtocolProbe":
-		var protocolProbeResult protocolProbeResponse
-		protocolProbeResult, err = w.handleProtocolProbe(cmd.Data)
-		response.Type = "ProtocolProbeResponse"
-		response.Data = protocolProbeResult
-
 	case "QualityProbe":
 		var probeResult qualityProbeResponse
 		probeResult, err = w.handleQualityProbe(cmd.Data)

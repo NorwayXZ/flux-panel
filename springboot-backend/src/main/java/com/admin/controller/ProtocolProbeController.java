@@ -27,17 +27,39 @@ public class ProtocolProbeController {
     @LogAnnotation
     @PostMapping("/run")
     public R run(@RequestBody Map<String, Object> body) {
-        Object id = body == null ? null : body.get("proxyId");
+        Object id = body == null ? null : body.get("targetId");
+        if (id == null && body != null) id = body.get("proxyId");
         if (id == null) return R.err("请选择协议节点");
-        return service.run(Long.valueOf(id.toString()), body);
+        String targetType = body == null ? "created" : String.valueOf(body.getOrDefault("targetType", "created"));
+        return service.run(targetType, Long.valueOf(id.toString()), body);
     }
 
     @PostMapping("/history")
     public R history(@RequestBody Map<String, Object> body) {
-        Object id = body == null ? null : body.get("proxyId");
+        Object id = body == null ? null : body.get("targetId");
+        if (id == null && body != null) id = body.get("proxyId");
         if (id == null) return R.err("请选择协议节点");
         Object limit = body.get("limit");
         int value = limit == null ? 30 : Integer.parseInt(limit.toString());
-        return service.history(Long.valueOf(id.toString()), value);
+        String targetType = String.valueOf(body.getOrDefault("targetType", "created"));
+        return service.history(targetType, Long.valueOf(id.toString()), value);
+    }
+
+    @PostMapping("/external/list")
+    public R externalList() {
+        return service.externalList();
+    }
+
+    @LogAnnotation
+    @PostMapping("/external/save")
+    public R saveExternal(@RequestBody Map<String, Object> body) {
+        return service.saveExternal(body);
+    }
+
+    @LogAnnotation
+    @PostMapping("/external/delete")
+    public R deleteExternal(@RequestBody Map<String, Object> body) {
+        Object id = body == null ? null : body.get("id");
+        return service.deleteExternal(id == null ? null : Long.valueOf(id.toString()));
     }
 }

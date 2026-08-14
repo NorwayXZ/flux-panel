@@ -1,10 +1,13 @@
 CREATE TABLE IF NOT EXISTS protocol_probe_run (
   id bigint unsigned NOT NULL AUTO_INCREMENT,
-  proxy_id bigint NOT NULL,
+  proxy_id bigint NULL,
   user_id int NOT NULL,
-  node_id bigint NOT NULL,
+  node_id bigint NULL,
   proxy_type varchar(32) NOT NULL,
-  probe_node_id bigint NOT NULL,
+  probe_node_id bigint NULL,
+  target_type varchar(16) NOT NULL DEFAULT 'created',
+  target_id bigint NULL,
+  target_name varchar(120) DEFAULT NULL,
   status varchar(16) NOT NULL,
   available tinyint NOT NULL DEFAULT 0,
   target_url varchar(500) NOT NULL,
@@ -20,10 +23,30 @@ CREATE TABLE IF NOT EXISTS protocol_probe_run (
   upload_status int DEFAULT NULL,
   error varchar(500) DEFAULT NULL,
   agent_version varchar(64) DEFAULT NULL,
+  probe_source varchar(64) DEFAULT NULL,
+  client_engine varchar(64) DEFAULT NULL,
+  client_engine_version varchar(128) DEFAULT NULL,
   started_at bigint NOT NULL,
   finished_at bigint NOT NULL,
   PRIMARY KEY (id),
   KEY idx_protocol_probe_proxy (proxy_id, started_at),
+  KEY idx_protocol_probe_target (target_type, target_id, started_at),
   KEY idx_protocol_probe_user (user_id, started_at),
   KEY idx_protocol_probe_status (status, started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS protocol_probe_target (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  user_id int NOT NULL,
+  name varchar(120) NOT NULL,
+  proxy_type varchar(16) NOT NULL,
+  host varchar(255) NOT NULL,
+  port int NOT NULL,
+  auth_username varchar(512) DEFAULT NULL,
+  auth_password varchar(1024) DEFAULT NULL,
+  state varchar(16) NOT NULL DEFAULT 'active',
+  created_at bigint NOT NULL,
+  updated_at bigint NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_protocol_probe_target_user (user_id, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
