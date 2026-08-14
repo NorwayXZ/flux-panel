@@ -287,6 +287,7 @@ public class PrivateProxyService {
 
     public R list() {
         QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>().ne("state", "deleted").orderByDesc("created_time");
+        excludeMissingNodes(query);
         if (!isAdmin()) query.eq("user_id", JwtUtil.getUserIdFromToken());
         return R.ok(proxyMapper.selectList(query).stream().map(this::view).collect(Collectors.toList()));
     }
@@ -295,6 +296,7 @@ public class PrivateProxyService {
         if (!isAdmin()) return R.err("只有管理员可以查看用户代理授权");
         QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>()
                 .isNotNull("granted_by_user_id").ne("state", "deleted").orderByDesc("created_time");
+        excludeMissingNodes(query);
         if (userId != null) query.eq("user_id", userId);
         return R.ok(proxyMapper.selectList(query).stream().map(this::view).collect(Collectors.toList()));
     }
@@ -481,10 +483,48 @@ public class PrivateProxyService {
         }
     }
 
+    /**
+     * 删除节点时同步处理该节点创建的所有私人代理。
+     *
+     * 在线节点必须先确认 Agent 已经删除运行时；否则中止节点删除，避免
+     * 面板记录消失但 Agent 端口仍然继续监听。离线节点无法回收远端运行时，
+     * 但节点本身即将从面板删除，代理记录必须同步标记为 deleted，避免形成
+     * 永久显示“节点已删除”的孤儿代理。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public int deleteForNode(Long nodeId) {
+        List<PrivateProxy> proxies = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .eq("node_id", nodeId).ne("state", "deleted"));
+        if (proxies.isEmpty()) return 0;
+
+        Node node = nodeMapper.selectById(nodeId);
+        boolean online = node != null && WebSocketServer.isNodeOnline(nodeId);
+        int deleted = 0;
+        for (PrivateProxy proxy : proxies) {
+            if (online && !cleanupRuntime(proxy, node)) {
+                throw new IllegalStateException("节点还有私人代理未清理成功，请先处理代理 "
+                        + proxy.getName() + " 后再删除节点");
+            }
+            updateState(proxy, "deleted", online ? null : "所属节点已删除，跳过离线 Agent 清理");
+            deleted++;
+        }
+        return deleted;
+    }
+
     @Scheduled(initialDelay = 30_000L, fixedDelay = 30_000L)
     public void reconcileExpiryAndCleanup() {
         long now = System.currentTimeMillis();
         synchronizeAdvancedGrantTraffic();
+
+        // 节点被历史版本删除后，旧代理记录没有机会进入普通到期清理队列。
+        // 先收敛这些孤儿记录，列表接口也会同步排除它们。
+        List<PrivateProxy> orphaned = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
+                .ne("state", "deleted")
+                .notExists("SELECT 1 FROM node n WHERE n.id = private_proxy.node_id"));
+        for (PrivateProxy proxy : orphaned) {
+            updateState(proxy, "deleted", "所属节点已删除，自动清理孤儿代理记录");
+        }
+
         List<PrivateProxy> granted = proxyMapper.selectList(new QueryWrapper<PrivateProxy>()
                 .isNotNull("granted_by_user_id").notIn("state", "deleted", "delete_pending", "error"));
         for (PrivateProxy proxy : granted) reconcileGrantedProxy(proxy, now);
@@ -502,6 +542,10 @@ public class PrivateProxyService {
             }
             if (cleanupRuntime(proxy, node)) updateState(proxy, explicitDelete ? "deleted" : "expired", null);
         }
+    }
+
+    private void excludeMissingNodes(QueryWrapper<PrivateProxy> query) {
+        query.exists("SELECT 1 FROM node n WHERE n.id = private_proxy.node_id");
     }
 
     private PrivateProxy view(PrivateProxy proxy) {

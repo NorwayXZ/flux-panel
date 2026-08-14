@@ -191,8 +191,15 @@ export default function PrivateProxyPage() {
     try {
       const proxyRes = await proxyRequest;
 
-      if (proxyRes.code === 0) setItems(proxyRes.data || []);
-      else toast.error(proxyRes.msg || "加载代理失败");
+      if (proxyRes.code === 0) {
+        // 后端已过滤孤儿代理；这里再做一次轻量兜底，避免旧版本接口或
+        // 浏览器保留的旧响应把“节点已删除”分组重新显示出来。
+        setItems(
+          (proxyRes.data || []).filter(
+            (item) => item.nodeName !== "节点已删除",
+          ),
+        );
+      } else toast.error(proxyRes.msg || "加载代理失败");
     } catch (error) {
       console.error("加载代理列表失败:", error);
       toast.error("加载代理列表失败");

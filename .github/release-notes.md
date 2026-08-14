@@ -1,3 +1,9 @@
+## 2.51.15 Node deletion cleanup
+
+- Cleans associated private proxy records and Agent runtimes when deleting a node.
+- Prevents online node deletion when a private proxy runtime cannot be removed safely.
+- Automatically hides and converges historical private proxies whose node was already deleted.
+
 ## 2.51.14 Remove protocol probe center
 
 - Removes the protocol probe center frontend, API, backend service, schema initializer, and test harness.

@@ -24,6 +24,7 @@ import com.admin.mapper.UserNodeMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
+import com.admin.service.PrivateProxyService;
 import com.admin.service.SpeedLimitService;
 import com.admin.service.ServicePublishingService;
 import com.admin.service.TunnelService;
@@ -92,7 +93,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.51.14/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.51.15/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -106,6 +107,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     @Resource
     @Lazy
     private ForwardService forwardService;
+
+    @Resource
+    @Lazy
+    private PrivateProxyService privateProxyService;
 
     @Resource
     @Lazy
@@ -408,8 +413,10 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("userTunnelCount", 0L);
         summary.put("speedLimitCount", 0L);
         summary.put("domainRouteCount", 0);
+        summary.put("privateProxyCount", 0);
 
         int domainRouteCount = servicePublishingService.cleanupDomainRoutesForNode(nodeId);
+        int privateProxyCount = privateProxyService.deleteForNode(nodeId);
 
         List<Long> tunnelIds = new ArrayList<>();
         List<Integer> tunnelIdInts = new ArrayList<>();
@@ -451,6 +458,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         summary.put("userTunnelCount", userTunnelCount);
         summary.put("speedLimitCount", speedLimitCount);
         summary.put("domainRouteCount", domainRouteCount);
+        summary.put("privateProxyCount", privateProxyCount);
         userNodeMapper.delete(new QueryWrapper<UserNode>().eq("node_id", nodeId));
         return summary;
     }

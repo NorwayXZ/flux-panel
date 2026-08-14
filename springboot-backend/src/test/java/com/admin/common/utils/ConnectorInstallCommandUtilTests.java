@@ -16,7 +16,7 @@ class ConnectorInstallCommandUtilTests {
     @Test
     void buildsPinnedLinuxCommand() {
         String command = ConnectorInstallCommandUtil.build("linux", "panel.example:6366", "secret");
-        assertTrue(command.contains("/2.51.14/install.sh"));
+        assertTrue(command.contains("/2.51.15/install.sh"));
         assertTrue(command.contains("-r connector"));
         assertTrue(command.contains("-a 'panel.example:6366'"));
     }
