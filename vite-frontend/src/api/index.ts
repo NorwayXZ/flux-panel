@@ -1764,6 +1764,19 @@ export const getCrossEntryEvents = (id: number) =>
 export interface SourceIpEntryRoute {
   id?: number;
   carrier: "default" | "telecom" | "unicom" | "mobile" | "custom";
+  ruleType?:
+    | "default"
+    | "carrier"
+    | "cidr"
+    | "asn"
+    | "region"
+    | "vip"
+    | "customer"
+    | "gray"
+    | "risk";
+  ruleTypeLabel?: string;
+  ruleName?: string;
+  priority?: number;
   backendForwardId: number;
   backendForwardName?: string;
   backendNodeId?: number;
@@ -1773,6 +1786,12 @@ export interface SourceIpEntryRoute {
   protocolMode?: string;
   cidrs?: string;
   cidrCount?: number;
+  region?: string;
+  asn?: string;
+  tags?: string;
+  qualityPolicy?: "static" | "quality_aware" | "prefer_primary" | "quarantine";
+  qualityPolicyLabel?: string;
+  notes?: string;
   enabled: boolean | number;
   chainName?: string;
 }
@@ -1836,8 +1855,59 @@ export interface SourceIpEntryOverview {
   ingressNodes: SourceIpEntryNode[];
   backendForwards: SourceIpBackendForward[];
   carriers: SourceIpCarrierDatabase[];
+  ruleTypes?: { key: string; label: string; description: string }[];
+  qualityPolicies?: { key: string; label: string; description: string }[];
+  capabilities?: { key: string; name: string; detail: string }[];
   minimumAgentVersion: string;
   summary: { total: number; enabled: number; healthy: number; errors: number };
+}
+
+export interface SourceIpDebugRoute {
+  id: number;
+  carrier: string;
+  carrierLabel: string;
+  ruleType: string;
+  ruleTypeLabel: string;
+  ruleName: string;
+  priority: number;
+  backendForwardId: number;
+  backendForwardName: string;
+  backendNodeName: string;
+  backendHost: string;
+  backendPort: number;
+  region?: string;
+  asn?: string;
+  qualityPolicy?: string;
+  qualityPolicyLabel?: string;
+  cidrCount: number;
+  matchedCidr?: string;
+  prefixLength?: number;
+}
+
+export interface SourceIpDebugGroupResult {
+  groupId: number;
+  groupName: string;
+  enabled: boolean;
+  state: string;
+  listener: string;
+  matched: boolean;
+  selectedRoute?: SourceIpDebugRoute;
+  defaultRoute?: SourceIpDebugRoute;
+  candidates: SourceIpDebugRoute[];
+  reason: string;
+  warning?: string;
+}
+
+export interface SourceIpDebugResult {
+  sourceIp: string;
+  ipVersion: string;
+  inferredCarrier: {
+    carrier: string;
+    label: string;
+    matchedCidr?: string;
+    prefixLength?: number;
+  };
+  groups: SourceIpDebugGroupResult[];
 }
 
 export const getSourceIpEntryOverview = () =>
@@ -1850,6 +1920,10 @@ export const deleteSourceIpEntry = (id: number) =>
   Network.post("/source-ip-entry/delete", { id });
 export const refreshSourceIpCarriers = () =>
   Network.post("/source-ip-entry/carriers/refresh");
+export const debugSourceIpEntry = (data: {
+  sourceIp: string;
+  groupId?: number;
+}) => Network.post<SourceIpDebugResult>("/source-ip-entry/debug", data);
 
 export interface SmartEntryRoute {
   id: number;

@@ -16,11 +16,14 @@ import { Switch } from "@heroui/switch";
 import {
   CheckCircle2,
   CircleAlert,
+  FlaskConical,
   Info,
+  MapPin,
   Pencil,
   Plus,
   RadioTower,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,11 +31,13 @@ import toast from "react-hot-toast";
 
 import {
   checkSourceIpEntry,
+  debugSourceIpEntry,
   deleteSourceIpEntry,
   getSourceIpEntryOverview,
   refreshSourceIpCarriers,
   saveSourceIpEntry,
   type SourceIpBackendForward,
+  type SourceIpDebugResult,
   type SourceIpCarrierDatabase,
   type SourceIpEntryGroup,
   type SourceIpEntryOverview,
@@ -40,11 +45,31 @@ import {
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile" | "custom";
+type RuleType =
+  | "default"
+  | "carrier"
+  | "cidr"
+  | "asn"
+  | "region"
+  | "vip"
+  | "customer"
+  | "gray"
+  | "risk";
+type QualityPolicy =
+  "static" | "quality_aware" | "prefer_primary" | "quarantine";
 
 interface FormRoute {
   carrier: Carrier;
+  ruleType: RuleType;
+  ruleName: string;
+  priority: string;
   backendForwardId: string;
   cidrs: string;
+  region: string;
+  asn: string;
+  tags: string;
+  qualityPolicy: QualityPolicy;
+  notes: string;
   enabled: boolean;
 }
 
@@ -63,8 +88,47 @@ const carrierLabels: Record<Carrier, string> = {
   telecom: "中国电信",
   unicom: "中国联通",
   mobile: "中国移动",
-  custom: "自定义 CIDR",
+  custom: "自定义来源",
 };
+
+const ruleTypeLabels: Record<RuleType, string> = {
+  default: "默认回退",
+  carrier: "运营商",
+  cidr: "CIDR/IP 段",
+  asn: "ASN",
+  region: "地区",
+  vip: "VIP 来源",
+  customer: "专属客户",
+  gray: "灰度测试",
+  risk: "风险隔离",
+};
+
+const qualityPolicyLabels: Record<QualityPolicy, string> = {
+  static: "固定规则",
+  quality_aware: "质量联动",
+  prefer_primary: "主线优先",
+  quarantine: "隔离/降级",
+};
+
+const newRoute = (ruleType: RuleType = "cidr"): FormRoute => ({
+  carrier:
+    ruleType === "default"
+      ? "default"
+      : ruleType === "carrier"
+        ? "telecom"
+        : "custom",
+  ruleType,
+  ruleName: "",
+  priority: ruleType === "default" ? "999" : "100",
+  backendForwardId: "",
+  cidrs: "",
+  region: "",
+  asn: "",
+  tags: "",
+  qualityPolicy: ruleType === "risk" ? "quarantine" : "static",
+  notes: "",
+  enabled: true,
+});
 
 const emptyForm = (): FormState => ({
   name: "",
@@ -72,9 +136,7 @@ const emptyForm = (): FormState => ({
   listenHost: "",
   listenPort: "",
   enabled: true,
-  routes: [
-    { carrier: "default", backendForwardId: "", cidrs: "", enabled: true },
-  ],
+  routes: [newRoute("default")],
 });
 
 const truthy = (value: boolean | number | undefined) =>
@@ -107,6 +169,31 @@ function carrierText(carrier: string) {
   return carrierLabels[carrier as Carrier] || carrier;
 }
 
+function ruleTypeText(ruleType?: string) {
+  return ruleTypeLabels[(ruleType || "cidr") as RuleType] || ruleType || "规则";
+}
+
+function qualityPolicyText(policy?: string) {
+  return (
+    qualityPolicyLabels[(policy || "static") as QualityPolicy] ||
+    policy ||
+    "固定规则"
+  );
+}
+
+function routeNeedsCidrs(route: FormRoute) {
+  return !["default", "carrier"].includes(route.ruleType);
+}
+
+function routeTitle(route: FormRoute) {
+  return (
+    route.ruleName ||
+    (route.ruleType === "carrier"
+      ? carrierText(route.carrier)
+      : ruleTypeText(route.ruleType))
+  );
+}
+
 export default function SourceIpEntryPage() {
   const [data, setData] = useState<SourceIpEntryOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,6 +201,12 @@ export default function SourceIpEntryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [carrierRefreshing, setCarrierRefreshing] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
+  const [debugging, setDebugging] = useState(false);
+  const [debugSourceIp, setDebugSourceIp] = useState("");
+  const [debugGroupId, setDebugGroupId] = useState("");
+  const [debugResult, setDebugResult] = useState<SourceIpDebugResult | null>(
+    null,
+  );
   const [form, setForm] = useState<FormState>(emptyForm);
 
   const load = useCallback(async (quiet = false) => {
@@ -160,8 +253,21 @@ export default function SourceIpEntryPage() {
       enabled: truthy(group.enabled),
       routes: group.routes.map((route) => ({
         carrier: route.carrier,
+        ruleType: (route.ruleType ||
+          (route.carrier === "default"
+            ? "default"
+            : route.carrier === "custom"
+              ? "cidr"
+              : "carrier")) as RuleType,
+        ruleName: route.ruleName || "",
+        priority: String(route.priority || 100),
         backendForwardId: String(route.backendForwardId),
-        cidrs: route.carrier === "custom" ? route.cidrs || "" : "",
+        cidrs: route.ruleType === "carrier" ? "" : route.cidrs || "",
+        region: route.region || "",
+        asn: route.asn || "",
+        tags: route.tags || "",
+        qualityPolicy: (route.qualityPolicy || "static") as QualityPolicy,
+        notes: route.notes || "",
         enabled: truthy(route.enabled),
       })),
     });
@@ -178,13 +284,10 @@ export default function SourceIpEntryPage() {
   };
 
   const addRoute = () => {
-    if (form.routes.length >= 5) return toast.error("一组最多配置 5 条线路");
+    if (form.routes.length >= 20) return toast.error("一组最多配置 20 条规则");
     setForm((current) => ({
       ...current,
-      routes: [
-        ...current.routes,
-        { carrier: "custom", backendForwardId: "", cidrs: "", enabled: true },
-      ],
+      routes: [...current.routes, newRoute("cidr")],
     }));
   };
 
@@ -206,19 +309,27 @@ export default function SourceIpEntryPage() {
       return toast.error("监听端口必须在 1-65535 之间");
     if (
       form.routes.length === 0 ||
-      !form.routes.some((route) => route.carrier === "default")
+      !form.routes.some((route) => route.ruleType === "default")
     )
       return toast.error("必须配置一条默认回退线路");
-    const carriers = new Set<string>();
+    const systemCarriers = new Set<string>();
 
     for (const route of form.routes) {
-      if (carriers.has(route.carrier))
-        return toast.error(`线路类型不能重复：${carrierText(route.carrier)}`);
-      carriers.add(route.carrier);
+      if (route.ruleType === "carrier") {
+        if (systemCarriers.has(route.carrier))
+          return toast.error(
+            `运营商规则不能重复：${carrierText(route.carrier)}`,
+          );
+        systemCarriers.add(route.carrier);
+      }
       if (!route.backendForwardId)
-        return toast.error(`${carrierText(route.carrier)} 未选择后端入口转发`);
-      if (route.carrier === "custom" && !route.cidrs.trim())
-        return toast.error("自定义线路必须填写 CIDR");
+        return toast.error(`${routeTitle(route)} 未选择后端入口转发`);
+      if (routeNeedsCidrs(route) && !route.cidrs.trim())
+        return toast.error(`${routeTitle(route)} 必须填写 CIDR`);
+      const priority = Number(route.priority || 100);
+
+      if (!Number.isInteger(priority) || priority < 1 || priority > 999)
+        return toast.error(`${routeTitle(route)} 优先级必须在 1-999 之间`);
     }
     setSubmitting(true);
     const response = await saveSourceIpEntry({
@@ -229,9 +340,22 @@ export default function SourceIpEntryPage() {
       listenPort: port,
       enabled: form.enabled,
       routes: form.routes.map((route) => ({
-        carrier: route.carrier,
+        carrier:
+          route.ruleType === "default"
+            ? "default"
+            : route.ruleType === "carrier"
+              ? route.carrier
+              : "custom",
+        ruleType: route.ruleType,
+        ruleName: route.ruleName.trim(),
+        priority: Number(route.priority || 100),
         backendForwardId: Number(route.backendForwardId),
-        cidrs: route.carrier === "custom" ? route.cidrs : "",
+        cidrs: route.ruleType === "carrier" ? "" : route.cidrs,
+        region: route.region.trim(),
+        asn: route.asn.trim(),
+        tags: route.tags.trim(),
+        qualityPolicy: route.qualityPolicy,
+        notes: route.notes.trim(),
         enabled: route.enabled,
       })),
     });
@@ -280,6 +404,20 @@ export default function SourceIpEntryPage() {
     void load(true);
   };
 
+  const runDebug = async () => {
+    if (!debugSourceIp.trim()) return toast.error("请输入要调试的来源 IP");
+    setDebugging(true);
+    const response = await debugSourceIpEntry({
+      sourceIp: debugSourceIp.trim(),
+      groupId: debugGroupId ? Number(debugGroupId) : undefined,
+    });
+
+    setDebugging(false);
+    if (response.code !== 0)
+      return toast.error(response.msg || "来源 IP 调试失败");
+    setDebugResult(response.data);
+  };
+
   if (loading)
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -294,12 +432,12 @@ export default function SourceIpEntryPage() {
     <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">三网优化的直连替代方案</p>
+          <p className="text-sm text-default-500">不依赖 DNS 的入口规则引擎</p>
           <h1 className="mt-1 text-2xl font-semibold">来源 IP 分流</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
             一个公网入口端口按客户端真实来源 IP
-            选择电信、联通、移动或自定义线路。它不依赖客户端 DNS，也不会终止
-            VLESS、Reality、Trojan 等上层协议。
+            选择运营商、地区、ASN、VIP、客户专线、灰度或风险隔离线路。它不依赖客户端
+            DNS，也不会终止 VLESS、Reality、Trojan 等上层协议。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -344,6 +482,28 @@ export default function SourceIpEntryPage() {
         </div>
       </section>
 
+      <section className="grid gap-3 md:grid-cols-4">
+        {(data?.capabilities || []).map((item, index) => (
+          <div key={item.key} className="border border-divider p-3">
+            <div className="flex items-center gap-2">
+              {index === 0 ? (
+                <RadioTower className="h-4 w-4 text-primary" />
+              ) : index === 1 ? (
+                <MapPin className="h-4 w-4 text-success" />
+              ) : index === 2 ? (
+                <FlaskConical className="h-4 w-4 text-warning" />
+              ) : (
+                <ShieldCheck className="h-4 w-4 text-secondary" />
+              )}
+              <p className="text-sm font-medium">{item.name}</p>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-default-500">
+              {item.detail}
+            </p>
+          </div>
+        ))}
+      </section>
+
       <section
         aria-label="来源 IP 分流概况"
         className="grid grid-cols-2 border-y border-divider sm:grid-cols-4"
@@ -371,6 +531,98 @@ export default function SourceIpEntryPage() {
             )}
           </div>
         ))}
+      </section>
+
+      <section className="border-y border-divider py-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">来源 IP 调试中心</h2>
+            <p className="mt-1 text-xs text-default-500">
+              输入一个客户端来源
+              IP，直接查看它命中哪条规则、最终走哪个后端入口。
+            </p>
+          </div>
+          <div className="grid w-full gap-2 md:w-auto md:grid-cols-[220px_180px_auto]">
+            <Input
+              placeholder="例如 113.88.1.2"
+              value={debugSourceIp}
+              onValueChange={setDebugSourceIp}
+            />
+            <Select
+              placeholder="全部分流组"
+              selectedKeys={debugGroupId ? [debugGroupId] : []}
+              onSelectionChange={(keys) =>
+                setDebugGroupId(String(Array.from(keys)[0] || ""))
+              }
+            >
+              {groups.map((group) => (
+                <SelectItem key={String(group.id)}>
+                  {group.name} · {group.listenPort}
+                </SelectItem>
+              ))}
+            </Select>
+            <Button
+              color="primary"
+              isLoading={debugging}
+              startContent={<FlaskConical size={17} />}
+              onPress={runDebug}
+            >
+              开始调试
+            </Button>
+          </div>
+        </div>
+        {debugResult && (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Chip color="primary" size="sm" variant="flat">
+                {debugResult.ipVersion}
+              </Chip>
+              <span className="font-medium">{debugResult.sourceIp}</span>
+              <span className="text-default-500">
+                运营商库判断：{debugResult.inferredCarrier.label}
+                {debugResult.inferredCarrier.matchedCidr
+                  ? ` · ${debugResult.inferredCarrier.matchedCidr}`
+                  : ""}
+              </span>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {debugResult.groups.map((item) => (
+                <div key={item.groupId} className="border border-divider p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">{item.groupName}</p>
+                    <Chip
+                      color={item.matched ? "success" : "default"}
+                      size="sm"
+                      variant="flat"
+                    >
+                      {item.matched ? "已命中" : "走默认"}
+                    </Chip>
+                  </div>
+                  <p className="mt-1 text-xs text-default-500">
+                    {item.listener} · {item.reason}
+                  </p>
+                  {item.selectedRoute && (
+                    <div className="mt-3 border-l-2 border-primary px-3 py-2 text-sm">
+                      <p className="font-medium">
+                        {item.selectedRoute.ruleName} ·{" "}
+                        {item.selectedRoute.ruleTypeLabel}
+                      </p>
+                      <p className="mt-1 text-xs text-default-500">
+                        {item.selectedRoute.backendNodeName || "-"} ·{" "}
+                        {item.selectedRoute.backendHost || "-"}:
+                        {item.selectedRoute.backendPort || "-"} ·{" "}
+                        {item.selectedRoute.qualityPolicyLabel}
+                      </p>
+                    </div>
+                  )}
+                  {item.warning && (
+                    <p className="mt-2 text-xs text-warning">{item.warning}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="border-y border-divider py-4">
@@ -527,9 +779,20 @@ export default function SourceIpEntryPage() {
                         className={`border-l-2 px-3 py-2 ${route.carrier === "default" ? "border-primary bg-primary-50/40 dark:bg-primary-500/5" : "border-divider"}`}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-sm font-medium">
-                            {carrierText(route.carrier)}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">
+                              {route.ruleName ||
+                                (route.ruleType === "carrier"
+                                  ? carrierText(route.carrier)
+                                  : ruleTypeText(route.ruleType))}
+                            </span>
+                            <Chip size="sm" variant="flat">
+                              {ruleTypeText(route.ruleType)}
+                            </Chip>
+                            <Chip size="sm" variant="flat">
+                              优先级 {route.priority || 100}
+                            </Chip>
+                          </div>
                           <span className="text-xs text-default-500">
                             {route.carrier === "default"
                               ? "未命中时回退"
@@ -541,6 +804,12 @@ export default function SourceIpEntryPage() {
                             backendMap.get(String(route.backendForwardId)),
                           )}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-1 text-xs text-default-500">
+                          <span>{qualityPolicyText(route.qualityPolicy)}</span>
+                          {route.region && <span>地区：{route.region}</span>}
+                          {route.asn && <span>ASN：{route.asn}</span>}
+                          {route.tags && <span>标签：{route.tags}</span>}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -631,49 +900,118 @@ export default function SourceIpEntryPage() {
             <section className="border-t border-divider pt-4">
               <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-semibold">来源线路</h3>
+                  <h3 className="text-sm font-semibold">来源规则</h3>
                   <p className="mt-1 text-xs text-default-500">
                     按最长 CIDR 匹配；未命中或线路失败时使用
-                    default。每条线路连接一个现有 TCP 转发入口。
+                    default。每条规则连接一个现有 TCP 转发入口。
                   </p>
                 </div>
                 <Button
-                  isDisabled={form.routes.length >= 5}
+                  isDisabled={form.routes.length >= 20}
                   size="sm"
                   startContent={<Plus size={16} />}
                   variant="flat"
                   onPress={addRoute}
                 >
-                  添加线路
+                  添加规则
                 </Button>
               </div>
               <div className="space-y-3">
                 {form.routes.map((route, index) => (
                   <div
-                    key={`${index}-${route.carrier}`}
+                    key={`${index}-${route.ruleType}-${route.carrier}`}
                     className="border border-divider p-3"
                   >
-                    <div className="grid gap-3 lg:grid-cols-[170px_minmax(0,1fr)_auto] lg:items-end">
+                    <div className="grid gap-3 lg:grid-cols-[160px_minmax(0,1fr)_120px] lg:items-end">
                       <Select
-                        label="来源类型"
-                        selectedKeys={[route.carrier]}
+                        label="规则类型"
+                        selectedKeys={[route.ruleType]}
                         onSelectionChange={(keys) => {
-                          const carrier = String(
-                            Array.from(keys)[0] || "custom",
-                          ) as Carrier;
+                          const ruleType = String(
+                            Array.from(keys)[0] || "cidr",
+                          ) as RuleType;
 
                           updateRoute(index, {
-                            carrier,
-                            cidrs: carrier === "custom" ? route.cidrs : "",
+                            ruleType,
+                            carrier:
+                              ruleType === "default"
+                                ? "default"
+                                : ruleType === "carrier"
+                                  ? route.carrier === "default" ||
+                                    route.carrier === "custom"
+                                    ? "telecom"
+                                    : route.carrier
+                                  : "custom",
+                            cidrs:
+                              ruleType === "default" || ruleType === "carrier"
+                                ? ""
+                                : route.cidrs,
+                            priority:
+                              ruleType === "default" ? "999" : route.priority,
+                            qualityPolicy:
+                              ruleType === "risk"
+                                ? "quarantine"
+                                : route.qualityPolicy,
                           });
                         }}
                       >
                         <SelectItem key="default">默认回退</SelectItem>
-                        <SelectItem key="telecom">中国电信</SelectItem>
-                        <SelectItem key="unicom">中国联通</SelectItem>
-                        <SelectItem key="mobile">中国移动</SelectItem>
-                        <SelectItem key="custom">自定义 CIDR</SelectItem>
+                        <SelectItem key="carrier">运营商</SelectItem>
+                        <SelectItem key="cidr">CIDR/IP 段</SelectItem>
+                        <SelectItem key="asn">ASN</SelectItem>
+                        <SelectItem key="region">地区</SelectItem>
+                        <SelectItem key="vip">VIP 来源</SelectItem>
+                        <SelectItem key="customer">专属客户</SelectItem>
+                        <SelectItem key="gray">灰度测试</SelectItem>
+                        <SelectItem key="risk">风险隔离</SelectItem>
                       </Select>
+                      <Input
+                        label="规则名称"
+                        placeholder="例如：广东联通 VIP / AS4134"
+                        value={route.ruleName}
+                        onValueChange={(ruleName) =>
+                          updateRoute(index, { ruleName })
+                        }
+                      />
+                      <Input
+                        label="优先级"
+                        max={999}
+                        min={1}
+                        type="number"
+                        value={route.priority}
+                        onValueChange={(priority) =>
+                          updateRoute(index, { priority })
+                        }
+                      />
+                    </div>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-[160px_minmax(0,1fr)_auto] lg:items-end">
+                      {route.ruleType === "carrier" ? (
+                        <Select
+                          label="运营商"
+                          selectedKeys={[route.carrier]}
+                          onSelectionChange={(keys) =>
+                            updateRoute(index, {
+                              carrier: String(
+                                Array.from(keys)[0] || "telecom",
+                              ) as Carrier,
+                            })
+                          }
+                        >
+                          <SelectItem key="telecom">中国电信</SelectItem>
+                          <SelectItem key="unicom">中国联通</SelectItem>
+                          <SelectItem key="mobile">中国移动</SelectItem>
+                        </Select>
+                      ) : (
+                        <Input
+                          isDisabled
+                          label="匹配方式"
+                          value={
+                            route.ruleType === "default"
+                              ? "未命中回退"
+                              : "CIDR 最长前缀"
+                          }
+                        />
+                      )}
                       <Select
                         isRequired
                         label="后端入口转发"
@@ -715,7 +1053,7 @@ export default function SourceIpEntryPage() {
                         >
                           启用
                         </Switch>
-                        {route.carrier !== "default" && (
+                        {route.ruleType !== "default" && (
                           <Button
                             isIconOnly
                             aria-label="删除线路"
@@ -730,16 +1068,56 @@ export default function SourceIpEntryPage() {
                         )}
                       </div>
                     </div>
-                    {route.carrier === "custom" ? (
+                    {route.ruleType !== "default" && (
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <Input
+                          label="地区/场景"
+                          placeholder="广东 / 华东 / 香港 / 美西"
+                          value={route.region}
+                          onValueChange={(region) =>
+                            updateRoute(index, { region })
+                          }
+                        />
+                        <Input
+                          label="ASN"
+                          placeholder="AS4134"
+                          value={route.asn}
+                          onValueChange={(asn) => updateRoute(index, { asn })}
+                        />
+                        <Input
+                          label="标签"
+                          placeholder="VIP,客户A,测试"
+                          value={route.tags}
+                          onValueChange={(tags) => updateRoute(index, { tags })}
+                        />
+                        <Select
+                          label="质量策略"
+                          selectedKeys={[route.qualityPolicy]}
+                          onSelectionChange={(keys) =>
+                            updateRoute(index, {
+                              qualityPolicy: String(
+                                Array.from(keys)[0] || "static",
+                              ) as QualityPolicy,
+                            })
+                          }
+                        >
+                          <SelectItem key="static">固定规则</SelectItem>
+                          <SelectItem key="quality_aware">质量联动</SelectItem>
+                          <SelectItem key="prefer_primary">主线优先</SelectItem>
+                          <SelectItem key="quarantine">隔离/降级</SelectItem>
+                        </Select>
+                      </div>
+                    )}
+                    {routeNeedsCidrs(route) ? (
                       <Textarea
                         className="mt-3"
                         label="CIDR 列表"
                         minRows={3}
-                        placeholder="每行一个，例如：\n113.0.0.0/8\n2408:8000::/20"
+                        placeholder="每行一个，例如：\n113.88.0.0/16\n2408:8000::/20"
                         value={route.cidrs}
                         onValueChange={(cidrs) => updateRoute(index, { cidrs })}
                       />
-                    ) : route.carrier === "default" ? (
+                    ) : route.ruleType === "default" ? (
                       <p className="mt-2 text-xs text-default-500">
                         default 不匹配来源
                         IP，作为后端失败和未知来源的回退线路。
@@ -754,6 +1132,14 @@ export default function SourceIpEntryPage() {
                         条 CIDR。可通过页面顶部按钮刷新。
                       </p>
                     )}
+                    <Textarea
+                      className="mt-3"
+                      label="备注（可选）"
+                      minRows={2}
+                      placeholder="写清楚这条规则给谁用、为什么走这条线路，后期排查会轻松很多。"
+                      value={route.notes}
+                      onValueChange={(notes) => updateRoute(index, { notes })}
+                    />
                   </div>
                 ))}
               </div>

@@ -36,15 +36,42 @@ public class SourceIpEntrySaveDto {
 
     @Data
     public static class Route {
-        /** default, telecom, unicom, mobile, or custom */
+        /** Legacy bucket: default, telecom, unicom, mobile, or custom. */
         @NotBlank(message = "线路类型不能为空")
         private String carrier;
+
+        /**
+         * default, carrier, cidr, asn, region, vip, customer, gray, or risk.
+         * All non-carrier advanced rules are compiled to CIDR lists before they
+         * are sent to the Agent.
+         */
+        private String ruleType;
+
+        @Size(max = 100, message = "规则名称不能超过100个字符")
+        private String ruleName;
+
+        private Integer priority = 100;
 
         @NotNull(message = "请选择后端入口转发")
         private Long backendForwardId;
 
-        /** Required for custom; carrier routes use the cached carrier database when blank. */
+        /** Required for manual rules; carrier routes use the cached carrier database when blank. */
         private String cidrs;
+
+        @Size(max = 100, message = "地区说明不能超过100个字符")
+        private String region;
+
+        @Size(max = 64, message = "ASN 不能超过64个字符")
+        private String asn;
+
+        @Size(max = 255, message = "标签不能超过255个字符")
+        private String tags;
+
+        @Size(max = 24, message = "质量策略不能超过24个字符")
+        private String qualityPolicy;
+
+        @Size(max = 500, message = "备注不能超过500个字符")
+        private String notes;
 
         private Boolean enabled = true;
     }

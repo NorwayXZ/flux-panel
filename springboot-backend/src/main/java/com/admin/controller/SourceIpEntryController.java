@@ -56,4 +56,10 @@ public class SourceIpEntryController {
     public R refreshCarriers() {
         return service.refreshCarriers();
     }
+
+    @PostMapping("/debug")
+    @RequireRole
+    public R debug(@RequestBody Map<String, Object> body) {
+        return service.debug(body);
+    }
 }

@@ -49,6 +49,9 @@ public class SourceIpEntryService {
     public static final String MIN_AGENT_VERSION = "2.42.3";
 
     private static final List<String> CARRIERS = List.of("default", "telecom", "unicom", "mobile", "custom");
+    private static final List<String> SYSTEM_CARRIERS = List.of("telecom", "unicom", "mobile");
+    private static final List<String> RULE_TYPES = List.of("default", "carrier", "cidr", "asn", "region", "vip", "customer", "gray", "risk");
+    private static final List<String> QUALITY_POLICIES = List.of("static", "quality_aware", "prefer_primary", "quarantine");
     private static final Map<String, List<String>> CARRIER_URLS = Map.of(
             "telecom", List.of(
                     "https://gaoyifan.github.io/china-operator-ip/chinanet.txt",
@@ -92,6 +95,13 @@ public class SourceIpEntryService {
         result.put("ingressNodes", loadIngressNodes());
         result.put("backendForwards", loadBackendForwards());
         result.put("carriers", loadCarrierDatabase());
+        result.put("ruleTypes", ruleTypeOptions());
+        result.put("qualityPolicies", qualityPolicyOptions());
+        result.put("capabilities", List.of(
+                Map.of("key", "carrier", "name", "运营商分流", "detail", "电信、联通、移动使用内置运营商 CIDR 库自动展开"),
+                Map.of("key", "geo-asn", "name", "地区 / ASN / 客户规则", "detail", "面板按你维护的 CIDR 规则编排，Agent 按最长前缀实时命中"),
+                Map.of("key", "debug", "name", "来源 IP 调试", "detail", "输入来源 IP 即可看到命中的规则、后端入口和回退原因"),
+                Map.of("key", "quality", "name", "质量策略标记", "detail", "来源 IP 决定第一跳，链路质量容灾建议放在后端入口或入口容灾层处理")));
         result.put("minimumAgentVersion", MIN_AGENT_VERSION);
         result.put("summary", Map.of(
                 "total", groups.size(),
@@ -159,6 +169,29 @@ public class SourceIpEntryService {
         }
     }
 
+    public R debug(Map<String, Object> body) {
+        String sourceIp = StringUtils.trimToEmpty(Objects.toString(body == null ? "" : body.get("sourceIp"), ""));
+        if (!isIp(sourceIp)) return R.err("请输入有效的来源 IP");
+        Long groupId = body == null || body.get("groupId") == null || StringUtils.isBlank(Objects.toString(body.get("groupId"), ""))
+                ? null : numberObject(body.get("groupId"));
+        List<Map<String, Object>> groups = groupId == null
+                ? jdbcTemplate.queryForList("SELECT * FROM source_ip_entry_group WHERE state<>'deleted' ORDER BY enabled DESC,created_time DESC")
+                : jdbcTemplate.queryForList("SELECT * FROM source_ip_entry_group WHERE id=? AND state<>'deleted'", groupId);
+        if (groups.isEmpty()) return R.err("没有可调试的来源 IP 分流组");
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (Map<String, Object> group : groups) {
+            List<Map<String, Object>> routes = loadRoutes(number(group.get("id")), true);
+            results.add(explainMatch(sourceIp, group, routes));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("sourceIp", sourceIp);
+        result.put("ipVersion", sourceIp.contains(":") ? "IPv6" : "IPv4");
+        result.put("inferredCarrier", inferCarrier(sourceIp));
+        result.put("groups", results);
+        return R.ok(result);
+    }
+
     private R saveLocked(SourceIpEntrySaveDto dto, Normalized normalized) {
         long now = System.currentTimeMillis();
         Map<String, Object> oldGroup = dto.getId() == null ? null
@@ -216,8 +249,10 @@ public class SourceIpEntryService {
 
         for (NormalizedRoute route : normalized.routes) {
             jdbcTemplate.update("INSERT INTO source_ip_entry_route "
-                            + "(group_id,carrier,backend_forward_id,cidrs,enabled,created_time,updated_time) VALUES (?,?,?,?,?,?,?)",
-                    id, route.carrier, route.backendForwardId, route.cidrs, route.enabled, now, now);
+                            + "(group_id,carrier,rule_type,rule_name,priority,backend_forward_id,cidrs,region,asn,tags,quality_policy,notes,enabled,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    id, route.carrier, route.ruleType, route.ruleName, route.priority, route.backendForwardId, route.cidrs,
+                    route.region, route.asn, route.tags, route.qualityPolicy, route.notes, route.enabled, now, now);
         }
         Long defaultRouteId = jdbcTemplate.queryForObject(
                 "SELECT id FROM source_ip_entry_route WHERE group_id=? AND carrier='default' ORDER BY id DESC LIMIT 1", Long.class, id);
@@ -241,7 +276,7 @@ public class SourceIpEntryService {
     private List<Map<String, Object>> oldGroupRoutes(Map<String, Object> oldGroup) {
         Object id = oldGroup.get("id");
         return id == null ? List.of() : jdbcTemplate.queryForList(
-                "SELECT id,carrier,cidrs,backend_forward_id AS backendForwardId FROM source_ip_entry_route WHERE group_id=?", id);
+                "SELECT id,carrier,rule_type AS ruleType,cidrs,backend_forward_id AS backendForwardId FROM source_ip_entry_route WHERE group_id=?", id);
     }
 
     private void syncAgent(Map<String, Object> group, List<Map<String, Object>> oldRoutes,
@@ -346,14 +381,21 @@ public class SourceIpEntryService {
         if (listenHost.contains(":") && !isIp(listenHost)) throw new IllegalArgumentException("监听地址必须是本机 IP 或留空");
 
         if (dto.getRoutes() == null || dto.getRoutes().isEmpty()) throw new IllegalArgumentException("至少配置一个默认回退线路");
-        Set<String> carriers = new LinkedHashSet<>();
+        Set<String> systemCarrierRoutes = new LinkedHashSet<>();
         List<NormalizedRoute> routes = new ArrayList<>();
         int defaultCount = 0;
         for (SourceIpEntrySaveDto.Route route : dto.getRoutes()) {
             if (route == null) continue;
             String carrier = StringUtils.lowerCase(StringUtils.trimToEmpty(route.getCarrier()));
-            if (!CARRIERS.contains(carrier)) throw new IllegalArgumentException("不支持的线路类型：" + carrier);
-            if (!carriers.add(carrier)) throw new IllegalArgumentException("线路类型不能重复：" + carrier);
+            String ruleType = normalizeRuleType(route.getRuleType(), carrier);
+            if ("default".equals(ruleType)) carrier = "default";
+            if ("carrier".equals(ruleType) && !SYSTEM_CARRIERS.contains(carrier)) {
+                throw new IllegalArgumentException("运营商规则只能选择电信、联通或移动");
+            }
+            if (!CARRIERS.contains(carrier)) carrier = "custom";
+            if ("carrier".equals(ruleType) && !systemCarrierRoutes.add(carrier)) {
+                throw new IllegalArgumentException("系统运营商规则不能重复：" + carrierLabel(carrier));
+            }
             if (route.getBackendForwardId() == null) throw new IllegalArgumentException(carrier + " 未选择后端入口转发");
             Map<String, Object> backend = backendForward(route.getBackendForwardId());
             if (backend == null) throw new IllegalArgumentException("后端入口转发不存在或已停用：" + route.getBackendForwardId());
@@ -361,22 +403,26 @@ public class SourceIpEntryService {
             if ("udp".equals(mode)) throw new IllegalArgumentException("来源 IP 分流只支持 TCP，后端转发“" + backend.get("name") + "”仅支持 UDP");
 
             String cidrs = StringUtils.trimToEmpty(route.getCidrs());
-            if ("default".equals(carrier)) {
+            if ("default".equals(ruleType)) {
                 defaultCount++;
                 if (Boolean.FALSE.equals(route.getEnabled())) {
                     throw new IllegalArgumentException("默认回退线路不能停用");
                 }
+                carrier = "default";
                 cidrs = "";
-            } else if (cidrs.isBlank()) {
-                if (!CARRIER_URLS.containsKey(carrier)) {
-                    throw new IllegalArgumentException("自定义线路必须填写 CIDR，例如 203.0.113.0/24");
-                }
+            } else if ("carrier".equals(ruleType) && cidrs.isBlank()) {
                 cidrs = carrierCidrs(carrier);
                 if (cidrs.isBlank()) throw new IllegalArgumentException(carrierLabel(carrier) + " IP 库尚未同步，请先刷新运营商 IP 库或手动填写 CIDR");
+            } else if (cidrs.isBlank()) {
+                throw new IllegalArgumentException(ruleTypeLabel(ruleType) + "规则必须填写 CIDR，例如 203.0.113.0/24");
             } else {
                 cidrs = normalizeCidrs(cidrs);
             }
-            routes.add(new NormalizedRoute(carrier, route.getBackendForwardId(), cidrs, !Boolean.FALSE.equals(route.getEnabled())));
+            routes.add(new NormalizedRoute(carrier, ruleType, defaultRuleName(route, carrier, ruleType),
+                    clamp(numberObject(route.getPriority()), 1, 999), route.getBackendForwardId(), cidrs,
+                    trim(route.getRegion(), 100), normalizeAsn(route.getAsn()), trim(route.getTags(), 255),
+                    normalizeQualityPolicy(route.getQualityPolicy(), ruleType), trim(route.getNotes(), 500),
+                    !Boolean.FALSE.equals(route.getEnabled())));
         }
         if (defaultCount != 1) throw new IllegalArgumentException("必须且只能配置一条 default 默认回退线路");
         if (routes.stream().noneMatch(item -> item.enabled)) throw new IllegalArgumentException("至少启用一条来源 IP 线路");
@@ -422,20 +468,27 @@ public class SourceIpEntryService {
     }
 
     private List<Map<String, Object>> loadRoutes(long groupId) {
+        return loadRoutes(groupId, false);
+    }
+
+    private List<Map<String, Object>> loadRoutes(long groupId, boolean includeManagedCidrs) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT r.id,r.carrier,r.cidrs,r.enabled,r.backend_forward_id AS backendForwardId,"
+                "SELECT r.id,r.carrier,r.rule_type AS ruleType,r.rule_name AS ruleName,r.priority,r.cidrs,"
+                        + "r.region,r.asn,r.tags,r.quality_policy AS qualityPolicy,r.notes,r.enabled,r.backend_forward_id AS backendForwardId,"
                         + "f.name AS backendForwardName,f.in_port AS backendPort,f.protocol_mode AS protocolMode,"
                         + "t.in_node_id AS backendNodeId,COALESCE(NULLIF(n.server_ip,''),NULLIF(n.ip,''),t.in_ip) AS backendHost,"
                         + "n.name AS backendNodeName "
                         + "FROM source_ip_entry_route r LEFT JOIN forward f ON f.id=r.backend_forward_id "
                         + "LEFT JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id "
-                        + "WHERE r.group_id=? ORDER BY CASE r.carrier WHEN 'default' THEN 0 WHEN 'telecom' THEN 1 WHEN 'unicom' THEN 2 WHEN 'mobile' THEN 3 ELSE 4 END,r.id",
+                        + "WHERE r.group_id=? ORDER BY CASE r.carrier WHEN 'default' THEN 0 WHEN 'telecom' THEN 1 WHEN 'unicom' THEN 2 WHEN 'mobile' THEN 3 ELSE 4 END,r.priority,r.id",
                 groupId);
         for (Map<String, Object> row : rows) {
             String cidrs = Objects.toString(row.get("cidrs"), "");
             row.put("cidrCount", splitCidrs(cidrs).size());
             row.put("chainName", chainName(groupId, number(row.get("id"))));
-            if (!"custom".equals(row.get("carrier"))) row.remove("cidrs");
+            row.put("ruleTypeLabel", ruleTypeLabel(Objects.toString(row.get("ruleType"), "")));
+            row.put("qualityPolicyLabel", qualityPolicyLabel(Objects.toString(row.get("qualityPolicy"), "")));
+            if (!includeManagedCidrs && "carrier".equals(row.get("ruleType"))) row.remove("cidrs");
         }
         return rows;
     }
@@ -447,6 +500,89 @@ public class SourceIpEntryService {
                         + "FROM source_ip_carrier_database ORDER BY FIELD(carrier,'telecom','unicom','mobile')");
         for (Map<String, Object> row : rows) row.put("label", carrierLabel(Objects.toString(row.get("carrier"), "")));
         return rows;
+    }
+
+    private Map<String, Object> explainMatch(String sourceIp, Map<String, Object> group, List<Map<String, Object>> routes) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Object> defaultRoute = null;
+        List<Map<String, Object>> candidates = new ArrayList<>();
+        for (Map<String, Object> route : routes) {
+            if ("default".equals(route.get("carrier"))) defaultRoute = route;
+            if (!truth(route.get("enabled")) || "default".equals(route.get("carrier"))) continue;
+            Match match = bestMatch(sourceIp, Objects.toString(route.get("cidrs"), ""));
+            if (match == null) continue;
+            Map<String, Object> candidate = routeSummary(route);
+            candidate.put("matchedCidr", match.cidr);
+            candidate.put("prefixLength", match.prefixLength);
+            candidates.add(candidate);
+        }
+        candidates.sort((left, right) -> {
+            int prefix = Long.compare(number(right.get("prefixLength")), number(left.get("prefixLength")));
+            if (prefix != 0) return prefix;
+            int priority = Long.compare(number(left.get("priority")), number(right.get("priority")));
+            if (priority != 0) return priority;
+            return Long.compare(number(left.get("id")), number(right.get("id")));
+        });
+        Map<String, Object> selected = candidates.isEmpty() ? routeSummary(defaultRoute) : candidates.get(0);
+        result.put("groupId", number(group.get("id")));
+        result.put("groupName", Objects.toString(group.get("name"), ""));
+        result.put("enabled", truth(group.get("enabled")));
+        result.put("state", Objects.toString(group.get("state"), ""));
+        result.put("listener", (StringUtils.defaultIfBlank(Objects.toString(group.get("listen_host"), ""), "全部地址"))
+                + ":" + group.get("listen_port"));
+        result.put("matched", !candidates.isEmpty());
+        result.put("selectedRoute", selected);
+        result.put("defaultRoute", routeSummary(defaultRoute));
+        result.put("candidates", candidates);
+        result.put("reason", candidates.isEmpty()
+                ? "没有 CIDR 命中，运行时会走默认回退线路"
+                : "命中 " + candidates.get(0).get("matchedCidr") + "，按最长前缀优先选择该规则");
+        if (!truth(group.get("enabled"))) result.put("warning", "该分流组已停用，调试结果只代表保存的规则，不代表当前运行时");
+        return result;
+    }
+
+    private Map<String, Object> routeSummary(Map<String, Object> route) {
+        if (route == null) return null;
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("id", number(route.get("id")));
+        summary.put("carrier", Objects.toString(route.get("carrier"), ""));
+        summary.put("carrierLabel", carrierLabel(Objects.toString(route.get("carrier"), "")));
+        summary.put("ruleType", Objects.toString(route.get("ruleType"), ""));
+        summary.put("ruleTypeLabel", ruleTypeLabel(Objects.toString(route.get("ruleType"), "")));
+        summary.put("ruleName", StringUtils.defaultIfBlank(Objects.toString(route.get("ruleName"), ""), carrierLabel(Objects.toString(route.get("carrier"), ""))));
+        summary.put("priority", number(route.get("priority")));
+        summary.put("backendForwardId", number(route.get("backendForwardId")));
+        summary.put("backendForwardName", Objects.toString(route.get("backendForwardName"), ""));
+        summary.put("backendNodeName", Objects.toString(route.get("backendNodeName"), ""));
+        summary.put("backendHost", Objects.toString(route.get("backendHost"), ""));
+        summary.put("backendPort", number(route.get("backendPort")));
+        summary.put("region", Objects.toString(route.get("region"), ""));
+        summary.put("asn", Objects.toString(route.get("asn"), ""));
+        summary.put("qualityPolicy", Objects.toString(route.get("qualityPolicy"), ""));
+        summary.put("qualityPolicyLabel", qualityPolicyLabel(Objects.toString(route.get("qualityPolicy"), "")));
+        summary.put("cidrCount", number(route.get("cidrCount")));
+        return summary;
+    }
+
+    private Map<String, Object> inferCarrier(String sourceIp) {
+        Map<String, Object> best = new LinkedHashMap<>();
+        Match bestMatch = null;
+        String bestCarrier = "";
+        for (String carrier : SYSTEM_CARRIERS) {
+            Match match = bestMatch(sourceIp, carrierCidrs(carrier));
+            if (match == null) continue;
+            if (bestMatch == null || match.prefixLength > bestMatch.prefixLength) {
+                bestMatch = match;
+                bestCarrier = carrier;
+            }
+        }
+        best.put("carrier", StringUtils.defaultIfBlank(bestCarrier, "unknown"));
+        best.put("label", bestCarrier.isEmpty() ? "未知/未命中运营商库" : carrierLabel(bestCarrier));
+        if (bestMatch != null) {
+            best.put("matchedCidr", bestMatch.cidr);
+            best.put("prefixLength", bestMatch.prefixLength);
+        }
+        return best;
     }
 
     @Scheduled(initialDelay = 20_000L, fixedDelay = 24L * 60L * 60L * 1000L)
@@ -531,6 +667,42 @@ public class SourceIpEntryService {
         return String.join("\n", values);
     }
 
+    private Match bestMatch(String sourceIp, String cidrs) {
+        if (StringUtils.isBlank(sourceIp) || StringUtils.isBlank(cidrs)) return null;
+        Match best = null;
+        for (String cidr : splitCidrs(cidrs)) {
+            Match match = matchCidr(sourceIp, cidr);
+            if (match == null) continue;
+            if (best == null || match.prefixLength > best.prefixLength) best = match;
+        }
+        return best;
+    }
+
+    private Match matchCidr(String sourceIp, String cidr) {
+        if (!isCidr(cidr)) return null;
+        try {
+            String[] parts = cidr.split("/", 2);
+            InetAddress source = InetAddress.getByName(stripIpLiteral(sourceIp));
+            InetAddress network = InetAddress.getByName(parts[0]);
+            byte[] sourceBytes = source.getAddress();
+            byte[] networkBytes = network.getAddress();
+            if (sourceBytes.length != networkBytes.length) return null;
+            int prefix = Integer.parseInt(parts[1]);
+            int fullBytes = prefix / 8;
+            int remainingBits = prefix % 8;
+            for (int index = 0; index < fullBytes; index++) {
+                if (sourceBytes[index] != networkBytes[index]) return null;
+            }
+            if (remainingBits > 0) {
+                int mask = 0xff << (8 - remainingBits);
+                if ((sourceBytes[fullBytes] & mask) != (networkBytes[fullBytes] & mask)) return null;
+            }
+            return new Match(cidr, prefix);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private boolean isCidr(String value) {
         if (StringUtils.isBlank(value) || value.indexOf('/') <= 0) return false;
         String[] parts = value.split("/", 2);
@@ -547,11 +719,23 @@ public class SourceIpEntryService {
 
     private boolean isIp(String value) {
         try {
-            InetAddress.getByName(value);
+            String normalized = stripIpLiteral(value);
+            if (!normalized.matches("[0-9a-fA-F:.]+")) return false;
+            InetAddress.getByName(normalized);
             return true;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private String stripIpLiteral(String value) {
+        String normalized = StringUtils.trimToEmpty(value);
+        if (normalized.startsWith("[") && normalized.contains("]")) {
+            normalized = normalized.substring(1, normalized.indexOf(']'));
+        }
+        int zoneIndex = normalized.indexOf('%');
+        if (zoneIndex > 0) normalized = normalized.substring(0, zoneIndex);
+        return normalized;
     }
 
     private String backendAddress(Map<String, Object> backend) {
@@ -612,6 +796,92 @@ public class SourceIpEntryService {
         };
     }
 
+    private String normalizeRuleType(String requested, String carrier) {
+        String value = StringUtils.lowerCase(StringUtils.trimToEmpty(requested));
+        if (value.isEmpty()) {
+            value = "default".equals(carrier) ? "default"
+                    : SYSTEM_CARRIERS.contains(carrier) ? "carrier" : "cidr";
+        }
+        if (!RULE_TYPES.contains(value)) throw new IllegalArgumentException("不支持的规则类型：" + value);
+        return value;
+    }
+
+    private String normalizeQualityPolicy(String requested, String ruleType) {
+        String value = StringUtils.lowerCase(StringUtils.defaultIfBlank(requested, "static").trim());
+        if (!QUALITY_POLICIES.contains(value)) value = "static";
+        if ("risk".equals(ruleType) && "static".equals(value)) return "quarantine";
+        return value;
+    }
+
+    private String normalizeAsn(String value) {
+        String text = trim(value, 64);
+        if (StringUtils.isBlank(text)) return "";
+        text = text.toUpperCase(Locale.ROOT).replace("ASN", "AS");
+        if (text.matches("\\d+")) text = "AS" + text;
+        return text;
+    }
+
+    private String defaultRuleName(SourceIpEntrySaveDto.Route route, String carrier, String ruleType) {
+        String requested = trim(route.getRuleName(), 100);
+        if (StringUtils.isNotBlank(requested)) return requested;
+        if ("carrier".equals(ruleType) || "default".equals(ruleType)) return carrierLabel(carrier);
+        return ruleTypeLabel(ruleType);
+    }
+
+    private int clamp(Long value, int min, int max) {
+        long raw = value == null ? 100 : value;
+        return (int) Math.max(min, Math.min(max, raw));
+    }
+
+    private String trim(String value, int max) {
+        String text = StringUtils.trimToEmpty(value);
+        return text.length() > max ? text.substring(0, max) : text;
+    }
+
+    private List<Map<String, String>> ruleTypeOptions() {
+        return List.of(
+                Map.of("key", "default", "label", "默认回退", "description", "没有命中任何规则时使用"),
+                Map.of("key", "carrier", "label", "运营商", "description", "使用电信/联通/移动 CIDR 库"),
+                Map.of("key", "cidr", "label", "CIDR/IP 段", "description", "手动维护 IP 或网段"),
+                Map.of("key", "asn", "label", "ASN", "description", "把某个 ASN 的 CIDR 粘贴进规则"),
+                Map.of("key", "region", "label", "地区", "description", "把某个地区的 CIDR 归入同一线路"),
+                Map.of("key", "vip", "label", "VIP 来源", "description", "VIP/精品客户来源 IP 走专线"),
+                Map.of("key", "customer", "label", "专属客户", "description", "家庭/公司/客户固定出口 IP 绑定线路"),
+                Map.of("key", "gray", "label", "灰度测试", "description", "指定来源先试新入口或新协议"),
+                Map.of("key", "risk", "label", "风险隔离", "description", "异常来源导向隔离线路或低优线路"));
+    }
+
+    private List<Map<String, String>> qualityPolicyOptions() {
+        return List.of(
+                Map.of("key", "static", "label", "固定规则", "description", "只按来源 IP 命中，不额外改线路"),
+                Map.of("key", "quality_aware", "label", "质量联动", "description", "建议后端选择入口容灾/质量调度托管的线路"),
+                Map.of("key", "prefer_primary", "label", "主线优先", "description", "来源规则命中后仍以主线路稳定性为第一优先"),
+                Map.of("key", "quarantine", "label", "隔离/降级", "description", "风险来源走隔离、低优或限速后端"));
+    }
+
+    private String ruleTypeLabel(String ruleType) {
+        return switch (ruleType) {
+            case "carrier" -> "运营商";
+            case "cidr" -> "CIDR/IP 段";
+            case "asn" -> "ASN";
+            case "region" -> "地区";
+            case "vip" -> "VIP 来源";
+            case "customer" -> "专属客户";
+            case "gray" -> "灰度测试";
+            case "risk" -> "风险隔离";
+            default -> "默认回退";
+        };
+    }
+
+    private String qualityPolicyLabel(String policy) {
+        return switch (policy) {
+            case "quality_aware" -> "质量联动";
+            case "prefer_primary" -> "主线优先";
+            case "quarantine" -> "隔离/降级";
+            default -> "固定规则";
+        };
+    }
+
     private String conflictSuffix(AgentPortCheckUtil.Result result) {
         return result.getConflicts() == null || result.getConflicts().isEmpty()
                 ? "" : "（" + String.join("；", result.getConflicts()) + "）";
@@ -643,6 +913,11 @@ public class SourceIpEntryService {
                               boolean enabled, List<NormalizedRoute> routes) {
     }
 
-    private record NormalizedRoute(String carrier, Long backendForwardId, String cidrs, boolean enabled) {
+    private record NormalizedRoute(String carrier, String ruleType, String ruleName, int priority,
+                                   Long backendForwardId, String cidrs, String region, String asn,
+                                   String tags, String qualityPolicy, String notes, boolean enabled) {
+    }
+
+    private record Match(String cidr, int prefixLength) {
     }
 }
