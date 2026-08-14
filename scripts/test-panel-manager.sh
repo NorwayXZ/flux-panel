@@ -18,7 +18,8 @@ mkdir -p "${FIXTURE_DIR}/scripts" "${MOCK_DIR}"
 cp "${PROJECT_DIR}/VERSION" "${PROJECT_DIR}/docker-compose.yml" \
   "${PROJECT_DIR}/docker-compose-source.yml" "${PROJECT_DIR}/gost.sql" "${FIXTURE_DIR}/"
 cp "${PROJECT_DIR}/scripts/flux-panel.sh" \
-  "${PROJECT_DIR}/scripts/flux-panel-update-worker.sh" "${FIXTURE_DIR}/scripts/"
+  "${PROJECT_DIR}/scripts/flux-panel-update-worker.sh" \
+  "${PROJECT_DIR}/scripts/flux-panel-auto-update-check.sh" "${FIXTURE_DIR}/scripts/"
 
 cat > "${MOCK_DIR}/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -120,6 +121,7 @@ grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'DB_POOL_MAX_SIZE=10' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'BACKEND_HEALTH_START_PERIOD=420s' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'BACKEND_HEALTH_RETRIES=6' "${CONFIG_DIR}/flux-panel.env"
+grep -Fq 'AUTO_UPDATE_ENABLED=1' "${CONFIG_DIR}/flux-panel.env"
 grep -Fq 'JAVA_OPTS="-Xms256m -Xmx1024m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError' "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"

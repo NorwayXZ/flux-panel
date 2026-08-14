@@ -40,6 +40,7 @@ jobs:
           sh scripts/test-agent-installer.sh
           bash scripts/test-runtime-healthcheck.sh
           sh scripts/check-runtime-safety.sh
+          bash scripts/test-auto-update-check.sh
           sudo bash scripts/test-panel-manager.sh
           test ! -e panel_install.sh
           test ! -e docker-compose-v4.yml
@@ -164,9 +165,9 @@ jobs:
           docker pull "${BACKEND_IMAGE}:${VERSION}"
           docker pull "${FRONTEND_IMAGE}:${VERSION}"
           docker run --rm --entrypoint sh "${BACKEND_IMAGE}:${VERSION}" -c \
-            "test -x /app/healthcheck.sh && grep -aq 'RuntimeHealthController.class' /app/app.jar && grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar && grep -aq 'BandwidthTestService.class' /app/app.jar && grep -aq 'UdpQuicDiagnosticService.class' /app/app.jar && grep -aq 'VirtualLanService.class' /app/app.jar && grep -aq 'PrivateNetworkService.class' /app/app.jar && grep -aq 'NetworkRouteApplicationService.class' /app/app.jar && grep -aq 'CloudFrontXhttpService.class' /app/app.jar && grep -aq 'AwsAccessService.class' /app/app.jar && grep -aq 'NftForwardService.class' /app/app.jar && grep -aq 'MultiLineAggregationService.class' /app/app.jar && grep -aq 'DockerAppCenterService.class' /app/app.jar"
+            "test -x /app/healthcheck.sh && grep -aq 'RuntimeHealthController.class' /app/app.jar && grep -aq 'NodeServiceDiscoveryService.class' /app/app.jar && grep -aq 'QualityLabService.class' /app/app.jar && grep -aq 'ProtocolProbeService.class' /app/app.jar && grep -aq 'BandwidthTestService.class' /app/app.jar && grep -aq 'UdpQuicDiagnosticService.class' /app/app.jar && grep -aq 'VirtualLanService.class' /app/app.jar && grep -aq 'PrivateNetworkService.class' /app/app.jar && grep -aq 'NetworkRouteApplicationService.class' /app/app.jar && grep -aq 'CloudFrontXhttpService.class' /app/app.jar && grep -aq 'AwsAccessService.class' /app/app.jar && grep -aq 'NftForwardService.class' /app/app.jar && grep -aq 'MultiLineAggregationService.class' /app/app.jar && grep -aq 'DockerAppCenterService.class' /app/app.jar"
           docker run --rm --entrypoint sh "${FRONTEND_IMAGE}:${VERSION}" -c \
-            "grep -Rqs '发现服务' /usr/share/nginx/html/assets && grep -Rqs '网络质量实验室' /usr/share/nginx/html/assets && grep -Rqs '真实带宽测试中心' /usr/share/nginx/html/assets && grep -Rqs 'UDP / QUIC 诊断' /usr/share/nginx/html/assets && grep -Rqs '多线路并发调度' /usr/share/nginx/html/assets && grep -Rqs '线路调度中心' /usr/share/nginx/html/assets && grep -Rqs '内网组建与出口' /usr/share/nginx/html/assets && grep -Rqs 'VLESS + XHTTP + TLS' /usr/share/nginx/html/assets && grep -Rqs 'AWS 账号' /usr/share/nginx/html/assets && grep -Rqs 'nftables 端口转发' /usr/share/nginx/html/assets && grep -Rqs 'Docker 应用中心' /usr/share/nginx/html/assets"
+            "grep -Rqs '发现服务' /usr/share/nginx/html/assets && grep -Rqs '协议测速中心' /usr/share/nginx/html/assets && grep -Rqs '网络质量实验室' /usr/share/nginx/html/assets && grep -Rqs '真实带宽测试中心' /usr/share/nginx/html/assets && grep -Rqs 'UDP / QUIC 诊断' /usr/share/nginx/html/assets && grep -Rqs '多线路并发调度' /usr/share/nginx/html/assets && grep -Rqs '线路调度中心' /usr/share/nginx/html/assets && grep -Rqs '内网组建与出口' /usr/share/nginx/html/assets && grep -Rqs 'VLESS + XHTTP + TLS' /usr/share/nginx/html/assets && grep -Rqs 'AWS 账号' /usr/share/nginx/html/assets && grep -Rqs 'nftables 端口转发' /usr/share/nginx/html/assets && grep -Rqs 'Docker 应用中心' /usr/share/nginx/html/assets"
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'

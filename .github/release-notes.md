@@ -1,3 +1,11 @@
+## 2.51.11 Protocol probe center and automatic panel updates
+
+- Adds an independent Protocol Probe Center instead of mixing protocol-node measurements into the browser/Cloudflare local speed page.
+- Adds Agent-side availability, handshake latency, first-response latency, download throughput, upload throughput, HTTP status, error reporting, and persistent history for SOCKS5, HTTP, and VLESS+REALITY.
+- Keeps Shadowsocks, Trojan, Hysteria2, TUIC v5, and WireGuard visibly pending until reliable Agent client probes exist; no protocol reports fabricated throughput.
+- Adds a systemd timer that checks the latest GitHub Release every 15 minutes and queues the existing guarded update worker. Health checks, rollback, database-volume preservation, manual updates, and systems without systemd remain supported.
+- Publishes Agent/Connector `2.51.11` because the new `ProtocolProbe` command is implemented in the Agent runtime.
+
 ## 2.51.10 Client speed display fix
 
 - Fixes the local speed center summary so `HTTP failure rate` now renders `0%` instead of `-` when no requests fail.

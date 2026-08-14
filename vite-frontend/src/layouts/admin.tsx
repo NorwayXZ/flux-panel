@@ -169,6 +169,11 @@ export default function AdminLayout({
       icon: <LockKeyhole className="h-5 w-5" />,
     },
     {
+      path: "/protocol-probe",
+      label: "协议测速中心",
+      icon: <Gauge className="h-5 w-5" />,
+    },
+    {
       path: "/home-access",
       label: "家庭网络中转",
       icon: <Home className="h-5 w-5" />,
@@ -346,6 +351,7 @@ export default function AdminLayout({
         "/service-publishing",
         "/docker-apps",
         "/private-proxy",
+        "/protocol-probe",
         "/home-access",
         "/private-network",
       ],

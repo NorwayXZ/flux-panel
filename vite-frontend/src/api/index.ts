@@ -790,6 +790,65 @@ export const resetPrivateProxyGrantFlow = (id: number) =>
     "/private-proxy/list",
   ]);
 
+export interface ProtocolProbeCapability {
+  status: "supported" | "pending";
+  label: string;
+  message: string;
+}
+
+export interface ProtocolProbeRun {
+  id?: number;
+  runId?: number;
+  proxyId?: number;
+  status?: "running" | "success" | "failed";
+  available?: boolean;
+  targetUrl?: string;
+  downloadBytes?: number;
+  uploadBytes?: number;
+  latencyMs?: number;
+  handshakeMs?: number;
+  downloadBytesActual?: number;
+  downloadMbps?: number;
+  uploadBytesActual?: number;
+  uploadMbps?: number;
+  downloadStatus?: number;
+  uploadStatus?: number;
+  error?: string;
+  downloadError?: string;
+  uploadError?: string;
+  agentVersion?: string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+export interface ProtocolProbeOverviewItem {
+  proxy: PrivateProxyItem;
+  capability: ProtocolProbeCapability;
+  latest?: ProtocolProbeRun | null;
+}
+
+export interface ProtocolProbeOverview {
+  minimumAgentVersion: string;
+  downloadUrl: string;
+  uploadUrl: string;
+  items: ProtocolProbeOverviewItem[];
+}
+
+export const getProtocolProbeOverview = () =>
+  Network.post<ProtocolProbeOverview>("/protocol-probe/overview");
+export const runProtocolProbe = (data: {
+  proxyId: number;
+  downloadBytes: number;
+  uploadBytes: number;
+  downloadUrl?: string;
+  uploadUrl?: string;
+}) => Network.post<ProtocolProbeRun>("/protocol-probe/run", data);
+export const getProtocolProbeHistory = (proxyId: number, limit = 30) =>
+  Network.post<ProtocolProbeRun[]>("/protocol-probe/history", {
+    proxyId,
+    limit,
+  });
+
 export interface NetworkDiagnosticResult {
   mode: "ping" | "tcp" | "dns" | "trace";
   target: string;

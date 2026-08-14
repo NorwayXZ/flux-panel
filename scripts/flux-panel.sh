@@ -12,8 +12,11 @@ SOURCE_URL="https://github.com/${REPOSITORY}/archive/refs/heads/${BRANCH}.tar.gz
 UPDATER_STATE_DIR="${FLUX_PANEL_UPDATER_STATE_DIR:-/var/lib/flux-panel-updater}"
 MANAGER_BIN="${FLUX_PANEL_MANAGER_BIN:-/usr/local/sbin/flux-panel-manager}"
 WORKER_BIN="${FLUX_PANEL_WORKER_BIN:-/usr/local/sbin/flux-panel-update-worker}"
+AUTO_UPDATE_CHECK_BIN="${FLUX_PANEL_AUTO_UPDATE_CHECK_BIN:-/usr/local/sbin/flux-panel-auto-update-check}"
 UPDATER_SERVICE="flux-panel-updater.service"
 UPDATER_PATH="flux-panel-updater.path"
+AUTO_UPDATE_SERVICE="flux-panel-auto-update.service"
+AUTO_UPDATE_TIMER="flux-panel-auto-update.timer"
 UPDATE_LOCK_FILE="${FLUX_PANEL_UPDATE_LOCK_FILE:-/run/flux-panel-update.lock}"
 
 log() {
@@ -203,6 +206,7 @@ ensure_runtime_defaults() {
   ensure_env_default FORWARD_SWITCH_COOLDOWN_MS 120000
   ensure_env_default FORWARD_FAILBACK_STABLE_MS 180000
   ensure_env_default FORWARD_LATENCY_SWITCH_GAP_MS 15
+  ensure_env_default AUTO_UPDATE_ENABLED 1
   chmod 600 "${ENV_FILE}"
 }
 
@@ -278,6 +282,7 @@ FORWARD_RECOVERY_THRESHOLD=2
 FORWARD_SWITCH_COOLDOWN_MS=120000
 FORWARD_FAILBACK_STABLE_MS=180000
 FORWARD_LATENCY_SWITCH_GAP_MS=15
+AUTO_UPDATE_ENABLED=1
 JAVA_OPTS=$(recommended_java_opts)
 EOF
   chmod 600 "${ENV_FILE}"
@@ -310,12 +315,16 @@ install_update_service() {
   chmod 750 "${UPDATER_STATE_DIR}"
 
   local temporary_manager temporary_worker
+  local temporary_auto_update
   temporary_manager="$(mktemp "${MANAGER_BIN}.XXXXXX")"
   temporary_worker="$(mktemp "${WORKER_BIN}.XXXXXX")"
+  temporary_auto_update="$(mktemp "${AUTO_UPDATE_CHECK_BIN}.XXXXXX")"
   install -m 750 "${INSTALL_DIR}/scripts/flux-panel.sh" "${temporary_manager}"
   install -m 750 "${INSTALL_DIR}/scripts/flux-panel-update-worker.sh" "${temporary_worker}"
+  install -m 750 "${INSTALL_DIR}/scripts/flux-panel-auto-update-check.sh" "${temporary_auto_update}"
   mv -f "${temporary_manager}" "${MANAGER_BIN}"
   mv -f "${temporary_worker}" "${WORKER_BIN}"
+  mv -f "${temporary_auto_update}" "${AUTO_UPDATE_CHECK_BIN}"
 
   cat > "/etc/systemd/system/${UPDATER_SERVICE}" <<EOF
 [Unit]
@@ -327,6 +336,11 @@ Requires=docker.service
 [Service]
 Type=oneshot
 ExecStart=${WORKER_BIN}
+Environment="FLUX_PANEL_DIR=${INSTALL_DIR}"
+Environment="FLUX_PANEL_CONFIG_DIR=${CONFIG_DIR}"
+Environment="FLUX_PANEL_UPDATER_STATE_DIR=${UPDATER_STATE_DIR}"
+Environment="FLUX_PANEL_MANAGER=${MANAGER_BIN}"
+Environment="FLUX_PANEL_UPDATE_LOCK_FILE=${UPDATE_LOCK_FILE}"
 TimeoutStartSec=0
 Nice=10
 EOF
@@ -343,11 +357,44 @@ Unit=${UPDATER_SERVICE}
 WantedBy=multi-user.target
 EOF
 
-  if ! systemctl daemon-reload || ! systemctl enable --now "${UPDATER_PATH}" >/dev/null; then
+  cat > "/etc/systemd/system/${AUTO_UPDATE_SERVICE}" <<EOF
+[Unit]
+Description=Check for new Flux Panel releases
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${AUTO_UPDATE_CHECK_BIN}
+Environment="FLUX_PANEL_REPOSITORY=${REPOSITORY}"
+Environment="FLUX_PANEL_DIR=${INSTALL_DIR}"
+Environment="FLUX_PANEL_CONFIG_DIR=${CONFIG_DIR}"
+Environment="FLUX_PANEL_UPDATER_STATE_DIR=${UPDATER_STATE_DIR}"
+Environment="FLUX_PANEL_UPDATE_LOCK_FILE=${UPDATE_LOCK_FILE}"
+Nice=10
+EOF
+
+  cat > "/etc/systemd/system/${AUTO_UPDATE_TIMER}" <<EOF
+[Unit]
+Description=Periodic Flux Panel release check
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=${AUTO_UPDATE_SERVICE}
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  if ! systemctl daemon-reload \
+      || ! systemctl enable --now "${UPDATER_PATH}" >/dev/null \
+      || ! systemctl enable --now "${AUTO_UPDATE_TIMER}" >/dev/null; then
     log "online update service could not be installed; command-line updates remain available"
     return 0
   fi
-  if systemctl is-active --quiet "${UPDATER_PATH}"; then
+  if systemctl is-active --quiet "${UPDATER_PATH}" && systemctl is-active --quiet "${AUTO_UPDATE_TIMER}"; then
     touch "${UPDATER_STATE_DIR}/enabled"
     chmod 640 "${UPDATER_STATE_DIR}/enabled"
     [[ -f "${UPDATER_STATE_DIR}/status.properties" ]] || write_updater_status "idle" "Ready"
@@ -363,10 +410,13 @@ remove_update_service() {
   if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
     systemctl disable --now "${UPDATER_PATH}" >/dev/null 2>&1 || true
     systemctl stop "${UPDATER_SERVICE}" >/dev/null 2>&1 || true
-    rm -f "/etc/systemd/system/${UPDATER_SERVICE}" "/etc/systemd/system/${UPDATER_PATH}"
+    systemctl disable --now "${AUTO_UPDATE_TIMER}" >/dev/null 2>&1 || true
+    systemctl stop "${AUTO_UPDATE_SERVICE}" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${UPDATER_SERVICE}" "/etc/systemd/system/${UPDATER_PATH}" \
+      "/etc/systemd/system/${AUTO_UPDATE_SERVICE}" "/etc/systemd/system/${AUTO_UPDATE_TIMER}"
     systemctl daemon-reload || true
   fi
-  rm -f "${MANAGER_BIN}" "${WORKER_BIN}"
+  rm -f "${MANAGER_BIN}" "${WORKER_BIN}" "${AUTO_UPDATE_CHECK_BIN}"
   if [[ "${remove_state}" == "1" ]]; then
     rm -rf "${UPDATER_STATE_DIR}"
   fi
@@ -608,6 +658,7 @@ Environment variables:
   FLUX_PANEL_DIR            Application directory, default: /opt/flux-panel
   FLUX_PANEL_COMPOSE_FILE   Optional custom Compose file for development
   FLUX_PANEL_DISABLE_ONLINE_UPDATES=1  Skip systemd update service installation
+  AUTO_UPDATE_ENABLED=0  Keep the request watcher but disable periodic release checks
   FLUX_PANEL_PURGE=1        Required confirmation for permanent deletion
 EOF
 }

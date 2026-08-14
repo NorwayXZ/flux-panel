@@ -6,6 +6,8 @@
 
 ## 近期版本
 
+`2.51.11` 新增独立协议测速中心和发布后自动更新：协议测速先支持 SOCKS5、HTTP、VLESS+REALITY 的 Agent 侧可用性、握手延迟、首响应延迟、下载/上传吞吐与历史记录；Shadowsocks、Trojan、Hysteria2、TUIC v5、WireGuard 等协议在对应 Agent 客户端探针完成前不会伪造结果。面板安装器会通过 systemd 定时检查 GitHub 最新 Release，并复用原有健康检查与失败回滚链路自动应用更新。
+
 `2.51.10` 修正本机测速中心的结果展示：HTTP 失败率会正常显示 `0%`，Cloudflare 丢包卡在未接入 TURN 时会明确显示为 HTTP 近似丢包，避免看起来像空数据。
 
 `2.51.6` 将来源 IP 分流扩展为规则引擎：支持运营商、CIDR、ASN、地区、VIP、专属客户、灰度测试和风险隔离规则；新增来源 IP 调试中心，可直接查看某个来源 IP 命中的规则、后端入口、默认回退和运营商库判断；规则支持优先级、标签、备注与质量策略标记。
@@ -56,6 +58,7 @@
 - 支持 SOCKS5、HTTP、Shadowsocks、VLESS+REALITY、Trojan、Hysteria2、TUIC v5 与 WireGuard 私人代理
 - 提供由指定节点执行的 Ping、TCP、DNS 和路由诊断工具箱
 - 网络质量实验室长期记录 TCP、TLS、TTFB、P50/P95/P99、抖动、失败率及 IPv4/IPv6 线路画像
+- 协议测速中心独立测试已创建代理的可用性、握手延迟、首响应延迟、下载吞吐和上传吞吐，并保留每次测试历史
 - 服务器资产中心统一记录厂商、地区、配置、成本、到期、线路、套餐、标签和续费提醒
 - 动态 DNS 支持 Cloudflare、DNSPod、阿里云 DNS，以及 IPv4/IPv6 变更历史和失败告警
 - 三网优化可按电信、联通、移动的 DNS 线路，将新连接分配到对应公网入口并自动健康回退
@@ -196,6 +199,16 @@ Agent `2.42.0` 会上报稳定机器指纹。同一节点密钥被另一台机�
 诊断请求只接受合法 IP 或主机名，使用固定程序和固定参数，不接受 Shell 命令；单次最多探测 10 次、超时 30 秒、输出 32 KB。SOCKS5、HTTP、Shadowsocks 和网络诊断要求所选节点 Agent `2.19.0` 或更高版本；VLESS+REALITY 要求 Agent `2.20.0`，旧 Agent 的现有业务不受影响。
 
 升级仅新增 `private_proxy` 表、一个可空的加密连接配置列，并将旧安装的协议名称字段无损扩宽到 32 个字符，不删除或改写现有业务记录；手动维护数据库时可执行 [`migrations/20260727_private_proxy.sql`](migrations/20260727_private_proxy.sql)。旧版面板会忽略该表和新增列。回退前建议先删除 Shadowsocks 和 VLESS+REALITY；如果节点离线，应等待其上线并完成清理，避免旧版无法继续管理仍在 Agent 中运行的代理服务。面板出现异常时可执行 `sudo /usr/local/sbin/flux-panel-manager rollback` 回到上一成功版本。
+
+### 协议测速中心
+
+协议测速中心与“本机单线程测速”分开。前者验证一个已经创建的协议节点能否由 Agent 建立连接并完成真实 HTTP 下载/上传，后者测浏览器到 Cloudflare 的本地网络体验。
+
+第一版支持 SOCKS5、HTTP 和 VLESS+REALITY。SOCKS5/HTTP 由协议所在节点 Agent 直接连接本地监听端口；VLESS+REALITY 会由 Agent 临时启动一个 Xray 客户端，再通过临时 SOCKS 端口执行同一套探针。每次结果会记录可用性、Agent 握手耗时、首响应延迟、实际下载/上传字节、Mbps、HTTP 状态和错误信息。
+
+Shadowsocks、Trojan、Hysteria2、TUIC v5 和 WireGuard 在对应 Agent 客户端探针完成前显示“等待 Agent 探针”，不会把服务器端口监听或面板创建成功错误当成协议可用，更不会显示伪造吞吐。第一版探测源是协议所在节点 Agent，因此适合做运行时和出口链路自检；要测手机、家庭宽带或其他运营商到节点的真实体验，需要后续接入本地 Connector/客户端探针。
+
+单次下载和上传测试量可在页面设置，范围为 `1-128 MiB`。默认使用 Cloudflare 测速端点，单次探测有超时和大小上限，避免误把测速变成长期占满节点带宽的任务。建议先使用 `32 MiB` 下载、`16 MiB` 上传，确认协议可用后再增加样本。
 
 ### 网络质量实验室
 
@@ -769,6 +782,8 @@ MYSQL_BUFFER_POOL_SIZE=256M
 
 在线更新只允许拉取本仓库固定的 `main` 分支和其中声明的版本化镜像，面板容器不会挂载 Docker Socket，也不能提交任意宿主机命令。更新过程会保留数据库卷；新镜像启动失败时，脚本会恢复上一版配置和镜像。
 
+一键安装的面板默认安装两个 systemd 单元：更新请求 watcher，以及每 `15` 分钟检查一次 GitHub 最新 Release 的定时器。发现远程版本高于本机版本时，检查器只写入 `/var/lib/flux-panel-updater/update.request`，真正更新仍由原有 worker 执行，并继续经过拉取、启动、健康检查和自动回滚。`AUTO_UPDATE_ENABLED=0` 可以关闭定时检查，但不会删除手动更新和请求 watcher；没有 systemd 的主机仍需使用命令行更新。
+
 仍可使用命令行更新：
 
 更新前先执行数据库备份，然后运行：
@@ -791,6 +806,7 @@ sudo /usr/local/sbin/flux-panel-manager rollback
 
 - `/usr/local/sbin/flux-panel-manager`：固定参数的面板管理脚本
 - `/usr/local/sbin/flux-panel-update-worker`：受 systemd 调用的更新任务
+- `/usr/local/sbin/flux-panel-auto-update-check`：只负责检查 Release 并排队，不直接替换容器
 - `/var/lib/flux-panel-updater`：更新请求、状态和最近一次日志
 
 普通用户无权读取状态或提交更新任务。
