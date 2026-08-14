@@ -75,6 +75,41 @@ const runStatus = (run?: ProtocolProbeRun | null) => {
   return { label: "失败", color: "danger" as const };
 };
 
+const itemTarget = (item?: ProtocolProbeOverviewItem | null): ProtocolProbeTarget | null => {
+  if (!item) return null;
+  if (item.target?.targetType && item.target?.targetId != null) return item.target;
+  if (item.targetType && item.targetId != null && item.name && item.proxyType) {
+    return {
+      targetType: item.targetType,
+      targetId: item.targetId,
+      name: item.name,
+      proxyType: item.proxyType,
+      host: item.host,
+      port: item.port,
+      nodeName: item.nodeName,
+      source: item.source,
+    };
+  }
+  if (item.proxy) {
+    return {
+      targetType: "created",
+      targetId: item.proxy.id,
+      name: item.proxy.name,
+      proxyType: item.proxy.proxyType,
+      host: item.proxy.publicHost || item.proxy.bindIp || "",
+      port: item.proxy.listenPort,
+      nodeName: item.proxy.nodeName,
+      source: "CloudNest 创建",
+    };
+  }
+  return null;
+};
+
+const itemKey = (item?: ProtocolProbeOverviewItem | null) => {
+  const target = itemTarget(item);
+  return target ? `${target.targetType}:${target.targetId}` : null;
+};
+
 const emptyExternalForm: ProtocolProbeExternalCreateRequest = {
   name: "",
   proxyType: "socks5",
@@ -106,9 +141,8 @@ export default function ProtocolProbePage() {
         throw new Error(response.msg || "加载协议测速中心失败");
       setOverview(response.data);
       if (!selectedKey && response.data.items.length > 0) {
-        const first = response.data.items[0].target;
-
-        setSelectedKey(`${first.targetType}:${first.targetId}`);
+        const first = response.data.items.map((item) => itemTarget(item)).find(Boolean);
+        if (first) setSelectedKey(`${first.targetType}:${first.targetId}`);
       }
     } catch (error) {
       toast.error(
@@ -125,12 +159,11 @@ export default function ProtocolProbePage() {
 
   const selected = useMemo(
     () =>
-      overview?.items.find(
-        (item) =>
-          `${item.target.targetType}:${item.target.targetId}` === selectedKey,
-      ),
+      overview?.items.find((item) => itemKey(item) === selectedKey),
     [overview, selectedKey],
   );
+
+  const selectedTarget = useMemo(() => itemTarget(selected), [selected]);
 
   const loadHistory = async (target: ProtocolProbeTarget) => {
     setSelectedKey(`${target.targetType}:${target.targetId}`);
@@ -151,6 +184,8 @@ export default function ProtocolProbePage() {
   };
 
   const startProbe = async (item: ProtocolProbeOverviewItem) => {
+    const target = itemTarget(item);
+    if (!target) return toast.error("协议目标数据不完整");
     const download = Number(downloadMiB);
     const upload = Number(uploadMiB);
 
@@ -159,7 +194,6 @@ export default function ProtocolProbePage() {
     if (!Number.isInteger(upload) || upload < 1 || upload > 128)
       return toast.error("上传测试量应为 1-128 MiB");
 
-    const target = item.target;
     const key = `${target.targetType}:${target.targetId}`;
 
     setRunningKey(key);
@@ -380,10 +414,11 @@ export default function ProtocolProbePage() {
             <span>操作</span>
           </div>
           {overview.items.map((item) => {
-            const target = item.target;
+            const target = itemTarget(item);
+            if (!target) return null;
             const latest = item.latest;
             const status = runStatus(latest);
-            const supported = item.capability.status === "supported";
+            const supported = item.capability?.status === "supported";
             const key = `${target.targetType}:${target.targetId}`;
             const running = runningKey === key;
 
@@ -490,7 +525,7 @@ export default function ProtocolProbePage() {
           <div className="flex flex-col gap-2 border-b border-divider px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="font-semibold">
-                {selected.target.name} 的测试历史
+                {selectedTarget?.name || "测试历史"}
               </h2>
               <p className="mt-1 text-xs text-default-500">
                 测速执行端：面板协议客户端。历史结果不会显示认证密码。
@@ -498,7 +533,7 @@ export default function ProtocolProbePage() {
             </div>
             <div className="flex items-center gap-2 text-xs text-default-500">
               <Activity size={15} />
-              {protocolLabel(selected.target)}
+              {selectedTarget ? protocolLabel(selectedTarget) : ""}
             </div>
           </div>
           {historyLoading ? (

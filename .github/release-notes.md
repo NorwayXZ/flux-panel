@@ -1,3 +1,8 @@
+## 2.51.13 Protocol probe page compatibility
+
+- Fixes the `/protocol-probe` frontend regression where rendering could crash on `targetType` when the backend payload is flat instead of nested.
+- Keeps protocol probe items compatible with both the new flat payload and older nested responses.
+
 ## 2.51.12 Protocol client probe center
 
 - Moves protocol measurements out of the Agent and into a panel-side independent SOCKS5/HTTP client.

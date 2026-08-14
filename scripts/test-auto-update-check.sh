@@ -8,7 +8,7 @@ trap 'rm -rf "${TEST_ROOT}"' EXIT
 mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/etc" "${TEST_ROOT}/state"
 cat > "${TEST_ROOT}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-printf '{"tag_name":"v2.51.12"}\n'
+printf '{"tag_name":"v2.51.13"}\n'
 EOF
 chmod 755 "${TEST_ROOT}/bin/curl"
 
@@ -24,6 +24,6 @@ FLUX_PANEL_UPDATE_LOCK_FILE="${TEST_ROOT}/update.lock" \
 FLUX_PANEL_DIR="${TEST_ROOT}" \
 bash "${PROJECT_DIR}/scripts/flux-panel-auto-update-check.sh" >/dev/null
 
-grep -Fq 'version=2.51.12' "${TEST_ROOT}/state/update.request"
+grep -Fq 'version=2.51.13' "${TEST_ROOT}/state/update.request"
 
 printf 'Automatic update checker test passed\n'

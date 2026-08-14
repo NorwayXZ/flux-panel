@@ -837,7 +837,16 @@ export interface ProtocolProbeRun {
 }
 
 export interface ProtocolProbeOverviewItem {
-  target: ProtocolProbeTarget;
+  target?: ProtocolProbeTarget;
+  targetType?: "created" | "external";
+  targetId?: number;
+  name?: string;
+  proxyType?: string;
+  host?: string;
+  port?: number;
+  nodeName?: string;
+  source?: string;
+  proxy?: PrivateProxyItem;
   capability: ProtocolProbeCapability;
   latest?: ProtocolProbeRun | null;
 }
