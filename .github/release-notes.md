@@ -1,3 +1,9 @@
+## 2.51.10 Client speed display fix
+
+- Fixes the local speed center summary so `HTTP failure rate` now renders `0%` instead of `-` when no requests fail.
+- Changes the packet-loss card to show an explicit HTTP-approximation label when TURN is not configured, instead of looking like a missing value.
+- Keeps the oversized single-thread speed test and Cloudflare quality metrics from `2.51.9`.
+
 ## 2.51.9 Cloudflare-style local speed quality
 
 - Upgrades the local browser speed test into a CloudNest native speed center with oversized single-thread download profiles up to 64 GB.

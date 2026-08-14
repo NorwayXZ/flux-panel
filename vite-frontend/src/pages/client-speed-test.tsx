@@ -502,7 +502,7 @@ export default function ClientSpeedTestPage() {
       ],
       [
         "HTTP失败率",
-        formatPercent(httpLoss?.lossPercent || quality?.packetLossPercent),
+        formatPercent(httpLoss?.lossPercent ?? quality?.packetLossPercent),
       ],
       [
         "耗时",
@@ -1512,10 +1512,12 @@ export default function ClientSpeedTestPage() {
               <Upload className="h-3.5 w-3.5" />,
             )}
             {renderMetric(
-              "Cloudflare丢包",
+              quality?.summary?.packetLoss !== undefined
+                ? "Cloudflare丢包"
+                : "HTTP近似丢包",
               quality?.summary?.packetLoss !== undefined
                 ? formatPacketLossRatio(quality.summary.packetLoss)
-                : "未配置TURN，显示HTTP失败率",
+                : formatPercent(httpLoss?.lossPercent),
               <Wifi className="h-3.5 w-3.5" />,
             )}
           </div>
