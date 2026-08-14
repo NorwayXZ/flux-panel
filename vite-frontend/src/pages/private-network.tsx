@@ -13,6 +13,7 @@ import { Select, SelectItem } from "@heroui/select";
 import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
 import {
+  BookOpen,
   Copy,
   Gauge,
   Network,
@@ -98,10 +99,7 @@ const applicationEmpty = {
   ] as RouteHopForm[],
   tunnelProtocol: "tls" as "tls" | "quic",
   proxyType: "socks5" as
-    | "socks5"
-    | "http"
-    | "vless_reality"
-    | "vless_xhttp_tls",
+    "socks5" | "http" | "vless_reality" | "vless_xhttp_tls",
   bindIp: "",
   listenPort: "1080",
   username: "",
@@ -132,6 +130,7 @@ const stateMeta = (state: string) => {
     return { label: "待验证", color: "default" as const };
   if (state === "degraded")
     return { label: "部分异常", color: "warning" as const };
+
   return { label: "异常", color: "danger" as const };
 };
 
@@ -148,6 +147,27 @@ const bytes = (value?: number) =>
         : `${Math.round(value / 1024)} KB`;
 const timeText = (value?: number) =>
   value ? new Date(value).toLocaleString() : "-";
+
+const scenarioGuides = [
+  {
+    title: "已有云厂商内网",
+    action: "登记原生内网",
+    detail:
+      "B、C 本来就在同一个 VPC、云骨干或专线里，就填它们的内网 IP，验证通过后出口应用可直接选原生内网。",
+  },
+  {
+    title: "没有现成内网",
+    action: "Agent 自动组网",
+    detail:
+      "让服务器 Agent 自动创建 WireGuard 虚拟网段，后续出口应用使用虚拟 IP 通信，不需要自己手写 WireGuard 配置。",
+  },
+  {
+    title: "真正开始使用",
+    action: "创建出口应用",
+    detail:
+      "本地客户端只连接 B 入口端口，B→C、C→D 每一跳可选公网、原生内网或自动组网，最后一台机器作为出口。",
+  },
+];
 
 export default function PrivateNetworkPage() {
   const location = useLocation();
@@ -212,10 +232,12 @@ export default function PrivateNetworkPage() {
         getVirtualLanOverview(),
         getNetworkRouteApplications(),
       ]);
+
     try {
       if (nativeRequest.status === "rejected") toast.error("加载原生内网失败");
       else {
         const nativeResult = nativeRequest.value;
+
         if (nativeResult.code === 0) setNative(nativeResult.data);
         else toast.error(nativeResult.msg || "加载原生内网失败");
       }
@@ -223,6 +245,7 @@ export default function PrivateNetworkPage() {
         toast.error("加载自动组网失败");
       else {
         const automaticResult = automaticRequest.value;
+
         if (automaticResult.code === 0) setAutomatic(automaticResult.data);
         else toast.error(automaticResult.msg || "加载自动组网失败");
       }
@@ -230,6 +253,7 @@ export default function PrivateNetworkPage() {
         toast.error("加载出口应用失败");
       else {
         const applicationResult = applicationRequest.value;
+
         if (applicationResult.code === 0)
           setApplications(applicationResult.data.applications || []);
         else toast.error(applicationResult.msg || "加载出口应用失败");
@@ -244,19 +268,31 @@ export default function PrivateNetworkPage() {
   }, []);
 
   useEffect(() => {
-    if (loading || new URLSearchParams(location.search).get("section") !== "virtual-lan") return;
+    if (
+      loading ||
+      new URLSearchParams(location.search).get("section") !== "virtual-lan"
+    )
+      return;
     const frame = window.requestAnimationFrame(() => {
-      document.getElementById("agent-virtual-lan")?.scrollIntoView({ block: "start" });
+      document
+        .getElementById("agent-virtual-lan")
+        ?.scrollIntoView({ block: "start" });
     });
+
     return () => window.cancelAnimationFrame(frame);
   }, [loading, location.search]);
 
   useEffect(() => {
-    if (!applicationOpen || applicationForm.proxyType !== "vless_xhttp_tls") return;
-    void Promise.allSettled([getAwsAccessAccounts(), getDnsZoneOptions()]).then(([aws, zones]) => {
-      if (aws.status === "fulfilled" && aws.value.code === 0) setAwsAccounts(aws.value.data.accounts || []);
-      if (zones.status === "fulfilled" && zones.value.code === 0) setDnsZones(zones.value.data || []);
-    });
+    if (!applicationOpen || applicationForm.proxyType !== "vless_xhttp_tls")
+      return;
+    void Promise.allSettled([getAwsAccessAccounts(), getDnsZoneOptions()]).then(
+      ([aws, zones]) => {
+        if (aws.status === "fulfilled" && aws.value.code === 0)
+          setAwsAccounts(aws.value.data.accounts || []);
+        if (zones.status === "fulfilled" && zones.value.code === 0)
+          setDnsZones(zones.value.data || []);
+      },
+    );
   }, [applicationOpen, applicationForm.proxyType]);
 
   const saveNative = async () => {
@@ -282,6 +318,7 @@ export default function PrivateNetworkPage() {
           mtu: Number(item.mtu) || 1500,
         })),
       });
+
       if (result.code !== 0) return toast.error(result.msg || "保存失败");
       setNative(result.data);
       setNativeOpen(false);
@@ -317,6 +354,7 @@ export default function PrivateNetworkPage() {
         action === "verify"
           ? await verifyPrivateNetwork(group.id)
           : await deletePrivateNetwork(group.id);
+
       if (result.code !== 0) return toast.error(result.msg || "操作失败");
       setNative(result.data);
       toast.success(action === "verify" ? "双向内网验证通过" : "内网组已删除");
@@ -327,6 +365,7 @@ export default function PrivateNetworkPage() {
 
   const createAutomatic = async () => {
     const members = Array.from(automaticForm.members);
+
     if (
       !automaticForm.name.trim() ||
       !automaticForm.hubNodeId ||
@@ -342,12 +381,14 @@ export default function PrivateNetworkPage() {
         listenPort: Number(automaticForm.listenPort),
         members: members.map((value) => {
           const [targetType, targetId] = value.split(":");
+
           return {
             targetType: targetType as "node" | "connector",
             targetId: Number(targetId),
           };
         }),
       });
+
       if (result.code !== 0) return toast.error(result.msg || "自动组网失败");
       setAutomatic(result.data);
       setAutomaticOpen(false);
@@ -363,20 +404,24 @@ export default function PrivateNetworkPage() {
   ) => {
     if (
       action === "delete" &&
-      !window.confirm(`删除“${network.name}”并清理所有成员上的 WireGuard 接口？`)
+      !window.confirm(
+        `删除“${network.name}”并清理所有成员上的 WireGuard 接口？`,
+      )
     )
       return;
     setBusy(`auto-${action}-${network.id}`);
     try {
-      const result = action === "refresh"
-        ? await refreshVirtualLan(network.id)
-        : action === "pause"
-          ? await pauseVirtualLan(network.id)
-          : action === "resume"
-            ? await resumeVirtualLan(network.id)
-            : action === "deploy"
-              ? await deployVirtualLan(network.id)
-              : await deleteVirtualLan(network.id);
+      const result =
+        action === "refresh"
+          ? await refreshVirtualLan(network.id)
+          : action === "pause"
+            ? await pauseVirtualLan(network.id)
+            : action === "resume"
+              ? await resumeVirtualLan(network.id)
+              : action === "deploy"
+                ? await deployVirtualLan(network.id)
+                : await deleteVirtualLan(network.id);
+
       if (result.code !== 0) return toast.error(result.msg || "操作失败");
       setAutomatic(result.data);
       toast.success(
@@ -413,6 +458,7 @@ export default function PrivateNetworkPage() {
 
   const createApplication = async () => {
     const nodePath = applicationForm.nodePath.map(Number);
+
     if (
       !applicationForm.name.trim() ||
       nodePath.some((id) => !id) ||
@@ -426,9 +472,17 @@ export default function PrivateNetworkPage() {
     } else if (applicationForm.proxyType === "vless_xhttp_tls") {
       if (!applicationForm.xhttpPath.trim().startsWith("/"))
         return toast.error("XHTTP 路径必须以 / 开头");
-      if (applicationForm.autoProvisionCloudFront && (!applicationForm.awsAccessAccountId || !applicationForm.dnsZoneId || !applicationForm.xhttpOriginDomain.trim()))
+      if (
+        applicationForm.autoProvisionCloudFront &&
+        (!applicationForm.awsAccessAccountId ||
+          !applicationForm.dnsZoneId ||
+          !applicationForm.xhttpOriginDomain.trim())
+      )
         return toast.error("请选择 AWS 账号、Cloudflare Zone 并填写源站域名");
-      if (!applicationForm.autoProvisionCloudFront && !applicationForm.xhttpUploadDomain.trim())
+      if (
+        !applicationForm.autoProvisionCloudFront &&
+        !applicationForm.xhttpUploadDomain.trim()
+      )
         return toast.error("请填写 CloudFront 上行域名");
     } else if (
       applicationForm.username.length < 3 ||
@@ -439,6 +493,7 @@ export default function PrivateNetworkPage() {
     const invalidHop = applicationForm.hops.some(
       (hop) => hop.addressMode !== "public" && !hop.resourceGroupId,
     );
+
     if (invalidHop) return toast.error("内网跳点必须选择对应的组网");
     setBusy("application-save");
     try {
@@ -484,11 +539,13 @@ export default function PrivateNetworkPage() {
             ? applicationForm.autoProvisionCloudFront
             : undefined,
         awsAccessAccountId:
-          applicationForm.proxyType === "vless_xhttp_tls" && applicationForm.autoProvisionCloudFront
+          applicationForm.proxyType === "vless_xhttp_tls" &&
+          applicationForm.autoProvisionCloudFront
             ? Number(applicationForm.awsAccessAccountId)
             : undefined,
         dnsZoneId:
-          applicationForm.proxyType === "vless_xhttp_tls" && applicationForm.autoProvisionCloudFront
+          applicationForm.proxyType === "vless_xhttp_tls" &&
+          applicationForm.autoProvisionCloudFront
             ? Number(applicationForm.dnsZoneId)
             : undefined,
         hopConfigs: applicationForm.hops.map((hop, index) => ({
@@ -501,6 +558,7 @@ export default function PrivateNetworkPage() {
           fallbackMode: hop.fallbackMode,
         })),
       });
+
       if (result.code !== 0)
         return toast.error(result.msg || "创建出口应用失败");
       setApplications(result.data.applications || []);
@@ -527,6 +585,7 @@ export default function PrivateNetworkPage() {
               : action === "deploy"
                 ? await deployNetworkRouteApplication(app.id)
                 : await deleteNetworkRouteApplication(app.id);
+
       if (result.code !== 0) return toast.error(result.msg || "操作失败");
       toast.success(
         action === "test"
@@ -562,6 +621,7 @@ export default function PrivateNetworkPage() {
               item.targetType === "node" && String(item.targetId) === toId,
           ),
       );
+
     return [];
   };
 
@@ -578,7 +638,8 @@ export default function PrivateNetworkPage() {
         <div>
           <h1 className="text-2xl font-semibold">内网组建与出口</h1>
           <p className="mt-1 text-sm text-default-500">
-            登记原生内网或自动组建虚拟内网，并直接应用到 B→C 或 B→C→D 的代理出口。
+            先把能走内网的服务器组起来，再创建“本地连 B，C/D
+            出口”的代理入口。能走内网的跳点优先走内网，减少公网绕路和双边流量。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -615,6 +676,68 @@ export default function PrivateNetworkPage() {
         </div>
       </header>
 
+      <section className="grid gap-3 lg:grid-cols-3">
+        {scenarioGuides.map((item, index) => (
+          <div
+            key={item.title}
+            className="border border-divider bg-content1 p-4"
+          >
+            <div className="flex items-center gap-2">
+              <Chip
+                color={index === 2 ? "primary" : "default"}
+                size="sm"
+                variant="flat"
+              >
+                {index + 1}
+              </Chip>
+              <h2 className="font-medium">{item.title}</h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-default-500">
+              {item.detail}
+            </p>
+            <p className="mt-3 text-xs font-medium text-primary">
+              {item.action}
+            </p>
+          </div>
+        ))}
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="border border-divider bg-content1 p-4">
+          <div className="flex items-center gap-2 font-medium">
+            <BookOpen size={17} />
+            最常用玩法
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <Chip variant="flat">本地客户端</Chip>
+            <span className="text-default-400">→</span>
+            <Chip color="primary" variant="flat">
+              B 入口服务器
+            </Chip>
+            <span className="text-default-400">→</span>
+            <Chip color="success" variant="flat">
+              C 内网中转
+            </Chip>
+            <span className="text-default-400">→</span>
+            <Chip color="success" variant="flat">
+              D 最终出口
+            </Chip>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-default-500">
+            如果 B 和 C 有内网，就先登记或自动组建 B-C；创建出口应用时在 B→C
+            这一跳选择内网。C→D 没有内网时继续走公网，有内网也可以继续选择内网。
+          </p>
+        </div>
+        <div className="border border-divider bg-content1 p-4">
+          <div className="font-medium">它解决什么问题</div>
+          <ul className="mt-3 space-y-2 text-sm leading-6 text-default-500">
+            <li>避免本来可以内网互通的 B、C 继续走公网绕路。</li>
+            <li>B 入口 IP 固定，后面的 C/D 出口可以按应用独立调整。</li>
+            <li>每一跳都能测试真实出口，失败时能看到是哪段链路有问题。</li>
+          </ul>
+        </div>
+      </section>
+
       <section className="grid gap-3 sm:grid-cols-3">
         <div className="border-y border-divider px-3 py-4">
           <p className="text-xs text-default-500">自动组网</p>
@@ -634,18 +757,33 @@ export default function PrivateNetworkPage() {
         </div>
       </section>
 
-      <section id="agent-virtual-lan" className="scroll-mt-6 space-y-3">
+      <section className="scroll-mt-6 space-y-3" id="agent-virtual-lan">
         <div className="flex items-center gap-2">
           <Network size={18} />
           <h2 className="font-semibold">Agent 自动组网</h2>
         </div>
         {automatic.networks.length === 0 ? (
-          <p className="border-y border-divider py-8 text-center text-sm text-default-500">
-            还没有自动组网
-          </p>
+          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+            <p>
+              还没有自动组网。没有云厂商内网时，用它自动创建 WireGuard
+              虚拟内网。
+            </p>
+            <Button
+              size="sm"
+              startContent={<Plus size={15} />}
+              variant="flat"
+              onPress={() => {
+                setAutomaticForm(automaticEmpty);
+                setAutomaticOpen(true);
+              }}
+            >
+              创建自动组网
+            </Button>
+          </div>
         ) : (
           automatic.networks.map((network) => {
             const meta = stateMeta(network.state);
+
             return (
               <article
                 key={network.id}
@@ -655,7 +793,7 @@ export default function PrivateNetworkPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-medium">{network.name}</h3>
-                      <Chip size="sm" color={meta.color} variant="flat">
+                      <Chip color={meta.color} size="sm" variant="flat">
                         {meta.label}
                       </Chip>
                       <Chip size="sm" variant="flat">
@@ -677,10 +815,10 @@ export default function PrivateNetworkPage() {
                   <div className="flex gap-1">
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
-                      title="刷新状态"
                       isLoading={busy === `auto-refresh-${network.id}`}
+                      size="sm"
+                      title="刷新状态"
+                      variant="light"
                       onPress={() => void automaticAction(network, "refresh")}
                     >
                       <RefreshCw size={16} />
@@ -688,10 +826,10 @@ export default function PrivateNetworkPage() {
                     {network.state === "paused" ? (
                       <Button
                         isIconOnly
-                        size="sm"
-                        variant="light"
-                        title="恢复组网"
                         isLoading={busy === `auto-resume-${network.id}`}
+                        size="sm"
+                        title="恢复组网"
+                        variant="light"
                         onPress={() => void automaticAction(network, "resume")}
                       >
                         <Play size={16} />
@@ -699,10 +837,10 @@ export default function PrivateNetworkPage() {
                     ) : (
                       <Button
                         isIconOnly
-                        size="sm"
-                        variant="light"
-                        title="暂停组网"
                         isLoading={busy === `auto-pause-${network.id}`}
+                        size="sm"
+                        title="暂停组网"
+                        variant="light"
                         onPress={() => void automaticAction(network, "pause")}
                       >
                         <Pause size={16} />
@@ -710,21 +848,21 @@ export default function PrivateNetworkPage() {
                     )}
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
-                      title="重新部署"
                       isLoading={busy === `auto-deploy-${network.id}`}
+                      size="sm"
+                      title="重新部署"
+                      variant="light"
                       onPress={() => void automaticAction(network, "deploy")}
                     >
                       <RotateCw size={16} />
                     </Button>
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
                       color="danger"
-                      title="删除组网"
                       isLoading={busy === `auto-delete-${network.id}`}
+                      size="sm"
+                      title="删除组网"
+                      variant="light"
                       onPress={() => void automaticAction(network, "delete")}
                     >
                       <Trash2 size={16} />
@@ -737,8 +875,8 @@ export default function PrivateNetworkPage() {
                       <div className="flex justify-between gap-2">
                         <span className="font-medium">{member.memberName}</span>
                         <Chip
-                          size="sm"
                           color={stateMeta(member.state).color}
+                          size="sm"
                           variant="dot"
                         >
                           {stateMeta(member.state).label}
@@ -766,12 +904,27 @@ export default function PrivateNetworkPage() {
           <h2 className="font-semibold">原生 VPC、云骨干与专线</h2>
         </div>
         {native.groups.length === 0 ? (
-          <p className="border-y border-divider py-8 text-center text-sm text-default-500">
-            还没有登记原生内网
-          </p>
+          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+            <p>
+              还没有登记原生内网。如果 B、C 已在同一
+              VPC、云骨干或专线里，先把它们的内网 IP 登记进来。
+            </p>
+            <Button
+              size="sm"
+              startContent={<Plus size={15} />}
+              variant="flat"
+              onPress={() => {
+                setNativeForm(nativeEmpty);
+                setNativeOpen(true);
+              }}
+            >
+              登记原生内网
+            </Button>
+          </div>
         ) : (
           native.groups.map((group) => {
             const meta = stateMeta(group.state);
+
             return (
               <article
                 key={group.id}
@@ -781,7 +934,7 @@ export default function PrivateNetworkPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-medium">{group.name}</h3>
-                      <Chip size="sm" color={meta.color} variant="flat">
+                      <Chip color={meta.color} size="sm" variant="flat">
                         {meta.label}
                       </Chip>
                       <Chip size="sm" variant="flat">
@@ -806,29 +959,29 @@ export default function PrivateNetworkPage() {
                     <Button
                       isIconOnly
                       size="sm"
-                      variant="light"
                       title="编辑"
+                      variant="light"
                       onPress={() => editNative(group)}
                     >
                       <Pencil size={16} />
                     </Button>
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
-                      title="双向验证"
                       isLoading={busy === `verify-${group.id}`}
+                      size="sm"
+                      title="双向验证"
+                      variant="light"
                       onPress={() => void nativeAction(group, "verify")}
                     >
                       <Gauge size={16} />
                     </Button>
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
                       color="danger"
-                      title="删除"
                       isLoading={busy === `delete-${group.id}`}
+                      size="sm"
+                      title="删除"
+                      variant="light"
                       onPress={() => void nativeAction(group, "delete")}
                     >
                       <Trash2 size={16} />
@@ -860,8 +1013,8 @@ export default function PrivateNetworkPage() {
                               </span>
                               <Chip
                                 className="ml-2"
-                                size="sm"
                                 color={stateMeta(link.state).color}
+                                size="sm"
                                 variant="dot"
                               >
                                 {stateMeta(link.state).label}
@@ -902,12 +1055,27 @@ export default function PrivateNetworkPage() {
           <h2 className="font-semibold">代理出口应用</h2>
         </div>
         {applications.length === 0 ? (
-          <p className="border-y border-divider py-8 text-center text-sm text-default-500">
-            创建后，本地只连接 B，最终由 C 或 D 访问网站
-          </p>
+          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+            <p>
+              还没有出口应用。创建后，本地只连接 B 入口端口，最终由 C 或 D
+              访问网站。
+            </p>
+            <Button
+              color="primary"
+              size="sm"
+              startContent={<Route size={15} />}
+              onPress={() => {
+                setApplicationForm(applicationEmpty);
+                setApplicationOpen(true);
+              }}
+            >
+              创建出口应用
+            </Button>
+          </div>
         ) : (
           applications.map((app) => {
             const meta = stateMeta(app.state);
+
             return (
               <article
                 key={app.id}
@@ -917,7 +1085,7 @@ export default function PrivateNetworkPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-medium">{app.name}</h3>
-                      <Chip size="sm" color={meta.color} variant="flat">
+                      <Chip color={meta.color} size="sm" variant="flat">
                         {meta.label}
                       </Chip>
                       <Chip size="sm" variant="flat">
@@ -942,8 +1110,8 @@ export default function PrivateNetworkPage() {
                       <Button
                         isIconOnly
                         size="sm"
-                        variant="light"
                         title="复制连接"
+                        variant="light"
                         onPress={() => {
                           void navigator.clipboard.writeText(app.clientUri);
                           toast.success("连接已复制");
@@ -965,8 +1133,6 @@ export default function PrivateNetworkPage() {
                                 {hop.toNodeName}
                               </span>
                               <Chip
-                                size="sm"
-                                variant="flat"
                                 color={
                                   hop.verificationState === "invalid"
                                     ? "danger"
@@ -974,6 +1140,8 @@ export default function PrivateNetworkPage() {
                                       ? "default"
                                       : "success"
                                 }
+                                size="sm"
+                                variant="flat"
                               >
                                 {hop.addressModeName}
                               </Chip>
@@ -1010,10 +1178,10 @@ export default function PrivateNetworkPage() {
                   <div className="flex gap-1">
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
-                      title="真实出口测试"
                       isLoading={busy === `app-test-${app.id}`}
+                      size="sm"
+                      title="真实出口测试"
+                      variant="light"
                       onPress={() => void applicationAction(app, "test")}
                     >
                       <Gauge size={16} />
@@ -1022,8 +1190,8 @@ export default function PrivateNetworkPage() {
                       <Button
                         isIconOnly
                         size="sm"
-                        variant="light"
                         title="恢复"
+                        variant="light"
                         onPress={() => void applicationAction(app, "resume")}
                       >
                         <Play size={16} />
@@ -1032,8 +1200,8 @@ export default function PrivateNetworkPage() {
                       <Button
                         isIconOnly
                         size="sm"
-                        variant="light"
                         title="暂停"
+                        variant="light"
                         onPress={() => void applicationAction(app, "pause")}
                       >
                         <Pause size={16} />
@@ -1042,18 +1210,18 @@ export default function PrivateNetworkPage() {
                     <Button
                       isIconOnly
                       size="sm"
-                      variant="light"
                       title="重新部署"
+                      variant="light"
                       onPress={() => void applicationAction(app, "deploy")}
                     >
                       <RotateCw size={16} />
                     </Button>
                     <Button
                       isIconOnly
-                      size="sm"
-                      variant="light"
                       color="danger"
+                      size="sm"
                       title="删除"
+                      variant="light"
                       onPress={() => void applicationAction(app, "delete")}
                     >
                       <Trash2 size={16} />
@@ -1066,19 +1234,26 @@ export default function PrivateNetworkPage() {
         )}
       </section>
 
-      <Modal isOpen={automaticOpen} onOpenChange={setAutomaticOpen} size="2xl">
+      <Modal isOpen={automaticOpen} size="2xl" onOpenChange={setAutomaticOpen}>
         <ModalContent>
           <ModalHeader>Agent 自动组网</ModalHeader>
           <ModalBody className="space-y-4">
+            <div className="border-y border-divider py-3 text-sm leading-6 text-default-500">
+              用 Agent 自动创建 WireGuard
+              虚拟内网。适合两台机器没有云厂商内网、但你希望 B→C 走固定虚拟 IP
+              的场景。公网握手节点只负责让成员互相发现和建隧道，不等于最终出口。
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="组网名称"
+                placeholder="香港-日本自动内网"
                 value={automaticForm.name}
                 onValueChange={(name) =>
                   setAutomaticForm({ ...automaticForm, name })
                 }
               />
               <Input
+                description="不要和服务器已有内网网段冲突，例如 10.88.0.0/24"
                 label="虚拟网段"
                 value={automaticForm.cidr}
                 onValueChange={(cidr) =>
@@ -1087,10 +1262,10 @@ export default function PrivateNetworkPage() {
               />
             </div>
             <Select
-              selectionMode="multiple"
+              description="至少选择两台；只有服务器节点可以作为公网握手节点"
               label="网络成员"
-              description="支持服务器 Agent 和在线 Linux Connector"
               selectedKeys={automaticForm.members}
+              selectionMode="multiple"
               onSelectionChange={(keys) => {
                 const members = new Set(Array.from(keys).map(String));
                 const currentHubKey = automaticForm.hubNodeId
@@ -1102,11 +1277,15 @@ export default function PrivateNetworkPage() {
                 const hubNodeId = members.has(currentHubKey)
                   ? automaticForm.hubNodeId
                   : firstNodeKey?.split(":")[1] || "";
+
                 setAutomaticForm({ ...automaticForm, members, hubNodeId });
               }}
             >
               {automaticMemberOptions.map((option) => (
-                <SelectItem key={option.key} textValue={`${option.label} ${option.detail}`}>
+                <SelectItem
+                  key={option.key}
+                  textValue={`${option.label} ${option.detail}`}
+                >
                   <div>
                     <p>{option.label}</p>
                     <p className="text-xs text-default-400">{option.detail}</p>
@@ -1116,6 +1295,7 @@ export default function PrivateNetworkPage() {
             </Select>
             <div className="grid gap-4 sm:grid-cols-2">
               <Select
+                description="选公网最稳定、UDP 可达的成员；通常选入口 B 或长期在线的 VPS"
                 label="公网握手节点"
                 selectedKeys={
                   automaticForm.hubNodeId ? [automaticForm.hubNodeId] : []
@@ -1136,6 +1316,7 @@ export default function PrivateNetworkPage() {
                   ))}
               </Select>
               <Input
+                description="需要安全组和系统防火墙放行 UDP"
                 label="WireGuard UDP 端口"
                 type="number"
                 value={automaticForm.listenPort}
@@ -1162,18 +1343,24 @@ export default function PrivateNetworkPage() {
 
       <Modal
         isOpen={nativeOpen}
-        onOpenChange={setNativeOpen}
-        size="3xl"
         scrollBehavior="inside"
+        size="3xl"
+        onOpenChange={setNativeOpen}
       >
         <ModalContent>
           <ModalHeader>
             {nativeForm.id ? "编辑原生内网" : "登记原生内网"}
           </ModalHeader>
           <ModalBody className="space-y-4">
+            <div className="border-y border-divider py-3 text-sm leading-6 text-default-500">
+              这里不创建新网络，只登记你已经存在的云内网、同地域
+              VPC、云骨干或专线。保存后请点“双向验证”，确认 B 能用内网 IP 访问
+              C、C 也能回访 B。
+            </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Input
                 label="内网组名称"
+                placeholder="香港-日本 VPC 内网"
                 value={nativeForm.name}
                 onValueChange={(name) => setNativeForm({ ...nativeForm, name })}
               />
@@ -1192,6 +1379,7 @@ export default function PrivateNetworkPage() {
                 <SelectItem key="dedicated">专线内网</SelectItem>
               </Select>
               <Input
+                description="可留空；填写后用于识别和排错"
                 label="内网网段"
                 placeholder="10.20.0.0/24"
                 value={nativeForm.cidr}
@@ -1208,6 +1396,7 @@ export default function PrivateNetworkPage() {
                   selectedKeys={member.nodeId ? [member.nodeId] : []}
                   onSelectionChange={(keys) => {
                     const members = [...nativeForm.members];
+
                     members[index] = {
                       ...member,
                       nodeId: String(Array.from(keys)[0] || ""),
@@ -1220,21 +1409,25 @@ export default function PrivateNetworkPage() {
                   ))}
                 </Select>
                 <Input
+                  description="填这台服务器在该 VPC/专线里的内网地址，不是公网 IP"
                   label="内网 IP"
                   placeholder="10.20.0.5"
                   value={member.privateAddress}
                   onValueChange={(privateAddress) => {
                     const members = [...nativeForm.members];
+
                     members[index] = { ...member, privateAddress };
                     setNativeForm({ ...nativeForm, members });
                   }}
                 />
                 <Input
+                  description="多网卡时填写，避免走错出口"
                   label="网卡（可留空）"
                   placeholder="eth1"
                   value={member.interfaceName}
                   onValueChange={(interfaceName) => {
                     const members = [...nativeForm.members];
+
                     members[index] = { ...member, interfaceName };
                     setNativeForm({ ...nativeForm, members });
                   }}
@@ -1245,16 +1438,17 @@ export default function PrivateNetworkPage() {
                   value={member.mtu}
                   onValueChange={(mtu) => {
                     const members = [...nativeForm.members];
+
                     members[index] = { ...member, mtu };
                     setNativeForm({ ...nativeForm, members });
                   }}
                 />
                 <Button
                   isIconOnly
-                  variant="light"
-                  color="danger"
                   className="self-end"
+                  color="danger"
                   isDisabled={nativeForm.members.length <= 2}
+                  variant="light"
                   onPress={() =>
                     setNativeForm({
                       ...nativeForm,
@@ -1269,8 +1463,8 @@ export default function PrivateNetworkPage() {
               </div>
             ))}
             <Button
-              variant="flat"
               startContent={<Plus size={16} />}
+              variant="flat"
               onPress={() =>
                 setNativeForm({
                   ...nativeForm,
@@ -1306,13 +1500,18 @@ export default function PrivateNetworkPage() {
 
       <Modal
         isOpen={applicationOpen}
-        onOpenChange={setApplicationOpen}
-        size="4xl"
         scrollBehavior="inside"
+        size="4xl"
+        onOpenChange={setApplicationOpen}
       >
         <ModalContent>
           <ModalHeader>创建代理出口应用</ModalHeader>
           <ModalBody className="space-y-5">
+            <div className="border-y border-divider py-3 text-sm leading-6 text-default-500">
+              这一步才会生成客户端能用的代理链接。第一台是 B
+              入口服务器，最后一台是最终出口；中间每一跳都可以选择公网、原生内网或
+              Agent 自动组网。
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 label="应用名称"
@@ -1323,16 +1522,14 @@ export default function PrivateNetworkPage() {
                 }
               />
               <Select
+                description="客户端连接 B 入口时使用的协议"
                 label="入口代理协议"
                 selectedKeys={[applicationForm.proxyType]}
                 onSelectionChange={(keys) =>
                   setApplicationForm({
                     ...applicationForm,
                     proxyType: String(Array.from(keys)[0]) as
-                      | "socks5"
-                      | "http"
-                      | "vless_reality"
-                      | "vless_xhttp_tls",
+                      "socks5" | "http" | "vless_reality" | "vless_xhttp_tls",
                   })
                 }
               >
@@ -1346,11 +1543,17 @@ export default function PrivateNetworkPage() {
             </div>
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium">服务器线路</p>
+                <div>
+                  <p className="text-sm font-medium">服务器线路</p>
+                  <p className="mt-1 text-xs text-default-500">
+                    示例：B 入口服务器 → C 内网中转 → D 最终出口。只需要 B→C
+                    内网时保留两台即可。
+                  </p>
+                </div>
                 <Button
                   size="sm"
-                  variant="flat"
                   startContent={<Plus size={15} />}
+                  variant="flat"
                   onPress={() =>
                     syncApplicationPath([...applicationForm.nodePath, ""])
                   }
@@ -1372,6 +1575,7 @@ export default function PrivateNetworkPage() {
                       selectedKeys={nodeId ? [nodeId] : []}
                       onSelectionChange={(keys) => {
                         const path = [...applicationForm.nodePath];
+
                         path[index] = String(Array.from(keys)[0] || "");
                         syncApplicationPath(path);
                       }}
@@ -1384,11 +1588,11 @@ export default function PrivateNetworkPage() {
                     </Select>
                     <Button
                       isIconOnly
-                      variant="light"
                       color="danger"
                       isDisabled={
                         applicationForm.nodePath.length <= 2 || index === 0
                       }
+                      variant="light"
                       onPress={() =>
                         syncApplicationPath(
                           applicationForm.nodePath.filter(
@@ -1403,10 +1607,12 @@ export default function PrivateNetworkPage() {
                   {index < applicationForm.hops.length && (
                     <div className="ml-5 mt-2 grid gap-3 border-l-2 border-divider pl-4 sm:grid-cols-3">
                       <Select
+                        description="有内网就选内网；没有就走公网"
                         label={`${String.fromCharCode(66 + index)}→${String.fromCharCode(67 + index)} 传输地址`}
                         selectedKeys={[applicationForm.hops[index].addressMode]}
                         onSelectionChange={(keys) => {
                           const hops = [...applicationForm.hops];
+
                           hops[index] = {
                             ...hops[index],
                             addressMode: String(
@@ -1423,6 +1629,7 @@ export default function PrivateNetworkPage() {
                       </Select>
                       {applicationForm.hops[index].addressMode !== "public" ? (
                         <Select
+                          description="这里只显示同时包含本跳两台服务器的组网"
                           label="选择组网"
                           selectedKeys={
                             applicationForm.hops[index].resourceGroupId
@@ -1431,6 +1638,7 @@ export default function PrivateNetworkPage() {
                           }
                           onSelectionChange={(keys) => {
                             const hops = [...applicationForm.hops];
+
                             hops[index] = {
                               ...hops[index],
                               resourceGroupId: String(
@@ -1457,15 +1665,17 @@ export default function PrivateNetworkPage() {
                         </div>
                       )}
                       <Select
-                        label="内网失败策略"
+                        description="严格模式可防止误走公网；回退公网可提高可用性但会消耗公网流量"
                         isDisabled={
                           applicationForm.hops[index].addressMode === "public"
                         }
+                        label="内网失败策略"
                         selectedKeys={[
                           applicationForm.hops[index].fallbackMode,
                         ]}
                         onSelectionChange={(keys) => {
                           const hops = [...applicationForm.hops];
+
                           hops[index] = {
                             ...hops[index],
                             fallbackMode: String(
@@ -1487,6 +1697,7 @@ export default function PrivateNetworkPage() {
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               <Select
+                description="节点间隧道协议；UDP 质量好可选 QUIC"
                 label="服务器间传输协议"
                 selectedKeys={[applicationForm.tunnelProtocol]}
                 onSelectionChange={(keys) =>
@@ -1501,6 +1712,7 @@ export default function PrivateNetworkPage() {
                 <SelectItem key="quic">QUIC / UDP</SelectItem>
               </Select>
               <Input
+                description="不懂就留空；需要只监听内网或指定 IP 时再填写"
                 label="B 入口监听 IP"
                 placeholder="留空监听全部地址"
                 value={applicationForm.bindIp}
@@ -1509,6 +1721,7 @@ export default function PrivateNetworkPage() {
                 }
               />
               <Input
+                description="客户端最终连接的端口"
                 label="B 入口端口"
                 type="number"
                 value={applicationForm.listenPort}
@@ -1558,9 +1771,7 @@ export default function PrivateNetworkPage() {
                       setApplicationForm({
                         ...applicationForm,
                         xhttpMode: String(Array.from(keys)[0]) as
-                          | "auto"
-                          | "packet-up"
-                          | "stream-up",
+                          "auto" | "packet-up" | "stream-up",
                       })
                     }
                   >
@@ -1585,27 +1796,45 @@ export default function PrivateNetworkPage() {
                     <Select
                       isRequired
                       label="AWS 账号"
-                      selectedKeys={applicationForm.awsAccessAccountId ? [applicationForm.awsAccessAccountId] : []}
+                      selectedKeys={
+                        applicationForm.awsAccessAccountId
+                          ? [applicationForm.awsAccessAccountId]
+                          : []
+                      }
                       onSelectionChange={(keys) =>
-                        setApplicationForm({ ...applicationForm, awsAccessAccountId: String(Array.from(keys)[0] || "") })
+                        setApplicationForm({
+                          ...applicationForm,
+                          awsAccessAccountId: String(Array.from(keys)[0] || ""),
+                        })
                       }
                     >
                       {awsAccounts
                         .filter((item) => Boolean(item.enabled))
                         .map((item) => (
-                          <SelectItem key={String(item.id)}>{item.name}</SelectItem>
+                          <SelectItem key={String(item.id)}>
+                            {item.name}
+                          </SelectItem>
                         ))}
                     </Select>
                     <Select
                       isRequired
                       label="Cloudflare Zone"
-                      selectedKeys={applicationForm.dnsZoneId ? [applicationForm.dnsZoneId] : []}
+                      selectedKeys={
+                        applicationForm.dnsZoneId
+                          ? [applicationForm.dnsZoneId]
+                          : []
+                      }
                       onSelectionChange={(keys) =>
-                        setApplicationForm({ ...applicationForm, dnsZoneId: String(Array.from(keys)[0] || "") })
+                        setApplicationForm({
+                          ...applicationForm,
+                          dnsZoneId: String(Array.from(keys)[0] || ""),
+                        })
                       }
                     >
                       {dnsZones.map((item) => (
-                        <SelectItem key={String(item.id)}>{item.zoneName}</SelectItem>
+                        <SelectItem key={String(item.id)}>
+                          {item.zoneName}
+                        </SelectItem>
                       ))}
                     </Select>
                     <Input
@@ -1614,47 +1843,50 @@ export default function PrivateNetworkPage() {
                       placeholder="origin.example.com"
                       value={applicationForm.xhttpOriginDomain}
                       onValueChange={(xhttpOriginDomain) =>
-                        setApplicationForm({ ...applicationForm, xhttpOriginDomain })
+                        setApplicationForm({
+                          ...applicationForm,
+                          xhttpOriginDomain,
+                        })
                       }
                     />
                   </div>
                 ) : (
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <Input
-                    label="源站域名"
-                    placeholder="origin.example.com"
-                    value={applicationForm.xhttpOriginDomain}
-                    onValueChange={(xhttpOriginDomain) =>
-                      setApplicationForm({
-                        ...applicationForm,
-                        xhttpOriginDomain,
-                      })
-                    }
-                  />
-                  <Input
-                    isRequired
-                    label="CloudFront 上行域名"
-                    placeholder="dxxx.cloudfront.net"
-                    value={applicationForm.xhttpUploadDomain}
-                    onValueChange={(xhttpUploadDomain) =>
-                      setApplicationForm({
-                        ...applicationForm,
-                        xhttpUploadDomain,
-                      })
-                    }
-                  />
-                  <Input
-                    label="CloudFront 下行域名"
-                    placeholder="dyyy.cloudfront.net"
-                    value={applicationForm.xhttpDownloadDomain}
-                    onValueChange={(xhttpDownloadDomain) =>
-                      setApplicationForm({
-                        ...applicationForm,
-                        xhttpDownloadDomain,
-                      })
-                    }
-                  />
-                </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Input
+                      label="源站域名"
+                      placeholder="origin.example.com"
+                      value={applicationForm.xhttpOriginDomain}
+                      onValueChange={(xhttpOriginDomain) =>
+                        setApplicationForm({
+                          ...applicationForm,
+                          xhttpOriginDomain,
+                        })
+                      }
+                    />
+                    <Input
+                      isRequired
+                      label="CloudFront 上行域名"
+                      placeholder="dxxx.cloudfront.net"
+                      value={applicationForm.xhttpUploadDomain}
+                      onValueChange={(xhttpUploadDomain) =>
+                        setApplicationForm({
+                          ...applicationForm,
+                          xhttpUploadDomain,
+                        })
+                      }
+                    />
+                    <Input
+                      label="CloudFront 下行域名"
+                      placeholder="dyyy.cloudfront.net"
+                      value={applicationForm.xhttpDownloadDomain}
+                      onValueChange={(xhttpDownloadDomain) =>
+                        setApplicationForm({
+                          ...applicationForm,
+                          xhttpDownloadDomain,
+                        })
+                      }
+                    />
+                  </div>
                 )}
               </div>
             ) : (

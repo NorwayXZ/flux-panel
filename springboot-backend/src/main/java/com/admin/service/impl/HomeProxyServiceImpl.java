@@ -318,9 +318,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             if (duplicate != null && duplicate > 0) return R.err("该家庭设备的直连端口已被其他代理使用");
             try {
                 directAddress = queryConnectorPublicIp(connector.getId(), family);
-                if (dto.getDynamicDnsRuleId() != null) {
-                    dynamicDnsRule = validateDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
-                }
+                dynamicDnsRule = validateRequiredDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
             } catch (RuntimeException error) {
                 return R.err(error.getMessage());
             }
@@ -536,12 +534,10 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         String portError = checkConnectorPort(connector.getId(), ipv6 ? "::" : "0.0.0.0", directPort, familyLabel);
         if (portError != null) return R.err(portError);
         Map<String, Object> dynamicDnsRule = null;
-        if (dto.getDynamicDnsRuleId() != null) {
-            try {
-                dynamicDnsRule = validateDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
-            } catch (RuntimeException error) {
-                return R.err(error.getMessage());
-            }
+        try {
+            dynamicDnsRule = validateRequiredDynamicDnsBinding(dto.getDynamicDnsRuleId(), connector.getId(), family);
+        } catch (RuntimeException error) {
+            return R.err(error.getMessage());
         }
 
         PortPool egress = "single".equals(egressMode) && dto.getEgressNodeId() == null
@@ -1622,6 +1618,14 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         }
         if (!truthy(rule.get("enabled"))) throw new IllegalStateException("动态 DNS 规则未启用");
         return rule;
+    }
+
+    private Map<String, Object> validateRequiredDynamicDnsBinding(Long ruleId, Long connectorId, String family) {
+        if (ruleId == null) {
+            throw new IllegalStateException(familyLabel(family)
+                    + " 直连必须绑定动态 DNS 域名，否则家庭公网地址变化后中转会失效");
+        }
+        return validateDynamicDnsBinding(ruleId, connectorId, family);
     }
 
     private void syncDynamicDnsIfBound(HomeProxyRoute route) {

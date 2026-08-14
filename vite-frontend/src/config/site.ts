@@ -1,17 +1,17 @@
-import { getConfigByName, getConfigs } from '@/api';
+import { getConfigByName, getConfigs } from "@/api";
 
 export type SiteConfig = typeof siteConfig;
 
 // 缓存相关常量
-const CACHE_PREFIX = 'vite_config_v2_';
-const VERSION = "2.51.4";
+const CACHE_PREFIX = "vite_config_v2_";
+const VERSION = "2.51.5";
 const APP_VERSION = "1.0.4";
 const UPDATE_REPOSITORY = "NorwayXZ/flux-panel";
 const configRequests = new Map<string, Promise<string | null>>();
 let allConfigsRequest: Promise<Record<string, string>> | null = null;
 
 const getInitialConfig = () => {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return {
       name: "云巢 CloudNest",
       version: VERSION,
@@ -20,15 +20,17 @@ const getInitialConfig = () => {
     };
   }
 
-  const cachedAppName = localStorage.getItem(CACHE_PREFIX + 'app_name');
-    if (cachedAppName) {
-      return {
-        name: cachedAppName,
-        version: VERSION,
-        app_version: APP_VERSION,
-        updateRepository: UPDATE_REPOSITORY,
-      };
-    }
+  const cachedAppName = localStorage.getItem(CACHE_PREFIX + "app_name");
+
+  if (cachedAppName) {
+    return {
+      name: cachedAppName,
+      version: VERSION,
+      app_version: APP_VERSION,
+      updateRepository: UPDATE_REPOSITORY,
+    };
+  }
+
   return {
     name: "云巢 CloudNest",
     version: VERSION,
@@ -44,85 +46,97 @@ export const configCache = {
   // 获取缓存的配置
   get: (key: string): string | null => {
     const cacheKey = CACHE_PREFIX + key;
-      return localStorage.getItem(cacheKey);
+
+    return localStorage.getItem(cacheKey);
   },
 
   // 设置缓存的配置
   set: (key: string, value: string): void => {
     const cacheKey = CACHE_PREFIX + key;
-      localStorage.setItem(cacheKey, value);
+
+    localStorage.setItem(cacheKey, value);
   },
 
   // 删除指定配置的缓存
   remove: (key: string): void => {
     const cacheKey = CACHE_PREFIX + key;
+
     localStorage.removeItem(cacheKey);
   },
 
   // 清空所有配置缓存
   clear: (): void => {
-   // 获取所有localStorage的key
-   const keys = Object.keys(localStorage);
-   keys.forEach(key => {
-     if (key.startsWith(CACHE_PREFIX)) {
-       localStorage.removeItem(key);
-     }
-   });
-  }
+    // 获取所有localStorage的key
+    const keys = Object.keys(localStorage);
+
+    keys.forEach((key) => {
+      if (key.startsWith(CACHE_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    });
+  },
 };
 
 // 获取单个配置（优先从缓存）
 export const getCachedConfig = async (key: string): Promise<string | null> => {
   const cachedValue = configCache.get(key);
+
   if (cachedValue !== null) {
     return cachedValue;
   }
 
   const existingRequest = configRequests.get(key);
+
   if (existingRequest) return existingRequest;
 
   const request = getConfigByName(key)
-    .then(response => {
+    .then((response) => {
       if (response.code === 0 && response.data?.value) {
         const value = response.data.value;
+
         configCache.set(key, value);
+
         return value;
       }
+
       return null;
     })
     .finally(() => {
       configRequests.delete(key);
     });
+
   configRequests.set(key, request);
+
   return request;
 };
 
 // 获取所有配置（优先从缓存）
 export const getCachedConfigs = async (): Promise<Record<string, string>> => {
   // 尝试从缓存获取所有配置
-  const configKeys = ['app_name'];
+  const configKeys = ["app_name"];
   const cachedConfigs: Record<string, string> = {};
   let hasCachedData = false;
 
-  configKeys.forEach(key => {
+  configKeys.forEach((key) => {
     const cachedValue = configCache.get(key);
+
     if (cachedValue !== null) {
       cachedConfigs[key] = cachedValue;
       hasCachedData = true;
     }
   });
 
-
-
   // 从API获取最新配置；多个设置入口同时打开时共享同一个请求。
   if (!allConfigsRequest) {
     allConfigsRequest = getConfigs()
-      .then(response => {
+      .then((response) => {
         if (response.code !== 0 || !response.data) return {};
         const configs = response.data as Record<string, string>;
+
         Object.entries(configs).forEach(([key, value]) => {
           configCache.set(key, value);
         });
+
         return configs;
       })
       .catch(() => ({}))
@@ -132,18 +146,21 @@ export const getCachedConfigs = async (): Promise<Record<string, string>> => {
   }
 
   const configs = await allConfigsRequest;
+
   if (Object.keys(configs).length > 0) return configs;
+
   return hasCachedData ? cachedConfigs : {};
 };
 
 // 动态更新网站配置
 export const updateSiteConfig = async () => {
-  const appName = await getCachedConfig('app_name');
-    if (appName && appName !== siteConfig.name) {
-      siteConfig.name = appName;
-      // 更新页面标题
-      document.title = appName;
-    }
+  const appName = await getCachedConfig("app_name");
+
+  if (appName && appName !== siteConfig.name) {
+    siteConfig.name = appName;
+    // 更新页面标题
+    document.title = appName;
+  }
 };
 
 // 清除配置缓存的工具函数
@@ -153,7 +170,7 @@ export const updateSiteConfig = async () => {
 export const clearConfigCache = (keys?: string[]) => {
   if (keys && keys.length > 0) {
     // 删除指定的配置缓存
-    keys.forEach(key => configCache.remove(key));
+    keys.forEach((key) => configCache.remove(key));
   } else {
     // 清空所有配置缓存
     configCache.clear();
@@ -161,7 +178,7 @@ export const clearConfigCache = (keys?: string[]) => {
 };
 
 // 在页面加载时异步更新配置（如果有更新的话）
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   // 延迟执行，避免阻塞初始渲染
   setTimeout(() => {
     updateSiteConfig();

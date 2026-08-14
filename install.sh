@@ -263,6 +263,7 @@ name="Gost Proxy Service"
 
 start_service() {
   procd_open_instance
+  procd_set_param cwd "$INSTALL_DIR"
   procd_set_param command "$INSTALL_DIR/gost" -agent-config "$INSTALL_DIR/config.json" -C "$INSTALL_DIR/gost.json"
   procd_set_param respawn 3600 5 0
   procd_set_param stdout 1

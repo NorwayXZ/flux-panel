@@ -131,6 +131,7 @@ EOF
   test -x "$case_root/etc/init.d/flux-connector"
   grep -Fq "#!/bin/sh $case_root/etc/rc.common" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'USE_PROCD=1' "$case_root/etc/init.d/flux-connector"
+  grep -Fq "procd_set_param cwd \"$case_root/etc/flux-connector\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq "procd_set_param command \"$case_root/etc/flux-connector/gost\" -agent-config \"$case_root/etc/flux-connector/config.json\" -C \"$case_root/etc/flux-connector/gost.json\"" "$case_root/etc/init.d/flux-connector"
   grep -Fq 'procd_set_param respawn 3600 5 0' "$case_root/etc/init.d/flux-connector"
   grep -Fq "procd_set_param pidfile \"$case_root/run/flux-connector.pid\"" "$case_root/etc/init.d/flux-connector"

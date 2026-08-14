@@ -1,61 +1,702 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@heroui/button';
-import { Chip } from '@heroui/chip';
-import { Input } from '@heroui/input';
-import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/modal';
-import { Switch } from '@heroui/switch';
-import { Activity, Clock3, ExternalLink, History, KeyRound, MapPin, Play, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { useCallback, useEffect, useState } from "react";
+import { Button } from "@heroui/button";
+import { Chip } from "@heroui/chip";
+import { Input } from "@heroui/input";
+import {
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+} from "@heroui/modal";
+import { Switch } from "@heroui/switch";
+import {
+  Activity,
+  Clock3,
+  ExternalLink,
+  History,
+  KeyRound,
+  MapPin,
+  Play,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
+import toast from "react-hot-toast";
 
-import { getIpQualityHistory, getIpQualityOverview, runIpQualityScan, saveIpQualityProviders, type IpQualityNode, type IpQualityOverview, type IpQualityScan } from '@/api';
+import {
+  getIpQualityHistory,
+  getIpQualityOverview,
+  runIpQualityScan,
+  saveIpQualityProviders,
+  type IpQualityNode,
+  type IpQualityOverview,
+  type IpQualityScan,
+} from "@/api";
 
-const initial: IpQualityOverview = { minimumAgentVersion: '2.46.0', nodes: [], providers: { ipqsConfigured: false, abuseipdbConfigured: false }, summary: { total: 0, running: 0, tested: 0, highRisk: 0 } };
-const timeText = (value?: number) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未检测';
-const stateText = (state?: string) => state === 'available' ? '可访问' : state === 'restricted' ? '地区受限' : state === 'unavailable' ? '不可达' : '无法确认';
-const stateColor = (state?: string) => state === 'available' ? 'success' as const : state === 'restricted' || state === 'unavailable' ? 'danger' as const : 'default' as const;
-const riskMeta = (scan: IpQualityScan) => scan.riskScore == null ? { label: '暂无风险分', color: 'default' as const } : scan.riskLevel === 'high' ? { label: `${scan.riskScore} · 高风险`, color: 'danger' as const } : scan.riskLevel === 'medium' ? { label: `${scan.riskScore} · 中风险`, color: 'warning' as const } : { label: `${scan.riskScore} · 低风险`, color: 'success' as const };
+const initial: IpQualityOverview = {
+  minimumAgentVersion: "2.46.0",
+  nodes: [],
+  providers: { ipqsConfigured: false, abuseipdbConfigured: false },
+  summary: { total: 0, running: 0, tested: 0, highRisk: 0 },
+};
+const timeText = (value?: number) =>
+  value
+    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
+    : "尚未检测";
+const stateText = (state?: string) =>
+  state === "available"
+    ? "可访问"
+    : state === "restricted"
+      ? "地区受限"
+      : state === "unavailable"
+        ? "不可达"
+        : "无法确认";
+const stateColor = (state?: string) =>
+  state === "available"
+    ? ("success" as const)
+    : state === "restricted" || state === "unavailable"
+      ? ("danger" as const)
+      : ("default" as const);
+const riskMeta = (scan: IpQualityScan) =>
+  scan.riskScore == null
+    ? { label: "暂无风险分", color: "default" as const }
+    : scan.riskLevel === "high"
+      ? { label: `${scan.riskScore} · 高风险`, color: "danger" as const }
+      : scan.riskLevel === "medium"
+        ? { label: `${scan.riskScore} · 中风险`, color: "warning" as const }
+        : { label: `${scan.riskScore} · 低风险`, color: "success" as const };
 
 export default function IpQualityPage() {
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState('');
+  const [busy, setBusy] = useState("");
   const [detail, setDetail] = useState<IpQualityNode | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState({ ipqsApiKey: '', abuseipdbApiKey: '', clearIpqs: false, clearAbuseipdb: false });
+  const [settings, setSettings] = useState({
+    ipqsApiKey: "",
+    abuseipdbApiKey: "",
+    clearIpqs: false,
+    clearAbuseipdb: false,
+  });
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyNode, setHistoryNode] = useState<IpQualityNode | null>(null);
   const [history, setHistory] = useState<IpQualityScan[]>([]);
 
-  const load = useCallback(async (quiet = false) => { if (!quiet) setLoading(true); const response = await getIpQualityOverview(); if (!quiet) setLoading(false); if (response.code === 0) setData(response.data); else if (!quiet) toast.error(response.msg || '加载 IP 质量检测失败'); }, []);
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { const timer = window.setInterval(() => { if (!document.hidden && data.summary.running > 0) void load(true); }, 2000); return () => window.clearInterval(timer); }, [data.summary.running, load]);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    const response = await getIpQualityOverview();
 
-  const run = async (node: IpQualityNode) => { setBusy(`run-${node.id}`); const response = await runIpQualityScan(node.id); setBusy(''); if (response.code !== 0) return toast.error(response.msg || '无法开始检测'); setData(response.data); toast.success('检测已开始'); };
-  const saveSettings = async () => { setBusy('settings'); const response = await saveIpQualityProviders(settings); setBusy(''); if (response.code !== 0) return toast.error(response.msg || '保存情报源失败'); setData(response.data); setSettingsOpen(false); setSettings({ ipqsApiKey: '', abuseipdbApiKey: '', clearIpqs: false, clearAbuseipdb: false }); toast.success('情报源设置已保存'); };
-  const openHistory = async (node: IpQualityNode) => { setBusy(`history-${node.id}`); const response = await getIpQualityHistory(node.id); setBusy(''); if (response.code !== 0) return toast.error(response.msg || '加载历史失败'); setHistoryNode(node); setHistory(response.data.scans); setHistoryOpen(true); };
+    if (!quiet) setLoading(false);
+    if (response.code === 0) setData(response.data);
+    else if (!quiet) toast.error(response.msg || "加载 IP 质量检测失败");
+  }, []);
 
-  return <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
-    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-default-500">实用工具</p><h1 className="mt-1 text-xl font-semibold sm:text-2xl">IP 质量与解锁检测</h1><p className="mt-2 text-sm text-default-500">从节点真实出口检测公网 IP、风险情报、黑名单、服务访问、DNS 解析器和常见出站端口。</p></div><div className="flex gap-2"><Button isIconOnly variant="flat" title="刷新" onPress={() => void load()}><RefreshCw size={17} /></Button><Button variant="flat" startContent={<KeyRound size={17} />} onPress={() => setSettingsOpen(true)}>情报源</Button></div></header>
-    {(!data.providers.ipqsConfigured || !data.providers.abuseipdbConfigured) && <div className="flex flex-col gap-3 border-y border-warning/30 bg-warning/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"><span>风险评分需要 IPQualityScore 或 AbuseIPDB API Key；未配置时仍可检测地区、黑名单、服务、DNS 和端口。</span><Button size="sm" color="warning" variant="flat" onPress={() => setSettingsOpen(true)}>配置情报源</Button></div>}
-    <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[
-      ['服务器节点', loading ? '-' : data.summary.total, <Activity size={18} />], ['已检测', loading ? '-' : data.summary.tested, <ShieldCheck size={18} />], ['检测中', loading ? '-' : data.summary.running, <Clock3 size={18} />], ['高风险', loading ? '-' : data.summary.highRisk, <ShieldAlert size={18} />],
-    ].map(([label, value, icon]) => <div key={String(label)} className="border border-divider bg-content1 p-4"><div className="flex items-center justify-between"><span className="text-sm text-default-500">{label as string}</span><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-default-100 text-default-600">{icon}</span></div><p className="mt-3 text-2xl font-semibold">{value as string | number}</p></div>)}</section>
-    <section className="grid gap-4 xl:grid-cols-2">{data.nodes.map(node => { const running = node.scanStatus === 'running'; const risk = riskMeta(node); const services = node.unlockResults || []; const ports = node.ports || []; return <article key={node.id} className="border border-divider bg-content1 p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{node.name}</h2><Chip size="sm" color={node.status === 1 ? 'success' : 'default'} variant="flat">{node.status === 1 ? '在线' : '离线'}</Chip>{running && <Chip size="sm" color="primary" variant="flat">检测中</Chip>}</div><p className="mt-2 text-xs text-default-400">Agent {node.version || '-'} · 要求 {data.minimumAgentVersion}+</p></div><div className="flex gap-1"><Button isIconOnly size="sm" variant="light" title="开始检测" isLoading={busy === `run-${node.id}` || running} isDisabled={node.status !== 1 || running} onPress={() => void run(node)}><Play size={16} /></Button><Button isIconOnly size="sm" variant="light" title="历史结果" isLoading={busy === `history-${node.id}`} onPress={() => void openHistory(node)}><History size={16} /></Button></div></div>
-      {node.finishedAt ? <><div className="mt-4 grid gap-3 border-y border-divider py-3 sm:grid-cols-[1.1fr_1fr_auto]"><div><p className="text-xs text-default-500">出口地址</p><p className="mt-1 break-all font-mono text-sm">{node.publicIpv4 || node.publicIpv6 || '-'}</p>{node.publicIpv6 && node.publicIpv4 && <p className="mt-1 break-all font-mono text-xs text-default-400">{node.publicIpv6}</p>}</div><div><p className="text-xs text-default-500">地区与网络</p><p className="mt-1 text-sm">{[node.country, node.region, node.city].filter(Boolean).join(' · ') || '-'}</p><p className="mt-1 truncate text-xs text-default-400">{[node.asn, node.organization].filter(Boolean).join(' · ') || '-'}</p></div><div className="sm:text-right"><p className="text-xs text-default-500">综合风险</p><Chip className="mt-1" size="sm" color={risk.color} variant="flat">{risk.label}</Chip><p className="mt-1 text-xs text-default-400">可信度 {node.confidence || 'none'}</p></div></div><div className="mt-3 grid grid-cols-3 divide-x divide-divider text-center"><div><p className="text-xs text-default-500">服务可访问</p><p className="mt-1 font-semibold">{services.filter(item => item.state === 'available').length}/{services.length}</p></div><div><p className="text-xs text-default-500">出站端口</p><p className="mt-1 font-semibold">{ports.filter(item => item.reachable).length}/{ports.length}</p></div><div><p className="text-xs text-default-500">黑名单命中</p><p className="mt-1 font-semibold">{(node.blacklist || []).filter(item => item.listed).length}</p></div></div><div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs text-default-400">{timeText(node.finishedAt)}</span><Button size="sm" variant="flat" onPress={() => setDetail(node)}>查看完整结果</Button></div></> : <div className="mt-4 flex min-h-36 flex-col items-center justify-center gap-2 border-y border-divider text-default-400"><MapPin size={25} /><p className="text-sm">{node.scanError || (running ? '正在从真实出口检测' : '尚未检测')}</p></div>}
-    </article>; })}</section>
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!document.hidden && data.summary.running > 0) void load(true);
+    }, 2000);
 
-    <Modal isOpen={settingsOpen} onOpenChange={setSettingsOpen} size="2xl"><ModalContent><ModalHeader>风险情报源</ModalHeader><ModalBody className="space-y-4"><Input type="password" label="IPQualityScore API Key" placeholder={data.providers.ipqsConfigured ? '已保存，留空保持不变' : '未配置'} value={settings.ipqsApiKey} onValueChange={value => setSettings({ ...settings, ipqsApiKey: value, clearIpqs: false })} /><Switch isSelected={settings.clearIpqs} onValueChange={value => setSettings({ ...settings, clearIpqs: value, ipqsApiKey: '' })}>删除已保存的 IPQualityScore Key</Switch><Input type="password" label="AbuseIPDB API Key" placeholder={data.providers.abuseipdbConfigured ? '已保存，留空保持不变' : '未配置'} value={settings.abuseipdbApiKey} onValueChange={value => setSettings({ ...settings, abuseipdbApiKey: value, clearAbuseipdb: false })} /><Switch isSelected={settings.clearAbuseipdb} onValueChange={value => setSettings({ ...settings, clearAbuseipdb: value, abuseipdbApiKey: '' })}>删除已保存的 AbuseIPDB Key</Switch><div className="border-y border-divider py-3 text-xs leading-5 text-default-500">密钥使用面板 JWT 密钥派生的 AES-GCM 密钥加密保存，只由后端请求情报服务，不会下发到 Agent。第三方评分按各自标准生成，页面会保留原始来源。</div></ModalBody><ModalFooter><Button variant="flat" onPress={() => setSettingsOpen(false)}>取消</Button><Button color="primary" isLoading={busy === 'settings'} onPress={() => void saveSettings()}>保存</Button></ModalFooter></ModalContent></Modal>
+    return () => window.clearInterval(timer);
+  }, [data.summary.running, load]);
 
-    <Modal isOpen={Boolean(detail)} onOpenChange={open => { if (!open) setDetail(null); }} size="5xl" scrollBehavior="inside"><ModalContent><ModalHeader>{detail?.name} · 完整检测结果</ModalHeader><ModalBody>{detail && <ScanDetail scan={detail} />}</ModalBody><ModalFooter><Button color="primary" onPress={() => setDetail(null)}>关闭</Button></ModalFooter></ModalContent></Modal>
-    <Modal isOpen={historyOpen} onOpenChange={setHistoryOpen} size="4xl" scrollBehavior="inside"><ModalContent><ModalHeader>{historyNode?.name} · 检测历史</ModalHeader><ModalBody>{history.length === 0 ? <div className="py-16 text-center text-default-400">暂无历史结果</div> : <div className="divide-y divide-divider">{history.map(scan => { const risk = riskMeta(scan); return <div key={scan.scanId} className="grid gap-3 py-4 sm:grid-cols-[1fr_1fr_auto]"><div><p className="font-mono text-sm">{scan.publicIpv4 || scan.publicIpv6 || '-'}</p><p className="mt-1 text-xs text-default-400">{timeText(scan.finishedAt || scan.startedAt)}</p></div><div className="text-sm">{[scan.country, scan.region, scan.organization].filter(Boolean).join(' · ') || scan.scanError || '-'}</div><Chip size="sm" color={risk.color} variant="flat">{scan.scanStatus === 'failed' ? '检测失败' : risk.label}</Chip></div>; })}</div>}</ModalBody><ModalFooter><Button color="primary" onPress={() => setHistoryOpen(false)}>关闭</Button></ModalFooter></ModalContent></Modal>
-  </div>;
+  const run = async (node: IpQualityNode) => {
+    setBusy(`run-${node.id}`);
+    const response = await runIpQualityScan(node.id);
+
+    setBusy("");
+    if (response.code !== 0) return toast.error(response.msg || "无法开始检测");
+    setData(response.data);
+    toast.success("检测已开始");
+  };
+  const saveSettings = async () => {
+    setBusy("settings");
+    const response = await saveIpQualityProviders(settings);
+
+    setBusy("");
+    if (response.code !== 0)
+      return toast.error(response.msg || "保存情报源失败");
+    setData(response.data);
+    setSettingsOpen(false);
+    setSettings({
+      ipqsApiKey: "",
+      abuseipdbApiKey: "",
+      clearIpqs: false,
+      clearAbuseipdb: false,
+    });
+    toast.success("情报源设置已保存");
+  };
+  const openHistory = async (node: IpQualityNode) => {
+    setBusy(`history-${node.id}`);
+    const response = await getIpQualityHistory(node.id);
+
+    setBusy("");
+    if (response.code !== 0) return toast.error(response.msg || "加载历史失败");
+    setHistoryNode(node);
+    setHistory(response.data.scans);
+    setHistoryOpen(true);
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-sm text-default-500">实用工具</p>
+          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
+            IP 质量与解锁检测
+          </h1>
+          <p className="mt-2 text-sm text-default-500">
+            从节点真实出口检测公网 IP、风险情报、黑名单、服务访问、DNS
+            解析器和常见出站端口。
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            isIconOnly
+            title="刷新"
+            variant="flat"
+            onPress={() => void load()}
+          >
+            <RefreshCw size={17} />
+          </Button>
+          <Button
+            startContent={<KeyRound size={17} />}
+            variant="flat"
+            onPress={() => setSettingsOpen(true)}
+          >
+            情报源
+          </Button>
+        </div>
+      </header>
+      {(!data.providers.ipqsConfigured ||
+        !data.providers.abuseipdbConfigured) && (
+        <div className="flex flex-col gap-3 border-y border-warning/30 bg-warning/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            风险评分需要 IPQualityScore 或 AbuseIPDB API
+            Key；未配置时仍可检测地区、黑名单、服务、DNS 和端口。
+          </span>
+          <Button
+            color="warning"
+            size="sm"
+            variant="flat"
+            onPress={() => setSettingsOpen(true)}
+          >
+            配置情报源
+          </Button>
+        </div>
+      )}
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          [
+            "服务器节点",
+            loading ? "-" : data.summary.total,
+            <Activity size={18} />,
+          ],
+          [
+            "已检测",
+            loading ? "-" : data.summary.tested,
+            <ShieldCheck size={18} />,
+          ],
+          [
+            "检测中",
+            loading ? "-" : data.summary.running,
+            <Clock3 size={18} />,
+          ],
+          [
+            "高风险",
+            loading ? "-" : data.summary.highRisk,
+            <ShieldAlert size={18} />,
+          ],
+        ].map(([label, value, icon]) => (
+          <div
+            key={String(label)}
+            className="border border-divider bg-content1 p-4"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-default-500">
+                {label as string}
+              </span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-default-100 text-default-600">
+                {icon}
+              </span>
+            </div>
+            <p className="mt-3 text-2xl font-semibold">
+              {value as string | number}
+            </p>
+          </div>
+        ))}
+      </section>
+      <section className="grid gap-4 xl:grid-cols-2">
+        {data.nodes.map((node) => {
+          const running = node.scanStatus === "running";
+          const risk = riskMeta(node);
+          const services = node.unlockResults || [];
+          const ports = node.ports || [];
+
+          return (
+            <article
+              key={node.id}
+              className="border border-divider bg-content1 p-4 sm:p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-semibold">{node.name}</h2>
+                    <Chip
+                      color={node.status === 1 ? "success" : "default"}
+                      size="sm"
+                      variant="flat"
+                    >
+                      {node.status === 1 ? "在线" : "离线"}
+                    </Chip>
+                    {running && (
+                      <Chip color="primary" size="sm" variant="flat">
+                        检测中
+                      </Chip>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-default-400">
+                    Agent {node.version || "-"} · 要求{" "}
+                    {data.minimumAgentVersion}+
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    isIconOnly
+                    isDisabled={node.status !== 1 || running}
+                    isLoading={busy === `run-${node.id}` || running}
+                    size="sm"
+                    title="开始检测"
+                    variant="light"
+                    onPress={() => void run(node)}
+                  >
+                    <Play size={16} />
+                  </Button>
+                  <Button
+                    isIconOnly
+                    isLoading={busy === `history-${node.id}`}
+                    size="sm"
+                    title="历史结果"
+                    variant="light"
+                    onPress={() => void openHistory(node)}
+                  >
+                    <History size={16} />
+                  </Button>
+                </div>
+              </div>
+              {node.finishedAt ? (
+                <>
+                  <div className="mt-4 grid gap-3 border-y border-divider py-3 sm:grid-cols-[1.1fr_1fr_auto]">
+                    <div>
+                      <p className="text-xs text-default-500">出口地址</p>
+                      <p className="mt-1 break-all font-mono text-sm">
+                        {node.publicIpv4 || node.publicIpv6 || "-"}
+                      </p>
+                      {node.publicIpv6 && node.publicIpv4 && (
+                        <p className="mt-1 break-all font-mono text-xs text-default-400">
+                          {node.publicIpv6}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-default-500">地区与网络</p>
+                      <p className="mt-1 text-sm">
+                        {[node.country, node.region, node.city]
+                          .filter(Boolean)
+                          .join(" · ") || "-"}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-default-400">
+                        {[node.asn, node.organization]
+                          .filter(Boolean)
+                          .join(" · ") || "-"}
+                      </p>
+                    </div>
+                    <div className="sm:text-right">
+                      <p className="text-xs text-default-500">综合风险</p>
+                      <Chip
+                        className="mt-1"
+                        color={risk.color}
+                        size="sm"
+                        variant="flat"
+                      >
+                        {risk.label}
+                      </Chip>
+                      <p className="mt-1 text-xs text-default-400">
+                        可信度 {node.confidence || "none"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 divide-x divide-divider text-center">
+                    <div>
+                      <p className="text-xs text-default-500">服务可访问</p>
+                      <p className="mt-1 font-semibold">
+                        {
+                          services.filter((item) => item.state === "available")
+                            .length
+                        }
+                        /{services.length}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-default-500">出站端口</p>
+                      <p className="mt-1 font-semibold">
+                        {ports.filter((item) => item.reachable).length}/
+                        {ports.length}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-default-500">黑名单命中</p>
+                      <p className="mt-1 font-semibold">
+                        {
+                          (node.blacklist || []).filter((item) => item.listed)
+                            .length
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <span className="text-xs text-default-400">
+                      {timeText(node.finishedAt)}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      onPress={() => setDetail(node)}
+                    >
+                      查看完整结果
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-4 flex min-h-36 flex-col items-center justify-center gap-2 border-y border-divider text-default-400">
+                  <MapPin size={25} />
+                  <p className="text-sm">
+                    {node.scanError ||
+                      (running ? "正在从真实出口检测" : "尚未检测")}
+                  </p>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </section>
+
+      <Modal isOpen={settingsOpen} size="2xl" onOpenChange={setSettingsOpen}>
+        <ModalContent>
+          <ModalHeader>风险情报源</ModalHeader>
+          <ModalBody className="space-y-4">
+            <Input
+              label="IPQualityScore API Key"
+              placeholder={
+                data.providers.ipqsConfigured
+                  ? "已保存，留空保持不变"
+                  : "未配置"
+              }
+              type="password"
+              value={settings.ipqsApiKey}
+              onValueChange={(value) =>
+                setSettings({
+                  ...settings,
+                  ipqsApiKey: value,
+                  clearIpqs: false,
+                })
+              }
+            />
+            <Switch
+              isSelected={settings.clearIpqs}
+              onValueChange={(value) =>
+                setSettings({ ...settings, clearIpqs: value, ipqsApiKey: "" })
+              }
+            >
+              删除已保存的 IPQualityScore Key
+            </Switch>
+            <Input
+              label="AbuseIPDB API Key"
+              placeholder={
+                data.providers.abuseipdbConfigured
+                  ? "已保存，留空保持不变"
+                  : "未配置"
+              }
+              type="password"
+              value={settings.abuseipdbApiKey}
+              onValueChange={(value) =>
+                setSettings({
+                  ...settings,
+                  abuseipdbApiKey: value,
+                  clearAbuseipdb: false,
+                })
+              }
+            />
+            <Switch
+              isSelected={settings.clearAbuseipdb}
+              onValueChange={(value) =>
+                setSettings({
+                  ...settings,
+                  clearAbuseipdb: value,
+                  abuseipdbApiKey: "",
+                })
+              }
+            >
+              删除已保存的 AbuseIPDB Key
+            </Switch>
+            <div className="border-y border-divider py-3 text-xs leading-5 text-default-500">
+              密钥使用面板 JWT 密钥派生的 AES-GCM
+              密钥加密保存，只由后端请求情报服务，不会下发到
+              Agent。第三方评分按各自标准生成，页面会保留原始来源。
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setSettingsOpen(false)}>
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={busy === "settings"}
+              onPress={() => void saveSettings()}
+            >
+              保存
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(detail)}
+        scrollBehavior="inside"
+        size="5xl"
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>{detail?.name} · 完整检测结果</ModalHeader>
+          <ModalBody>{detail && <ScanDetail scan={detail} />}</ModalBody>
+          <ModalFooter>
+            <Button color="primary" onPress={() => setDetail(null)}>
+              关闭
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+      <Modal
+        isOpen={historyOpen}
+        scrollBehavior="inside"
+        size="4xl"
+        onOpenChange={setHistoryOpen}
+      >
+        <ModalContent>
+          <ModalHeader>{historyNode?.name} · 检测历史</ModalHeader>
+          <ModalBody>
+            {history.length === 0 ? (
+              <div className="py-16 text-center text-default-400">
+                暂无历史结果
+              </div>
+            ) : (
+              <div className="divide-y divide-divider">
+                {history.map((scan) => {
+                  const risk = riskMeta(scan);
+
+                  return (
+                    <div
+                      key={scan.scanId}
+                      className="grid gap-3 py-4 sm:grid-cols-[1fr_1fr_auto]"
+                    >
+                      <div>
+                        <p className="font-mono text-sm">
+                          {scan.publicIpv4 || scan.publicIpv6 || "-"}
+                        </p>
+                        <p className="mt-1 text-xs text-default-400">
+                          {timeText(scan.finishedAt || scan.startedAt)}
+                        </p>
+                      </div>
+                      <div className="text-sm">
+                        {[scan.country, scan.region, scan.organization]
+                          .filter(Boolean)
+                          .join(" · ") ||
+                          scan.scanError ||
+                          "-"}
+                      </div>
+                      <Chip color={risk.color} size="sm" variant="flat">
+                        {scan.scanStatus === "failed" ? "检测失败" : risk.label}
+                      </Chip>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button color="primary" onPress={() => setHistoryOpen(false)}>
+              关闭
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </div>
+  );
 }
 
 function ScanDetail({ scan }: { scan: IpQualityScan }) {
   const sources = Object.values(scan.riskSources || {});
-  return <div className="space-y-6"><section><h3 className="font-medium">风险情报</h3><div className="mt-3 grid gap-3 sm:grid-cols-2">{sources.map(source => <div key={source.name} className="border-y border-divider py-3"><div className="flex items-center justify-between"><span>{source.name}</span><Chip size="sm" variant="flat" color={source.status === 'success' ? 'success' : source.status === 'failed' ? 'danger' : 'default'}>{source.status === 'success' ? `${source.score} 分` : source.status === 'not_configured' ? '未配置' : '查询失败'}</Chip></div><p className="mt-2 text-xs text-default-500">{source.error || [source.proxy && '代理', source.vpn && 'VPN', source.tor && 'Tor', source.recentAbuse && '近期滥用', source.bot && '机器人', source.totalReports != null && `${source.totalReports} 次举报`].filter(Boolean).join(' · ') || '未发现额外风险标签'}</p></div>)}</div></section>
-    <section><h3 className="font-medium">服务访问</h3><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[650px] text-sm"><tbody>{(scan.unlockResults || []).map(item => <tr key={item.name} className="border-b border-divider"><td className="p-3 font-medium">{item.name}</td><td className="p-3"><Chip size="sm" color={stateColor(item.state)} variant="flat">{stateText(item.state)}</Chip></td><td className="p-3">HTTP {item.httpStatus || '-'}</td><td className="p-3">{Number(item.latencyMs || 0).toFixed(0)} ms</td><td className="p-3 text-default-500">{item.detail || '-'}</td></tr>)}</tbody></table></div></section>
-    <section><h3 className="font-medium">DNS 与出站端口</h3><div className="mt-3 grid gap-5 lg:grid-cols-2"><div className="border-y border-divider py-3 text-sm"><p className="text-xs text-default-500">系统配置的解析器</p><p className="mt-1 break-all">{scan.dns?.configuredResolvers?.join(', ') || '-'}</p><p className="mt-3 text-xs text-default-500">权威侧观察到的解析器出口</p><p className="mt-1 break-all">{scan.dns?.observedResolvers?.join(', ') || scan.dns?.error || '-'}</p></div><div className="divide-y divide-divider border-y border-divider">{(scan.ports || []).map(item => <div key={`${item.host}:${item.port}`} className="flex items-center justify-between gap-3 py-2 text-sm"><span>{item.name} · {item.port}</span><Chip size="sm" color={item.reachable ? 'success' : 'danger'} variant="flat">{item.reachable ? `${item.latencyMs.toFixed(0)} ms` : '不可达'}</Chip></div>)}</div></div></section>
-    <section><div className="flex items-center gap-2"><h3 className="font-medium">公开黑名单</h3><a className="text-default-400 hover:text-primary" href="https://check.spamhaus.org/" target="_blank" rel="noreferrer" title="打开 Spamhaus 查询"><ExternalLink size={15} /></a></div><div className="mt-3 grid gap-2 sm:grid-cols-3">{(scan.blacklist || []).map(item => <div key={item.provider} className="flex items-center justify-between border-y border-divider py-3 text-sm"><span>{item.provider}</span><Chip size="sm" color={item.listed ? 'danger' : item.status === 'success' ? 'success' : 'default'} variant="flat">{item.listed ? '命中' : item.status === 'success' ? '未命中' : '查询失败'}</Chip></div>)}</div></section>
-  </div>;
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <h3 className="font-medium">风险情报</h3>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {sources.map((source) => (
+            <div key={source.name} className="border-y border-divider py-3">
+              <div className="flex items-center justify-between">
+                <span>{source.name}</span>
+                <Chip
+                  color={
+                    source.status === "success"
+                      ? "success"
+                      : source.status === "failed"
+                        ? "danger"
+                        : "default"
+                  }
+                  size="sm"
+                  variant="flat"
+                >
+                  {source.status === "success"
+                    ? `${source.score} 分`
+                    : source.status === "not_configured"
+                      ? "未配置"
+                      : "查询失败"}
+                </Chip>
+              </div>
+              <p className="mt-2 text-xs text-default-500">
+                {source.error ||
+                  [
+                    source.proxy && "代理",
+                    source.vpn && "VPN",
+                    source.tor && "Tor",
+                    source.recentAbuse && "近期滥用",
+                    source.bot && "机器人",
+                    source.totalReports != null &&
+                      `${source.totalReports} 次举报`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") ||
+                  "未发现额外风险标签"}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section>
+        <h3 className="font-medium">服务访问</h3>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[650px] text-sm">
+            <tbody>
+              {(scan.unlockResults || []).map((item) => (
+                <tr key={item.name} className="border-b border-divider">
+                  <td className="p-3 font-medium">{item.name}</td>
+                  <td className="p-3">
+                    <Chip
+                      color={stateColor(item.state)}
+                      size="sm"
+                      variant="flat"
+                    >
+                      {stateText(item.state)}
+                    </Chip>
+                  </td>
+                  <td className="p-3">HTTP {item.httpStatus || "-"}</td>
+                  <td className="p-3">
+                    {Number(item.latencyMs || 0).toFixed(0)} ms
+                  </td>
+                  <td className="p-3 text-default-500">{item.detail || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h3 className="font-medium">DNS 与出站端口</h3>
+        <div className="mt-3 grid gap-5 lg:grid-cols-2">
+          <div className="border-y border-divider py-3 text-sm">
+            <p className="text-xs text-default-500">系统配置的解析器</p>
+            <p className="mt-1 break-all">
+              {scan.dns?.configuredResolvers?.join(", ") || "-"}
+            </p>
+            <p className="mt-3 text-xs text-default-500">
+              权威侧观察到的解析器出口
+            </p>
+            <p className="mt-1 break-all">
+              {scan.dns?.observedResolvers?.join(", ") ||
+                scan.dns?.error ||
+                "-"}
+            </p>
+          </div>
+          <div className="divide-y divide-divider border-y border-divider">
+            {(scan.ports || []).map((item) => (
+              <div
+                key={`${item.host}:${item.port}`}
+                className="flex items-center justify-between gap-3 py-2 text-sm"
+              >
+                <span>
+                  {item.name} · {item.port}
+                </span>
+                <Chip
+                  color={item.reachable ? "success" : "danger"}
+                  size="sm"
+                  variant="flat"
+                >
+                  {item.reachable
+                    ? `${item.latencyMs.toFixed(0)} ms`
+                    : "不可达"}
+                </Chip>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+      <section>
+        <div className="flex items-center gap-2">
+          <h3 className="font-medium">公开黑名单</h3>
+          <a
+            className="text-default-400 hover:text-primary"
+            href="https://check.spamhaus.org/"
+            rel="noreferrer"
+            target="_blank"
+            title="打开 Spamhaus 查询"
+          >
+            <ExternalLink size={15} />
+          </a>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {(scan.blacklist || []).map((item) => (
+            <div
+              key={item.provider}
+              className="flex items-center justify-between border-y border-divider py-3 text-sm"
+            >
+              <span>{item.provider}</span>
+              <Chip
+                color={
+                  item.listed
+                    ? "danger"
+                    : item.status === "success"
+                      ? "success"
+                      : "default"
+                }
+                size="sm"
+                variant="flat"
+              >
+                {item.listed
+                  ? "命中"
+                  : item.status === "success"
+                    ? "未命中"
+                    : "查询失败"}
+              </Chip>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
 }

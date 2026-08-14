@@ -11,11 +11,14 @@ export interface PortForwardOptionGroup<T extends PortForwardOption> {
   options: T[];
 }
 
-export function groupForwardOptionsByPort<T extends PortForwardOption>(options: T[]): PortForwardOptionGroup<T>[] {
+export function groupForwardOptionsByPort<T extends PortForwardOption>(
+  options: T[],
+): PortForwardOptionGroup<T>[] {
   const groups = new Map<number, T[]>();
 
-  options.forEach(option => {
+  options.forEach((option) => {
     const group = groups.get(option.inPort) || [];
+
     group.push(option);
     groups.set(option.inPort, group);
   });
@@ -24,9 +27,14 @@ export function groupForwardOptionsByPort<T extends PortForwardOption>(options: 
     .map(([port, groupedOptions]) => ({
       port,
       options: [...groupedOptions].sort((left, right) => {
-        const nodeOrder = (left.nodeName || '').localeCompare(right.nodeName || '', 'zh-CN');
+        const nodeOrder = (left.nodeName || "").localeCompare(
+          right.nodeName || "",
+          "zh-CN",
+        );
+
         if (nodeOrder !== 0) return nodeOrder;
-        const nameOrder = left.name.localeCompare(right.name, 'zh-CN');
+        const nameOrder = left.name.localeCompare(right.name, "zh-CN");
+
         return nameOrder !== 0 ? nameOrder : left.id - right.id;
       }),
     }))

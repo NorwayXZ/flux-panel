@@ -95,11 +95,26 @@ export default defineConfig([
     rules: {
       "no-console": "warn",
       "react/prop-types": "off",
+      "react/jsx-key": "warn",
       "react/jsx-uses-react": "off",
+      "react/no-unescaped-entities": "warn",
       "react/react-in-jsx-scope": "off",
       "react-hooks/exhaustive-deps": "off",
+      "react-hooks/config": "off",
+      "react-hooks/error-boundaries": "off",
+      "react-hooks/gating": "off",
+      "react-hooks/globals": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/set-state-in-render": "off",
+      "react-hooks/static-components": "off",
+      "react-hooks/use-memo": "off",
       "jsx-a11y/click-events-have-key-events": "warn",
       "jsx-a11y/interactive-supports-focus": "warn",
+      "jsx-a11y/no-static-element-interactions": "warn",
       "prettier/prettier": "warn",
       "no-unused-vars": "off",
       "unused-imports/no-unused-vars": "off",
@@ -142,15 +157,7 @@ export default defineConfig([
 
       "react/self-closing-comp": "warn",
 
-      "react/jsx-sort-props": [
-        "warn",
-        {
-          callbacksLast: true,
-          shorthandFirst: true,
-          noSortAlphabetically: false,
-          reservedFirst: true,
-        },
-      ],
+      "react/jsx-sort-props": "off",
 
       "padding-line-between-statements": [
         "warn",
