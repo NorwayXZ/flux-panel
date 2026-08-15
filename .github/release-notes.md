@@ -1,3 +1,9 @@
+## 2.51.19 Cross-entry failover layout cleanup
+
+- Reflows the cross-entry failover editor into clearer cards and collapsible rule groups so the page reads like a configuration panel instead of a long note wall.
+- Separates the base settings, member order, detection presets, quality failover, and summary guidance into cleaner visual blocks without changing existing strategy behavior.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.18 Cross-entry failover cooling and lock control
 
 - Adds the backup-line cooling pool, post-switch reject blacklist, and expiring manual lock controls to Cross-entry Failover.

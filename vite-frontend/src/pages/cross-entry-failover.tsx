@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Accordion, AccordionItem } from "@heroui/accordion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
@@ -214,6 +215,8 @@ const lockDurationLabel = (value?: number | null) => {
 
   return `锁定 ${durationText(remaining)}`;
 };
+const sectionCardClass =
+  "rounded-2xl border border-divider/70 bg-content2/60 p-4 shadow-sm";
 const memberStatusCounts = (group: CrossEntryGroup) => {
   const now = Date.now();
   const members = group.members || [];
@@ -235,10 +238,11 @@ const memberStatusCounts = (group: CrossEntryGroup) => {
     cooling: members.filter(
       (member) =>
         Boolean(
-          member.qualitySuppressedUntil &&
-            member.qualitySuppressedUntil > now,
+          member.qualitySuppressedUntil && member.qualitySuppressedUntil > now,
         ) &&
-        !Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
+        !Boolean(
+          member.switchRejectedUntil && member.switchRejectedUntil > now,
+        ),
     ).length,
     blacklisted: members.filter((member) =>
       Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
@@ -880,12 +884,106 @@ function StrategySummaryPanel({
   summary: StrategySummary;
   compact?: boolean;
 }) {
+  const activeCount = summary.activeRules.filter(
+    (item) => item.state === "active",
+  ).length;
+  const blockedCount = summary.blockedRules.length;
   const visibleActiveRules = compact
     ? summary.activeRules.slice(0, 5)
     : summary.activeRules;
   const visibleBlockedRules = compact
     ? summary.blockedRules.slice(0, 4)
     : summary.blockedRules;
+
+  const renderRuleGrid = (items: RuleLine[], prefix: string) => (
+    <div className="grid gap-2 md:grid-cols-2">
+      {items.map((item) => {
+        const meta = ruleStateMeta[item.state];
+
+        return (
+          <div
+            key={`${prefix}-${item.label}`}
+            className={`rounded-xl border px-3 py-2 ${item.state === "active" ? "border-success/30 bg-success-50/50 dark:bg-success-500/10" : item.state === "blocked" ? "border-warning/30 bg-warning-50/50 dark:bg-warning-500/10" : "border-default-200 bg-default-50/60 dark:bg-default-900/30"}`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium">{item.label}</span>
+              <Chip color={meta.color} size="sm" variant="flat">
+                {meta.label}
+              </Chip>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-default-500">
+              {item.detail}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (!compact)
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs text-default-500">当前生效模式</p>
+            <h3 className="mt-1 text-sm font-semibold">{summary.title}</h3>
+            <p className="mt-1 text-xs leading-5 text-default-500">
+              {summary.detail}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Chip color="primary" size="sm" variant="flat">
+              {activeCount} 条生效
+            </Chip>
+            <Chip color="warning" size="sm" variant="flat">
+              {blockedCount} 条互斥 / 未启用
+            </Chip>
+          </div>
+        </div>
+        <p className="rounded-xl border border-primary/15 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+          {summary.decisionHint}
+        </p>
+        <Accordion
+          className="px-0"
+          defaultExpandedKeys={["active"]}
+          selectionMode="multiple"
+          variant="bordered"
+        >
+          <AccordionItem
+            key="active"
+            aria-label="生效规则"
+            title={
+              <div className="flex w-full flex-wrap items-center justify-between gap-2 pr-2">
+                <span className="text-sm font-medium">生效规则</span>
+                <Chip color="success" size="sm" variant="flat">
+                  {summary.activeRules.length} 项
+                </Chip>
+              </div>
+            }
+          >
+            {renderRuleGrid(summary.activeRules, "active")}
+          </AccordionItem>
+          <AccordionItem
+            key="blocked"
+            aria-label="互斥与未启用"
+            title={
+              <div className="flex w-full flex-wrap items-center justify-between gap-2 pr-2">
+                <span className="text-sm font-medium">互斥 / 未启用</span>
+                <Chip color="warning" size="sm" variant="flat">
+                  {summary.blockedRules.length} 项
+                </Chip>
+              </div>
+            }
+          >
+            {visibleBlockedRules.length > 0 ? (
+              renderRuleGrid(summary.blockedRules, "blocked")
+            ) : (
+              <p className="text-xs text-default-500">暂无互斥规则。</p>
+            )}
+          </AccordionItem>
+        </Accordion>
+      </div>
+    );
 
   return (
     <div className="border-y border-divider py-3">
@@ -898,8 +996,7 @@ function StrategySummaryPanel({
           </p>
         </div>
         <Chip color="primary" size="sm" variant="flat">
-          {summary.activeRules.filter((item) => item.state === "active").length}{" "}
-          条生效
+          {activeCount} 条生效
         </Chip>
       </div>
       <p className="mt-3 rounded-md bg-default-100 px-3 py-2 text-xs leading-5 text-default-600 dark:bg-default-900/40">
@@ -1965,15 +2062,17 @@ export default function CrossEntryFailoverPage() {
       <Modal
         isOpen={formOpen}
         scrollBehavior="inside"
-        size="3xl"
+        size="5xl"
         onOpenChange={setFormOpen}
       >
         <ModalContent>
           <ModalHeader>
             {form.id ? "编辑入口容灾组" : "新建入口容灾组"}
           </ModalHeader>
-          <ModalBody className="gap-5">
-            <section className="grid gap-3 sm:grid-cols-2">
+          <ModalBody className="gap-4">
+            <section
+              className={`${sectionCardClass} grid gap-3 sm:grid-cols-2`}
+            >
               <Input
                 description="只用于面板识别，不影响 DNS 或转发。"
                 label="容灾组名称"
@@ -2093,16 +2192,18 @@ export default function CrossEntryFailoverPage() {
               </Select>
             </section>
 
-            <div className="border-l-2 border-primary bg-primary-50/60 px-3 py-3 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+            <div className="rounded-2xl border border-primary/20 bg-primary-50/60 px-4 py-3 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
               {form.routingMode === "active_active"
                 ? "所有健康入口会同时写入同一业务域名的 DNS 记录。客户端 DNS 解析后选择其中一个入口，失效入口会在检测确认后从记录集合摘除。它只影响新的解析和新连接，普通 DNS 不提供严格按权重的连接级均衡。"
                 : "域名始终只指向一个当前入口。主入口连续失败后切到备用入口，适合希望地址稳定、只在故障时切换的业务。"}
             </div>
 
-            <StrategySummaryPanel summary={formStrategy} />
+            <section className={sectionCardClass}>
+              <StrategySummaryPanel summary={formStrategy} />
+            </section>
 
             {zoneOptions.length === 0 && (
-              <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 rounded-2xl border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
                 <span>
                   尚未登记 Cloudflare 凭据。先同步 Zone，之后这里直接选择即可。
                 </span>
@@ -2120,7 +2221,7 @@ export default function CrossEntryFailoverPage() {
               </div>
             )}
 
-            <section className="border-t border-divider pt-4">
+            <section className={sectionCardClass}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold">
@@ -2250,7 +2351,7 @@ export default function CrossEntryFailoverPage() {
               )}
             </section>
 
-            <section className="border-t border-divider pt-4">
+            <section className={sectionCardClass}>
               <h3 className="text-sm font-semibold">失效检测</h3>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {(Object.keys(profiles) as PresetProfileKey[]).map((key) => (
@@ -2614,7 +2715,7 @@ export default function CrossEntryFailoverPage() {
               )}
             </section>
 
-            <section className="border-t border-divider pt-4">
+            <section className={sectionCardClass}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h3 className="text-sm font-semibold">质量容灾</h3>
@@ -3086,7 +3187,7 @@ export default function CrossEntryFailoverPage() {
               )}
             </section>
 
-            <div className="rounded-md bg-warning-50 px-3 py-3 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">
+            <div className="rounded-2xl border border-warning-200 bg-warning-50 px-4 py-3 text-xs leading-5 text-warning-700 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-300">
               面板会自动创建或更新仅 DNS 记录，不开启 Cloudflare
               代理。请确保面板服务器能访问各公网入口端口。检测和 DNS
               更新可在数秒内完成，但运营商及客户端 DNS
