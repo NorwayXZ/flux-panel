@@ -1595,6 +1595,9 @@ export interface CrossEntryMember {
   qualityPenaltyWindowStartedAt?: number;
   qualityPenaltyLastAt?: number;
   qualityRecoveryObserveUntil?: number;
+  switchRejectedUntil?: number;
+  switchRejectedReason?: string;
+  switchRejectCount?: number;
   qualityLastError?: string;
   qualityCheckedAt?: number;
   faultEpisodeCount?: number;
@@ -1666,9 +1669,11 @@ export interface CrossEntryGroup {
   preheatBackupCount?: number;
   preheatStrictIsolation?: boolean | number;
   postSwitchVerifyEnabled?: boolean | number;
+  postSwitchRejectSuppressSeconds?: number;
   dnsVerifyEnabled?: boolean | number;
   manualControlMode?: "auto" | "pause" | "lock";
   lockedMemberId?: number;
+  manualLockUntil?: number;
   qualityProbeStatus?: "disabled" | "pending" | "ok" | "warning" | "failed";
   qualityProbeError?: string;
   qualityProbeAt?: number;

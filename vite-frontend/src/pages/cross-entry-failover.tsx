@@ -153,9 +153,12 @@ const emptyForm = {
   preheatBackupCount: "3",
   preheatStrictIsolation: true,
   postSwitchVerifyEnabled: true,
+  postSwitchRejectSuppressSeconds: "600",
   dnsVerifyEnabled: true,
   manualControlMode: "auto" as "auto" | "pause" | "lock",
   lockedMemberId: "",
+  manualLockUntil: "",
+  manualLockDuration: "forever" as "forever" | "30m" | "2h",
   memberForwardIds: ["", ""],
 };
 
@@ -177,6 +180,73 @@ const durationText = (seconds?: number) => {
   if (value % 60 === 0) return `${value / 60} 分钟`;
 
   return `${value} 秒`;
+};
+const lockDurationOptions = [
+  { key: "forever", label: "永久锁定", seconds: null },
+  { key: "30m", label: "锁 30 分钟", seconds: 30 * 60 },
+  { key: "2h", label: "锁 2 小时", seconds: 2 * 60 * 60 },
+] as const;
+const resolveLockUntil = (duration: typeof emptyForm.manualLockDuration) => {
+  const option = lockDurationOptions.find((item) => item.key === duration);
+
+  if (!option || option.seconds == null) return undefined;
+
+  return Date.now() + option.seconds * 1000;
+};
+const inferLockDuration = (until?: number | null) => {
+  if (!until) return "forever" as const;
+  const remaining = Math.max(0, until - Date.now());
+
+  if (remaining <= 45 * 60 * 1000) return "30m" as const;
+  if (remaining <= 3 * 60 * 60 * 1000) return "2h" as const;
+
+  return "forever" as const;
+};
+const lockDurationLabel = (value?: number | null) => {
+  if (!value) return "永久锁定";
+  const remaining = Math.max(0, Math.round((value - Date.now()) / 1000));
+
+  if (remaining <= 0) return "已到期";
+  if (remaining <= 30 * 60 + 60 && remaining >= 30 * 60 - 60)
+    return "锁 30 分钟";
+  if (remaining <= 2 * 60 * 60 + 120 && remaining >= 2 * 60 * 60 - 120)
+    return "锁 2 小时";
+
+  return `锁定 ${durationText(remaining)}`;
+};
+const memberStatusCounts = (group: CrossEntryGroup) => {
+  const now = Date.now();
+  const members = group.members || [];
+
+  return {
+    healthy: members.filter((member) => member.status === "healthy").length,
+    warming: members.filter(
+      (member) =>
+        (member.qualityState === "warming" ||
+          member.qualityState === "unknown") &&
+        Boolean(member.qualityCheckedAt),
+    ).length,
+    observing: members.filter((member) =>
+      Boolean(
+        member.qualityRecoveryObserveUntil &&
+        member.qualityRecoveryObserveUntil > now,
+      ),
+    ).length,
+    cooling: members.filter(
+      (member) =>
+        Boolean(
+          member.qualitySuppressedUntil &&
+            member.qualitySuppressedUntil > now,
+        ) &&
+        !Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
+    ).length,
+    blacklisted: members.filter((member) =>
+      Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
+    ).length,
+    disabled: members.filter(
+      (member) => member.enabled === false || member.enabled === 0,
+    ).length,
+  };
 };
 const eventRouteText = (event?: CrossEntryEvent) => {
   if (!event) return "暂无自动切换";
@@ -207,6 +277,7 @@ const faultSummaryText = (member: CrossEntryGroup["members"][number]) => {
     ["丢包", member.lossFaultCount],
     ["保护", member.flapFaultCount],
     ["惩罚", member.qualityPenaltyEpisodeCount],
+    ["黑名单", member.switchRejectCount],
     ["切换", member.switchTriggerCount],
   ]
     .filter(([, count]) => typeof count === "number" && count > 0)
@@ -291,7 +362,9 @@ const probeSourceText = (
 };
 const isMemberSuppressed = (member: CrossEntryGroup["members"][number]) =>
   Boolean(
-    member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now(),
+    (member.qualitySuppressedUntil &&
+      member.qualitySuppressedUntil > Date.now()) ||
+    (member.switchRejectedUntil && member.switchRejectedUntil > Date.now()),
   );
 const activeGroupFlags = (group: CrossEntryGroup) => {
   const activeActive = group.routingMode === "active_active";
@@ -329,11 +402,20 @@ const currentDecisionHint = (group: CrossEntryGroup) => {
   if (group.manualControlMode === "pause")
     return "自动切换已暂停，即使检测到异常也会保持当前入口。";
   if (group.manualControlMode === "lock")
-    return "当前处于锁定模式，只会尝试使用你指定的入口。";
+    return group.manualLockUntil
+      ? `当前处于锁定模式，直到 ${timeText(group.manualLockUntil)} 才恢复自动选择。`
+      : "当前处于锁定模式，只会尝试使用你指定的入口。";
   if (!active)
     return "当前没有确定承载入口，下一轮检测会尝试回到主入口或健康备用。";
+  if (active.switchRejectedUntil && active.switchRejectedUntil > Date.now())
+    return `当前入口刚发生切换验证失败，处于黑名单保护期，直到 ${timeText(active.switchRejectedUntil)} 才会重新参与。`;
   if (active.status === "unhealthy")
     return "当前入口已不可用，会优先选择健康、未保护、未同类故障的备用入口。";
+  if (
+    active.qualityRecoveryObserveUntil &&
+    active.qualityRecoveryObserveUntil > Date.now()
+  )
+    return `当前入口仍在恢复观察期，直到 ${timeText(active.qualityRecoveryObserveUntil)} 才会重新优先参与。`;
   if (flags.tcpLatencySelectionEnabled) {
     const measured = group.members.filter(
       (member) =>
@@ -369,8 +451,10 @@ const currentDecisionHint = (group: CrossEntryGroup) => {
       return flags.smartSelectionEnabled
         ? "当前入口质量劣化，会避开保护期、同类故障、同节点/同大网段线路；全部都差时差中选优。"
         : "当前入口质量劣化，满足冷却和恢复确认后会切到质量正常的备用入口。";
+    if (active.switchRejectedUntil && active.switchRejectedUntil > Date.now())
+      return `当前入口处于切换验证黑名单，直到 ${timeText(active.switchRejectedUntil)} 才能重新参与。`;
     if (isMemberSuppressed(active))
-      return "当前入口处于质量保护期，不会自动回切到它，直到保护和恢复观察结束。";
+      return "当前入口处于质量保护或恢复观察期，不会自动回切到它，直到观察结束。";
 
     return "当前入口质量未劣化，暂时不会切换。";
   }
@@ -451,6 +535,11 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
         "该模式直接按稳定 TCP 延迟排序。",
         "blocked",
       ),
+      ruleLine(
+        "质量黑名单 / 恢复观察",
+        "TCP 优选只看实时延迟，不叠加质量黑名单和恢复观察。",
+        "blocked",
+      ),
     );
   } else {
     if (truthy(group.autoFailback))
@@ -481,6 +570,12 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
             `${durationText(group.qualityFlapWindowSeconds)} 内劣化 ${group.qualityFlapThreshold || 3} 次进入保护期。`,
           ),
         );
+      activeRules.push(
+        ruleLine(
+          "冷却池 / 黑名单",
+          `切换验证失败的入口会进入 ${durationText(group.postSwitchRejectSuppressSeconds)} 黑名单；恢复后仍可能先经过观察期。`,
+        ),
+      );
       if (flags.smartSelectionEnabled) {
         activeRules.push(
           ruleLine("差中选优", "全部入口都差时，选择丢包和延迟相对最好的。"),
@@ -512,6 +607,17 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
   if (truthy(group.postSwitchVerifyEnabled ?? true))
     activeRules.push(
       ruleLine("切换后验证", "DNS 更新后会再探测目标入口，失败则回滚。"),
+    );
+  if (!flags.activeActive)
+    activeRules.push(
+      ruleLine(
+        "人工锁定",
+        group.manualControlMode === "lock"
+          ? group.manualLockUntil
+            ? `当前锁定到 ${timeText(group.manualLockUntil)}。`
+            : "当前锁定为永久。"
+          : "需要时可手动固定某个入口，并设置到期时间。",
+      ),
     );
   if (truthy(group.dnsVerifyEnabled ?? true))
     activeRules.push(
@@ -603,6 +709,11 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
         "blocked",
       ),
       ruleLine("锁定入口", "锁定入口和自动最低延迟互斥。", "blocked"),
+      ruleLine(
+        "质量黑名单",
+        "切换验证失败后的黑名单仍会生效，但不单独展示为选线规则。",
+        "blocked",
+      ),
     );
 
     return {
@@ -657,6 +768,12 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
           `${durationText(Number(form.qualityFlapWindowSeconds))} 内劣化 ${form.qualityFlapThreshold} 次进入保护期。`,
         ),
       );
+    activeRules.push(
+      ruleLine(
+        "冷却池 / 黑名单",
+        `切换验证失败的入口会被额外冷却 ${durationText(Number(form.postSwitchRejectSuppressSeconds || 600))}。`,
+      ),
+    );
     if (form.smartSelectionEnabled)
       activeRules.push(
         ruleLine(
@@ -689,6 +806,16 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
           "disabled",
         ),
   );
+  activeRules.push(
+    ruleLine(
+      "人工锁定",
+      form.manualControlMode === "lock"
+        ? form.manualLockDuration === "forever"
+          ? "当前会永久固定到选定入口。"
+          : `锁定会在 ${lockDurationOptions.find((item) => item.key === form.manualLockDuration)?.label || "指定时间"} 后自动解除。`
+        : "需要时可手动锁定单个入口，并设置到期时间。",
+    ),
+  );
 
   return {
     title: form.qualityEnabled ? "主备容灾 + 质量容灾" : "主备容灾",
@@ -711,6 +838,12 @@ const eventActionText = (event: CrossEntryEvent) => {
   if (reason.includes("TCP 延迟优选")) return "最低 TCP 延迟切换";
   if (reason.includes("质量劣化")) return "质量容灾切换";
   if (reason.includes("差中最优")) return "差中选优";
+  if (
+    reason.includes("切换验证失败黑名单") ||
+    reason.includes("切换后目标入口验证失败")
+  )
+    return "切换验证黑名单";
+  if (reason.includes("手动锁定到期")) return "锁定到期";
   if (reason.includes("连续检测失败") || reason.includes("当前入口不存在"))
     return "故障容灾切换";
   if (reason.includes("手动锁定")) return "手动锁定";
@@ -729,6 +862,13 @@ const eventReasonText = (event: CrossEntryEvent) => {
   if (reason.includes("驻留时间不足"))
     return "没有切换：当前线路还没达到最短驻留时间。";
   if (reason.includes("冷却期")) return "没有切换：仍在冷却期。";
+  if (
+    reason.includes("切换验证失败黑名单") ||
+    reason.includes("切换后目标入口验证失败")
+  )
+    return "没有切换：目标入口刚失败过，还在黑名单冷却期。";
+  if (reason.includes("手动锁定到期"))
+    return "没有切换：手动锁定已经到期，自动规则重新接管。";
 
   return reason;
 };
@@ -1054,6 +1194,9 @@ export default function CrossEntryFailoverPage() {
       )
         ? truthy(group.postSwitchVerifyEnabled ?? true)
         : Number(group.postSwitchVerifyEnabled) !== 0,
+      postSwitchRejectSuppressSeconds: String(
+        group.postSwitchRejectSuppressSeconds ?? 600,
+      ),
       dnsVerifyEnabled: !Number.isFinite(Number(group.dnsVerifyEnabled))
         ? truthy(group.dnsVerifyEnabled ?? true)
         : Number(group.dnsVerifyEnabled) !== 0,
@@ -1066,6 +1209,10 @@ export default function CrossEntryFailoverPage() {
         : group.lockedMemberId
           ? String(group.lockedMemberId)
           : "",
+      manualLockUntil: group.manualLockUntil
+        ? String(group.manualLockUntil)
+        : "",
+      manualLockDuration: inferLockDuration(group.manualLockUntil),
       memberForwardIds: group.members.map((item) => String(item.forwardId)),
     });
     setFormOpen(true);
@@ -1113,6 +1260,8 @@ export default function CrossEntryFailoverPage() {
           ? "auto"
           : current.manualControlMode,
       lockedMemberId: enabled ? "" : current.lockedMemberId,
+      manualLockUntil: enabled ? "" : current.manualLockUntil,
+      manualLockDuration: enabled ? "forever" : current.manualLockDuration,
     }));
   };
 
@@ -1211,6 +1360,9 @@ export default function CrossEntryFailoverPage() {
       preheatBackupCount: Number(form.preheatBackupCount),
       preheatStrictIsolation: form.preheatStrictIsolation,
       postSwitchVerifyEnabled: form.postSwitchVerifyEnabled,
+      postSwitchRejectSuppressSeconds: Number(
+        form.postSwitchRejectSuppressSeconds,
+      ),
       dnsVerifyEnabled: form.dnsVerifyEnabled,
       manualControlMode:
         form.routingMode === "failover" && !tcpMode
@@ -1221,6 +1373,14 @@ export default function CrossEntryFailoverPage() {
         !tcpMode &&
         form.manualControlMode === "lock"
           ? Number(form.lockedMemberId)
+          : undefined,
+      manualLockUntil:
+        form.routingMode === "failover" &&
+        !tcpMode &&
+        form.manualControlMode === "lock"
+          ? form.manualLockUntil
+            ? Number(form.manualLockUntil)
+            : resolveLockUntil(form.manualLockDuration)
           : undefined,
     });
 
@@ -1421,6 +1581,8 @@ export default function CrossEntryFailoverPage() {
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             const manualMeta = manualControlMeta(group.manualControlMode);
             const strategy = explainGroupStrategy(group);
+            const statusCounts = memberStatusCounts(group);
+            const lockActive = group.manualControlMode === "lock";
 
             return (
               <Card
@@ -1483,6 +1645,9 @@ export default function CrossEntryFailoverPage() {
                               variant="flat"
                             >
                               {manualMeta.label}
+                              {lockActive && group.manualLockUntil
+                                ? ` · ${lockDurationLabel(group.manualLockUntil)}`
+                                : ""}
                             </Chip>
                           )}
                       </div>
@@ -1535,6 +1700,26 @@ export default function CrossEntryFailoverPage() {
                       </Button>
                     </div>
                   </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Chip size="sm" variant="flat">
+                      健康 {statusCounts.healthy}
+                    </Chip>
+                    <Chip color="secondary" size="sm" variant="flat">
+                      学习 {statusCounts.warming}
+                    </Chip>
+                    <Chip color="secondary" size="sm" variant="flat">
+                      观察 {statusCounts.observing}
+                    </Chip>
+                    <Chip color="warning" size="sm" variant="flat">
+                      冷却 {statusCounts.cooling}
+                    </Chip>
+                    <Chip color="warning" size="sm" variant="flat">
+                      黑名单 {statusCounts.blacklisted}
+                    </Chip>
+                    <Chip color="default" size="sm" variant="flat">
+                      禁用 {statusCounts.disabled}
+                    </Chip>
+                  </div>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-divider py-3 text-sm sm:grid-cols-4">
                     <div>
@@ -1585,10 +1770,15 @@ export default function CrossEntryFailoverPage() {
                       const isActive = member.id === group.activeMemberId;
                       const qMeta = qualityMeta(member.qualityState);
                       const now = Date.now();
-                      const suppressed = Boolean(
+                      const qualitySuppressed = Boolean(
                         member.qualitySuppressedUntil &&
                         member.qualitySuppressedUntil > now,
                       );
+                      const blacklisted = Boolean(
+                        member.switchRejectedUntil &&
+                        member.switchRejectedUntil > now,
+                      );
+                      const suppressed = qualitySuppressed || blacklisted;
                       const observing =
                         !suppressed &&
                         Boolean(
@@ -1646,9 +1836,14 @@ export default function CrossEntryFailoverPage() {
                                   惩罚 L{penaltyLevel}
                                 </Chip>
                               )}
-                              {suppressed && (
+                              {qualitySuppressed && (
                                 <Chip color="warning" size="sm" variant="flat">
-                                  保护中
+                                  冷却池
+                                </Chip>
+                              )}
+                              {blacklisted && (
+                                <Chip color="danger" size="sm" variant="flat">
+                                  黑名单
                                 </Chip>
                               )}
                               {observing && (
@@ -1675,11 +1870,18 @@ export default function CrossEntryFailoverPage() {
                               · {member.entryAddress}:{member.entryPort} ·{" "}
                               {member.forwardName}
                             </p>
-                            {suppressed && (
+                            {qualitySuppressed && (
                               <p className="mt-1 truncate text-xs text-warning">
                                 {member.qualitySuppressedReason ||
                                   "质量惩罚保护"}
                                 至 {timeText(member.qualitySuppressedUntil)}
+                              </p>
+                            )}
+                            {blacklisted && (
+                              <p className="mt-1 truncate text-xs text-danger">
+                                {member.switchRejectedReason ||
+                                  "切换验证黑名单"}
+                                至 {timeText(member.switchRejectedUntil)}
                               </p>
                             )}
                             {observing && (
@@ -1873,6 +2075,14 @@ export default function CrossEntryFailoverPage() {
                       routingMode === "active_active"
                         ? ""
                         : form.lockedMemberId,
+                    manualLockUntil:
+                      routingMode === "active_active"
+                        ? ""
+                        : form.manualLockUntil,
+                    manualLockDuration:
+                      routingMode === "active_active"
+                        ? "forever"
+                        : form.manualLockDuration,
                   });
                 }}
               >
@@ -2130,6 +2340,7 @@ export default function CrossEntryFailoverPage() {
                 </Switch>
                 {form.routingMode === "failover" && (
                   <Select
+                    description="锁定后自动规则暂停接管，直到手动恢复或到期。"
                     disabledKeys={[
                       ...(!form.id ? ["lock"] : []),
                       ...(form.tcpLatencySelectionEnabled ? ["lock"] : []),
@@ -2148,6 +2359,14 @@ export default function CrossEntryFailoverPage() {
                           manualControlMode === "lock"
                             ? form.lockedMemberId
                             : "",
+                        manualLockUntil:
+                          manualControlMode === "lock"
+                            ? form.manualLockUntil
+                            : "",
+                        manualLockDuration:
+                          manualControlMode === "lock"
+                            ? form.manualLockDuration
+                            : "forever",
                       });
                     }}
                   >
@@ -2158,35 +2377,61 @@ export default function CrossEntryFailoverPage() {
                 )}
                 {form.routingMode === "failover" &&
                   form.manualControlMode === "lock" && (
-                    <Select
-                      label="锁定入口"
-                      placeholder="选择要固定承载的入口"
-                      selectedKeys={
-                        form.lockedMemberId ? [form.lockedMemberId] : []
-                      }
-                      onSelectionChange={(keys) =>
-                        setForm({
-                          ...form,
-                          lockedMemberId: String(Array.from(keys)[0] || ""),
-                        })
-                      }
-                    >
-                      {lockableMembers.map((member, index) => (
-                        <SelectItem
-                          key={String(member.id)}
-                          textValue={`${member.nodeName} ${member.entryAddress}:${member.entryPort}`}
-                        >
-                          {index === 0 ? "主入口" : `备用 ${index}`} ·{" "}
-                          {member.nodeName} · {member.entryAddress}:
-                          {member.entryPort}
-                        </SelectItem>
-                      ))}
-                    </Select>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Select
+                        label="锁定入口"
+                        placeholder="选择要固定承载的入口"
+                        selectedKeys={
+                          form.lockedMemberId ? [form.lockedMemberId] : []
+                        }
+                        onSelectionChange={(keys) =>
+                          setForm({
+                            ...form,
+                            lockedMemberId: String(Array.from(keys)[0] || ""),
+                          })
+                        }
+                      >
+                        {lockableMembers.map((member, index) => (
+                          <SelectItem
+                            key={String(member.id)}
+                            textValue={`${member.nodeName} ${member.entryAddress}:${member.entryPort}`}
+                          >
+                            {index === 0 ? "主入口" : `备用 ${index}`} ·{" "}
+                            {member.nodeName} · {member.entryAddress}:
+                            {member.entryPort}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                      <Select
+                        description="永久锁定会一直固定；定时锁定到期后自动恢复自动选择。"
+                        label="锁定时长"
+                        selectedKeys={[form.manualLockDuration]}
+                        onSelectionChange={(keys) => {
+                          const duration = String(
+                            Array.from(keys)[0] || "forever",
+                          ) as FailoverForm["manualLockDuration"];
+
+                          setForm({
+                            ...form,
+                            manualLockDuration: duration,
+                            manualLockUntil:
+                              duration === "forever"
+                                ? ""
+                                : String(resolveLockUntil(duration) || ""),
+                          });
+                        }}
+                      >
+                        {lockDurationOptions.map((item) => (
+                          <SelectItem key={item.key}>{item.label}</SelectItem>
+                        ))}
+                      </Select>
+                    </div>
                   )}
               </div>
               <p className="mt-3 text-xs leading-5 text-default-500">
                 自动回切只在主入口恢复稳定后生效；暂停自动切换会保留检测但不改
-                DNS；锁定入口用于临时固定线路，避免自动策略抢占。
+                DNS；锁定入口用于临时固定线路，支持永久、30 分钟、2
+                小时，到期后自动恢复。
               </p>
               {form.routingMode === "failover" && (
                 <div className="mt-3 border-t border-divider pt-4">
@@ -2346,6 +2591,19 @@ export default function CrossEntryFailoverPage() {
                       >
                         DNS 生效确认
                       </Switch>
+                      <Input
+                        description="切换后验证失败时，对目标入口额外冷却多长时间，避免它马上再次被选中。"
+                        label="验证失败黑名单（秒）"
+                        min={60}
+                        type="number"
+                        value={form.postSwitchRejectSuppressSeconds}
+                        onValueChange={(postSwitchRejectSuppressSeconds) =>
+                          setForm({
+                            ...form,
+                            postSwitchRejectSuppressSeconds,
+                          })
+                        }
+                      />
                       <p className="text-xs leading-5 text-default-500 sm:col-span-2 lg:col-span-3">
                         此模式已接管自动选线：普通自动回切、质量容灾、固定延迟目标、智能选择、抖动保护、备用预热和锁定入口均不可同时启用。故障切换、冷却、恢复确认、切换后验证与
                         DNS 确认继续生效。
@@ -2803,6 +3061,19 @@ export default function CrossEntryFailoverPage() {
                         >
                           DNS 生效确认
                         </Switch>
+                        <Input
+                          description="切换后验证失败时，对目标入口额外冷却多长时间。"
+                          label="验证失败黑名单（秒）"
+                          min={60}
+                          type="number"
+                          value={form.postSwitchRejectSuppressSeconds}
+                          onValueChange={(postSwitchRejectSuppressSeconds) =>
+                            setForm({
+                              ...form,
+                              postSwitchRejectSuppressSeconds,
+                            })
+                          }
+                        />
                       </div>
                       <p className="text-xs leading-5 text-default-500">
                         智能选择会负责同类故障、拓扑隔离、预热和差中选优。它与

@@ -1,3 +1,9 @@
+## 2.51.18 Cross-entry failover cooling and lock control
+
+- Adds the backup-line cooling pool, post-switch reject blacklist, and expiring manual lock controls to Cross-entry Failover.
+- Surfaces healthy, observing, cooling, blacklisted, and disabled member states directly in the failover page and keeps the rule summary aligned with the runtime selector.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.16 Expanded in-panel usage guide
 
 - Expands the built-in `/guide` page with detailed tutorials for source-IP entry routing, multi-line concurrent scheduling, AWS resources, Docker App Center, real bandwidth tests, local single-thread speed tests, UDP/QUIC diagnostics, IP quality checks, system self-check, and account settings.

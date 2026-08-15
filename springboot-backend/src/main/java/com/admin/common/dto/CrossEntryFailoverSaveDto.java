@@ -78,9 +78,11 @@ public class CrossEntryFailoverSaveDto {
     private Integer preheatBackupCount = 3;
     private Boolean preheatStrictIsolation = true;
     private Boolean postSwitchVerifyEnabled = true;
+    private Integer postSwitchRejectSuppressSeconds = 600;
     private Boolean dnsVerifyEnabled = true;
     private String manualControlMode = "auto";
     private Long lockedMemberId;
+    private Long manualLockUntil;
 
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;

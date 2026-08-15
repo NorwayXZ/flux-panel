@@ -89,10 +89,12 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "preheat_backup_count", "int NOT NULL DEFAULT 3 AFTER preheat_enabled");
             ensureColumn("cross_entry_failover_group", "preheat_strict_isolation", "tinyint NOT NULL DEFAULT 1 AFTER preheat_backup_count");
             ensureColumn("cross_entry_failover_group", "post_switch_verify_enabled", "tinyint NOT NULL DEFAULT 1 AFTER preheat_strict_isolation");
-            ensureColumn("cross_entry_failover_group", "dns_verify_enabled", "tinyint NOT NULL DEFAULT 1 AFTER post_switch_verify_enabled");
+            ensureColumn("cross_entry_failover_group", "post_switch_reject_suppress_seconds", "int NOT NULL DEFAULT 600 AFTER post_switch_verify_enabled");
+            ensureColumn("cross_entry_failover_group", "dns_verify_enabled", "tinyint NOT NULL DEFAULT 1 AFTER post_switch_reject_suppress_seconds");
             ensureColumn("cross_entry_failover_group", "manual_control_mode", "varchar(16) NOT NULL DEFAULT 'auto' AFTER dns_verify_enabled");
             ensureColumn("cross_entry_failover_group", "locked_member_id", "bigint DEFAULT NULL AFTER manual_control_mode");
-            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER locked_member_id");
+            ensureColumn("cross_entry_failover_group", "manual_lock_until", "bigint DEFAULT NULL AFTER locked_member_id");
+            ensureColumn("cross_entry_failover_group", "quality_probe_status", "varchar(24) NOT NULL DEFAULT 'disabled' AFTER manual_lock_until");
             ensureColumn("cross_entry_failover_group", "quality_probe_error", "varchar(500) DEFAULT NULL AFTER quality_probe_status");
             ensureColumn("cross_entry_failover_group", "quality_probe_at", "bigint DEFAULT NULL AFTER quality_probe_error");
             ensureColumn("cross_entry_failover_member", "weight", "int NOT NULL DEFAULT 100 AFTER priority");
@@ -116,7 +118,10 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "quality_penalty_window_started_at", "bigint DEFAULT NULL AFTER quality_penalty_episode_count");
             ensureColumn("cross_entry_failover_member", "quality_penalty_last_at", "bigint DEFAULT NULL AFTER quality_penalty_window_started_at");
             ensureColumn("cross_entry_failover_member", "quality_recovery_observe_until", "bigint DEFAULT NULL AFTER quality_penalty_last_at");
-            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER quality_recovery_observe_until");
+            ensureColumn("cross_entry_failover_member", "switch_rejected_until", "bigint DEFAULT NULL AFTER quality_recovery_observe_until");
+            ensureColumn("cross_entry_failover_member", "switch_rejected_reason", "varchar(255) DEFAULT NULL AFTER switch_rejected_until");
+            ensureColumn("cross_entry_failover_member", "switch_reject_count", "int NOT NULL DEFAULT 0 AFTER switch_rejected_reason");
+            ensureColumn("cross_entry_failover_member", "quality_last_error", "varchar(500) DEFAULT NULL AFTER switch_reject_count");
             ensureColumn("cross_entry_failover_member", "quality_checked_at", "bigint DEFAULT NULL AFTER quality_last_error");
             ensureColumn("cross_entry_failover_member", "fault_episode_count", "int NOT NULL DEFAULT 0 AFTER quality_checked_at");
             ensureColumn("cross_entry_failover_member", "connect_fault_count", "int NOT NULL DEFAULT 0 AFTER fault_episode_count");
