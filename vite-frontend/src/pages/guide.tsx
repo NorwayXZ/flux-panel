@@ -11,15 +11,19 @@ import {
   BookOpen,
   Boxes,
   CloudCog,
+  Combine,
   GitBranch,
   Globe2,
+  Gauge,
   Home,
   KeyRound,
   LayoutDashboard,
   LockKeyhole,
+  MapPinned,
   Network,
   RadioTower,
   RefreshCw,
+  SearchCheck,
   Search,
   Server,
   Settings,
@@ -260,6 +264,40 @@ const entries: GuideEntry[] = [
     keywords: "移动 联通 电信 运营商 DNS 线路解析",
   },
   {
+    id: "source-ip-entry",
+    category: "core",
+    title: "来源 IP 分流",
+    path: "/source-ip-entry",
+    icon: RadioTower,
+    adminOnly: true,
+    summary:
+      "由统一 TCP 入口按真实客户端来源 IP、CIDR、ASN、地区或自定义规则选择后端线路。",
+    purpose:
+      "来源 IP 分流存在的原因，是 DNS 缓存、私人 DNS、公共 DNS 和客户端缓存可能导致三网优化选错入口。它不依赖客户端 DNS，而是在入口 Agent 收到连接时根据真实来源 IP 做最长匹配或规则匹配，再把 TCP 流量交给对应后端转发。它适合固定入口域名不想换、但又希望不同来源走不同后端线路的场景。",
+    prerequisites: [
+      "一台在线且版本满足要求的统一入口节点。",
+      "已经创建多条后端转发，并且这些后端使用相同上层协议和正确目标端口。",
+      "如果使用运营商或 ASN 规则，需要先在页面刷新运营商/ASN 数据库；缓存优先，缺失时再联网补充。",
+    ],
+    steps: [
+      "新建分流组，选择统一入口节点、监听地址和监听端口。",
+      "添加默认回退规则，保证未命中的来源也有可走线路。",
+      "按需要添加运营商、CIDR/IP 段、ASN、地区、VIP 来源、专属客户、灰度测试或风险隔离规则。",
+      "为每条规则选择后端转发，并设置优先级；数字越小越靠前，CIDR 规则仍按最长匹配优先。",
+      "保存后使用“调试来源 IP”输入真实客户端 IP，确认命中了哪条规则和后端线路。",
+    ],
+    result:
+      "用户仍连接同一个域名或同一个入口端口，但入口 Agent 会按来源规则把连接送到不同后端线路。",
+    notes: [
+      "它只做 TCP 入口层转发，不解密 VLESS、REALITY、Trojan 等上层协议，也不会修改协议参数。",
+      "它会让统一入口机器产生中转流量；如果不想让任何统一入口承担流量，只能使用 DNS、客户端本地选择或不同域名入口。",
+      "ASN 和地区数据库适合作为辅助判断，不能百分百替代真实运营商探测；关键客户建议用明确 CIDR 或专属客户规则。",
+      "不要让同一个端口同时被三网优化、入口容灾和来源 IP 分流接管，先到线路调度中心看冲突提示。",
+    ],
+    keywords:
+      "来源IP 分流 CIDR ASN 地区 VIP 客户 灰度 风险隔离 DNS缓存 统一入口",
+  },
+  {
     id: "entry-failover",
     category: "core",
     title: "入口容灾",
@@ -288,6 +326,37 @@ const entries: GuideEntry[] = [
       "三网优化解决“不同运营商走不同入口”，入口容灾解决“当前入口坏了换备用”，两者目的不同。",
     ],
     keywords: "高可用 Cloudflare DNS 主备 跨入口 故障切换",
+  },
+  {
+    id: "multi-line-aggregation",
+    category: "core",
+    title: "多线路并发调度",
+    path: "/multi-line-aggregation",
+    icon: Combine,
+    adminOnly: true,
+    summary: "把多个已存在转发组成一个入口组，按连接级别分配到不同线路。",
+    purpose:
+      "这个功能不是把同一个 TCP 单连接拆成多条线路叠加带宽，而是把新建连接按权重、速度优先、轮询或哈希分配到不同转发。它适合 YouTube、下载器、多线程测速、网页并发请求这类天然会创建多个连接的业务，用来提高整体吞吐或降低单条线路拥塞风险。",
+    prerequisites: [
+      "已经有多条健康转发，且这些转发监听端口真实可用。",
+      "同一个并发调度组的所有候选线路必须使用相同入口节点。",
+      "候选线路的目标业务和协议应一致，避免同一个客户端连接到不同服务。",
+    ],
+    steps: [
+      "新建调度组，选择入口节点、监听端口和协议模式。",
+      "添加候选转发，填写权重、带宽参考值和健康检查参数。",
+      "选择调度策略：速度优先适合尽量挑快线路，轮询适合平均分配，源 IP 哈希适合让同一来源更稳定。",
+      "保存后检查每条成员线路是否健康；底层转发端口未监听时，先回到转发管理修复。",
+      "用多连接场景测试效果，不要只拿单线程测速结果判断它是否有效。",
+    ],
+    result:
+      "同一个入口地址可以把不同连接分散到多条线路，在多连接业务下提高综合体验。",
+    notes: [
+      "单线程测速、单个长 TCP 连接、某些游戏或实时会话通常不会明显变快。",
+      "如果底层线路本身不通或端口没监听，调度组不会自动帮你部署底层转发。",
+      "延迟差异过大的线路混在一起，可能让体验变得忽快忽慢；应先用质量实验室或真实带宽测试筛选成员。",
+    ],
+    keywords: "多线路 并发调度 聚合 轮询 权重 哈希 多连接 YouTube",
   },
   {
     id: "port-resources",
@@ -398,6 +467,37 @@ const entries: GuideEntry[] = [
     ],
   },
   {
+    id: "aws-access",
+    category: "access",
+    title: "AWS 资源",
+    path: "/aws-access",
+    icon: CloudCog,
+    adminOnly: true,
+    summary:
+      "集中保存 AWS Access Key，用于后续 CloudFront、ACM 或相关云资源自动化。",
+    purpose:
+      "AWS 资源页的存在，是为了把云厂商密钥从具体业务页面中抽出来统一管理。后续需要创建或验证 CloudFront XHTTP 分离、ACM 证书、分配域名等能力时，可以复用这里的账号，不需要在每条业务规则里重复保存 AK/SK。",
+    prerequisites: [
+      "已在 AWS IAM 中创建 Access Key。",
+      "只授予所需服务的最小权限，例如 CloudFront、ACM、Route53 读取或变更权限。",
+      "如果涉及 CloudFront 证书，通常需要关注 us-east-1 区域的 ACM 证书要求。",
+    ],
+    steps: [
+      "打开 AWS 资源，新增账号名称、Access Key ID、Secret Access Key 和默认 Region。",
+      "保存后点击验证，确认面板服务器能访问 AWS API 并读取到账号信息。",
+      "验证成功后，在需要 AWS 能力的页面选择该账号。",
+      "密钥轮换时编辑账号并重新填写 Secret；不再使用时先确认无业务依赖再删除。",
+    ],
+    result:
+      "CloudNest 获得可复用的 AWS 自动化入口，后续功能可以直接选择账号执行云资源操作。",
+    notes: [
+      "AK/SK 会加密保存，页面不会回显 Secret 明文。",
+      "不要使用主账号长期密钥；建议为面板单独创建 IAM 用户或角色并限制权限。",
+      "保存 AWS 凭据本身不会自动创建 CloudFront、证书或 DNS 记录，只有具体业务提交后才会执行。",
+    ],
+    keywords: "AWS AK SK CloudFront ACM Route53 us-east-1 资源中心",
+  },
+  {
     id: "dynamic-dns",
     category: "access",
     title: "动态解析",
@@ -449,6 +549,37 @@ const entries: GuideEntry[] = [
       "公开 SSH、RDP 和数据库时应设置来源限制、强密码或密钥认证。",
       "TCP 映射与 UDP 能力应以创建界面实际提供的协议为准。",
     ],
+  },
+  {
+    id: "docker-apps",
+    category: "access",
+    title: "Docker 应用中心",
+    path: "/docker-apps",
+    icon: Boxes,
+    adminOnly: true,
+    summary: "识别节点 Docker 环境，并一键部署、管理和发布常用容器应用。",
+    purpose:
+      "Docker 应用中心让 CloudNest 不只管理网络链路，也能把 X-UI、哪吒、Alist、Nextcloud 等服务快速部署到节点上。它统一处理容器创建、端口分配、域名绑定、反代发布、启动停止、升级和删除，减少你反复登录服务器敲命令的成本。",
+    prerequisites: [
+      "目标节点在线，Agent 版本达到页面显示的最低要求。",
+      "节点已安装 Docker，或至少允许按页面命令安装 Docker。",
+      "需要绑定域名时，资源中心已配置 Cloudflare DNS，并准备可用 HTTPS 入口节点。",
+    ],
+    steps: [
+      "先点击节点检测，确认 Docker 是否可用、Docker 版本和当前容器列表。",
+      "点击新建应用，选择模板、节点、应用名、容器名和宿主机端口。",
+      "需要公网域名时开启绑定域名，选择 DNS Zone、入口节点、监听端口和路径。",
+      "创建后在应用卡片执行启动、停止、重启、升级、备份或删除，并查看事件日志。",
+      "部署失败时打开命令窗口查看面板准备的等效 Docker 命令，方便手动排查。",
+    ],
+    result:
+      "常用自托管应用可以从面板直接部署并发布，不必把 Docker、端口、域名和反代分散到多个地方维护。",
+    notes: [
+      "应用中心管理的是容器应用，不等同于代理协议；代理仍在私人代理、转发或隧道功能中创建。",
+      "端口仍受全局端口账本约束，已被转发、代理或其他应用占用时不能重复使用。",
+      "删除应用前确认数据卷和备份策略；容器删除不一定等于业务数据已经安全备份。",
+    ],
+    keywords: "Docker 应用中心 x-ui 哪吒 Alist Nextcloud 反代 域名 容器",
   },
   {
     id: "home-access",
@@ -562,6 +693,132 @@ const entries: GuideEntry[] = [
     ],
   },
   {
+    id: "bandwidth-test",
+    category: "tools",
+    title: "真实带宽测试",
+    path: "/bandwidth-test",
+    icon: Gauge,
+    adminOnly: true,
+    summary:
+      "让两个节点或节点到目标之间执行 TCP/UDP 吞吐、RTT、抖动、丢包和重传测试。",
+    purpose:
+      "真实带宽测试用于回答“这两台服务器之间到底能跑多少”“UDP 有没有丢包”“多并发是否比单并发更快”。它比普通 Ping 更接近实际转发承载能力，适合上线新线路前做验收，也适合排查家庭中转、跨境中转和落地出口速度不达标的问题。",
+    prerequisites: [
+      "至少一台在线节点；节点间互测时两端 Agent 都必须在线。",
+      "测试端口需要能被临时监听和访问，云厂商安全组与系统防火墙不能阻断。",
+      "大流量测试会真实消耗服务器流量，尤其是跨境和按量计费线路。",
+    ],
+    steps: [
+      "新建任务，选择执行节点和目标节点或目标地址。",
+      "选择 TCP 或 UDP、测试方向、持续时间、并发流数和最大带宽。",
+      "先用小并发短时间测试确认连通，再提高时长和并发测上限。",
+      "查看吞吐、RTT、抖动、丢包、乱序、重传和历史结果。",
+      "将结果与质量实验室长期数据结合，判断是瞬时拥塞还是长期线路问题。",
+    ],
+    result:
+      "获得接近真实业务链路的吞吐和丢包数据，帮助决定线路是否适合做入口、中转或出口。",
+    notes: [
+      "并发流数表示同时开多少条测试连接；单线程体验看 1 条，多连接下载可看多条。",
+      "UDP 丢包和抖动比平均速度更重要，丢包高时游戏、QUIC、Hysteria2 和语音体验会明显变差。",
+      "测试结果受测试时段、CPU、网卡、限速、运营商 QoS 和服务商流量策略影响。",
+    ],
+    keywords: "真实带宽 iperf TCP UDP 并发流数 丢包 抖动 重传 RTT",
+  },
+  {
+    id: "client-speed-test",
+    category: "tools",
+    title: "本机单线程测速",
+    path: "/client-speed-test",
+    icon: Activity,
+    adminOnly: true,
+    summary:
+      "在当前浏览器里使用 Cloudflare 测速端点测本机网络的单线程下载、上传、延迟、抖动、丢包和出口信息。",
+    purpose:
+      "本机单线程测速解决的是“我这台电脑或手机当前网络到公网测速点能跑多少”。它不经过 Agent，也不代表某个节点服务器的出口速度，而是帮助你判断本地宽带、5G、浏览器、DNS 或当前网络环境是否正常。",
+    prerequisites: [
+      "当前浏览器能访问 Cloudflare Speedtest 端点。",
+      "浏览器没有被插件、系统代理或公司网络限制大文件请求。",
+      "需要测超过 1G 级别单线程时，把最大下载量调大，避免测试太早结束。",
+    ],
+    steps: [
+      "打开页面，按需要选择标准或深度测试。",
+      "设置最大下载量、最大上传量、单线程/多阶段参数和是否启用上传测试。",
+      "点击开始后不要切换网络，等待延迟、下载、上传和质量阶段完成。",
+      "查看平均速度、峰值速度、已传输数据、空载延迟、负载延迟、抖动、丢包、IP、ASN、Cloudflare 机房和历史记录。",
+      "需要留档时复制结果或下载报告。",
+    ],
+    result:
+      "得到当前本机网络视角的测速结果，可用于判断问题是在本地网络、运营商、代理协议还是服务器线路。",
+    notes: [
+      "这是本机到 Cloudflare 的测试，不是 CloudNest 节点之间的真实带宽测试。",
+      "浏览器测速会受 CORS、浏览器连接调度、CPU 和系统代理影响，极限值可与系统测速工具交叉验证。",
+      "单线程速度低但多线程高，通常说明单连接拥塞、TCP 窗口、路由或中间链路对长连接不友好。",
+    ],
+    keywords: "本机测速 Cloudflare 单线程 下载 上传 延迟 抖动 丢包 IP ASN",
+  },
+  {
+    id: "udp-quic-diagnostic",
+    category: "tools",
+    title: "UDP / QUIC 诊断",
+    path: "/udp-quic-diagnostic",
+    icon: RadioTower,
+    adminOnly: true,
+    summary: "专门检测 UDP 端口、UDP Echo 和 QUIC 握手是否可用。",
+    purpose:
+      "很多协议表面 TCP 正常，但 UDP 或 QUIC 被安全组、防火墙、运营商或 NAT 丢弃。UDP / QUIC 诊断把这类问题单独拿出来测，适合排查 Hysteria2、TUIC、WireGuard、QUIC 应用和游戏端口。",
+    prerequisites: [
+      "执行节点在线，目标节点或目标地址可访问。",
+      "UDP Echo 模式通常需要目标节点配合；QUIC 模式需要目标端口真实支持 QUIC/TLS。",
+      "云厂商安全组、系统防火墙和路由器端口转发都必须放行对应 UDP 端口。",
+    ],
+    steps: [
+      "选择 UDP Echo 或 QUIC 模式。",
+      "选择执行节点和目标节点，或填写外部目标地址与端口。",
+      "设置包大小、次数、超时、空闲时间或 QUIC SNI。",
+      "运行诊断后查看成功率、RTT、抖动、丢包、错误阶段和原始结果。",
+      "如果 TCP 可用但 UDP 失败，优先检查安全组、防火墙、NAT 和运营商限制。",
+    ],
+    result: "能明确区分“服务没监听”“UDP 被挡”“QUIC 握手失败”和“网络抖动丢包”。",
+    notes: [
+      "UDP 没有 TCP 那样的连接建立过程，测试成功率和丢包率比单次结果更有意义。",
+      "QUIC 失败不一定是端口不通，也可能是 SNI、证书、ALPN 或服务端协议不匹配。",
+      "普通 Ping 正常不能证明 UDP 或 QUIC 正常。",
+    ],
+    keywords: "UDP QUIC Hysteria2 TUIC WireGuard Echo 丢包 SNI NAT",
+  },
+  {
+    id: "ip-quality",
+    category: "tools",
+    title: "IP 质量检测",
+    path: "/ip-quality",
+    icon: MapPinned,
+    adminOnly: true,
+    summary:
+      "检测节点出口 IP 的地区、ASN、风险评分、黑名单、流媒体、ChatGPT、DNS 观察和端口封禁。",
+    purpose:
+      "IP 质量检测用于判断一台出口机器是否适合做落地、代理或服务发布。它把公开地理信息、可选风险服务、DNSBL、流媒体可访问性、ChatGPT 可用性和 DNS 观察结果放在同一页，避免只看地区或只看 Ping 就误判出口质量。",
+    prerequisites: [
+      "执行节点 Agent 版本达到页面显示的最低要求。",
+      "需要风险评分时，在情报源中配置 IPQualityScore 或 AbuseIPDB API Key。",
+      "节点能访问检测目标站点；部分服务会因反自动化返回无法确认。",
+    ],
+    steps: [
+      "打开页面，先在情报源中按需保存风险服务 API Key。",
+      "选择节点点击开始检测，等待地区、风险、黑名单、解锁和 DNS 检查完成。",
+      "打开详情查看各项原始结果、可信度、失败原因和最近历史。",
+      "对高风险、黑名单命中或目标服务不可用的出口，避免用于重要用户或敏感业务。",
+    ],
+    result:
+      "形成节点出口质量档案，帮助决定哪台机器做入口、哪台做中转、哪台做落地出口。",
+    notes: [
+      "没有配置风险服务时不会凭机房标签乱给风险分，只显示暂无风险分。",
+      "服务检测只能证明当前测试时刻可访问，不能保证未来长期解锁。",
+      "DNS 泄漏判断要结合系统配置和权威侧观察，不能只看单个解析器结果。",
+    ],
+    keywords:
+      "IP质量 解锁 ChatGPT Netflix 风险评分 AbuseIPDB IPQS DNSBL DNS泄漏",
+  },
+  {
     id: "topology",
     category: "system",
     title: "全链路拓扑",
@@ -579,6 +836,37 @@ const entries: GuideEntry[] = [
     ],
     result: "减少在多个页面之间逐项猜测依赖关系的时间。",
     notes: ["拓扑展示现有资源关系，不会自动修改配置。"],
+  },
+  {
+    id: "system-self-check",
+    category: "system",
+    title: "全系统自检",
+    path: "/system-self-check",
+    icon: SearchCheck,
+    adminOnly: true,
+    summary:
+      "自动检查 Agent 身份、DNS 解析、端口账本、真实监听、域名、证书、转发和隧道断链。",
+    purpose:
+      "全系统自检存在的意义，是把“到底坏在哪一段”从人工猜测变成分段检查。它会把面板配置、数据库账本、Agent 上报、服务器真实监听、DNS 公网解析和证书状态放到一起核对，直接提示问题段和建议修复方向。",
+    prerequisites: [
+      "管理员登录。",
+      "需要检查的节点或家庭设备尽量在线；离线资源会被标记为无法确认或失败。",
+      "DNS、证书和端口类检查需要面板服务器能够访问外部解析和目标端口。",
+    ],
+    steps: [
+      "打开页面选择全量自检，或只检查节点、DNS、端口、域名证书、转发和隧道。",
+      "查看每个检查项的状态：正常、警告、失败或跳过。",
+      "展开失败项，按提示区分是面板配置、Agent、服务器监听、DNS、证书还是外部网络问题。",
+      "修复后重新运行同一类检查，确认问题消失。",
+    ],
+    result:
+      "不用逐台登录服务器，也能快速定位常见断链、密钥装错、端口账本不一致和 DNS 解析异常。",
+    notes: [
+      "无 IPv6、无 OpenWrt 或没有家庭设备的环境会跳过对应检查，不代表失败。",
+      "面板之外的路由器品牌和手机网络限制只能通过结果推断，不能被面板完全控制。",
+      "自检不会自动删除资源；涉及停用、重装或删除时仍由管理员确认。",
+    ],
+    keywords: "自检 Agent密钥 DNS AAAA OpenWrt 端口账本 证书 断链 故障定位",
   },
   {
     id: "monitoring",
@@ -646,7 +934,31 @@ const entries: GuideEntry[] = [
       "总流量是各项资源额度之和，但每项额度独立执行。",
       "共享节点不可被普通用户修改；共享隧道也不可修改。",
       "用户使用共享节点组隧道或做转发时，仍受全局端口账本和分享范围约束。",
+      "独立限速规则已经并入用户资源授权和转发策略；旧的 /limit 入口会跳回用户管理。",
     ],
+  },
+  {
+    id: "profile",
+    category: "system",
+    title: "账户设置",
+    path: "/profile",
+    icon: KeyRound,
+    summary: "查看个人资料、打开使用教程，并进入当前账号可用的功能入口。",
+    purpose:
+      "账户设置是用户自己的入口页。普通用户可以从这里查看资料、进入被授权的资源；管理员也可以快速跳转到常用管理功能。它不承担资源配置本身，主要用于账号级操作和导航。",
+    prerequisites: ["登录任意有效账号。"],
+    steps: [
+      "打开账户设置查看当前账号、角色和可用入口。",
+      "需要学习功能时点击使用教程。",
+      "需要修改登录密码时使用左侧菜单底部或顶部账户区域的密码修改入口。",
+      "普通用户按页面展示的授权资源进入对应功能。",
+    ],
+    result: "用户能清楚知道自己能用哪些功能，并能快速进入教程或个人操作入口。",
+    notes: [
+      "普通用户不会看到管理员的限制性参数和后台策略，只显示续费、额度、到期等必要信息。",
+      "账号密码修改后通常需要重新登录。",
+    ],
+    keywords: "账户设置 个人资料 普通用户 教程 密码",
   },
   {
     id: "settings",

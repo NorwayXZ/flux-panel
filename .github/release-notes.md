@@ -1,3 +1,9 @@
+## 2.51.16 Expanded in-panel usage guide
+
+- Expands the built-in `/guide` page with detailed tutorials for source-IP entry routing, multi-line concurrent scheduling, AWS resources, Docker App Center, real bandwidth tests, local single-thread speed tests, UDP/QUIC diagnostics, IP quality checks, system self-check, and account settings.
+- Each guide entry now explains why the feature exists, what to prepare before using it, the exact setup flow, the expected result, and the operational caveats.
+- Keeps Agent `2.51.13`; this is a panel documentation and UX release only.
+
 ## 2.51.15 Node deletion cleanup
 
 - Cleans associated private proxy records and Agent runtimes when deleting a node.
