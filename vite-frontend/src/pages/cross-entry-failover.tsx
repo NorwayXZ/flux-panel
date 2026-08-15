@@ -2446,68 +2446,67 @@ export default function CrossEntryFailoverPage() {
                   }
                 />
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-center">
-                {form.routingMode === "failover" ? (
+              <div className="mt-4 grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                  {form.routingMode === "failover" ? (
+                    <Switch
+                      isDisabled={form.tcpLatencySelectionEnabled}
+                      isSelected={form.autoFailback}
+                      onValueChange={(autoFailback) =>
+                        setForm({ ...form, autoFailback })
+                      }
+                    >
+                      主入口恢复后自动回切
+                    </Switch>
+                  ) : (
+                    <span className="text-xs text-default-500">
+                      多入口模式不回切，健康成员会自动恢复到 DNS 记录。
+                    </span>
+                  )}
                   <Switch
-                    isDisabled={form.tcpLatencySelectionEnabled}
-                    isSelected={form.autoFailback}
-                    onValueChange={(autoFailback) =>
-                      setForm({ ...form, autoFailback })
-                    }
+                    isSelected={form.enabled}
+                    onValueChange={(enabled) => setForm({ ...form, enabled })}
                   >
-                    主入口恢复后自动回切
+                    启用自动检测
                   </Switch>
-                ) : (
-                  <span className="text-xs text-default-500">
-                    多入口模式不回切，健康成员会自动恢复到 DNS 记录。
-                  </span>
-                )}
-                <Switch
-                  isSelected={form.enabled}
-                  onValueChange={(enabled) => setForm({ ...form, enabled })}
-                >
-                  启用自动检测
-                </Switch>
+                </div>
                 {form.routingMode === "failover" && (
-                  <Select
-                    description="锁定后自动规则暂停接管，直到手动恢复或到期。"
-                    disabledKeys={[
-                      ...(!form.id ? ["lock"] : []),
-                      ...(form.tcpLatencySelectionEnabled ? ["lock"] : []),
-                    ]}
-                    label="自动控制"
-                    selectedKeys={[form.manualControlMode]}
-                    onSelectionChange={(keys) => {
-                      const manualControlMode = String(
-                        Array.from(keys)[0] || "auto",
-                      ) as "auto" | "pause" | "lock";
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <Select
+                      disabledKeys={[
+                        ...(!form.id ? ["lock"] : []),
+                        ...(form.tcpLatencySelectionEnabled ? ["lock"] : []),
+                      ]}
+                      label="自动控制"
+                      selectedKeys={[form.manualControlMode]}
+                      onSelectionChange={(keys) => {
+                        const manualControlMode = String(
+                          Array.from(keys)[0] || "auto",
+                        ) as "auto" | "pause" | "lock";
 
-                      setForm({
-                        ...form,
-                        manualControlMode,
-                        lockedMemberId:
-                          manualControlMode === "lock"
-                            ? form.lockedMemberId
-                            : "",
-                        manualLockUntil:
-                          manualControlMode === "lock"
-                            ? form.manualLockUntil
-                            : "",
-                        manualLockDuration:
-                          manualControlMode === "lock"
-                            ? form.manualLockDuration
-                            : "forever",
-                      });
-                    }}
-                  >
-                    <SelectItem key="auto">自动选择</SelectItem>
-                    <SelectItem key="pause">暂停自动切换</SelectItem>
-                    <SelectItem key="lock">锁定指定入口</SelectItem>
-                  </Select>
-                )}
-                {form.routingMode === "failover" &&
-                  form.manualControlMode === "lock" && (
-                    <div className="grid gap-3 sm:grid-cols-2">
+                        setForm({
+                          ...form,
+                          manualControlMode,
+                          lockedMemberId:
+                            manualControlMode === "lock"
+                              ? form.lockedMemberId
+                              : "",
+                          manualLockUntil:
+                            manualControlMode === "lock"
+                              ? form.manualLockUntil
+                              : "",
+                          manualLockDuration:
+                            manualControlMode === "lock"
+                              ? form.manualLockDuration
+                              : "forever",
+                        });
+                      }}
+                    >
+                      <SelectItem key="auto">自动选择</SelectItem>
+                      <SelectItem key="pause">暂停自动切换</SelectItem>
+                      <SelectItem key="lock">锁定指定入口</SelectItem>
+                    </Select>
+                    {form.manualControlMode === "lock" && (
                       <Select
                         label="锁定入口"
                         placeholder="选择要固定承载的入口"
@@ -2532,8 +2531,9 @@ export default function CrossEntryFailoverPage() {
                           </SelectItem>
                         ))}
                       </Select>
+                    )}
+                    {form.manualControlMode === "lock" && (
                       <Select
-                        description="永久锁定会一直固定；定时锁定到期后自动恢复自动选择。"
                         label="锁定时长"
                         selectedKeys={[form.manualLockDuration]}
                         onSelectionChange={(keys) => {
@@ -2555,8 +2555,9 @@ export default function CrossEntryFailoverPage() {
                           <SelectItem key={item.key}>{item.label}</SelectItem>
                         ))}
                       </Select>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                )}
               </div>
               <p className="mt-3 text-xs leading-5 text-default-500">
                 自动回切只在主入口恢复稳定后生效；暂停自动切换会保留检测但不改
@@ -2617,124 +2618,148 @@ export default function CrossEntryFailoverPage() {
                     TCP 延迟最低的健康线路。开启后会自动关闭存在冲突的策略。
                   </p>
                   {form.tcpLatencySelectionEnabled && (
-                    <div className="mt-4 grid gap-3 border-t border-divider pt-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-center">
-                      <Select
-                        description="从哪个网络视角去测入口延迟；本地 Connector 更接近你的宽带体验。"
-                        label="TCP 探测源"
-                        selectedKeys={[form.qualityProbeSourceType]}
-                        onSelectionChange={(keys) =>
-                          setForm({
-                            ...form,
-                            qualityProbeSourceType: String(
-                              Array.from(keys)[0] || "panel",
-                            ) as "panel" | "node" | "connector",
-                            qualityProbeSourceId: "",
-                          })
-                        }
-                      >
-                        <SelectItem key="panel">面板服务器</SelectItem>
-                        <SelectItem key="node">指定 Agent 节点</SelectItem>
-                        <SelectItem key="connector">指定 Connector</SelectItem>
-                      </Select>
-                      {form.qualityProbeSourceType === "node" && (
-                        <Select
-                          label="Agent 节点"
-                          placeholder={`Agent ≥ ${probeSources.minimumRemoteVersion}`}
-                          selectedKeys={
-                            form.qualityProbeSourceId
-                              ? [form.qualityProbeSourceId]
-                              : []
-                          }
-                          onSelectionChange={(keys) =>
-                            setForm({
-                              ...form,
-                              qualityProbeSourceId: String(
-                                Array.from(keys)[0] || "",
-                              ),
-                            })
-                          }
-                        >
-                          {probeSources.nodes.map((source) => (
-                            <SelectItem
-                              key={String(source.id)}
-                              textValue={`${source.name} ${source.address || ""}`}
-                            >
-                              {source.name} · {source.address || "无地址"} ·{" "}
-                              {source.version || "-"}
+                    <div className="mt-4 grid gap-4 border-t border-divider pt-4">
+                      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">TCP 探测</p>
+                          <p className="text-xs leading-5 text-default-500">
+                            从指定网络视角测入口延迟，本地 Connector
+                            更接近你的宽带体验。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          <Select
+                            label="TCP 探测源"
+                            selectedKeys={[form.qualityProbeSourceType]}
+                            onSelectionChange={(keys) =>
+                              setForm({
+                                ...form,
+                                qualityProbeSourceType: String(
+                                  Array.from(keys)[0] || "panel",
+                                ) as "panel" | "node" | "connector",
+                                qualityProbeSourceId: "",
+                              })
+                            }
+                          >
+                            <SelectItem key="panel">面板服务器</SelectItem>
+                            <SelectItem key="node">指定 Agent 节点</SelectItem>
+                            <SelectItem key="connector">
+                              指定 Connector
                             </SelectItem>
-                          ))}
-                        </Select>
-                      )}
-                      {form.qualityProbeSourceType === "connector" && (
-                        <Select
-                          label="Connector"
-                          placeholder={`Connector ≥ ${probeSources.minimumRemoteVersion}`}
-                          selectedKeys={
-                            form.qualityProbeSourceId
-                              ? [form.qualityProbeSourceId]
-                              : []
-                          }
-                          onSelectionChange={(keys) =>
-                            setForm({
-                              ...form,
-                              qualityProbeSourceId: String(
-                                Array.from(keys)[0] || "",
-                              ),
-                            })
-                          }
-                        >
-                          {probeSources.connectors.map((source) => (
-                            <SelectItem
-                              key={String(source.id)}
-                              textValue={`${source.name} ${source.platform || ""}`}
+                          </Select>
+                          {form.qualityProbeSourceType === "node" && (
+                            <Select
+                              label="Agent 节点"
+                              placeholder={`Agent ≥ ${probeSources.minimumRemoteVersion}`}
+                              selectedKeys={
+                                form.qualityProbeSourceId
+                                  ? [form.qualityProbeSourceId]
+                                  : []
+                              }
+                              onSelectionChange={(keys) =>
+                                setForm({
+                                  ...form,
+                                  qualityProbeSourceId: String(
+                                    Array.from(keys)[0] || "",
+                                  ),
+                                })
+                              }
                             >
-                              {source.name} · {source.platform || "-"} ·{" "}
-                              {source.version || "-"}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      )}
-                      <Input
-                        description="使用多次均值降低单次抖动影响"
-                        label="每轮 TCP 次数"
-                        max={10}
-                        min={2}
-                        type="number"
-                        value={form.qualityProbeCount}
-                        onValueChange={(qualityProbeCount) =>
-                          setForm({ ...form, qualityProbeCount })
-                        }
-                      />
-                      <Switch
-                        isSelected={form.postSwitchVerifyEnabled}
-                        onValueChange={(postSwitchVerifyEnabled) =>
-                          setForm({ ...form, postSwitchVerifyEnabled })
-                        }
-                      >
-                        切换后验证入口
-                      </Switch>
-                      <Switch
-                        isSelected={form.dnsVerifyEnabled}
-                        onValueChange={(dnsVerifyEnabled) =>
-                          setForm({ ...form, dnsVerifyEnabled })
-                        }
-                      >
-                        DNS 生效确认
-                      </Switch>
-                      <Input
-                        description="切换后验证失败时，对目标入口额外冷却多长时间，避免它马上再次被选中。"
-                        label="验证失败黑名单（秒）"
-                        min={60}
-                        type="number"
-                        value={form.postSwitchRejectSuppressSeconds}
-                        onValueChange={(postSwitchRejectSuppressSeconds) =>
-                          setForm({
-                            ...form,
-                            postSwitchRejectSuppressSeconds,
-                          })
-                        }
-                      />
-                      <p className="text-xs leading-5 text-default-500 sm:col-span-2 lg:col-span-3">
+                              {probeSources.nodes.map((source) => (
+                                <SelectItem
+                                  key={String(source.id)}
+                                  textValue={`${source.name} ${source.address || ""}`}
+                                >
+                                  {source.name} · {source.address || "无地址"} ·{" "}
+                                  {source.version || "-"}
+                                </SelectItem>
+                              ))}
+                            </Select>
+                          )}
+                          {form.qualityProbeSourceType === "connector" && (
+                            <Select
+                              label="Connector"
+                              placeholder={`Connector ≥ ${probeSources.minimumRemoteVersion}`}
+                              selectedKeys={
+                                form.qualityProbeSourceId
+                                  ? [form.qualityProbeSourceId]
+                                  : []
+                              }
+                              onSelectionChange={(keys) =>
+                                setForm({
+                                  ...form,
+                                  qualityProbeSourceId: String(
+                                    Array.from(keys)[0] || "",
+                                  ),
+                                })
+                              }
+                            >
+                              {probeSources.connectors.map((source) => (
+                                <SelectItem
+                                  key={String(source.id)}
+                                  textValue={`${source.name} ${source.platform || ""}`}
+                                >
+                                  {source.name} · {source.platform || "-"} ·{" "}
+                                  {source.version || "-"}
+                                </SelectItem>
+                              ))}
+                            </Select>
+                          )}
+                          <Input
+                            label="每轮 TCP 次数"
+                            max={10}
+                            min={2}
+                            type="number"
+                            value={form.qualityProbeCount}
+                            onValueChange={(qualityProbeCount) =>
+                              setForm({ ...form, qualityProbeCount })
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">切换验证与 DNS</p>
+                          <p className="text-xs leading-5 text-default-500">
+                            验证切换目标是否真的可用，失败后短时间避开该入口。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isSelected={form.postSwitchVerifyEnabled}
+                              onValueChange={(postSwitchVerifyEnabled) =>
+                                setForm({ ...form, postSwitchVerifyEnabled })
+                              }
+                            >
+                              切换后验证入口
+                            </Switch>
+                          </div>
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isSelected={form.dnsVerifyEnabled}
+                              onValueChange={(dnsVerifyEnabled) =>
+                                setForm({ ...form, dnsVerifyEnabled })
+                              }
+                            >
+                              DNS 生效确认
+                            </Switch>
+                          </div>
+                          <Input
+                            label="验证失败黑名单（秒）"
+                            min={60}
+                            type="number"
+                            value={form.postSwitchRejectSuppressSeconds}
+                            onValueChange={(postSwitchRejectSuppressSeconds) =>
+                              setForm({
+                                ...form,
+                                postSwitchRejectSuppressSeconds,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs leading-5 text-default-500">
                         此模式已接管自动选线：普通自动回切、质量容灾、固定延迟目标、智能选择、抖动保护、备用预热和锁定入口均不可同时启用。故障切换、冷却、恢复确认、切换后验证与
                         DNS 确认继续生效。
                       </p>
@@ -2966,146 +2991,162 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                     </div>
-                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_320px] xl:items-end">
-                      <Switch
-                        isSelected={form.qualityFixedTargetEnabled}
-                        onValueChange={(qualityFixedTargetEnabled) =>
-                          setForm({ ...form, qualityFixedTargetEnabled })
-                        }
-                      >
-                        启用固定延迟目标
-                      </Switch>
-                      <Input
-                        description="开启固定目标后，超过这个延迟就直接算质量劣化。"
-                        isDisabled={!form.qualityFixedTargetEnabled}
-                        label="目标延迟 ms"
-                        min={1}
-                        type="number"
-                        value={form.qualityFixedTargetMs}
-                        onValueChange={(qualityFixedTargetMs) =>
-                          setForm({ ...form, qualityFixedTargetMs })
-                        }
-                      />
-                      <Select
-                        isDisabled={!form.qualityFixedTargetEnabled}
-                        label="目标未达标时"
-                        selectedKeys={[
-                          fixedTargetModeKey(form.qualityFixedTargetStrict),
-                        ]}
-                        onSelectionChange={(keys) => {
-                          const mode = String(
-                            Array.from(keys)[0] || "prefer_best",
-                          ) as FixedTargetMode;
+                    <div className="grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                      <div className="space-y-2">
+                        <Switch
+                          isSelected={form.qualityFixedTargetEnabled}
+                          onValueChange={(qualityFixedTargetEnabled) =>
+                            setForm({ ...form, qualityFixedTargetEnabled })
+                          }
+                        >
+                          启用固定延迟目标
+                        </Switch>
+                        <p className="text-xs leading-5 text-default-500">
+                          超过固定目标时直接记为质量劣化，适合低延迟入口设置硬性体验线。
+                        </p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Input
+                          isDisabled={!form.qualityFixedTargetEnabled}
+                          label="目标延迟 ms"
+                          min={1}
+                          type="number"
+                          value={form.qualityFixedTargetMs}
+                          onValueChange={(qualityFixedTargetMs) =>
+                            setForm({ ...form, qualityFixedTargetMs })
+                          }
+                        />
+                        <Select
+                          isDisabled={!form.qualityFixedTargetEnabled}
+                          label="目标未达标时"
+                          selectedKeys={[
+                            fixedTargetModeKey(form.qualityFixedTargetStrict),
+                          ]}
+                          onSelectionChange={(keys) => {
+                            const mode = String(
+                              Array.from(keys)[0] || "prefer_best",
+                            ) as FixedTargetMode;
 
-                          setForm({
-                            ...form,
-                            qualityFixedTargetStrict: mode === "strict",
-                          });
-                        }}
-                      >
-                        {Object.entries(fixedTargetModeMeta).map(
-                          ([key, meta]) => (
-                            <SelectItem key={key} textValue={meta.label}>
-                              {meta.label}
-                            </SelectItem>
-                          ),
-                        )}
-                      </Select>
-                      <p className="text-xs leading-5 text-default-500 sm:col-span-2 xl:col-span-3">
+                            setForm({
+                              ...form,
+                              qualityFixedTargetStrict: mode === "strict",
+                            });
+                          }}
+                        >
+                          {Object.entries(fixedTargetModeMeta).map(
+                            ([key, meta]) => (
+                              <SelectItem key={key} textValue={meta.label}>
+                                {meta.label}
+                              </SelectItem>
+                            ),
+                          )}
+                        </Select>
+                      </div>
+                      <p className="text-xs leading-5 text-default-500 lg:col-span-2">
                         开启后，入口连续超过目标延迟会算作质量劣化；“达标优先，没达标就选最优”会在没有达标备用时，从差线路里挑相对最优；“只切到达标备用入口”则更严格，没有达标入口时不会因为这个规则强行切换。
                       </p>
                     </div>
-                    <div className="grid gap-3 border-t border-divider pt-3">
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-center">
-                        <Switch
-                          isSelected={form.qualityFlapGuardEnabled}
-                          onValueChange={(qualityFlapGuardEnabled) =>
-                            setForm({
-                              ...form,
-                              qualityFlapGuardEnabled,
-                              qualityPenaltyEnabled: qualityFlapGuardEnabled
-                                ? form.qualityPenaltyEnabled
-                                : false,
-                            })
-                          }
-                        >
-                          启用抖动保护
-                        </Switch>
-                        <Input
-                          description="统计这段时间内反复劣化的次数。默认 900 秒即 15 分钟。"
-                          isDisabled={!form.qualityFlapGuardEnabled}
-                          label="统计窗口（秒）"
-                          min={60}
-                          type="number"
-                          value={form.qualityFlapWindowSeconds}
-                          onValueChange={(qualityFlapWindowSeconds) =>
-                            setForm({ ...form, qualityFlapWindowSeconds })
-                          }
-                        />
-                        <Input
-                          description="窗口内达到几次劣化事件后，入口进入保护期。"
-                          isDisabled={!form.qualityFlapGuardEnabled}
-                          label="触发次数"
-                          max={20}
-                          min={2}
-                          type="number"
-                          value={form.qualityFlapThreshold}
-                          onValueChange={(qualityFlapThreshold) =>
-                            setForm({ ...form, qualityFlapThreshold })
-                          }
-                        />
-                        <Input
-                          description="第一次进入保护期的时长；开启阶梯惩罚后会按级别加长。"
-                          isDisabled={!form.qualityFlapGuardEnabled}
-                          label="基础保护（秒）"
-                          min={60}
-                          type="number"
-                          value={form.qualityFlapSuppressSeconds}
-                          onValueChange={(qualityFlapSuppressSeconds) =>
-                            setForm({ ...form, qualityFlapSuppressSeconds })
-                          }
-                        />
+                    <div className="grid gap-4 border-t border-divider pt-4">
+                      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <Switch
+                            isSelected={form.qualityFlapGuardEnabled}
+                            onValueChange={(qualityFlapGuardEnabled) =>
+                              setForm({
+                                ...form,
+                                qualityFlapGuardEnabled,
+                                qualityPenaltyEnabled: qualityFlapGuardEnabled
+                                  ? form.qualityPenaltyEnabled
+                                  : false,
+                              })
+                            }
+                          >
+                            启用抖动保护
+                          </Switch>
+                          <p className="text-xs leading-5 text-default-500">
+                            统计窗口内反复劣化的次数，避免入口在 10ms/200ms
+                            之间来回跳。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <Input
+                            isDisabled={!form.qualityFlapGuardEnabled}
+                            label="统计窗口（秒）"
+                            min={60}
+                            type="number"
+                            value={form.qualityFlapWindowSeconds}
+                            onValueChange={(qualityFlapWindowSeconds) =>
+                              setForm({ ...form, qualityFlapWindowSeconds })
+                            }
+                          />
+                          <Input
+                            isDisabled={!form.qualityFlapGuardEnabled}
+                            label="触发次数"
+                            max={20}
+                            min={2}
+                            type="number"
+                            value={form.qualityFlapThreshold}
+                            onValueChange={(qualityFlapThreshold) =>
+                              setForm({ ...form, qualityFlapThreshold })
+                            }
+                          />
+                          <Input
+                            isDisabled={!form.qualityFlapGuardEnabled}
+                            label="基础保护（秒）"
+                            min={60}
+                            type="number"
+                            value={form.qualityFlapSuppressSeconds}
+                            onValueChange={(qualityFlapSuppressSeconds) =>
+                              setForm({ ...form, qualityFlapSuppressSeconds })
+                            }
+                          />
+                        </div>
                       </div>
-                      <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-center">
-                        <Switch
-                          isDisabled={!form.qualityFlapGuardEnabled}
-                          isSelected={form.qualityPenaltyEnabled}
-                          onValueChange={(qualityPenaltyEnabled) =>
-                            setForm({ ...form, qualityPenaltyEnabled })
-                          }
-                        >
-                          启用阶梯惩罚
-                        </Switch>
-                        <Input
-                          description="这段时间内再次复发会升级惩罚等级；超过后惩罚等级重置。"
-                          isDisabled={
-                            !form.qualityFlapGuardEnabled ||
-                            !form.qualityPenaltyEnabled
-                          }
-                          label="复发记忆（秒）"
-                          max={604800}
-                          min={3600}
-                          type="number"
-                          value={form.qualityPenaltyResetSeconds}
-                          onValueChange={(qualityPenaltyResetSeconds) =>
-                            setForm({ ...form, qualityPenaltyResetSeconds })
-                          }
-                        />
-                        <Input
-                          description="保护结束后继续观察，观察期内不优先回切到该入口。"
-                          isDisabled={
-                            !form.qualityFlapGuardEnabled ||
-                            !form.qualityPenaltyEnabled
-                          }
-                          label="恢复观察（秒）"
-                          max={86400}
-                          min={0}
-                          type="number"
-                          value={form.qualityPenaltyObserveSeconds}
-                          onValueChange={(qualityPenaltyObserveSeconds) =>
-                            setForm({ ...form, qualityPenaltyObserveSeconds })
-                          }
-                        />
+                      <div className="grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <Switch
+                            isDisabled={!form.qualityFlapGuardEnabled}
+                            isSelected={form.qualityPenaltyEnabled}
+                            onValueChange={(qualityPenaltyEnabled) =>
+                              setForm({ ...form, qualityPenaltyEnabled })
+                            }
+                          >
+                            启用阶梯惩罚
+                          </Switch>
+                          <p className="text-xs leading-5 text-default-500">
+                            短期复发会延长保护期，保护结束后继续观察一段时间。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Input
+                            isDisabled={
+                              !form.qualityFlapGuardEnabled ||
+                              !form.qualityPenaltyEnabled
+                            }
+                            label="复发记忆（秒）"
+                            max={604800}
+                            min={3600}
+                            type="number"
+                            value={form.qualityPenaltyResetSeconds}
+                            onValueChange={(qualityPenaltyResetSeconds) =>
+                              setForm({ ...form, qualityPenaltyResetSeconds })
+                            }
+                          />
+                          <Input
+                            isDisabled={
+                              !form.qualityFlapGuardEnabled ||
+                              !form.qualityPenaltyEnabled
+                            }
+                            label="恢复观察（秒）"
+                            max={86400}
+                            min={0}
+                            type="number"
+                            value={form.qualityPenaltyObserveSeconds}
+                            onValueChange={(qualityPenaltyObserveSeconds) =>
+                              setForm({ ...form, qualityPenaltyObserveSeconds })
+                            }
+                          />
+                        </div>
                       </div>
                       <p className="text-xs leading-5 text-default-500">
                         规则：
@@ -3118,108 +3159,144 @@ export default function CrossEntryFailoverPage() {
                         小时。保护结束后进入恢复观察，必须达到恢复确认次数才重新参与回切。
                       </p>
                     </div>
-                    <div className="grid gap-3 border-t border-divider pt-3">
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <Switch
-                          isSelected={form.smartSelectionEnabled}
-                          onValueChange={(smartSelectionEnabled) =>
-                            setForm({ ...form, smartSelectionEnabled })
-                          }
-                        >
-                          启用智能选择
-                        </Switch>
-                        <Switch
-                          isDisabled={!form.smartSelectionEnabled}
-                          isSelected={form.degradedFallbackEnabled}
-                          onValueChange={(degradedFallbackEnabled) =>
-                            setForm({ ...form, degradedFallbackEnabled })
-                          }
-                        >
-                          全部差时差中选优
-                        </Switch>
-                        <Switch
-                          isDisabled={!form.smartSelectionEnabled}
-                          isSelected={form.sameFaultAvoidanceEnabled}
-                          onValueChange={(sameFaultAvoidanceEnabled) =>
-                            setForm({ ...form, sameFaultAvoidanceEnabled })
-                          }
-                        >
-                          避开同类故障
-                        </Switch>
-                        <Switch
-                          isDisabled={!form.smartSelectionEnabled}
-                          isSelected={form.topologyAvoidanceEnabled}
-                          onValueChange={(topologyAvoidanceEnabled) =>
-                            setForm({ ...form, topologyAvoidanceEnabled })
-                          }
-                        >
-                          避开同节点/同大网段
-                        </Switch>
+                    <div className="grid gap-4 border-t border-divider pt-4">
+                      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <Switch
+                            isSelected={form.smartSelectionEnabled}
+                            onValueChange={(smartSelectionEnabled) =>
+                              setForm({ ...form, smartSelectionEnabled })
+                            }
+                          >
+                            启用智能选择
+                          </Switch>
+                          <p className="text-xs leading-5 text-default-500">
+                            接管同类故障、拓扑隔离和差中选优，避免盲目按顺序切到同样差的线路。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isDisabled={!form.smartSelectionEnabled}
+                              isSelected={form.degradedFallbackEnabled}
+                              onValueChange={(degradedFallbackEnabled) =>
+                                setForm({ ...form, degradedFallbackEnabled })
+                              }
+                            >
+                              全部差时差中选优
+                            </Switch>
+                          </div>
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isDisabled={!form.smartSelectionEnabled}
+                              isSelected={form.sameFaultAvoidanceEnabled}
+                              onValueChange={(sameFaultAvoidanceEnabled) =>
+                                setForm({ ...form, sameFaultAvoidanceEnabled })
+                              }
+                            >
+                              避开同类故障
+                            </Switch>
+                          </div>
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isDisabled={!form.smartSelectionEnabled}
+                              isSelected={form.topologyAvoidanceEnabled}
+                              onValueChange={(topologyAvoidanceEnabled) =>
+                                setForm({ ...form, topologyAvoidanceEnabled })
+                              }
+                            >
+                              避开同节点/同大网段
+                            </Switch>
+                          </div>
+                        </div>
                       </div>
-                      <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 lg:grid-cols-5">
-                        <Switch
-                          isDisabled={!form.smartSelectionEnabled}
-                          isSelected={form.preheatEnabled}
-                          onValueChange={(preheatEnabled) =>
-                            setForm({ ...form, preheatEnabled })
-                          }
-                        >
-                          备用线路预热
-                        </Switch>
-                        <Input
-                          description="提前确认多少条备用线路可用，主线故障时优先从这些备用里选。"
-                          isDisabled={
-                            !form.smartSelectionEnabled || !form.preheatEnabled
-                          }
-                          label="预热备用数"
-                          max={9}
-                          min={1}
-                          type="number"
-                          value={form.preheatBackupCount}
-                          onValueChange={(preheatBackupCount) =>
-                            setForm({ ...form, preheatBackupCount })
-                          }
-                        />
-                        <Switch
-                          isDisabled={
-                            !form.smartSelectionEnabled || !form.preheatEnabled
-                          }
-                          isSelected={form.preheatStrictIsolation}
-                          onValueChange={(preheatStrictIsolation) =>
-                            setForm({ ...form, preheatStrictIsolation })
-                          }
-                        >
-                          严格预热隔离
-                        </Switch>
-                        <Switch
-                          isSelected={form.postSwitchVerifyEnabled}
-                          onValueChange={(postSwitchVerifyEnabled) =>
-                            setForm({ ...form, postSwitchVerifyEnabled })
-                          }
-                        >
-                          切换后验证入口
-                        </Switch>
-                        <Switch
-                          isSelected={form.dnsVerifyEnabled}
-                          onValueChange={(dnsVerifyEnabled) =>
-                            setForm({ ...form, dnsVerifyEnabled })
-                          }
-                        >
-                          DNS 生效确认
-                        </Switch>
-                        <Input
-                          description="切换后验证失败时，对目标入口额外冷却多长时间。"
-                          label="验证失败黑名单（秒）"
-                          min={60}
-                          type="number"
-                          value={form.postSwitchRejectSuppressSeconds}
-                          onValueChange={(postSwitchRejectSuppressSeconds) =>
-                            setForm({
-                              ...form,
-                              postSwitchRejectSuppressSeconds,
-                            })
-                          }
-                        />
+                      <div className="grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <Switch
+                            isDisabled={!form.smartSelectionEnabled}
+                            isSelected={form.preheatEnabled}
+                            onValueChange={(preheatEnabled) =>
+                              setForm({ ...form, preheatEnabled })
+                            }
+                          >
+                            备用线路预热
+                          </Switch>
+                          <p className="text-xs leading-5 text-default-500">
+                            提前确认备用线路可用，主线故障时优先从已验证的备用里选。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Input
+                            isDisabled={
+                              !form.smartSelectionEnabled ||
+                              !form.preheatEnabled
+                            }
+                            label="预热备用数"
+                            max={9}
+                            min={1}
+                            type="number"
+                            value={form.preheatBackupCount}
+                            onValueChange={(preheatBackupCount) =>
+                              setForm({ ...form, preheatBackupCount })
+                            }
+                          />
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isDisabled={
+                                !form.smartSelectionEnabled ||
+                                !form.preheatEnabled
+                              }
+                              isSelected={form.preheatStrictIsolation}
+                              onValueChange={(preheatStrictIsolation) =>
+                                setForm({ ...form, preheatStrictIsolation })
+                              }
+                            >
+                              严格预热隔离
+                            </Switch>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 border-t border-divider pt-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">切换验证与 DNS</p>
+                          <p className="text-xs leading-5 text-default-500">
+                            切换后确认新入口可用，并把验证失败的目标短暂拉黑。
+                          </p>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isSelected={form.postSwitchVerifyEnabled}
+                              onValueChange={(postSwitchVerifyEnabled) =>
+                                setForm({ ...form, postSwitchVerifyEnabled })
+                              }
+                            >
+                              切换后验证入口
+                            </Switch>
+                          </div>
+                          <div className="flex min-h-14 items-center">
+                            <Switch
+                              isSelected={form.dnsVerifyEnabled}
+                              onValueChange={(dnsVerifyEnabled) =>
+                                setForm({ ...form, dnsVerifyEnabled })
+                              }
+                            >
+                              DNS 生效确认
+                            </Switch>
+                          </div>
+                          <Input
+                            label="验证失败黑名单（秒）"
+                            min={60}
+                            type="number"
+                            value={form.postSwitchRejectSuppressSeconds}
+                            onValueChange={(postSwitchRejectSuppressSeconds) =>
+                              setForm({
+                                ...form,
+                                postSwitchRejectSuppressSeconds,
+                              })
+                            }
+                          />
+                        </div>
                       </div>
                       <p className="text-xs leading-5 text-default-500">
                         智能选择会负责同类故障、拓扑隔离、预热和差中选优。它与
