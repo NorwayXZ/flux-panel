@@ -134,7 +134,7 @@ const emptyForm = {
   qualityJitterThresholdMs: "50",
   qualityFixedTargetEnabled: false,
   qualityFixedTargetMs: "20",
-  qualityFixedTargetStrict: true,
+  qualityFixedTargetStrict: false,
   qualityFlapGuardEnabled: true,
   qualityFlapWindowSeconds: "900",
   qualityFlapThreshold: "3",
@@ -329,6 +329,32 @@ const manualControlMeta = (mode?: CrossEntryGroup["manualControlMode"]) =>
     lock: { label: "已锁定入口", color: "secondary" as const },
     auto: { label: "自动选择", color: "default" as const },
   })[mode || "auto"] || { label: "自动选择", color: "default" as const };
+
+type FixedTargetMode = "prefer_best" | "strict";
+
+const fixedTargetModeMeta: Record<
+  FixedTargetMode,
+  { label: string; detail: string }
+> = {
+  prefer_best: {
+    label: "达标优先，没达标就选最优",
+    detail:
+      "先优先挑选达到目标值的备用入口；如果暂时没有达标入口，也会在差线路里选相对最优的那个。",
+  },
+  strict: {
+    label: "只切到达标备用入口",
+    detail:
+      "只有延迟达到目标值的备用入口才会参与切换；如果没有达标入口，就保持当前规则结果。",
+  },
+};
+
+const fixedTargetModeKey = (
+  strict?: boolean | number | null,
+): FixedTargetMode => (truthy(strict ?? true) ? "strict" : "prefer_best");
+const fixedTargetModeLabel = (strict?: boolean | number | null) =>
+  fixedTargetModeMeta[fixedTargetModeKey(strict)].label;
+const fixedTargetModeDetail = (strict?: boolean | number | null) =>
+  fixedTargetModeMeta[fixedTargetModeKey(strict)].detail;
 
 type RuleState = "active" | "blocked" | "disabled";
 type RuleLine = { label: string; detail: string; state: RuleState };
@@ -564,7 +590,7 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
         activeRules.push(
           ruleLine(
             "固定延迟目标",
-            `超过 ${group.qualityFixedTargetMs || 20}ms 算劣化。`,
+            `目标 ${group.qualityFixedTargetMs || 20}ms；${fixedTargetModeDetail(group.qualityFixedTargetStrict)}`,
           ),
         );
       if (flags.flapGuardEnabled)
@@ -762,7 +788,7 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
       activeRules.push(
         ruleLine(
           "固定延迟目标",
-          `超过 ${form.qualityFixedTargetMs}ms 直接算劣化。`,
+          `目标 ${form.qualityFixedTargetMs}ms；${fixedTargetModeDetail(form.qualityFixedTargetStrict)}`,
         ),
       );
     if (form.qualityFlapGuardEnabled)
@@ -1726,7 +1752,10 @@ export default function CrossEntryFailoverPage() {
                         )}
                         {fixedTargetEnabled && (
                           <Chip color="secondary" size="sm" variant="flat">
-                            目标 ≤ {group.qualityFixedTargetMs || 20} ms
+                            目标 ≤ {group.qualityFixedTargetMs || 20} ms ·{" "}
+                            {fixedTargetModeLabel(
+                              group.qualityFixedTargetStrict,
+                            )}
                           </Chip>
                         )}
                         {flapGuardEnabled && (
@@ -2937,7 +2966,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                     </div>
-                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center">
+                    <div className="grid gap-3 border-t border-divider pt-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_320px] xl:items-end">
                       <Switch
                         isSelected={form.qualityFixedTargetEnabled}
                         onValueChange={(qualityFixedTargetEnabled) =>
@@ -2957,17 +2986,33 @@ export default function CrossEntryFailoverPage() {
                           setForm({ ...form, qualityFixedTargetMs })
                         }
                       />
-                      <Switch
+                      <Select
                         isDisabled={!form.qualityFixedTargetEnabled}
-                        isSelected={form.qualityFixedTargetStrict}
-                        onValueChange={(qualityFixedTargetStrict) =>
-                          setForm({ ...form, qualityFixedTargetStrict })
-                        }
+                        label="目标未达标时"
+                        selectedKeys={[
+                          fixedTargetModeKey(form.qualityFixedTargetStrict),
+                        ]}
+                        onSelectionChange={(keys) => {
+                          const mode = String(
+                            Array.from(keys)[0] || "prefer_best",
+                          ) as FixedTargetMode;
+
+                          setForm({
+                            ...form,
+                            qualityFixedTargetStrict: mode === "strict",
+                          });
+                        }}
                       >
-                        只切到达标备用入口
-                      </Switch>
-                      <p className="text-xs leading-5 text-default-500">
-                        开启后，入口连续超过目标延迟会算作质量劣化；严格模式下，只会切到最近探测延迟小于等于目标值的备用入口。
+                        {Object.entries(fixedTargetModeMeta).map(
+                          ([key, meta]) => (
+                            <SelectItem key={key} textValue={meta.label}>
+                              {meta.label}
+                            </SelectItem>
+                          ),
+                        )}
+                      </Select>
+                      <p className="text-xs leading-5 text-default-500 sm:col-span-2 xl:col-span-3">
+                        开启后，入口连续超过目标延迟会算作质量劣化；“达标优先，没达标就选最优”会在没有达标备用时，从差线路里挑相对最优；“只切到达标备用入口”则更严格，没有达标入口时不会因为这个规则强行切换。
                       </p>
                     </div>
                     <div className="grid gap-3 border-t border-divider pt-3">

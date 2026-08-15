@@ -54,7 +54,8 @@ public class CrossEntryFailoverSaveDto {
     private Integer qualityJitterThresholdMs = 50;
     private Boolean qualityFixedTargetEnabled = false;
     private Integer qualityFixedTargetMs = 20;
-    private Boolean qualityFixedTargetStrict = true;
+    /** false=达标优先，没达标就选最优；true=只切到达标备用入口。 */
+    private Boolean qualityFixedTargetStrict = false;
     private Boolean qualityFlapGuardEnabled = true;
     private Integer qualityFlapWindowSeconds = 900;
     private Integer qualityFlapThreshold = 3;
