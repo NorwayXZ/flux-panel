@@ -255,6 +255,569 @@ const manualControlMeta = (mode?: CrossEntryGroup["manualControlMode"]) =>
     auto: { label: "自动选择", color: "default" as const },
   })[mode || "auto"] || { label: "自动选择", color: "default" as const };
 
+type RuleState = "active" | "blocked" | "disabled";
+type RuleLine = { label: string; detail: string; state: RuleState };
+type StrategySummary = {
+  title: string;
+  detail: string;
+  activeRules: RuleLine[];
+  blockedRules: RuleLine[];
+  decisionHint: string;
+};
+type FailoverForm = typeof emptyForm;
+
+const ruleStateMeta: Record<
+  RuleState,
+  { label: string; color: "success" | "warning" | "default" }
+> = {
+  active: { label: "生效", color: "success" },
+  blocked: { label: "互斥关闭", color: "warning" },
+  disabled: { label: "未开启", color: "default" },
+};
+const ruleLine = (
+  label: string,
+  detail: string,
+  state: RuleState = "active",
+): RuleLine => ({ label, detail, state });
+const probeSourceText = (
+  type?: "panel" | "node" | "connector",
+  id?: number | string,
+) => {
+  if (type === "node") return id ? `指定 Agent 节点 #${id}` : "指定 Agent 节点";
+  if (type === "connector")
+    return id ? `指定 Connector #${id}` : "指定 Connector";
+
+  return "面板服务器";
+};
+const isMemberSuppressed = (member: CrossEntryGroup["members"][number]) =>
+  Boolean(
+    member.qualitySuppressedUntil && member.qualitySuppressedUntil > Date.now(),
+  );
+const activeGroupFlags = (group: CrossEntryGroup) => {
+  const activeActive = group.routingMode === "active_active";
+  const tcpLatencySelectionEnabled =
+    !activeActive && truthy(group.tcpLatencySelectionEnabled ?? false);
+  const qualityEnabled =
+    !tcpLatencySelectionEnabled && truthy(group.qualityEnabled || false);
+  const fixedTargetEnabled =
+    qualityEnabled && truthy(group.qualityFixedTargetEnabled || false);
+  const flapGuardEnabled =
+    qualityEnabled && truthy(group.qualityFlapGuardEnabled ?? true);
+  const penaltyEnabled =
+    flapGuardEnabled && truthy(group.qualityPenaltyEnabled ?? true);
+  const smartSelectionEnabled =
+    qualityEnabled && truthy(group.smartSelectionEnabled ?? true);
+
+  return {
+    activeActive,
+    tcpLatencySelectionEnabled,
+    qualityEnabled,
+    fixedTargetEnabled,
+    flapGuardEnabled,
+    penaltyEnabled,
+    smartSelectionEnabled,
+  };
+};
+const currentDecisionHint = (group: CrossEntryGroup) => {
+  const flags = activeGroupFlags(group);
+  const active = group.members.find((item) => item.id === group.activeMemberId);
+  const primary = group.members[0];
+
+  if (!truthy(group.enabled)) return "自动检测已关闭，面板不会主动切换入口。";
+  if (flags.activeActive)
+    return "多入口同时写入 DNS，面板只摘除不可用入口，不做主备回切。";
+  if (group.manualControlMode === "pause")
+    return "自动切换已暂停，即使检测到异常也会保持当前入口。";
+  if (group.manualControlMode === "lock")
+    return "当前处于锁定模式，只会尝试使用你指定的入口。";
+  if (!active)
+    return "当前没有确定承载入口，下一轮检测会尝试回到主入口或健康备用。";
+  if (active.status === "unhealthy")
+    return "当前入口已不可用，会优先选择健康、未保护、未同类故障的备用入口。";
+  if (flags.tcpLatencySelectionEnabled) {
+    const measured = group.members.filter(
+      (member) =>
+        member.status === "healthy" &&
+        !isMemberSuppressed(member) &&
+        typeof member.qualityLatencyMs === "number",
+    );
+    const fastest = measured
+      .slice()
+      .sort((a, b) => (a.qualityLatencyMs || 0) - (b.qualityLatencyMs || 0))[0];
+    const activeLatency = active.qualityLatencyMs;
+    const tolerance = group.tcpPrimaryPreferenceToleranceMs ?? 10;
+    const threshold = Math.max(1, group.tcpLatencySwitchThresholdMs ?? 5);
+
+    if (!fastest || typeof activeLatency !== "number")
+      return "等待 TCP 探测样本，暂时不会按最低延迟自动换线。";
+    if (
+      primary &&
+      active.id === primary.id &&
+      activeLatency <= (fastest.qualityLatencyMs || 0) + tolerance
+    )
+      return `主入口在 ${tolerance}ms 容忍范围内，继续使用主入口。`;
+    if (
+      fastest.id !== active.id &&
+      activeLatency - (fastest.qualityLatencyMs || 0) >= threshold
+    )
+      return `最低延迟入口比当前快至少 ${threshold}ms，满足冷却和驻留后会切换。`;
+
+    return "候选入口延迟收益不足，继续保持当前线路，避免来回跳。";
+  }
+  if (flags.qualityEnabled) {
+    if (active.qualityState === "degraded")
+      return flags.smartSelectionEnabled
+        ? "当前入口质量劣化，会避开保护期、同类故障、同节点/同大网段线路；全部都差时差中选优。"
+        : "当前入口质量劣化，满足冷却和恢复确认后会切到质量正常的备用入口。";
+    if (isMemberSuppressed(active))
+      return "当前入口处于质量保护期，不会自动回切到它，直到保护和恢复观察结束。";
+
+    return "当前入口质量未劣化，暂时不会切换。";
+  }
+  if (truthy(group.autoFailback) && primary && active.id !== primary.id)
+    return "主入口恢复并连续达标后，会按冷却时间自动回切。";
+
+  return "当前入口可用时保持不动；只有连续连接失败才切到下一条备用。";
+};
+const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
+  const flags = activeGroupFlags(group);
+  const activeRules: RuleLine[] = [];
+  const blockedRules: RuleLine[] = [];
+
+  activeRules.push(
+    ruleLine(
+      "基础连通性检测",
+      `${group.probeIntervalMs / 1000} 秒一次，连续 ${group.failureThreshold} 次失败才判定入口失效。`,
+    ),
+    ruleLine(
+      "恢复确认",
+      `入口连续 ${group.recoveryThreshold} 次恢复后，才允许重新参与选择。`,
+    ),
+  );
+
+  if (flags.activeActive) {
+    activeRules.push(
+      ruleLine("多入口 DNS", "所有健康入口同时写入 DNS，异常入口会被摘除。"),
+    );
+    blockedRules.push(
+      ruleLine(
+        "主备回切",
+        "多入口模式没有唯一当前入口，不执行回主线。",
+        "blocked",
+      ),
+      ruleLine("质量容灾", "质量切换只作用于主备容灾模式。", "blocked"),
+      ruleLine(
+        "TCP 延迟优选",
+        "DNS 多入口不能按连接实时选择最低 TCP 延迟。",
+        "blocked",
+      ),
+    );
+  } else if (flags.tcpLatencySelectionEnabled) {
+    activeRules.push(
+      ruleLine(
+        "主线优先 TCP 延迟优选",
+        `主线最多慢 ${group.tcpPrimaryPreferenceToleranceMs ?? 10}ms 仍继续用主线。`,
+      ),
+      ruleLine(
+        "备用切换收益",
+        `备用至少快 ${group.tcpLatencySwitchThresholdMs ?? 5}ms，才允许切过去。`,
+      ),
+      ruleLine(
+        "探测源",
+        probeSourceText(
+          group.qualityProbeSourceType,
+          group.qualityProbeSourceId,
+        ),
+      ),
+      ruleLine(
+        "最短驻留",
+        `切换后至少保持 ${durationText(group.minResidencySeconds)}，避免频繁跳线。`,
+      ),
+    );
+    blockedRules.push(
+      ruleLine(
+        "普通自动回切",
+        "TCP 优选自己负责回主线，不再叠加普通回切。",
+        "blocked",
+      ),
+      ruleLine(
+        "质量容灾",
+        "避免最低延迟策略和质量劣化策略互相抢线。",
+        "blocked",
+      ),
+      ruleLine("锁定入口", "最低延迟自动选择与手动锁定互斥。", "blocked"),
+      ruleLine(
+        "备用预热/同故障避让",
+        "该模式直接按稳定 TCP 延迟排序。",
+        "blocked",
+      ),
+    );
+  } else {
+    if (truthy(group.autoFailback))
+      activeRules.push(ruleLine("自动回主线", "主入口恢复稳定后自动切回。"));
+    else activeRules.push(ruleLine("保持备用", "切到备用后不会主动回主线。"));
+    if (flags.qualityEnabled) {
+      activeRules.push(
+        ruleLine(
+          "质量容灾",
+          `按 ${probeSourceText(group.qualityProbeSourceType, group.qualityProbeSourceId)} 探测 TCP 均值、P95、抖动和丢包。`,
+        ),
+        ruleLine(
+          "基线判断",
+          `延迟超过自身基线 ${group.qualityDegradeFactor || 3} 倍或兜底阈值才算劣化。`,
+        ),
+      );
+      if (flags.fixedTargetEnabled)
+        activeRules.push(
+          ruleLine(
+            "固定延迟目标",
+            `超过 ${group.qualityFixedTargetMs || 20}ms 算劣化。`,
+          ),
+        );
+      if (flags.flapGuardEnabled)
+        activeRules.push(
+          ruleLine(
+            flags.penaltyEnabled ? "抖动保护 + 阶梯惩罚" : "抖动保护",
+            `${durationText(group.qualityFlapWindowSeconds)} 内劣化 ${group.qualityFlapThreshold || 3} 次进入保护期。`,
+          ),
+        );
+      if (flags.smartSelectionEnabled) {
+        activeRules.push(
+          ruleLine("差中选优", "全部入口都差时，选择丢包和延迟相对最好的。"),
+          ruleLine(
+            "避开同类故障",
+            "主线是延迟/丢包/抖动问题时，优先避开同类问题备用。",
+          ),
+          ruleLine("避开同节点/同大网段", "优先使用不同节点、不同大网段入口。"),
+        );
+      }
+      blockedRules.push(
+        ruleLine(
+          "TCP 延迟优选",
+          "已使用质量容灾，不再启用最低延迟策略。",
+          "blocked",
+        ),
+      );
+    } else {
+      blockedRules.push(
+        ruleLine("质量容灾", "未开启，只按端口连通性判断故障。", "disabled"),
+        ruleLine(
+          "TCP 延迟优选",
+          "未开启，备用顺序由你手动排列决定。",
+          "disabled",
+        ),
+      );
+    }
+  }
+  if (truthy(group.postSwitchVerifyEnabled ?? true))
+    activeRules.push(
+      ruleLine("切换后验证", "DNS 更新后会再探测目标入口，失败则回滚。"),
+    );
+  if (truthy(group.dnsVerifyEnabled ?? true))
+    activeRules.push(
+      ruleLine("DNS 生效确认", "检查 Cloudflare 记录是否已指向目标入口。"),
+    );
+
+  return {
+    title: flags.activeActive
+      ? "多入口同时运行"
+      : flags.tcpLatencySelectionEnabled
+        ? "主线优先 TCP 延迟优选"
+        : flags.qualityEnabled
+          ? "主备容灾 + 质量容灾"
+          : "主备容灾",
+    detail: flags.activeActive
+      ? "适合让 DNS 返回多条健康入口。"
+      : flags.tcpLatencySelectionEnabled
+        ? "适合一组入口物理距离接近，希望自动选 TCP 延迟更低的入口。"
+        : flags.qualityEnabled
+          ? "适合主入口仍可用但延迟、抖动、丢包明显变差时自动切备用。"
+          : "适合只在入口端口不通时切换备用。",
+    activeRules,
+    blockedRules,
+    decisionHint: currentDecisionHint(group),
+  };
+};
+const explainFormStrategy = (form: FailoverForm): StrategySummary => {
+  const activeRules: RuleLine[] = [
+    ruleLine(
+      "基础连通性检测",
+      `${Number(form.probeIntervalMs || 0) / 1000} 秒一次，连续 ${form.failureThreshold} 次失败才切换。`,
+    ),
+    ruleLine(
+      "恢复确认",
+      `连续 ${form.recoveryThreshold} 次成功后才认为入口恢复。`,
+    ),
+  ];
+  const blockedRules: RuleLine[] = [];
+
+  if (form.routingMode === "active_active") {
+    activeRules.push(
+      ruleLine("多入口 DNS", "健康入口同时写入 DNS，失效入口自动摘除。"),
+    );
+    blockedRules.push(
+      ruleLine("主备回切", "多入口模式没有唯一当前承载入口。", "blocked"),
+      ruleLine("质量容灾", "质量切换只应用在主备容灾模式。", "blocked"),
+      ruleLine(
+        "TCP 延迟优选",
+        "DNS 解析无法做到每条连接实时最低延迟。",
+        "blocked",
+      ),
+    );
+
+    return {
+      title: "多入口同时运行",
+      detail: "适合多个入口都能直接承载业务的场景。",
+      activeRules,
+      blockedRules,
+      decisionHint:
+        "保存后，所有健康入口会写入同一 DNS 记录；客户端缓存仍会影响实际生效时间。",
+    };
+  }
+
+  if (form.tcpLatencySelectionEnabled) {
+    activeRules.push(
+      ruleLine(
+        "主线优先 TCP 延迟优选",
+        `主线最多慢 ${form.tcpPrimaryPreferenceToleranceMs}ms 仍继续使用主线。`,
+      ),
+      ruleLine(
+        "备用切换收益",
+        `备用至少快 ${form.tcpLatencySwitchThresholdMs}ms 才切换。`,
+      ),
+      ruleLine(
+        "TCP 探测源",
+        probeSourceText(form.qualityProbeSourceType, form.qualityProbeSourceId),
+      ),
+      ruleLine(
+        "最短驻留",
+        `切换后至少保持 ${durationText(Number(form.minResidencySeconds))}。`,
+      ),
+    );
+    blockedRules.push(
+      ruleLine("普通自动回切", "TCP 优选已包含回主线判断。", "blocked"),
+      ruleLine("质量容灾", "避免两套自动选线规则互相抢占。", "blocked"),
+      ruleLine(
+        "固定延迟目标/抖动保护/预热",
+        "最低 TCP 延迟模式下不参与选线。",
+        "blocked",
+      ),
+      ruleLine("锁定入口", "锁定入口和自动最低延迟互斥。", "blocked"),
+    );
+
+    return {
+      title: "主线优先 TCP 延迟优选",
+      detail:
+        "主线正常且延迟差距不大时坚持主线，明显慢时才切到 TCP 延迟最低入口。",
+      activeRules,
+      blockedRules,
+      decisionHint:
+        "适合你说的“全是美国入口，就选 TCP 延迟最优秀”的场景，但不会因为 1-2ms 抖动来回跳。",
+    };
+  }
+
+  activeRules.push(
+    form.autoFailback
+      ? ruleLine("自动回主线", "主入口恢复并连续达标后自动回切。")
+      : ruleLine("保持备用", "切到备用后不主动回主线，直到当前入口故障。"),
+  );
+  if (form.manualControlMode === "pause")
+    activeRules.push(ruleLine("暂停自动切换", "只检测，不自动改 DNS。"));
+  if (form.manualControlMode === "lock")
+    activeRules.push(
+      ruleLine("锁定入口", "强制使用指定入口，其他自动策略不抢占。"),
+    );
+
+  if (form.qualityEnabled) {
+    activeRules.push(
+      ruleLine(
+        "质量容灾",
+        "主线没断但延迟、P95、抖动、丢包持续变差时也会切换。",
+      ),
+      ruleLine(
+        "质量探测源",
+        probeSourceText(form.qualityProbeSourceType, form.qualityProbeSourceId),
+      ),
+      ruleLine(
+        "基线 + 兜底阈值",
+        `超过自身基线 ${form.qualityDegradeFactor} 倍，或超过兜底 ${form.qualityDegradeThresholdMs}ms，才算劣化。`,
+      ),
+    );
+    if (form.qualityFixedTargetEnabled)
+      activeRules.push(
+        ruleLine(
+          "固定延迟目标",
+          `超过 ${form.qualityFixedTargetMs}ms 直接算劣化。`,
+        ),
+      );
+    if (form.qualityFlapGuardEnabled)
+      activeRules.push(
+        ruleLine(
+          form.qualityPenaltyEnabled ? "抖动保护 + 阶梯惩罚" : "抖动保护",
+          `${durationText(Number(form.qualityFlapWindowSeconds))} 内劣化 ${form.qualityFlapThreshold} 次进入保护期。`,
+        ),
+      );
+    if (form.smartSelectionEnabled)
+      activeRules.push(
+        ruleLine(
+          "智能选择",
+          "避开同类故障、同节点/同大网段，全部差时差中选优。",
+        ),
+      );
+    blockedRules.push(
+      ruleLine("TCP 延迟优选", "质量容灾已接管自动选线。", "blocked"),
+    );
+  } else {
+    blockedRules.push(
+      ruleLine("质量容灾", "未开启，只按入口连通性切换。", "disabled"),
+      ruleLine("TCP 延迟优选", "未开启，按主备顺序切换。", "disabled"),
+    );
+  }
+  activeRules.push(
+    form.postSwitchVerifyEnabled
+      ? ruleLine("切换后验证", "切换后会验证目标入口，失败会回滚。")
+      : ruleLine(
+          "切换后验证",
+          "未开启，DNS 更新后不再复测目标入口。",
+          "disabled",
+        ),
+    form.dnsVerifyEnabled
+      ? ruleLine("DNS 生效确认", "检查 Cloudflare 记录是否写入正确。")
+      : ruleLine(
+          "DNS 生效确认",
+          "未开启，不检查 DNS 服务商返回值。",
+          "disabled",
+        ),
+  );
+
+  return {
+    title: form.qualityEnabled ? "主备容灾 + 质量容灾" : "主备容灾",
+    detail: form.qualityEnabled
+      ? "入口没断但质量变差也会自动切换。"
+      : "只有入口端口连续失败时才按备用顺序切换。",
+    activeRules,
+    blockedRules,
+    decisionHint:
+      "第一条是主入口，后面按备用 1、备用 2 的顺序使用；上移/下移会直接改变优先级。",
+  };
+};
+const eventActionText = (event: CrossEntryEvent) => {
+  const reason = event.reason || "";
+
+  if (event.status === "failed") return "切换失败";
+  if (reason.includes("初始化")) return "初始化主入口";
+  if (reason.includes("回切") || reason.includes("主入口延迟已回到"))
+    return "回到主入口";
+  if (reason.includes("TCP 延迟优选")) return "最低 TCP 延迟切换";
+  if (reason.includes("质量劣化")) return "质量容灾切换";
+  if (reason.includes("差中最优")) return "差中选优";
+  if (reason.includes("连续检测失败") || reason.includes("当前入口不存在"))
+    return "故障容灾切换";
+  if (reason.includes("手动锁定")) return "手动锁定";
+
+  return "自动切换";
+};
+const eventReasonText = (event: CrossEntryEvent) => {
+  const reason = event.reason || "无原因记录";
+
+  if (reason.includes("候选入口 TCP 延迟收益不足"))
+    return "没有切换：候选入口不够快，避免来回跳。";
+  if (reason.includes("主入口在优先容忍范围"))
+    return "没有切换：主入口仍在你设置的容忍范围内。";
+  if (reason.includes("质量抖动保护期"))
+    return "没有回切：目标入口处于保护期。";
+  if (reason.includes("驻留时间不足"))
+    return "没有切换：当前线路还没达到最短驻留时间。";
+  if (reason.includes("冷却期")) return "没有切换：仍在冷却期。";
+
+  return reason;
+};
+
+function StrategySummaryPanel({
+  summary,
+  compact = false,
+}: {
+  summary: StrategySummary;
+  compact?: boolean;
+}) {
+  const visibleActiveRules = compact
+    ? summary.activeRules.slice(0, 5)
+    : summary.activeRules;
+  const visibleBlockedRules = compact
+    ? summary.blockedRules.slice(0, 4)
+    : summary.blockedRules;
+
+  return (
+    <div className="border-y border-divider py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-default-500">当前生效模式</p>
+          <h3 className="mt-1 text-sm font-semibold">{summary.title}</h3>
+          <p className="mt-1 text-xs leading-5 text-default-500">
+            {summary.detail}
+          </p>
+        </div>
+        <Chip color="primary" size="sm" variant="flat">
+          {summary.activeRules.filter((item) => item.state === "active").length}{" "}
+          条生效
+        </Chip>
+      </div>
+      <p className="mt-3 rounded-md bg-default-100 px-3 py-2 text-xs leading-5 text-default-600 dark:bg-default-900/40">
+        {summary.decisionHint}
+      </p>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {visibleActiveRules.map((item) => {
+          const meta = ruleStateMeta[item.state];
+
+          return (
+            <div
+              key={`active-${item.label}`}
+              className="border-l-2 border-success px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">{item.label}</span>
+                <Chip color={meta.color} size="sm" variant="flat">
+                  {meta.label}
+                </Chip>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-default-500">
+                {item.detail}
+              </p>
+            </div>
+          );
+        })}
+        {visibleBlockedRules.map((item) => {
+          const meta = ruleStateMeta[item.state];
+
+          return (
+            <div
+              key={`blocked-${item.label}`}
+              className="border-l-2 border-warning px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">{item.label}</span>
+                <Chip color={meta.color} size="sm" variant="flat">
+                  {meta.label}
+                </Chip>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-default-500">
+                {item.detail}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      {compact &&
+        summary.activeRules.length + summary.blockedRules.length >
+          visibleActiveRules.length + visibleBlockedRules.length && (
+          <p className="mt-2 text-xs text-default-400">
+            完整规则可进入编辑窗口查看。
+          </p>
+        )}
+    </div>
+  );
+}
+
 export default function CrossEntryFailoverPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -270,6 +833,7 @@ export default function CrossEntryFailoverPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [events, setEvents] = useState<CrossEntryEvent[]>([]);
   const [historyName, setHistoryName] = useState("");
+  const [historyGroup, setHistoryGroup] = useState<CrossEntryGroup>();
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
   const [form, setForm] = useState(emptyForm);
@@ -358,6 +922,7 @@ export default function CrossEntryFailoverPage() {
         })),
     [groups],
   );
+  const formStrategy = useMemo(() => explainFormStrategy(form), [form]);
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -695,6 +1260,7 @@ export default function CrossEntryFailoverPage() {
       return toast.error(response.msg || "加载切换历史失败");
     setEvents(response.data || []);
     setHistoryName(group.name);
+    setHistoryGroup(group);
     setHistoryOpen(true);
   };
 
@@ -854,6 +1420,7 @@ export default function CrossEntryFailoverPage() {
               qualityEnabled || tcpLatencySelectionEnabled;
             const probeMeta = qualityProbeMeta(group.qualityProbeStatus);
             const manualMeta = manualControlMeta(group.manualControlMode);
+            const strategy = explainGroupStrategy(group);
 
             return (
               <Card
@@ -1010,6 +1577,8 @@ export default function CrossEntryFailoverPage() {
                       </p>
                     </div>
                   </div>
+
+                  <StrategySummaryPanel compact summary={strategy} />
 
                   <div className="space-y-2">
                     {group.members.map((member, index) => {
@@ -1204,11 +1773,13 @@ export default function CrossEntryFailoverPage() {
           <ModalBody className="gap-5">
             <section className="grid gap-3 sm:grid-cols-2">
               <Input
+                description="只用于面板识别，不影响 DNS 或转发。"
                 label="容灾组名称"
                 value={form.name}
                 onValueChange={(name) => setForm({ ...form, name })}
               />
               <Select
+                description="选择要由面板自动维护记录的 Cloudflare Zone。"
                 label="Cloudflare Zone"
                 placeholder="选择已登记的域名区域"
                 selectedKeys={form.dnsZoneId ? [form.dnsZoneId] : []}
@@ -1244,6 +1815,7 @@ export default function CrossEntryFailoverPage() {
                 onValueChange={(domain) => setForm({ ...form, domain })}
               />
               <Select
+                description="A 写 IPv4 入口，AAAA 写 IPv6 入口。"
                 label="DNS 记录类型"
                 selectedKeys={[form.recordType]}
                 onSelectionChange={(keys) =>
@@ -1257,6 +1829,7 @@ export default function CrossEntryFailoverPage() {
                 <SelectItem key="AAAA">AAAA（IPv6）</SelectItem>
               </Select>
               <Input
+                description="DNS 缓存时间；越低切换越快，但客户端和运营商仍可能缓存。"
                 label="DNS TTL（秒）"
                 max={86400}
                 min={60}
@@ -1265,6 +1838,7 @@ export default function CrossEntryFailoverPage() {
                 onValueChange={(ttl) => setForm({ ...form, ttl })}
               />
               <Select
+                description="主备容灾只返回一个入口；多入口模式会返回所有健康入口。"
                 label="入口调度模式"
                 selectedKeys={[form.routingMode]}
                 onSelectionChange={(keys) => {
@@ -1314,6 +1888,8 @@ export default function CrossEntryFailoverPage() {
                 ? "所有健康入口会同时写入同一业务域名的 DNS 记录。客户端 DNS 解析后选择其中一个入口，失效入口会在检测确认后从记录集合摘除。它只影响新的解析和新连接，普通 DNS 不提供严格按权重的连接级均衡。"
                 : "域名始终只指向一个当前入口。主入口连续失败后切到备用入口，适合希望地址稳定、只在故障时切换的业务。"}
             </div>
+
+            <StrategySummaryPanel summary={formStrategy} />
 
             {zoneOptions.length === 0 && (
               <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
@@ -1485,6 +2061,7 @@ export default function CrossEntryFailoverPage() {
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <Input
+                  description="两轮检测之间的间隔。越短切换越快，探测压力也越高。"
                   label="探测间隔（毫秒）"
                   type="number"
                   value={form.probeIntervalMs}
@@ -1493,6 +2070,7 @@ export default function CrossEntryFailoverPage() {
                   }
                 />
                 <Input
+                  description="单次 TCP 连接等待时间。超过这个时间算本次探测失败。"
                   label="连接超时（毫秒）"
                   type="number"
                   value={form.connectTimeoutMs}
@@ -1501,6 +2079,7 @@ export default function CrossEntryFailoverPage() {
                   }
                 />
                 <Input
+                  description="连续失败达到这个次数后，才认为当前入口真的失效。"
                   label="连续失败次数"
                   type="number"
                   value={form.failureThreshold}
@@ -1509,6 +2088,7 @@ export default function CrossEntryFailoverPage() {
                   }
                 />
                 <Input
+                  description="备用或主入口连续成功达到这个次数后，才认为恢复稳定。"
                   label="恢复确认次数"
                   type="number"
                   value={form.recoveryThreshold}
@@ -1517,6 +2097,7 @@ export default function CrossEntryFailoverPage() {
                   }
                 />
                 <Input
+                  description="刚切换后至少等待这段时间，避免线路刚恢复就马上来回跳。"
                   label="回切冷却（秒）"
                   type="number"
                   value={form.cooldownSeconds}
@@ -1603,6 +2184,10 @@ export default function CrossEntryFailoverPage() {
                     </Select>
                   )}
               </div>
+              <p className="mt-3 text-xs leading-5 text-default-500">
+                自动回切只在主入口恢复稳定后生效；暂停自动切换会保留检测但不改
+                DNS；锁定入口用于临时固定线路，避免自动策略抢占。
+              </p>
               {form.routingMode === "failover" && (
                 <div className="mt-3 border-t border-divider pt-4">
                   <Switch
@@ -1659,6 +2244,7 @@ export default function CrossEntryFailoverPage() {
                   {form.tcpLatencySelectionEnabled && (
                     <div className="mt-4 grid gap-3 border-t border-divider pt-4 sm:grid-cols-2 lg:grid-cols-3 lg:items-center">
                       <Select
+                        description="从哪个网络视角去测入口延迟；本地 Connector 更接近你的宽带体验。"
                         label="TCP 探测源"
                         selectedKeys={[form.qualityProbeSourceType]}
                         onSelectionChange={(keys) =>
@@ -1808,6 +2394,7 @@ export default function CrossEntryFailoverPage() {
                   <div className="mt-3 grid gap-3">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Select
+                        description="从哪个网络视角判断质量劣化；本地 Connector 可代表家庭宽带。"
                         label="质量探测源"
                         selectedKeys={[form.qualityProbeSourceType]}
                         onSelectionChange={(keys) =>
@@ -1885,6 +2472,7 @@ export default function CrossEntryFailoverPage() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       <Input
+                        description="每轮对同一入口发起几次 TCP 连接，取均值/P95/抖动。"
                         label="TCP 次数"
                         max={10}
                         min={2}
@@ -1895,6 +2483,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="兜底绝对阈值。比如美西本来就 150ms，可把这里设高，主要依赖基线倍数。"
                         label="兜底劣化 ms"
                         min={20}
                         type="number"
@@ -1904,6 +2493,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="恢复判断参考值。入口延迟低于它，或低于基线恢复倍数，就算恢复一次。"
                         label="恢复参考 ms"
                         min={10}
                         type="number"
@@ -1913,6 +2503,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="本轮 TCP 样本失败比例达到该值，认为存在丢包或连接异常。"
                         label="丢包阈值 %"
                         max={100}
                         min={1}
@@ -1923,6 +2514,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="最慢 5% 样本的延迟阈值，用来识别偶发卡顿和高尾延迟。"
                         label="P95 阈值 ms"
                         min={20}
                         type="number"
@@ -1932,6 +2524,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="同一轮样本的波动幅度。抖动大说明体验可能忽快忽慢。"
                         label="抖动阈值 ms"
                         min={1}
                         type="number"
@@ -1941,6 +2534,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="相对自身历史基线判断。3 表示延迟达到平时 3 倍才算劣化。"
                         label="基线劣化倍数"
                         min={1.2}
                         step={0.1}
@@ -1951,6 +2545,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="相对自身基线判断恢复。1.8 表示回落到基线 1.8 倍内算恢复。"
                         label="基线恢复倍数"
                         min={1}
                         step={0.1}
@@ -1961,6 +2556,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="连续几轮都劣化，才真正标记入口质量差。"
                         label="劣化确认次数"
                         max={20}
                         min={1}
@@ -1971,6 +2567,7 @@ export default function CrossEntryFailoverPage() {
                         }
                       />
                       <Input
+                        description="连续几轮都恢复，才允许重新参与回切或优选。"
                         label="恢复确认次数"
                         max={20}
                         min={1}
@@ -1991,6 +2588,7 @@ export default function CrossEntryFailoverPage() {
                         启用固定延迟目标
                       </Switch>
                       <Input
+                        description="开启固定目标后，超过这个延迟就直接算质量劣化。"
                         isDisabled={!form.qualityFixedTargetEnabled}
                         label="目标延迟 ms"
                         min={1}
@@ -2030,6 +2628,7 @@ export default function CrossEntryFailoverPage() {
                           启用抖动保护
                         </Switch>
                         <Input
+                          description="统计这段时间内反复劣化的次数。默认 900 秒即 15 分钟。"
                           isDisabled={!form.qualityFlapGuardEnabled}
                           label="统计窗口（秒）"
                           min={60}
@@ -2040,6 +2639,7 @@ export default function CrossEntryFailoverPage() {
                           }
                         />
                         <Input
+                          description="窗口内达到几次劣化事件后，入口进入保护期。"
                           isDisabled={!form.qualityFlapGuardEnabled}
                           label="触发次数"
                           max={20}
@@ -2051,6 +2651,7 @@ export default function CrossEntryFailoverPage() {
                           }
                         />
                         <Input
+                          description="第一次进入保护期的时长；开启阶梯惩罚后会按级别加长。"
                           isDisabled={!form.qualityFlapGuardEnabled}
                           label="基础保护（秒）"
                           min={60}
@@ -2072,7 +2673,7 @@ export default function CrossEntryFailoverPage() {
                           启用阶梯惩罚
                         </Switch>
                         <Input
-                          description="默认 24 小时内复发会升级"
+                          description="这段时间内再次复发会升级惩罚等级；超过后惩罚等级重置。"
                           isDisabled={
                             !form.qualityFlapGuardEnabled ||
                             !form.qualityPenaltyEnabled
@@ -2087,7 +2688,7 @@ export default function CrossEntryFailoverPage() {
                           }
                         />
                         <Input
-                          description="保护后继续确认稳定"
+                          description="保护结束后继续观察，观察期内不优先回切到该入口。"
                           isDisabled={
                             !form.qualityFlapGuardEnabled ||
                             !form.qualityPenaltyEnabled
@@ -2162,6 +2763,7 @@ export default function CrossEntryFailoverPage() {
                           备用线路预热
                         </Switch>
                         <Input
+                          description="提前确认多少条备用线路可用，主线故障时优先从这些备用里选。"
                           isDisabled={
                             !form.smartSelectionEnabled || !form.preheatEnabled
                           }
@@ -2234,12 +2836,23 @@ export default function CrossEntryFailoverPage() {
       <Modal
         isOpen={historyOpen}
         scrollBehavior="inside"
-        size="2xl"
+        size="3xl"
         onOpenChange={setHistoryOpen}
       >
         <ModalContent>
           <ModalHeader>{historyName} · 切换历史</ModalHeader>
-          <ModalBody>
+          <ModalBody className="gap-4">
+            {historyGroup && (
+              <div className="border-y border-divider py-3">
+                <p className="text-xs text-default-500">当前组规则</p>
+                <p className="mt-1 text-sm font-medium">
+                  {explainGroupStrategy(historyGroup).title}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-default-500">
+                  {explainGroupStrategy(historyGroup).decisionHint}
+                </p>
+              </div>
+            )}
             {events.length === 0 ? (
               <div className="py-12 text-center text-sm text-default-500">
                 暂无切换记录
@@ -2247,36 +2860,74 @@ export default function CrossEntryFailoverPage() {
             ) : (
               <div className="divide-y divide-divider">
                 {events.map((event) => (
-                  <div key={event.id} className="flex gap-3 py-3">
+                  <div key={event.id} className="flex gap-3 py-4">
                     <div
                       className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === "success" ? "bg-success" : "bg-danger"}`}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-medium">{event.reason}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Chip
+                            color={
+                              event.status === "success" ? "success" : "danger"
+                            }
+                            size="sm"
+                            variant="flat"
+                          >
+                            {eventActionText(event)}
+                          </Chip>
+                          <p className="text-sm font-medium">
+                            {eventReasonText(event)}
+                          </p>
+                        </div>
                         <span className="text-xs text-default-500">
                           {timeText(event.createdTime)}
                         </span>
                       </div>
-                      <p className="mt-1 flex flex-wrap items-center gap-1 text-xs text-default-500">
-                        <span>
-                          {event.fromForwardName ||
-                            event.fromNodeName ||
-                            "初始"}
-                        </span>
-                        <ArrowRight size={12} />
-                        <span>
-                          {event.toForwardName || event.toNodeName || "-"}
-                        </span>
-                      </p>
-                      {eventEndpointText(event) && (
-                        <p className="mt-1 text-xs text-default-500">
-                          {eventEndpointText(event)}
+                      <div className="mt-2 grid gap-2 text-xs text-default-500 sm:grid-cols-2">
+                        <div>
+                          <p className="font-medium text-default-600">
+                            线路变化
+                          </p>
+                          <p className="mt-1 flex flex-wrap items-center gap-1">
+                            <span>
+                              {event.fromForwardName ||
+                                event.fromNodeName ||
+                                "初始"}
+                            </span>
+                            <ArrowRight size={12} />
+                            <span>
+                              {event.toForwardName || event.toNodeName || "-"}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
+                          <p className="font-medium text-default-600">
+                            入口地址
+                          </p>
+                          <p className="mt-1 break-all">
+                            {eventEndpointText(event) || "无地址记录"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 border-l-2 border-default-200 px-3 py-2 text-xs leading-5 text-default-500">
+                        <p>
+                          <span className="font-medium text-default-600">
+                            执行结果：
+                          </span>
+                          {event.status === "success"
+                            ? " DNS 已写入目标入口。"
+                            : " 切换失败，按详情处理或已尝试回滚。"}
                         </p>
-                      )}
-                      <p className="mt-1 text-xs text-default-500">
-                        {event.detail}
-                      </p>
+                        {event.detail && (
+                          <p className="mt-1">
+                            <span className="font-medium text-default-600">
+                              验证细节：
+                            </span>
+                            {event.detail}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
