@@ -147,6 +147,31 @@ const bytes = (value?: number) =>
         : `${Math.round(value / 1024)} KB`;
 const timeText = (value?: number) =>
   value ? new Date(value).toLocaleString() : "-";
+const compactTimeText = (value?: number) =>
+  value
+    ? new Date(value).toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    : "-";
+const memberRoleName = (role: string) => (role === "hub" ? "握手节点" : "成员");
+const addressModeTone = (
+  mode: NetworkRouteApplication["hopDetails"][number]["addressMode"],
+) =>
+  mode === "public"
+    ? "border-default-200 bg-default-50 text-default-600 dark:border-default-700 dark:bg-default-900/40"
+    : mode === "virtual"
+      ? "border-success-200 bg-success-50 text-success-700 dark:border-success-500/30 dark:bg-success-500/10 dark:text-success-300"
+      : "border-primary-200 bg-primary-50 text-primary-700 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300";
+const verificationColor = (state: string) =>
+  state === "invalid"
+    ? ("danger" as const)
+    : state === "verified"
+      ? ("success" as const)
+      : ("default" as const);
 
 const scenarioGuides = [
   {
@@ -787,12 +812,12 @@ export default function PrivateNetworkPage() {
             return (
               <article
                 key={network.id}
-                className="border border-divider bg-content1"
+                className="overflow-hidden rounded-lg border border-default-200 bg-content1 shadow-sm"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-divider p-4">
-                  <div>
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-default-200 bg-content1 px-4 py-4 sm:px-5">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-medium">{network.name}</h3>
+                      <h3 className="text-lg font-semibold">{network.name}</h3>
                       <Chip color={meta.color} size="sm" variant="flat">
                         {meta.label}
                       </Chip>
@@ -800,11 +825,8 @@ export default function PrivateNetworkPage() {
                         WireGuard
                       </Chip>
                     </div>
-                    <p className="mt-1 text-xs text-default-500">
-                      {network.cidr} ·{" "}
-                      {network.members
-                        .map((item) => `${item.memberName} ${item.virtualIp}`)
-                        .join(" → ")}
+                    <p className="mt-1 truncate text-sm text-default-500">
+                      {network.cidr} · {network.hubNodeName} 作为公网握手节点
                     </p>
                     {network.lastError && (
                       <p className="mt-2 text-xs text-danger">
@@ -869,28 +891,65 @@ export default function PrivateNetworkPage() {
                     </Button>
                   </div>
                 </div>
-                <div className="grid gap-px bg-divider sm:grid-cols-2 lg:grid-cols-3">
-                  {network.members.map((member) => (
-                    <div key={member.id} className="bg-content1 p-3 text-sm">
-                      <div className="flex justify-between gap-2">
-                        <span className="font-medium">{member.memberName}</span>
-                        <Chip
-                          color={stateMeta(member.state).color}
-                          size="sm"
-                          variant="dot"
+                <div className="space-y-4 p-4 sm:p-5">
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-md border border-default-200 px-2.5 py-1 text-default-600 dark:border-default-700">
+                      UDP {network.listenPort}
+                    </span>
+                    <span className="rounded-md border border-default-200 px-2.5 py-1 text-default-600 dark:border-default-700">
+                      成员 {network.onlineCount}/{network.memberCount}
+                    </span>
+                    <span className="rounded-md border border-default-200 px-2.5 py-1 text-default-600 dark:border-default-700">
+                      虚拟网段 {network.cidr}
+                    </span>
+                  </div>
+                  <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]">
+                    {network.members.map((member) => {
+                      const memberMeta = stateMeta(member.state);
+
+                      return (
+                        <div
+                          key={member.id}
+                          className="rounded-md border border-default-200 bg-default-50/70 p-3 text-sm dark:border-default-700 dark:bg-default-900/30"
                         >
-                          {stateMeta(member.state).label}
-                        </Chip>
-                      </div>
-                      <p className="mt-1 font-mono text-xs">
-                        {member.virtualIp}
-                      </p>
-                      <p className="mt-1 text-xs text-default-500">
-                        接收 {bytes(member.receiveBytes)} · 发送{" "}
-                        {bytes(member.transmitBytes)}
-                      </p>
-                    </div>
-                  ))}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate font-semibold">
+                                  {member.memberName}
+                                </span>
+                                <Chip size="sm" variant="flat">
+                                  {memberRoleName(member.role)}
+                                </Chip>
+                              </div>
+                              <p className="mt-1 font-mono text-sm text-foreground">
+                                {member.virtualIp}
+                              </p>
+                            </div>
+                            <Chip
+                              color={memberMeta.color}
+                              size="sm"
+                              variant="dot"
+                            >
+                              {memberMeta.label}
+                            </Chip>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-default-500">
+                            <span>接收 {bytes(member.receiveBytes)}</span>
+                            <span>发送 {bytes(member.transmitBytes)}</span>
+                            <span className="col-span-2">
+                              握手 {compactTimeText(member.latestHandshake)}
+                            </span>
+                          </div>
+                          {member.lastError && (
+                            <p className="mt-2 text-xs text-danger">
+                              {member.lastError}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </article>
             );
@@ -1079,12 +1138,12 @@ export default function PrivateNetworkPage() {
             return (
               <article
                 key={app.id}
-                className="border border-divider bg-content1 p-4"
+                className="overflow-hidden rounded-lg border border-default-200 bg-content1 shadow-sm"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-default-200 px-4 py-4 sm:px-5">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-medium">{app.name}</h3>
+                      <h3 className="text-lg font-semibold">{app.name}</h3>
                       <Chip color={meta.color} size="sm" variant="flat">
                         {meta.label}
                       </Chip>
@@ -1096,83 +1155,12 @@ export default function PrivateNetworkPage() {
                             : app.proxyType.toUpperCase()}
                       </Chip>
                     </div>
-                    <p className="mt-1 text-sm">
+                    <p className="mt-1 truncate text-sm text-default-500">
                       {(app.nodePath || [])
                         .map((item) => item.nodeName)
                         .join(" → ") ||
                         `${app.entryNodeName} → ${app.exitNodeName}`}{" "}
                       · {app.exitNodeName} 最终出口
-                    </p>
-                    <div className="mt-2 flex max-w-3xl items-center gap-2">
-                      <code className="min-w-0 flex-1 truncate border-y border-divider py-2 text-xs">
-                        {app.clientUri}
-                      </code>
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        title="复制连接"
-                        variant="light"
-                        onPress={() => {
-                          void navigator.clipboard.writeText(app.clientUri);
-                          toast.success("连接已复制");
-                        }}
-                      >
-                        <Copy size={16} />
-                      </Button>
-                    </div>
-                    {app.hopDetails?.length > 0 && (
-                      <div className="mt-3 grid gap-px border border-divider bg-divider sm:grid-cols-2">
-                        {app.hopDetails.map((hop, index) => (
-                          <div
-                            key={`${hop.fromNodeId}-${hop.toNodeId}`}
-                            className="bg-content1 p-3 text-xs"
-                          >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium">
-                                第 {index + 1} 跳 · {hop.fromNodeName} →{" "}
-                                {hop.toNodeName}
-                              </span>
-                              <Chip
-                                color={
-                                  hop.verificationState === "invalid"
-                                    ? "danger"
-                                    : hop.addressMode === "public"
-                                      ? "default"
-                                      : "success"
-                                }
-                                size="sm"
-                                variant="flat"
-                              >
-                                {hop.addressModeName}
-                              </Chip>
-                            </div>
-                            <p className="mt-1 font-mono">
-                              主地址 {hop.targetAddress || "-"}
-                            </p>
-                            {hop.resourceGroupName && (
-                              <p className="mt-1 text-default-500">
-                                组网 {hop.resourceGroupName}
-                              </p>
-                            )}
-                            {hop.fallbackAddress && (
-                              <p className="mt-1 font-mono text-warning">
-                                备用公网 {hop.fallbackAddress}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {app.lastError && (
-                      <p className="mt-2 text-xs text-danger">
-                        {app.lastError}
-                      </p>
-                    )}
-                    <p className="mt-2 text-xs text-default-500">
-                      最近测试 {timeText(app.lastTestAt)}
-                      {app.lastTestLatencyMs != null
-                        ? ` · ${Number(app.lastTestLatencyMs).toFixed(1)} ms`
-                        : ""}
                     </p>
                   </div>
                   <div className="flex gap-1">
@@ -1227,6 +1215,119 @@ export default function PrivateNetworkPage() {
                       <Trash2 size={16} />
                     </Button>
                   </div>
+                </div>
+                <div className="space-y-4 p-4 sm:p-5">
+                  <div className="flex items-center gap-2 rounded-md border border-default-200 bg-default-50/70 px-3 py-2 dark:border-default-700 dark:bg-default-900/30">
+                    <code className="min-w-0 flex-1 truncate text-xs">
+                      {app.clientUri}
+                    </code>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      title="复制连接"
+                      variant="light"
+                      onPress={() => {
+                        void navigator.clipboard.writeText(app.clientUri);
+                        toast.success("连接已复制");
+                      }}
+                    >
+                      <Copy size={16} />
+                    </Button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    {(app.nodePath?.length
+                      ? app.nodePath
+                      : [
+                          {
+                            nodeId: app.entryNodeId,
+                            nodeName: app.entryNodeName,
+                          },
+                          {
+                            nodeId: app.exitNodeId,
+                            nodeName: app.exitNodeName,
+                          },
+                        ]
+                    ).map((node, index, path) => (
+                      <div
+                        key={`${node.nodeId}-${index}`}
+                        className="flex items-center gap-2"
+                      >
+                        <div className="rounded-md border border-default-200 bg-content1 px-3 py-2 dark:border-default-700">
+                          <p className="text-xs text-default-500">
+                            {index === 0
+                              ? "入口"
+                              : index === path.length - 1
+                                ? "出口"
+                                : `中转 ${index}`}
+                          </p>
+                          <p className="font-medium">{node.nodeName}</p>
+                        </div>
+                        {index < path.length - 1 && (
+                          <span className="text-default-400">→</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {app.hopDetails?.length > 0 && (
+                    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+                      {app.hopDetails.map((hop, index) => (
+                        <div
+                          key={`${hop.fromNodeId}-${hop.toNodeId}`}
+                          className={`rounded-md border p-3 text-sm ${addressModeTone(hop.addressMode)}`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs text-default-500">
+                                第 {index + 1} 跳
+                              </p>
+                              <p className="font-semibold text-foreground">
+                                {hop.fromNodeName} → {hop.toNodeName}
+                              </p>
+                            </div>
+                            <Chip
+                              color={verificationColor(hop.verificationState)}
+                              size="sm"
+                              variant="flat"
+                            >
+                              {hop.addressModeName}
+                            </Chip>
+                          </div>
+                          <div className="mt-3 space-y-1 text-xs">
+                            <p className="font-mono text-foreground">
+                              主地址 {hop.targetAddress || "-"}
+                            </p>
+                            {hop.resourceGroupName && (
+                              <p className="text-default-500">
+                                组网 {hop.resourceGroupName}
+                              </p>
+                            )}
+                            {hop.fallbackAddress && (
+                              <p className="font-mono text-warning">
+                                备用公网 {hop.fallbackAddress}
+                              </p>
+                            )}
+                            <p className="text-default-500">
+                              验证 {compactTimeText(hop.verifiedAt)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {app.lastError && (
+                    <p className="rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700 dark:border-danger-500/30 dark:bg-danger-500/10 dark:text-danger-300">
+                      {app.lastError}
+                    </p>
+                  )}
+                  <p className="text-xs text-default-500">
+                    最近测试 {timeText(app.lastTestAt)}
+                    {app.lastTestLatencyMs != null
+                      ? ` · ${Number(app.lastTestLatencyMs).toFixed(1)} ms`
+                      : ""}
+                  </p>
                 </div>
               </article>
             );
