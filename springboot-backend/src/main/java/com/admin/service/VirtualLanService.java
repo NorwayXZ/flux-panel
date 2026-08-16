@@ -165,6 +165,10 @@ public class VirtualLanService {
         if (usedBy != null) return R.err("该自动组网仍被线路使用，请先删除出口应用或修改线路：" + usedBy);
         List<String> failures = new ArrayList<>();
         for (Map<String, Object> member : members) {
+            if (!targetExists(member)) {
+                log.info("Skip virtual LAN cleanup for deleted {} member {} in network {}", member.get("target_type"), member.get("member_name"), id);
+                continue;
+            }
             if (!online(member)) { failures.add(String.valueOf(member.get("member_name"))); continue; }
             GostDto result = send(member, Map.of("name", "vlan-" + id), "VirtualLanDelete", 8);
             if (result == null || !"OK".equals(result.getMsg())) failures.add(String.valueOf(member.get("member_name")));
@@ -214,6 +218,7 @@ public class VirtualLanService {
     }
 
     private boolean online(Map<String, Object> member) { return "node".equals(member.get("target_type")) ? WebSocketServer.isNodeOnline(longNumber(member.get("target_id"))) : WebSocketServer.isConnectorOnline(longNumber(member.get("target_id"))); }
+    private boolean targetExists(Map<String, Object> member) { return "node".equals(member.get("target_type")) ? nodeMapper.selectById(longNumber(member.get("target_id"))) != null : connectorMapper.selectById(longNumber(member.get("target_id"))) != null; }
     private GostDto send(Map<String, Object> member, Object payload, String type, long timeout) { return "node".equals(member.get("target_type")) ? WebSocketServer.send_msg(longNumber(member.get("target_id")), payload, type, timeout) : WebSocketServer.sendConnectorMsg(longNumber(member.get("target_id")), payload, type, timeout); }
     private void updateStatus(Map<String, Object> member, JSONObject data, String error) {
         if (data == null) jdbcTemplate.update("UPDATE virtual_lan_member SET state='offline',last_error=?,updated_time=? WHERE id=?", error, System.currentTimeMillis(), member.get("id"));
