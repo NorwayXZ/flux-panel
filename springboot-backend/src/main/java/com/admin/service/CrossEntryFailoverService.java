@@ -1352,28 +1352,54 @@ public class CrossEntryFailoverService {
     private int chooseManagedPublicPort(CrossEntryFailoverSaveDto dto, List<Node> nodes) {
         if ("custom".equals(dto.getManagedPortMode())) {
             int port = dto.getManagedPublicPort();
-            if (!isManagedPortAvailable(nodes, port, dto.getManagedProtocolMode())) {
-                throw new IllegalArgumentException("自定义公共端口 " + port + " 在至少一个入口节点上已被占用");
+            ManagedPortAvailability availability = managedPortAvailability(nodes, port, dto.getManagedProtocolMode());
+            if (!availability.available()) {
+                throw new IllegalArgumentException("自定义公共端口 " + port + " 不可用：" + availability.reason());
             }
             return port;
         }
         int start = dto.getManagedPortRangeStart();
         int end = dto.getManagedPortRangeEnd();
+        String firstFailure = "";
+        String lastFailure = "";
         for (int port = start; port <= end; port++) {
-            if (isManagedPortAvailable(nodes, port, dto.getManagedProtocolMode())) return port;
+            ManagedPortAvailability availability = managedPortAvailability(nodes, port, dto.getManagedProtocolMode());
+            if (availability.available()) return port;
+            if (availability.fatal()) {
+                throw new IllegalArgumentException("无法自动选择公共端口：" + availability.reason());
+            }
+            String reason = "端口 " + port + "：" + availability.reason();
+            if (firstFailure.isEmpty()) firstFailure = reason;
+            lastFailure = reason;
         }
-        throw new IllegalArgumentException("指定端口范围内没有找到所有入口都空闲的公共端口");
+        String detail = firstFailure.equals(lastFailure)
+                ? firstFailure
+                : firstFailure + "；最后检查：" + lastFailure;
+        throw new IllegalArgumentException("指定端口范围 " + start + "-" + end
+                + " 内没有找到所有入口都空闲的公共端口；" + detail);
     }
 
-    private boolean isManagedPortAvailable(List<Node> nodes, int port, String protocolMode) {
+    private ManagedPortAvailability managedPortAvailability(List<Node> nodes, int port, String protocolMode) {
         for (Node node : nodes) {
-            if (isLedgerPortOccupied(node, port)) return false;
-            if (!isManagedPortAvailableByAgent(node, port, protocolMode)) return false;
+            String ledgerConflict = ledgerPortConflictReason(node, port);
+            if (StringUtils.isNotBlank(ledgerConflict)) {
+                return new ManagedPortAvailability(false, ledgerConflict, false);
+            }
+            AgentPortCheckUtil.Result agentResult = managedPortAvailabilityByAgent(node, port, protocolMode);
+            if (!agentResult.isAvailable()) {
+                String conflicts = agentResult.getConflicts() == null || agentResult.getConflicts().isEmpty()
+                        ? ""
+                        : "：" + String.join("；", agentResult.getConflicts());
+                String message = "节点 " + node.getName() + " 真实端口检查失败，"
+                        + agentResult.getMessage() + conflicts;
+                boolean fatal = StringUtils.defaultString(agentResult.getMessage()).contains("系统端口检查失败");
+                return new ManagedPortAvailability(false, message, fatal);
+            }
         }
-        return true;
+        return new ManagedPortAvailability(true, "所有入口节点均空闲", false);
     }
 
-    private boolean isLedgerPortOccupied(Node node, int port) {
+    private String ledgerPortConflictReason(Node node, int port) {
         try {
             PortLedgerQueryDto query = new PortLedgerQueryDto();
             query.setNodeId(node.getId());
@@ -1384,19 +1410,25 @@ public class CrossEntryFailoverService {
                     if (!(raw instanceof PortLedgerEntryDto entry)) continue;
                     Integer start = entry.getPortStart();
                     Integer end = entry.getPortEnd();
-                    if (start != null && end != null && port >= start && port <= end) return true;
+                    if (start != null && end != null && port >= start && port <= end) {
+                        String owner = StringUtils.defaultIfBlank(entry.getResourceName(), entry.getType());
+                        return "节点 " + node.getName() + " 的端口账本已占用 " + port
+                                + (StringUtils.isBlank(owner) ? "" : "（" + owner + "）");
+                    }
                 }
             }
             Integer managed = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM cross_entry_managed_resource WHERE entry_node_id=? AND public_port=?",
                     Integer.class, node.getId(), port);
-            return managed != null && managed > 0;
+            return managed != null && managed > 0
+                    ? "节点 " + node.getName() + " 已有托管入口容灾占用公共端口 " + port
+                    : "";
         } catch (DataAccessException e) {
             throw new IllegalStateException("读取节点 " + node.getName() + " 端口账本失败");
         }
     }
 
-    private boolean isManagedPortAvailableByAgent(Node node, int port, String protocolMode) {
+    private AgentPortCheckUtil.Result managedPortAvailabilityByAgent(Node node, int port, String protocolMode) {
         List<AgentPortCheckUtil.Check> checks = new ArrayList<>();
         if ("tcp".equals(protocolMode) || "tcp_udp".equals(protocolMode)) {
             checks.add(new AgentPortCheckUtil.Check("tcp", "", port));
@@ -1404,7 +1436,7 @@ public class CrossEntryFailoverService {
         if ("tcp_udp".equals(protocolMode)) {
             checks.add(new AgentPortCheckUtil.Check("udp", "", port));
         }
-        return AgentPortCheckUtil.check(node, checks).isAvailable();
+        return AgentPortCheckUtil.check(node, checks);
     }
 
     private DirectTunnelResult ensureManagedDirectTunnel(Node node) {
@@ -2118,6 +2150,7 @@ public class CrossEntryFailoverService {
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
                                       Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
     private record DirectTunnelResult(Tunnel tunnel, boolean created) {}
+    private record ManagedPortAvailability(boolean available, String reason, boolean fatal) {}
     record FaultStatsUpdate(int episodeDelta, int connectDelta, int latencyDelta, int lossDelta, int p95Delta,
                             int jitterDelta, int flapDelta, String type, String reason, Long at) {}
     private record DnsVerification(boolean providerMatched, boolean publicMatched, String message) {}

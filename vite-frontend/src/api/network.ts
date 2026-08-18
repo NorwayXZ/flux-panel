@@ -83,6 +83,13 @@ function isTokenExpired(response: ApiResponse) {
 }
 
 function errorMessage(error: any): string {
+  const data = error?.response?.data;
+  const backendMessage =
+    typeof data === "string"
+      ? data
+      : data?.msg || data?.message || data?.error || data?.detail;
+
+  if (backendMessage) return String(backendMessage);
   if (error?.code === "ECONNABORTED") return "请求超时，请稍后重试";
   if (error?.response?.status === 502)
     return "后端服务暂时不可用（502），请稍后重试";

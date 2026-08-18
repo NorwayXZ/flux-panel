@@ -182,6 +182,31 @@ const metricText = (value?: number, unit = "") =>
   typeof value === "number" && Number.isFinite(value)
     ? `${Math.round(value * 10) / 10}${unit}`
     : "-";
+const displayDomain = (value: string, zoneName?: string) => {
+  let domain = value.trim().toLowerCase();
+
+  while (domain.endsWith(".")) domain = domain.slice(0, -1);
+  if (!domain || !zoneName || domain.includes(".")) return domain;
+
+  return `${domain}.${zoneName}`;
+};
+const apiFailureMessage = (
+  response: { msg?: string; data?: unknown },
+  fallback: string,
+) => {
+  const data = response.data as
+    | { msg?: string; message?: string; error?: string; detail?: string }
+    | undefined;
+
+  return (
+    response.msg ||
+    data?.msg ||
+    data?.message ||
+    data?.error ||
+    data?.detail ||
+    fallback
+  );
+};
 const durationText = (seconds?: number) => {
   const value = Number(seconds || 0);
 
@@ -1172,6 +1197,10 @@ export default function CrossEntryFailoverPage() {
     () => zoneOptions.find((item) => String(item.id) === form.dnsZoneId),
     [form.dnsZoneId, zoneOptions],
   );
+  const finalDomain = useMemo(
+    () => displayDomain(form.domain, selectedZone?.zoneName),
+    [form.domain, selectedZone?.zoneName],
+  );
   const lockableMembers = useMemo(
     () => groups.find((item) => item.id === form.id)?.members || [],
     [form.id, groups],
@@ -1616,7 +1645,9 @@ export default function CrossEntryFailoverPage() {
 
     setSubmitting(false);
     if (response.code !== 0)
-      return toast.error(response.msg || "保存入口容灾失败");
+      return toast.error(apiFailureMessage(response, "保存入口容灾失败"), {
+        duration: 9000,
+      });
     toast.success(form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口");
     setFormOpen(false);
     void loadData();
@@ -2288,7 +2319,9 @@ export default function CrossEntryFailoverPage() {
               <Input
                 description={
                   selectedZone
-                    ? `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录`
+                    ? finalDomain
+                      ? `最终记录：${finalDomain}`
+                      : `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录`
                     : "凭据和 Zone 在“资源中心 - 域名管理”中统一维护"
                 }
                 label="业务域名或主机记录"

@@ -1,3 +1,9 @@
+## 2.51.26 Cross-entry failover creation diagnostics
+
+- Surfaces backend `msg/message/error/detail` responses in the frontend instead of falling back to a generic creation failure.
+- Adds per-node managed public-port diagnostics for Cross-entry Failover: ledger conflicts, real Agent port-check failures, port number, node name, and Agent no-response cases are now included in the error.
+- Stops automatic port scanning immediately when the Agent system port check itself fails, so operators get the failing node instead of waiting through a large port range. Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.25 Managed cross-entry failover cleanup safety
 
 - Fixes the managed cross-entry failover creation failure path so automatically created forwards and direct tunnels are cleaned up before the error result is committed.
