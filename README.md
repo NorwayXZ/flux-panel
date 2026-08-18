@@ -6,6 +6,8 @@
 
 ## 近期版本
 
+`2.51.29` 修复后台监控扫描因证书、DDNS 或转发诊断详情过长导致 `monitoring_* detail` 写库失败的问题：新安装和旧安装都会把监控详情字段扩到 500 字符，后台写入前也会统一截断，避免同类日志噪声再次打断监控任务。Agent 保持 `2.51.13`。
+
 `2.51.28` 修复入口容灾托管创建时普通转发默认负载策略为空导致的创建失败：托管转发会显式使用 `round` 默认策略，普通转发内部也会把空策略安全归一化，避免再次触发空指针。保留 `2.51.27` 的详细错误原因兜底。Agent 保持 `2.51.13`。
 
 `2.51.27` 修复入口容灾托管创建时后端空指针导致“失败但没有原因”的问题：自动创建转发时会把节点、公共端口、落地地址和底层转发失败原因一起返回；全局未处理异常也会带上异常类型和请求 ID，避免前端再显示空白原因。Agent 保持 `2.51.13`。
@@ -606,7 +608,7 @@ Agent 通常以 root 运行，因此网页终端也可能获得 root 权限。�
 
 可在 `/etc/flux-panel/flux-panel.env` 中调整 `MONITORING_SCAN_INTERVAL_MS` 和 `MONITORING_RETENTION_DAYS`。扫描间隔不建议低于 10 秒；历史保留天数低于 30 时，后端仍按最低 30 天执行清理。
 
-升级后端会自动创建 `monitoring_current`、`monitoring_history`、`monitoring_alert` 和 `monitoring_alert_read` 表。手动维护数据库时可以执行 [`migrations/20260725_monitoring_alerts.sql`](migrations/20260725_monitoring_alerts.sql)，该迁移可重复执行。
+升级后端会自动创建 `monitoring_current`、`monitoring_history`、`monitoring_alert` 和 `monitoring_alert_read` 表，并把监控详情字段保持在 500 字符。手动维护数据库时可以执行 [`migrations/20260725_monitoring_alerts.sql`](migrations/20260725_monitoring_alerts.sql)，旧库详情字段过短时再执行 [`migrations/20260818_monitoring_detail_width.sql`](migrations/20260818_monitoring_detail_width.sql)。
 
 ### 卡片拖动排序
 

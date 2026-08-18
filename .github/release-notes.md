@@ -1,3 +1,9 @@
+## 2.51.29 Monitoring detail bounds
+
+- Fixes monitoring scans failing when certificate, DDNS, or forwarding diagnostics produce a `detail` value longer than the database column.
+- Expands monitoring `detail` columns to 500 characters for new and existing installs, and bounds every monitoring state detail before writing current status, history, alerts, and notifications.
+- Keeps Agent and Connector binaries at `2.51.13`; this is a panel-only backend stability release.
+
 ## 2.51.28 Managed cross-entry forward default strategy
 
 - Fixes managed Cross-entry Failover creation failing when the generated forward does not provide a route balance strategy.

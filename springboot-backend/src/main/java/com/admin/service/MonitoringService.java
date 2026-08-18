@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -37,6 +38,7 @@ public class MonitoringService {
     private static final String UNKNOWN = "unknown";
     private static final String ALERT_OPEN = "open";
     private static final String ALERT_RESOLVED = "resolved";
+    static final int DETAIL_MAX_LENGTH = 500;
 
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -493,6 +495,7 @@ public class MonitoringService {
     }
 
     private void persistState(ResourceState state, long now) {
+        state = normalizeState(state);
         List<Map<String, Object>> existingRows = jdbcTemplate.queryForList(
                 "SELECT status, changed_at FROM monitoring_current WHERE resource_type = ? AND resource_id = ?",
                 state.type(), state.id()
@@ -882,6 +885,15 @@ public class MonitoringService {
         result.add(first);
         result.addAll(values);
         return result;
+    }
+
+    private ResourceState normalizeState(ResourceState state) {
+        return new ResourceState(state.type(), state.id(), state.name(), state.ownerUserId(), state.status(),
+                boundedDetailForStorage(state.detail()));
+    }
+
+    static String boundedDetailForStorage(String value) {
+        return StringUtils.abbreviate(StringUtils.defaultString(value), DETAIL_MAX_LENGTH);
     }
 
     private record ResourceState(String type, long id, String name, int ownerUserId, String status, String detail) {}

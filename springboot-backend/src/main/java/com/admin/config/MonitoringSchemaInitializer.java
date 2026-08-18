@@ -7,9 +7,14 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.Map;
+
 @Slf4j
 @Component
 public class MonitoringSchemaInitializer implements ApplicationRunner {
+
+    private static final int DETAIL_MAX_LENGTH = 500;
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -26,7 +31,7 @@ public class MonitoringSchemaInitializer implements ApplicationRunner {
                     + "resource_name varchar(160) NOT NULL, "
                     + "owner_user_id int NOT NULL, "
                     + "status varchar(16) NOT NULL, "
-                    + "detail varchar(255) DEFAULT NULL, "
+                    + "detail varchar(500) DEFAULT NULL, "
                     + "changed_at bigint NOT NULL, "
                     + "checked_at bigint NOT NULL, "
                     + "PRIMARY KEY (resource_type, resource_id), "
@@ -41,7 +46,7 @@ public class MonitoringSchemaInitializer implements ApplicationRunner {
                     + "resource_name varchar(160) NOT NULL, "
                     + "owner_user_id int NOT NULL, "
                     + "status varchar(16) NOT NULL, "
-                    + "detail varchar(255) DEFAULT NULL, "
+                    + "detail varchar(500) DEFAULT NULL, "
                     + "started_at bigint NOT NULL, "
                     + "ended_at bigint DEFAULT NULL, "
                     + "PRIMARY KEY (id), "
@@ -59,7 +64,7 @@ public class MonitoringSchemaInitializer implements ApplicationRunner {
                     + "severity varchar(16) NOT NULL, "
                     + "status varchar(16) NOT NULL, "
                     + "title varchar(200) NOT NULL, "
-                    + "detail varchar(255) DEFAULT NULL, "
+                    + "detail varchar(500) DEFAULT NULL, "
                     + "started_at bigint NOT NULL, "
                     + "resolved_at bigint DEFAULT NULL, "
                     + "updated_at bigint NOT NULL, "
@@ -76,8 +81,30 @@ public class MonitoringSchemaInitializer implements ApplicationRunner {
                     + "PRIMARY KEY (alert_id, user_id), "
                     + "KEY idx_monitoring_alert_read_user (user_id, read_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+            ensureDetailWidth("monitoring_current");
+            ensureDetailWidth("monitoring_history");
+            ensureDetailWidth("monitoring_alert");
         } catch (DataAccessException e) {
             log.error("Monitoring storage initialization failed", e);
         }
+    }
+
+    private void ensureDetailWidth(String table) {
+        List<Map<String, Object>> columns = jdbcTemplate.queryForList(
+                "SELECT DATA_TYPE AS data_type, CHARACTER_MAXIMUM_LENGTH AS max_length FROM information_schema.columns "
+                        + "WHERE table_schema=DATABASE() AND table_name=? AND column_name='detail'",
+                table);
+        if (columns.isEmpty()) {
+            return;
+        }
+        Map<String, Object> column = columns.get(0);
+        String dataType = String.valueOf(column.get("data_type"));
+        Object rawLength = column.get("max_length");
+        long length = rawLength == null ? Long.MAX_VALUE : Long.parseLong(rawLength.toString());
+        if (!"varchar".equalsIgnoreCase(dataType) || length >= DETAIL_MAX_LENGTH) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE `" + table + "` MODIFY COLUMN `detail` varchar(" + DETAIL_MAX_LENGTH + ") DEFAULT NULL");
     }
 }
