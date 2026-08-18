@@ -1,3 +1,9 @@
+## 2.51.25 Managed cross-entry failover cleanup safety
+
+- Fixes the managed cross-entry failover creation failure path so automatically created forwards and direct tunnels are cleaned up before the error result is committed.
+- Prevents a database rollback from restoring managed forwarding records after the real GOST resources have already been removed.
+- Keeps the existing-forward mode unchanged and keeps Agent and Connector binaries at `2.51.13`; this is a panel-only release.
+
 ## 2.51.19 Cross-entry failover layout cleanup
 
 - Reflows the cross-entry failover editor into clearer cards and collapsible rule groups so the page reads like a configuration panel instead of a long note wall.

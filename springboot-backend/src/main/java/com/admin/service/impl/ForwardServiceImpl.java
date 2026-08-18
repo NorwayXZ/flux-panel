@@ -196,7 +196,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return gostResult;
         }
 
-        return R.ok();
+        return R.ok(Map.of("id", forward.getId()));
     }
 
     private R createBatchForwards(ForwardDto source) {

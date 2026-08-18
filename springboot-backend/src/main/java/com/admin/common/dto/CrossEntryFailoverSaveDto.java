@@ -3,7 +3,6 @@ package com.admin.common.dto;
 import lombok.Data;
 
 import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.Size;
 import java.util.List;
 
@@ -88,7 +87,25 @@ public class CrossEntryFailoverSaveDto {
     /** Mirrors memberForwardIds by position. DNS itself does not guarantee strict weighting. */
     private List<Integer> memberWeights;
 
+    /**
+     * existing_forward 引用已经创建的转发；managed_forward 由面板自动创建到固定落地的转发。
+     * 旧请求不填写时继续使用 existing_forward。
+     */
+    private String creationMode = "existing_forward";
+
+    /** 托管落地模式下的入口节点顺序，第一项为主入口。 */
+    private List<Long> managedEntryNodeIds;
+
+    /** 托管落地模式下的固定目标，例如 203.0.113.10:443。 */
+    private String managedTargetAddress;
+
+    /** custom 使用 managedPublicPort；auto 在范围内寻找所有入口都空闲的公共端口。 */
+    private String managedPortMode = "auto";
+    private Integer managedPublicPort;
+    private Integer managedPortRangeStart = 10000;
+    private Integer managedPortRangeEnd = 60000;
+    private String managedProtocolMode = "tcp";
+
     /** 第一项为主入口，其余按顺序作为备用入口。 */
-    @NotEmpty(message = "请至少选择两个入口转发")
     private List<Long> memberForwardIds;
 }

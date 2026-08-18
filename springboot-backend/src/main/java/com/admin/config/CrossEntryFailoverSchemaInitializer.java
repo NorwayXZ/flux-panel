@@ -140,6 +140,18 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_dns_member (group_id,member_id),"
                     + "UNIQUE KEY uk_cross_entry_dns_provider (provider_record_id),KEY idx_cross_entry_dns_group (group_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_managed_resource ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,forward_id bigint NOT NULL,"
+                    + "tunnel_id bigint NOT NULL,entry_node_id bigint NOT NULL,target_address varchar(255) NOT NULL,"
+                    + "public_port int NOT NULL,port_mode varchar(16) NOT NULL DEFAULT 'auto',protocol_mode varchar(16) NOT NULL DEFAULT 'tcp',"
+                    + "created_tunnel tinyint NOT NULL DEFAULT 0,created_time bigint NOT NULL,"
+                    + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_managed_forward (group_id,forward_id),"
+                    + "KEY idx_cross_entry_managed_group (group_id),KEY idx_cross_entry_managed_forward_id (forward_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureColumn("cross_entry_managed_resource", "port_mode",
+                    "varchar(16) NOT NULL DEFAULT 'auto' AFTER public_port");
+            ensureColumn("cross_entry_managed_resource", "protocol_mode",
+                    "varchar(16) NOT NULL DEFAULT 'tcp' AFTER port_mode");
             normalizeFailbackToleranceDefaults();
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);

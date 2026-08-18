@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class ConnectorInstallCommandUtil {
-    public static final String RELEASE = "2.51.24";
+    public static final String RELEASE = "2.51.25";
     private static final String RAW_BASE = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/" + RELEASE;
     private static final Set<String> SUPPORTED_PLATFORMS = Set.of("linux", "windows", "macos");
 

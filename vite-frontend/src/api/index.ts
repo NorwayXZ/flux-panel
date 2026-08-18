@@ -1619,6 +1619,11 @@ export interface CrossEntryGroup {
   id: number;
   name: string;
   domain: string;
+  creationMode?: "existing_forward" | "managed_forward";
+  managedTargetAddress?: string;
+  managedPublicPort?: number;
+  managedPortMode?: "auto" | "custom";
+  managedProtocolMode?: "tcp" | "tcp_udp";
   dnsZoneId?: number;
   zoneName?: string;
   zoneId: string;
@@ -1741,6 +1746,16 @@ export const getCrossEntryForwardOptions = () =>
     {},
     15000,
   );
+export interface CrossEntryNodeOption {
+  id: number;
+  name: string;
+  ip?: string;
+  serverIp?: string;
+  status?: number;
+  version?: string;
+}
+export const getCrossEntryNodeOptions = () =>
+  Network.postCached<CrossEntryNodeOption[]>("/node/list", {}, 8000);
 export const getCrossEntryProbeSources = () =>
   Network.postCached<CrossEntryProbeSourceOverview>(
     "/cross-entry-failover/probe-sources",

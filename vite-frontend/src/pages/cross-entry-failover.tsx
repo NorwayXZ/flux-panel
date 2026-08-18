@@ -38,12 +38,14 @@ import {
   getCrossEntryEvents,
   getCrossEntryForwardOptions,
   getCrossEntryGroups,
+  getCrossEntryNodeOptions,
   getCrossEntryProbeSources,
   getDnsZoneOptions,
   saveCrossEntryGroup,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
   type CrossEntryGroup,
+  type CrossEntryNodeOption,
   type CrossEntryProbeSourceOverview,
   type CrossEntrySummary,
   type DnsZoneOption,
@@ -160,6 +162,14 @@ const emptyForm = {
   lockedMemberId: "",
   manualLockUntil: "",
   manualLockDuration: "forever" as "forever" | "30m" | "2h",
+  creationMode: "existing_forward" as "existing_forward" | "managed_forward",
+  managedEntryNodeIds: ["", ""],
+  managedTargetAddress: "",
+  managedPortMode: "auto" as "auto" | "custom",
+  managedPublicPort: "",
+  managedPortRangeStart: "10000",
+  managedPortRangeEnd: "60000",
+  managedProtocolMode: "tcp" as "tcp" | "tcp_udp",
   memberForwardIds: ["", ""],
 };
 
@@ -1089,6 +1099,7 @@ export default function CrossEntryFailoverPage() {
   const [forwardOptions, setForwardOptions] = useState<
     CrossEntryForwardOption[]
   >([]);
+  const [nodeOptions, setNodeOptions] = useState<CrossEntryNodeOption[]>([]);
   const [zoneOptions, setZoneOptions] = useState<DnsZoneOption[]>([]);
   const [probeSources, setProbeSources] =
     useState<CrossEntryProbeSourceOverview>(emptyProbeSources);
@@ -1103,10 +1114,11 @@ export default function CrossEntryFailoverPage() {
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
-    const [groupResult, optionResult, zoneResult, probeResult] =
+    const [groupResult, optionResult, nodeResult, zoneResult, probeResult] =
       await Promise.allSettled([
         getCrossEntryGroups(),
         getCrossEntryForwardOptions(),
+        getCrossEntryNodeOptions(),
         getDnsZoneOptions(),
         getCrossEntryProbeSources(),
       ]);
@@ -1127,6 +1139,9 @@ export default function CrossEntryFailoverPage() {
     if (optionResult.status === "fulfilled" && optionResult.value.code === 0)
       setForwardOptions(optionResult.value.data || []);
     else if (!quiet) toast.error("入口候选线路加载失败，已保留旧选项");
+    if (nodeResult.status === "fulfilled" && nodeResult.value.code === 0)
+      setNodeOptions(nodeResult.value.data || []);
+    else if (!quiet) toast.error("入口节点加载失败，已保留旧选项");
     if (zoneResult.status === "fulfilled" && zoneResult.value.code === 0)
       setZoneOptions(zoneResult.value.data || []);
     else if (!quiet) toast.error("DNS Zone 加载失败，已保留旧选项");
@@ -1161,8 +1176,30 @@ export default function CrossEntryFailoverPage() {
     () => groups.find((item) => item.id === form.id)?.members || [],
     [form.id, groups],
   );
-  const selectedPort = selectedOptions.find(Boolean)?.inPort;
+  const selectedPort =
+    form.creationMode === "managed_forward"
+      ? form.managedPublicPort || "自动分配"
+      : selectedOptions.find(Boolean)?.inPort;
   const selectionProblem = useMemo(() => {
+    if (form.creationMode === "managed_forward") {
+      const selectedNodes = form.managedEntryNodeIds.filter(Boolean);
+
+      if (selectedNodes.length < 2) return "至少选择两个不同入口节点";
+      if (new Set(selectedNodes).size !== selectedNodes.length)
+        return "托管入口节点不能重复";
+      if (!form.managedTargetAddress.trim())
+        return "请填写已搭好的落地 IP:端口";
+      if (
+        form.managedPortMode === "custom" &&
+        (!form.managedPublicPort ||
+          Number(form.managedPublicPort) < 1 ||
+          Number(form.managedPublicPort) > 65535)
+      ) {
+        return "请填写有效的自定义公共端口";
+      }
+
+      return "";
+    }
     const selected = selectedOptions.filter(
       Boolean,
     ) as CrossEntryForwardOption[];
@@ -1174,7 +1211,14 @@ export default function CrossEntryFailoverPage() {
       return "所有候选转发必须使用相同公网端口";
 
     return "";
-  }, [selectedOptions]);
+  }, [
+    form.creationMode,
+    form.managedEntryNodeIds,
+    form.managedPortMode,
+    form.managedPublicPort,
+    form.managedTargetAddress,
+    selectedOptions,
+  ]);
   const recentSwitches = useMemo(
     () =>
       groups
@@ -1336,6 +1380,25 @@ export default function CrossEntryFailoverPage() {
         ? String(group.manualLockUntil)
         : "",
       manualLockDuration: inferLockDuration(group.manualLockUntil),
+      creationMode: group.creationMode || "existing_forward",
+      managedEntryNodeIds:
+        group.creationMode === "managed_forward"
+          ? group.members.map((item) => String(item.entryNodeId))
+          : ["", ""],
+      managedTargetAddress: group.managedTargetAddress || "",
+      managedPortMode:
+        group.creationMode === "managed_forward"
+          ? group.managedPortMode || "custom"
+          : "auto",
+      managedPublicPort:
+        group.managedPublicPort != null
+          ? String(group.managedPublicPort)
+          : group.members[0]?.entryPort
+            ? String(group.members[0].entryPort)
+            : "",
+      managedPortRangeStart: "10000",
+      managedPortRangeEnd: "60000",
+      managedProtocolMode: group.managedProtocolMode || "tcp",
       memberForwardIds: group.members.map((item) => String(item.forwardId)),
     });
     setFormOpen(true);
@@ -1405,6 +1468,28 @@ export default function CrossEntryFailoverPage() {
     });
   };
 
+  const moveManagedNode = (index: number, direction: -1 | 1) => {
+    setForm((current) => {
+      const target = index + direction;
+
+      if (
+        target < 0 ||
+        target >= current.managedEntryNodeIds.length ||
+        current.id
+      ) {
+        return current;
+      }
+      const managedEntryNodeIds = [...current.managedEntryNodeIds];
+
+      [managedEntryNodeIds[index], managedEntryNodeIds[target]] = [
+        managedEntryNodeIds[target],
+        managedEntryNodeIds[index],
+      ];
+
+      return { ...current, managedEntryNodeIds };
+    });
+  };
+
   const submit = async () => {
     if (!form.name.trim() || !form.domain.trim() || !form.dnsZoneId)
       return toast.error("请选择 Cloudflare Zone 并填写业务域名");
@@ -1428,6 +1513,7 @@ export default function CrossEntryFailoverPage() {
     const qualityMode =
       form.routingMode === "failover" && form.qualityEnabled && !tcpMode;
     const smartMode = qualityMode && form.smartSelectionEnabled;
+    const managedMode = form.creationMode === "managed_forward";
 
     setSubmitting(true);
     const response = await saveCrossEntryGroup({
@@ -1439,7 +1525,28 @@ export default function CrossEntryFailoverPage() {
       failureThreshold: Number(form.failureThreshold),
       recoveryThreshold: Number(form.recoveryThreshold),
       cooldownSeconds: Number(form.cooldownSeconds),
-      memberForwardIds: form.memberForwardIds.map(Number),
+      creationMode: form.creationMode,
+      managedEntryNodeIds: managedMode
+        ? form.managedEntryNodeIds.filter(Boolean).map(Number)
+        : undefined,
+      managedTargetAddress: managedMode
+        ? form.managedTargetAddress.trim()
+        : undefined,
+      managedPortMode: managedMode ? form.managedPortMode : undefined,
+      managedPublicPort:
+        managedMode && form.managedPublicPort
+          ? Number(form.managedPublicPort)
+          : undefined,
+      managedPortRangeStart: managedMode
+        ? Number(form.managedPortRangeStart)
+        : undefined,
+      managedPortRangeEnd: managedMode
+        ? Number(form.managedPortRangeEnd)
+        : undefined,
+      managedProtocolMode: managedMode ? form.managedProtocolMode : undefined,
+      memberForwardIds: managedMode
+        ? undefined
+        : form.memberForwardIds.filter(Boolean).map(Number),
       autoFailback: tcpMode ? false : form.autoFailback,
       qualityEnabled: qualityMode,
       qualityProbeSourceId:
@@ -1527,8 +1634,12 @@ export default function CrossEntryFailoverPage() {
   };
 
   const remove = async (group: CrossEntryGroup) => {
-    if (!window.confirm(`确认删除“${group.name}”吗？现有转发不会被删除。`))
-      return;
+    const message =
+      group.creationMode === "managed_forward"
+        ? `确认删除“${group.name}”吗？这会同时删除面板自动创建的托管转发；如果入口节点离线，可能需要在转发管理中补充清理。`
+        : `确认删除“${group.name}”吗？现有转发不会被删除。`;
+
+    if (!window.confirm(message)) return;
     const response = await deleteCrossEntryGroup(group.id);
 
     if (response.code !== 0) return toast.error(response.msg || "删除失败");
@@ -1731,6 +1842,11 @@ export default function CrossEntryFailoverPage() {
                         >
                           {activeActive ? "多入口同时运行" : "主备容灾"}
                         </Chip>
+                        {group.creationMode === "managed_forward" && (
+                          <Chip color="primary" size="sm" variant="flat">
+                            托管落地
+                          </Chip>
+                        )}
                         {detailedProbeEnabled && (
                           <Chip
                             color={probeMeta.color}
@@ -1779,6 +1895,9 @@ export default function CrossEntryFailoverPage() {
                       </div>
                       <p className="mt-1 truncate text-sm text-default-500">
                         {group.domain}:{group.members[0]?.entryPort || "-"}
+                        {group.creationMode === "managed_forward" &&
+                          group.managedTargetAddress &&
+                          ` · 落地 ${group.managedTargetAddress}`}
                       </p>
                     </div>
                     <div className="flex items-center gap-1">
@@ -2109,6 +2228,43 @@ export default function CrossEntryFailoverPage() {
                 onValueChange={(name) => setForm({ ...form, name })}
               />
               <Select
+                description={
+                  form.id
+                    ? "创建方式不能在编辑时切换；托管基础资源需要删除后重新创建。"
+                    : "旧模式引用已有转发；托管模式自动为每个入口创建到同一落地的转发。"
+                }
+                isDisabled={Boolean(form.id)}
+                label="入口创建方式"
+                selectedKeys={[form.creationMode]}
+                onSelectionChange={(keys) => {
+                  const creationMode = String(
+                    Array.from(keys)[0] || "existing_forward",
+                  ) as "existing_forward" | "managed_forward";
+
+                  setForm({
+                    ...form,
+                    creationMode,
+                    memberForwardIds:
+                      creationMode === "existing_forward"
+                        ? form.memberForwardIds.length >= 2
+                          ? form.memberForwardIds
+                          : ["", ""]
+                        : form.memberForwardIds,
+                    managedEntryNodeIds:
+                      creationMode === "managed_forward"
+                        ? form.managedEntryNodeIds.length >= 2
+                          ? form.managedEntryNodeIds
+                          : ["", ""]
+                        : form.managedEntryNodeIds,
+                  });
+                }}
+              >
+                <SelectItem key="existing_forward">引用已有转发</SelectItem>
+                <SelectItem key="managed_forward">
+                  自动创建到固定落地
+                </SelectItem>
+              </Select>
+              <Select
                 description="选择要由面板自动维护记录的 Cloudflare Zone。"
                 label="Cloudflare Zone"
                 placeholder="选择已登记的域名区域"
@@ -2269,113 +2425,342 @@ export default function CrossEntryFailoverPage() {
                   端口 {selectedPort || "-"}
                 </Chip>
               </div>
-              <div className="space-y-2">
-                {form.memberForwardIds.map((id, index) => (
-                  <div
-                    key={`${index}-${id}`}
-                    className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2"
-                  >
-                    <span className="w-14 text-xs font-medium text-default-500">
-                      {form.routingMode === "active_active"
-                        ? `入口 ${index + 1}`
-                        : index === 0
-                          ? "主入口"
-                          : `备用 ${index}`}
-                    </span>
-                    <Select
-                      aria-label={
-                        index === 0 ? "主入口转发" : `备用入口 ${index}`
+              {form.creationMode === "managed_forward" ? (
+                <div className="space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input
+                      description="填写已经手工搭好的落地服务，例如 203.0.113.10:443；IPv6 使用 [IPv6]:端口。"
+                      isDisabled={Boolean(form.id)}
+                      label="固定落地目标"
+                      placeholder="例如 203.0.113.10:443"
+                      value={form.managedTargetAddress}
+                      onValueChange={(managedTargetAddress) =>
+                        setForm({ ...form, managedTargetAddress })
                       }
-                      placeholder="选择一个现有转发"
-                      selectedKeys={id ? [id] : []}
-                      onSelectionChange={(keys) => {
-                        const values = [...form.memberForwardIds];
-
-                        values[index] = String(Array.from(keys)[0] || "");
-                        setForm({ ...form, memberForwardIds: values });
-                      }}
+                    />
+                    <Select
+                      description="TCP+UDP 会在每个入口同时检查并转发 TCP、UDP。"
+                      isDisabled={Boolean(form.id)}
+                      label="转发协议"
+                      selectedKeys={[form.managedProtocolMode]}
+                      onSelectionChange={(keys) =>
+                        setForm({
+                          ...form,
+                          managedProtocolMode: String(
+                            Array.from(keys)[0] || "tcp",
+                          ) as "tcp" | "tcp_udp",
+                        })
+                      }
                     >
-                      {forwardGroups.map((group, groupIndex) => (
-                        <SelectSection
-                          key={`port-${group.port}`}
-                          showDivider={groupIndex < forwardGroups.length - 1}
-                          title={`端口 ${group.port} (${group.options.length})`}
-                        >
-                          {group.options.map((option) => (
-                            <SelectItem
-                              key={String(option.id)}
-                              textValue={`端口 ${option.inPort} ${option.nodeName} ${option.entryHost} ${option.name}`}
-                            >
-                              {option.nodeName} · {option.entryHost}:
-                              {option.inPort} · {option.name}
-                            </SelectItem>
-                          ))}
-                        </SelectSection>
-                      ))}
+                      <SelectItem key="tcp">TCP</SelectItem>
+                      <SelectItem key="tcp_udp">TCP + UDP</SelectItem>
                     </Select>
-                    <div className="flex h-10 items-center gap-1">
-                      <Button
-                        isIconOnly
-                        aria-label="上移入口"
-                        isDisabled={index === 0}
-                        size="sm"
-                        title="上移"
-                        variant="light"
-                        onPress={() => moveMember(index, -1)}
-                      >
-                        <ArrowUp size={16} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="下移入口"
-                        isDisabled={index === form.memberForwardIds.length - 1}
-                        size="sm"
-                        title="下移"
-                        variant="light"
-                        onPress={() => moveMember(index, 1)}
-                      >
-                        <ArrowDown size={16} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="移除入口"
-                        isDisabled={form.memberForwardIds.length <= 2}
-                        size="sm"
-                        title="移除"
-                        variant="light"
-                        onPress={() =>
-                          setForm({
-                            ...form,
-                            memberForwardIds: form.memberForwardIds.filter(
-                              (_, current) => current !== index,
-                            ),
-                          })
-                        }
-                      >
-                        <X size={17} />
-                      </Button>
-                    </div>
                   </div>
-                ))}
-              </div>
-              <Button
-                className="mt-3"
-                isDisabled={form.memberForwardIds.length >= 10}
-                size="sm"
-                startContent={<Plus size={16} />}
-                variant="flat"
-                onPress={() =>
-                  setForm({
-                    ...form,
-                    memberForwardIds: [...form.memberForwardIds, ""],
-                  })
-                }
-              >
-                {form.routingMode === "active_active"
-                  ? "添加入口成员"
-                  : "添加备用入口"}
-              </Button>
-              {selectionProblem && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Select
+                      description="自定义端口必须在所有入口节点都空闲。"
+                      isDisabled={Boolean(form.id)}
+                      label="公共端口方式"
+                      selectedKeys={[form.managedPortMode]}
+                      onSelectionChange={(keys) =>
+                        setForm({
+                          ...form,
+                          managedPortMode: String(
+                            Array.from(keys)[0] || "auto",
+                          ) as "auto" | "custom",
+                        })
+                      }
+                    >
+                      <SelectItem key="auto">自动选择公共端口</SelectItem>
+                      <SelectItem key="custom">自定义公共端口</SelectItem>
+                    </Select>
+                    {form.managedPortMode === "custom" ? (
+                      <Input
+                        description="所有入口都会使用这个公网端口。"
+                        isDisabled={Boolean(form.id)}
+                        label="公共端口"
+                        max={65535}
+                        min={1}
+                        type="number"
+                        value={form.managedPublicPort}
+                        onValueChange={(managedPublicPort) =>
+                          setForm({ ...form, managedPublicPort })
+                        }
+                      />
+                    ) : (
+                      <Input
+                        description="面板会先看端口账本，再让 Agent 检查真实监听。"
+                        isDisabled={Boolean(form.id)}
+                        label="自动端口起始"
+                        max={65535}
+                        min={1}
+                        type="number"
+                        value={form.managedPortRangeStart}
+                        onValueChange={(managedPortRangeStart) =>
+                          setForm({ ...form, managedPortRangeStart })
+                        }
+                      />
+                    )}
+                    <Input
+                      description={
+                        form.managedPortMode === "auto"
+                          ? "从起始端口到结束端口查找所有入口共同空闲的端口。"
+                          : "托管组创建后公共端口固定，不会自动改动。"
+                      }
+                      isDisabled={
+                        Boolean(form.id) || form.managedPortMode !== "auto"
+                      }
+                      label="自动端口结束"
+                      max={65535}
+                      min={1}
+                      type="number"
+                      value={form.managedPortRangeEnd}
+                      onValueChange={(managedPortRangeEnd) =>
+                        setForm({ ...form, managedPortRangeEnd })
+                      }
+                    />
+                  </div>
+                  <div className="rounded-xl border border-primary/20 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+                    面板会为每个入口节点复用或创建一个内部直连隧道，再调用原有转发服务创建
+                    “入口公共端口 → 固定落地”的转发。质量容灾、DNS
+                    切换和故障保护规则与普通入口容灾完全相同。
+                  </div>
+                  <div className="space-y-2">
+                    {form.managedEntryNodeIds.map((id, index) => {
+                      const node = nodeOptions.find(
+                        (item) => String(item.id) === id,
+                      );
+
+                      return (
+                        <div
+                          key={`${index}-${id}`}
+                          className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2"
+                        >
+                          <span className="w-14 text-xs font-medium text-default-500">
+                            {index === 0 ? "主入口" : `备用 ${index}`}
+                          </span>
+                          <Select
+                            aria-label={
+                              index === 0 ? "主入口节点" : `备用入口 ${index}`
+                            }
+                            isDisabled={Boolean(form.id)}
+                            placeholder="选择入口节点"
+                            selectedKeys={id ? [id] : []}
+                            onSelectionChange={(keys) => {
+                              const values = [...form.managedEntryNodeIds];
+
+                              values[index] = String(Array.from(keys)[0] || "");
+                              setForm({
+                                ...form,
+                                managedEntryNodeIds: values,
+                              });
+                            }}
+                          >
+                            {nodeOptions.map((item) => (
+                              <SelectItem
+                                key={String(item.id)}
+                                textValue={`${item.name} ${item.serverIp || item.ip || ""}`}
+                              >
+                                {item.name} ·{" "}
+                                {item.serverIp || item.ip || "无公网地址"} ·{" "}
+                                {item.status === 1 ? "在线" : "待检测"}
+                              </SelectItem>
+                            ))}
+                          </Select>
+                          <div className="flex h-10 items-center gap-1">
+                            <Button
+                              isIconOnly
+                              aria-label="上移入口节点"
+                              isDisabled={Boolean(form.id) || index === 0}
+                              size="sm"
+                              title="上移"
+                              variant="light"
+                              onPress={() => moveManagedNode(index, -1)}
+                            >
+                              <ArrowUp size={16} />
+                            </Button>
+                            <Button
+                              isIconOnly
+                              aria-label="下移入口节点"
+                              isDisabled={
+                                Boolean(form.id) ||
+                                index === form.managedEntryNodeIds.length - 1
+                              }
+                              size="sm"
+                              title="下移"
+                              variant="light"
+                              onPress={() => moveManagedNode(index, 1)}
+                            >
+                              <ArrowDown size={16} />
+                            </Button>
+                            <Button
+                              isIconOnly
+                              aria-label="移除入口节点"
+                              isDisabled={
+                                Boolean(form.id) ||
+                                form.managedEntryNodeIds.length <= 2
+                              }
+                              size="sm"
+                              title="移除"
+                              variant="light"
+                              onPress={() =>
+                                setForm({
+                                  ...form,
+                                  managedEntryNodeIds:
+                                    form.managedEntryNodeIds.filter(
+                                      (_, current) => current !== index,
+                                    ),
+                                })
+                              }
+                            >
+                              <X size={17} />
+                            </Button>
+                          </div>
+                          {node && (
+                            <span className="col-start-2 text-xs text-default-400">
+                              {node.version
+                                ? `Agent ${node.version}`
+                                : "Agent 版本未知"}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Button
+                    className="mt-1"
+                    isDisabled={
+                      Boolean(form.id) || form.managedEntryNodeIds.length >= 10
+                    }
+                    size="sm"
+                    startContent={<Plus size={16} />}
+                    variant="flat"
+                    onPress={() =>
+                      setForm({
+                        ...form,
+                        managedEntryNodeIds: [...form.managedEntryNodeIds, ""],
+                      })
+                    }
+                  >
+                    添加备用入口节点
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {form.memberForwardIds.map((id, index) => (
+                    <div
+                      key={`${index}-${id}`}
+                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2"
+                    >
+                      <span className="w-14 text-xs font-medium text-default-500">
+                        {form.routingMode === "active_active"
+                          ? `入口 ${index + 1}`
+                          : index === 0
+                            ? "主入口"
+                            : `备用 ${index}`}
+                      </span>
+                      <Select
+                        aria-label={
+                          index === 0 ? "主入口转发" : `备用入口 ${index}`
+                        }
+                        placeholder="选择一个现有转发"
+                        selectedKeys={id ? [id] : []}
+                        onSelectionChange={(keys) => {
+                          const values = [...form.memberForwardIds];
+
+                          values[index] = String(Array.from(keys)[0] || "");
+                          setForm({ ...form, memberForwardIds: values });
+                        }}
+                      >
+                        {forwardGroups.map((group, groupIndex) => (
+                          <SelectSection
+                            key={`port-${group.port}`}
+                            showDivider={groupIndex < forwardGroups.length - 1}
+                            title={`端口 ${group.port} (${group.options.length})`}
+                          >
+                            {group.options.map((option) => (
+                              <SelectItem
+                                key={String(option.id)}
+                                textValue={`端口 ${option.inPort} ${option.nodeName} ${option.entryHost} ${option.name}`}
+                              >
+                                {option.nodeName} · {option.entryHost}:
+                                {option.inPort} · {option.name}
+                              </SelectItem>
+                            ))}
+                          </SelectSection>
+                        ))}
+                      </Select>
+                      <div className="flex h-10 items-center gap-1">
+                        <Button
+                          isIconOnly
+                          aria-label="上移入口"
+                          isDisabled={index === 0}
+                          size="sm"
+                          title="上移"
+                          variant="light"
+                          onPress={() => moveMember(index, -1)}
+                        >
+                          <ArrowUp size={16} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="下移入口"
+                          isDisabled={
+                            index === form.memberForwardIds.length - 1
+                          }
+                          size="sm"
+                          title="下移"
+                          variant="light"
+                          onPress={() => moveMember(index, 1)}
+                        >
+                          <ArrowDown size={16} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="移除入口"
+                          isDisabled={form.memberForwardIds.length <= 2}
+                          size="sm"
+                          title="移除"
+                          variant="light"
+                          onPress={() =>
+                            setForm({
+                              ...form,
+                              memberForwardIds: form.memberForwardIds.filter(
+                                (_, current) => current !== index,
+                              ),
+                            })
+                          }
+                        >
+                          <X size={17} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    className="mt-3"
+                    isDisabled={form.memberForwardIds.length >= 10}
+                    size="sm"
+                    startContent={<Plus size={16} />}
+                    variant="flat"
+                    onPress={() =>
+                      setForm({
+                        ...form,
+                        memberForwardIds: [...form.memberForwardIds, ""],
+                      })
+                    }
+                  >
+                    {form.routingMode === "active_active"
+                      ? "添加入口成员"
+                      : "添加备用入口"}
+                  </Button>
+                  {selectionProblem && (
+                    <p className="mt-2 text-xs text-warning">
+                      {selectionProblem}
+                    </p>
+                  )}
+                </div>
+              )}
+              {form.creationMode === "managed_forward" && selectionProblem && (
                 <p className="mt-2 text-xs text-warning">{selectionProblem}</p>
               )}
             </section>

@@ -1,19 +1,27 @@
 package com.admin.service;
 
 import com.admin.common.dto.CrossEntryFailoverSaveDto;
+import com.admin.common.dto.ForwardDto;
+import com.admin.common.dto.PortLedgerEntryDto;
 import com.admin.common.dto.GostDto;
+import com.admin.common.dto.PortLedgerQueryDto;
+import com.admin.common.dto.TunnelDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.AESCrypto;
+import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.CrossEntryFailoverPolicy;
 import com.admin.common.utils.CrossEntryQualityFlapGuard;
 import com.admin.common.utils.CrossEntryQualityEvaluator;
 import com.admin.common.utils.CrossEntryTopology;
 import com.admin.common.utils.JwtUtil;
+import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
+import com.admin.entity.Node;
+import com.admin.entity.Tunnel;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +41,8 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import javax.annotation.PreDestroy;
+import javax.annotation.Resource;
+import java.math.BigDecimal;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -70,6 +80,10 @@ public class CrossEntryFailoverService {
     private final TelegramNotificationService telegramNotificationService;
     private final DnsProviderService dnsProviderService;
     private final SchedulingConflictService schedulingConflictService;
+    private final ForwardService forwardService;
+    private final TunnelService tunnelService;
+    private final NodeService nodeService;
+    private final PortLedgerService portLedgerService;
     private final ExecutorService probeExecutor = boundedExecutor(8, 64, "cross-entry-probe");
     private final ExecutorService groupExecutor = boundedExecutor(4, 100, "cross-entry-group");
     private final AtomicBoolean checking = new AtomicBoolean(false);
@@ -82,12 +96,43 @@ public class CrossEntryFailoverService {
     public CrossEntryFailoverService(JdbcTemplate jdbcTemplate, RestTemplate restTemplate,
                                      TelegramNotificationService telegramNotificationService,
                                      DnsProviderService dnsProviderService,
-                                     SchedulingConflictService schedulingConflictService) {
+                                     SchedulingConflictService schedulingConflictService,
+                                     ForwardService forwardService,
+                                     TunnelService tunnelService,
+                                     NodeService nodeService,
+                                     PortLedgerService portLedgerService) {
         this.jdbcTemplate = jdbcTemplate;
         this.restTemplate = restTemplate;
         this.telegramNotificationService = telegramNotificationService;
         this.dnsProviderService = dnsProviderService;
         this.schedulingConflictService = schedulingConflictService;
+        this.forwardService = forwardService;
+        this.tunnelService = tunnelService;
+        this.nodeService = nodeService;
+        this.portLedgerService = portLedgerService;
+    }
+
+    private static final class ManagedResourceDraft {
+        private Long forwardId;
+        private final Long tunnelId;
+        private final Long entryNodeId;
+        private final boolean createdTunnel;
+        private final String targetAddress;
+        private final int publicPort;
+        private final String portMode;
+        private final String protocolMode;
+
+        private ManagedResourceDraft(Long tunnelId, Long entryNodeId,
+                                     boolean createdTunnel, String targetAddress, int publicPort,
+                                     String portMode, String protocolMode) {
+            this.tunnelId = tunnelId;
+            this.entryNodeId = entryNodeId;
+            this.createdTunnel = createdTunnel;
+            this.targetAddress = targetAddress;
+            this.publicPort = publicPort;
+            this.portMode = portMode;
+            this.protocolMode = protocolMode;
+        }
     }
 
     public R listEligibleForwards() {
@@ -141,6 +186,12 @@ public class CrossEntryFailoverService {
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
+                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id) "
+                        + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
+                        + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedTargetAddress,"
+                        + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedPublicPort,"
+                        + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedPortMode,"
+                        + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedProtocolMode,"
                         + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
                         + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
@@ -167,8 +218,15 @@ public class CrossEntryFailoverService {
 
     @Transactional(rollbackFor = Exception.class)
     public R save(CrossEntryFailoverSaveDto dto) {
+        List<ManagedResourceDraft> createdManagedResources = new ArrayList<>();
+        Long createdGroupId = null;
         try {
             normalizeAndValidate(dto);
+            if (isManagedCreate(dto)) {
+                prepareManagedMembers(dto, createdManagedResources);
+            } else if (dto.getId() != null && hasManagedResources(dto.getId())) {
+                assertManagedMembersUnchanged(dto);
+            }
             Integer duplicate = dto.getId() == null
                     ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_group WHERE domain=? AND record_type=?",
                     Integer.class, dto.getDomain(), dto.getRecordType())
@@ -289,6 +347,7 @@ public class CrossEntryFailoverService {
                         dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(), dto.getManualLockUntil(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), "unknown", now, now);
                 id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+                createdGroupId = id;
             } else {
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET name=?,domain=?,dns_zone_id=?,zone_id=?,record_id=?,api_token=?,record_type=?,ttl=?,"
                                 + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,cooldown_seconds=?,"
@@ -410,6 +469,9 @@ public class CrossEntryFailoverService {
                         Objects.toString(previousActiveName, "原入口") + " -> " + selectedEntry.get("nodeName"));
             }
             Map<String, Object> savedGroup = loadGroup(id);
+            if (!createdManagedResources.isEmpty()) {
+                persistManagedResources(id, createdManagedResources);
+            }
             if ("active_active".equals(dto.getRoutingMode())) {
                 syncActiveEntries(savedGroup, loadMembers(id), "已发布全部入口");
             } else {
@@ -417,6 +479,19 @@ public class CrossEntryFailoverService {
             }
             return R.ok(Map.of("id", id));
         } catch (IllegalArgumentException | IllegalStateException e) {
+            int cleanupFailed = cleanupManagedResources(createdManagedResources);
+            if (dto.getId() == null && isManagedCreate(dto)) {
+                if (createdGroupId != null) {
+                    jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", createdGroupId);
+                    jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", createdGroupId);
+                    jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", createdGroupId);
+                    jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", createdGroupId);
+                }
+                String suffix = cleanupFailed == 0
+                        ? ""
+                        : "；有 " + cleanupFailed + " 个自动资源清理失败，请检查转发管理";
+                return R.err(StringUtils.defaultIfBlank(e.getMessage(), "托管入口容灾创建失败") + suffix);
+            }
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return R.err(e.getMessage());
         }
@@ -425,12 +500,21 @@ public class CrossEntryFailoverService {
     @Transactional
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        List<Map<String, Object>> managedResources = jdbcTemplate.queryForList(
+                "SELECT forward_id AS forwardId,tunnel_id AS tunnelId,created_tunnel AS createdTunnel,"
+                        + "port_mode AS portMode,protocol_mode AS protocolMode "
+                        + "FROM cross_entry_managed_resource WHERE group_id=?", id);
         Map<String, Object> group = loadGroup(id);
         dnsProviderService.clearCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")), id);
         dnsProviderService.releaseRecord(id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", id);
+        int cleanupFailed = cleanupPersistedManagedResources(id, managedResources);
+        if (cleanupFailed > 0) {
+            return R.ok(Map.of("cleanupFailed", cleanupFailed,
+                    "message", "容灾组已删除，但有 " + cleanupFailed + " 个托管资源清理失败，节点恢复后请在转发管理中检查"));
+        }
         return R.ok();
     }
 
@@ -1160,6 +1244,320 @@ public class CrossEntryFailoverService {
         }
     }
 
+    private boolean isManagedCreate(CrossEntryFailoverSaveDto dto) {
+        return dto.getId() == null && "managed_forward".equalsIgnoreCase(dto.getCreationMode());
+    }
+
+    private boolean hasManagedResources(Long groupId) {
+        if (groupId == null) return false;
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM cross_entry_managed_resource WHERE group_id=?", Integer.class, groupId);
+        return count != null && count > 0;
+    }
+
+    private void assertManagedMembersUnchanged(CrossEntryFailoverSaveDto dto) {
+        List<Map<String, Object>> stored = jdbcTemplate.queryForList(
+                "SELECT mr.forward_id AS forwardId,mr.entry_node_id AS entryNodeId,mr.target_address AS targetAddress,"
+                        + "mr.public_port AS publicPort,m.priority "
+                        + "FROM cross_entry_managed_resource mr "
+                        + "LEFT JOIN cross_entry_failover_member m ON m.group_id=mr.group_id AND m.forward_id=mr.forward_id "
+                        + "WHERE mr.group_id=? ORDER BY COALESCE(m.priority,999),mr.id", dto.getId());
+        if (stored.isEmpty()) return;
+
+        List<Long> storedForwardIds = stored.stream()
+                .map(row -> number(row.get("forwardId")).longValue())
+                .collect(Collectors.toList());
+        List<Long> requestedForwardIds = dto.getMemberForwardIds() == null
+                ? List.of()
+                : dto.getMemberForwardIds().stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
+        if (!requestedForwardIds.isEmpty() && !requestedForwardIds.equals(storedForwardIds)) {
+            throw new IllegalArgumentException("托管入口的节点顺序不能在编辑时修改，请删除后重新创建");
+        }
+        if (requestedForwardIds.isEmpty()) dto.setMemberForwardIds(storedForwardIds);
+
+        if (dto.getManagedEntryNodeIds() != null && !dto.getManagedEntryNodeIds().isEmpty()) {
+            List<Long> storedNodeIds = stored.stream()
+                    .map(row -> number(row.get("entryNodeId")).longValue())
+                    .collect(Collectors.toList());
+            if (!dto.getManagedEntryNodeIds().equals(storedNodeIds)) {
+                throw new IllegalArgumentException("托管入口的节点顺序不能在编辑时修改，请删除后重新创建");
+            }
+        }
+        String requestedTarget = StringUtils.trimToNull(dto.getManagedTargetAddress());
+        if (requestedTarget != null
+                && !requestedTarget.equalsIgnoreCase(Objects.toString(stored.get(0).get("targetAddress"), ""))) {
+            throw new IllegalArgumentException("托管落地目标不能在编辑时修改，请删除后重新创建");
+        }
+        if (dto.getManagedPublicPort() != null
+                && dto.getManagedPublicPort() != number(stored.get(0).get("publicPort")).intValue()) {
+            throw new IllegalArgumentException("托管公共端口不能在编辑时修改，请删除后重新创建");
+        }
+    }
+
+    private void prepareManagedMembers(CrossEntryFailoverSaveDto dto,
+                                       List<ManagedResourceDraft> createdResources) {
+        List<Long> nodeIds = dto.getManagedEntryNodeIds() == null
+                ? List.of()
+                : dto.getManagedEntryNodeIds().stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
+        if (nodeIds.size() < 2) throw new IllegalArgumentException("托管入口容灾至少需要两个入口节点");
+        if (nodeIds.size() > 10) throw new IllegalArgumentException("单个容灾组最多配置10个入口节点");
+
+        String target = normalizeManagedTargetAddress(dto.getManagedTargetAddress());
+        dto.setManagedTargetAddress(target);
+        List<Node> nodes = new ArrayList<>();
+        Set<String> addresses = new HashSet<>();
+        for (Long nodeId : nodeIds) {
+            Node node = nodeService.getNodeById(nodeId);
+            if (node == null) throw new IllegalArgumentException("托管入口节点不存在：" + nodeId);
+            if (!WebSocketServer.isNodeOnline(nodeId)) {
+                throw new IllegalArgumentException("托管入口节点离线：" + node.getName());
+            }
+            String host = nodeAddress(node);
+            if (StringUtils.isBlank(host)) throw new IllegalArgumentException("入口节点缺少公网地址：" + node.getName());
+            String address = resolveAddress(host, dto.getRecordType());
+            if (!addresses.add(address)) throw new IllegalArgumentException("托管入口节点不能使用相同的公网 IP：" + address);
+            nodes.add(node);
+        }
+
+        int publicPort = chooseManagedPublicPort(dto, nodes);
+        dto.setManagedPublicPort(publicPort);
+        List<Long> forwardIds = new ArrayList<>();
+        for (Node node : nodes) {
+            DirectTunnelResult tunnel = ensureManagedDirectTunnel(node);
+            ManagedResourceDraft draft = new ManagedResourceDraft(
+                    tunnel.tunnel().getId(), node.getId(), tunnel.created(), target, publicPort,
+                    dto.getManagedPortMode(), dto.getManagedProtocolMode());
+            createdResources.add(draft);
+
+            ForwardDto forward = new ForwardDto();
+            forward.setName(dto.getName().trim() + " · " + node.getName());
+            forward.setTunnelId(tunnel.tunnel().getId().intValue());
+            forward.setRemoteAddr(target);
+            forward.setInPort(publicPort);
+            forward.setProtocolMode(dto.getManagedProtocolMode());
+            R result = forwardService.createForward(forward);
+            if (result.getCode() != 0) {
+                throw new IllegalStateException("节点 " + node.getName() + " 的托管转发创建失败：" + result.getMsg());
+            }
+            Long forwardId = extractId(result.getData());
+            if (forwardId == null) {
+                throw new IllegalStateException("节点 " + node.getName() + " 的托管转发已返回成功，但未能读取转发 ID");
+            }
+            draft.forwardId = forwardId;
+            forwardIds.add(forwardId);
+        }
+        dto.setMemberForwardIds(forwardIds);
+    }
+
+    private int chooseManagedPublicPort(CrossEntryFailoverSaveDto dto, List<Node> nodes) {
+        if ("custom".equals(dto.getManagedPortMode())) {
+            int port = dto.getManagedPublicPort();
+            if (!isManagedPortAvailable(nodes, port, dto.getManagedProtocolMode())) {
+                throw new IllegalArgumentException("自定义公共端口 " + port + " 在至少一个入口节点上已被占用");
+            }
+            return port;
+        }
+        int start = dto.getManagedPortRangeStart();
+        int end = dto.getManagedPortRangeEnd();
+        for (int port = start; port <= end; port++) {
+            if (isManagedPortAvailable(nodes, port, dto.getManagedProtocolMode())) return port;
+        }
+        throw new IllegalArgumentException("指定端口范围内没有找到所有入口都空闲的公共端口");
+    }
+
+    private boolean isManagedPortAvailable(List<Node> nodes, int port, String protocolMode) {
+        for (Node node : nodes) {
+            if (isLedgerPortOccupied(node, port)) return false;
+            if (!isManagedPortAvailableByAgent(node, port, protocolMode)) return false;
+        }
+        return true;
+    }
+
+    private boolean isLedgerPortOccupied(Node node, int port) {
+        try {
+            PortLedgerQueryDto query = new PortLedgerQueryDto();
+            query.setNodeId(node.getId());
+            query.setPort(port);
+            Object rawEntries = portLedgerService.list(query).get("entries");
+            if (rawEntries instanceof List<?> entries) {
+                for (Object raw : entries) {
+                    if (!(raw instanceof PortLedgerEntryDto entry)) continue;
+                    Integer start = entry.getPortStart();
+                    Integer end = entry.getPortEnd();
+                    if (start != null && end != null && port >= start && port <= end) return true;
+                }
+            }
+            Integer managed = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM cross_entry_managed_resource WHERE entry_node_id=? AND public_port=?",
+                    Integer.class, node.getId(), port);
+            return managed != null && managed > 0;
+        } catch (DataAccessException e) {
+            throw new IllegalStateException("读取节点 " + node.getName() + " 端口账本失败");
+        }
+    }
+
+    private boolean isManagedPortAvailableByAgent(Node node, int port, String protocolMode) {
+        List<AgentPortCheckUtil.Check> checks = new ArrayList<>();
+        if ("tcp".equals(protocolMode) || "tcp_udp".equals(protocolMode)) {
+            checks.add(new AgentPortCheckUtil.Check("tcp", "", port));
+        }
+        if ("tcp_udp".equals(protocolMode)) {
+            checks.add(new AgentPortCheckUtil.Check("udp", "", port));
+        }
+        return AgentPortCheckUtil.check(node, checks).isAvailable();
+    }
+
+    private DirectTunnelResult ensureManagedDirectTunnel(Node node) {
+        Integer roleId = JwtUtil.getRoleIdFromToken();
+        Integer userId = JwtUtil.getUserIdFromToken();
+        List<Long> existingIds = jdbcTemplate.query(
+                "SELECT id FROM tunnel WHERE type=1 AND status=1 AND in_node_id=? "
+                        + "AND (owner_user_id=? OR ?=0) ORDER BY id",
+                (rs, rowNum) -> rs.getLong(1), node.getId(), userId, roleId == null ? -1 : roleId);
+        for (Long existingId : existingIds) {
+            Tunnel existing = tunnelService.getById(existingId);
+            if (existing != null) return new DirectTunnelResult(existing, false);
+        }
+
+        TunnelDto tunnelDto = new TunnelDto();
+        tunnelDto.setName("托管入口-" + node.getName() + "-" + Long.toHexString(System.nanoTime()));
+        tunnelDto.setInNodeId(node.getId());
+        tunnelDto.setType(1);
+        tunnelDto.setFlow(1);
+        tunnelDto.setTrafficRatio(BigDecimal.ONE);
+        tunnelDto.setTcpListenAddr("0.0.0.0");
+        tunnelDto.setUdpListenAddr("0.0.0.0");
+        R result = tunnelService.createTunnel(tunnelDto);
+        if (result.getCode() != 0) {
+            throw new IllegalStateException("节点 " + node.getName() + " 的内部直连隧道创建失败：" + result.getMsg());
+        }
+        Long tunnelId = extractId(result.getData());
+        if (tunnelId == null) {
+            tunnelId = jdbcTemplate.queryForObject("SELECT id FROM tunnel WHERE name=? ORDER BY id DESC LIMIT 1",
+                    Long.class, tunnelDto.getName());
+        }
+        Tunnel created = tunnelId == null ? null : tunnelService.getById(tunnelId);
+        if (created == null) throw new IllegalStateException("内部直连隧道创建成功，但未能读取隧道记录");
+        return new DirectTunnelResult(created, true);
+    }
+
+    private String normalizeManagedTargetAddress(String raw) {
+        String value = StringUtils.trimToEmpty(raw);
+        if (value.isEmpty() || value.contains(",") || value.matches(".*\\s+.*")) {
+            throw new IllegalArgumentException("落地目标必须填写单个 IP 或域名加端口");
+        }
+        String host;
+        String portText;
+        if (value.startsWith("[")) {
+            int end = value.indexOf("]:");
+            if (end <= 1) throw new IllegalArgumentException("IPv6 落地目标必须使用 [IPv6]:端口 格式");
+            host = value.substring(1, end);
+            portText = value.substring(end + 2);
+            value = "[" + host + "]:" + portText;
+        } else {
+            int separator = value.lastIndexOf(':');
+            if (separator <= 0 || separator != value.indexOf(':')) {
+                throw new IllegalArgumentException("落地目标必须使用 IP:端口 或域名:端口格式；IPv6 请加方括号");
+            }
+            host = value.substring(0, separator);
+            portText = value.substring(separator + 1);
+        }
+        if (StringUtils.isBlank(host) || host.contains("/") || !portText.matches("\\d+")) {
+            throw new IllegalArgumentException("落地目标格式不正确");
+        }
+        int port;
+        try {
+            port = Integer.parseInt(portText);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("落地端口必须是 1-65535");
+        }
+        if (port < 1 || port > 65535) throw new IllegalArgumentException("落地端口必须是 1-65535");
+        return value;
+    }
+
+    private String nodeAddress(Node node) {
+        return StringUtils.defaultIfBlank(StringUtils.trimToNull(node.getServerIp()), StringUtils.trimToNull(node.getIp()));
+    }
+
+    private Long extractId(Object data) {
+        if (data instanceof Number number) return number.longValue();
+        if (data instanceof Map<?, ?> map) {
+            Object id = map.get("id");
+            if (id == null) id = map.get("forwardId");
+            if (id instanceof Number number) return number.longValue();
+            if (id != null) {
+                try {
+                    return Long.parseLong(id.toString());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private void persistManagedResources(Long groupId, List<ManagedResourceDraft> resources) {
+        long now = System.currentTimeMillis();
+        for (ManagedResourceDraft resource : resources) {
+            if (resource.forwardId == null) continue;
+            jdbcTemplate.update("INSERT INTO cross_entry_managed_resource "
+                            + "(group_id,forward_id,tunnel_id,entry_node_id,target_address,public_port,port_mode,protocol_mode,created_tunnel,created_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    groupId, resource.forwardId, resource.tunnelId, resource.entryNodeId, resource.targetAddress,
+                    resource.publicPort, resource.portMode, resource.protocolMode, resource.createdTunnel, now);
+        }
+    }
+
+    private int cleanupManagedResources(List<ManagedResourceDraft> resources) {
+        int failures = 0;
+        List<ManagedResourceDraft> reverse = new ArrayList<>(resources);
+        Collections.reverse(reverse);
+        for (ManagedResourceDraft resource : reverse) {
+            boolean forwardRemoved = resource.forwardId == null;
+            if (resource.forwardId != null) {
+                jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE forward_id=?", resource.forwardId);
+                try {
+                    R result = forwardService.deleteManagedForward(resource.forwardId);
+                    forwardRemoved = result.getCode() == 0 || isMissingResource(result.getMsg());
+                    if (!forwardRemoved) failures++;
+                } catch (RuntimeException e) {
+                    failures++;
+                    log.warn("托管转发 {} 清理失败：{}", resource.forwardId, e.getMessage());
+                }
+            }
+            if (resource.createdTunnel && resource.tunnelId != null && forwardRemoved) {
+                try {
+                    R result = tunnelService.deleteTunnel(resource.tunnelId);
+                    if (result.getCode() != 0 && !isMissingResource(result.getMsg())) failures++;
+                } catch (RuntimeException e) {
+                    failures++;
+                    log.warn("托管隧道 {} 清理失败：{}", resource.tunnelId, e.getMessage());
+                }
+            }
+        }
+        return failures;
+    }
+
+    private int cleanupPersistedManagedResources(Long groupId, List<Map<String, Object>> rows) {
+        List<ManagedResourceDraft> resources = rows.stream()
+                .map(row -> {
+                    ManagedResourceDraft draft = new ManagedResourceDraft(
+                            nullableLong(row.get("tunnelId")), null, bool(row.get("createdTunnel")), null, 0,
+                            Objects.toString(row.get("portMode"), "auto"),
+                            Objects.toString(row.get("protocolMode"), "tcp"));
+                    draft.forwardId = nullableLong(row.get("forwardId"));
+                    return draft;
+                })
+                .collect(Collectors.toList());
+        int failures = cleanupManagedResources(resources);
+        jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", groupId);
+        return failures;
+    }
+
+    private boolean isMissingResource(String message) {
+        String value = StringUtils.defaultString(message);
+        return value.contains("不存在") || value.contains("not found");
+    }
+
     private List<Map<String, Object>> loadAndValidateForwards(List<Long> ids, String recordType) {
         List<Long> distinctIds = ids == null ? List.of() : ids.stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
         if (distinctIds.size() < 2) throw new IllegalArgumentException("跨入口容灾至少需要两个入口转发");
@@ -1222,6 +1620,38 @@ public class CrossEntryFailoverService {
             throw new IllegalArgumentException("业务域名格式不正确");
         }
         if (!Set.of("A", "AAAA").contains(dto.getRecordType())) throw new IllegalArgumentException("记录类型仅支持 A 或 AAAA");
+        String creationMode = StringUtils.lowerCase(
+                StringUtils.defaultIfBlank(dto.getCreationMode(), "existing_forward"), Locale.ROOT);
+        if (!Set.of("existing_forward", "managed_forward").contains(creationMode)) {
+            throw new IllegalArgumentException("入口创建方式不正确");
+        }
+        dto.setCreationMode(creationMode);
+        if ("managed_forward".equals(creationMode)) {
+            dto.setManagedTargetAddress(normalizeManagedTargetAddress(dto.getManagedTargetAddress()));
+            String portMode = StringUtils.lowerCase(
+                    StringUtils.defaultIfBlank(dto.getManagedPortMode(), "auto"), Locale.ROOT);
+            if (!Set.of("auto", "custom").contains(portMode)) {
+                throw new IllegalArgumentException("托管公共端口模式不正确");
+            }
+            dto.setManagedPortMode(portMode);
+            String protocolMode = StringUtils.lowerCase(
+                    StringUtils.defaultIfBlank(dto.getManagedProtocolMode(), "tcp"), Locale.ROOT);
+            if (!Set.of("tcp", "tcp_udp").contains(protocolMode)) {
+                throw new IllegalArgumentException("托管转发协议不正确");
+            }
+            dto.setManagedProtocolMode(protocolMode);
+            dto.setManagedPortRangeStart(clamp(dto.getManagedPortRangeStart(), 1, 65535));
+            dto.setManagedPortRangeEnd(clamp(dto.getManagedPortRangeEnd(), 1, 65535));
+            if (dto.getManagedPortRangeEnd() < dto.getManagedPortRangeStart()) {
+                throw new IllegalArgumentException("自动端口范围结束端口不能小于起始端口");
+            }
+            if ("custom".equals(portMode)) {
+                if (dto.getManagedPublicPort() == null) {
+                    throw new IllegalArgumentException("请填写自定义公共端口");
+                }
+                dto.setManagedPublicPort(clamp(dto.getManagedPublicPort(), 1, 65535));
+            }
+        }
         dto.setTtl(clamp(dto.getTtl(), 60, 86400));
         dto.setProbeIntervalMs(clamp(dto.getProbeIntervalMs(), 1000, 60000));
         dto.setConnectTimeoutMs(clamp(dto.getConnectTimeoutMs(), 300, 10000));
@@ -1352,7 +1782,14 @@ public class CrossEntryFailoverService {
                 + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,manual_lock_until AS manualLockUntil,"
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
-                + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt FROM cross_entry_failover_group WHERE id=?", id);
+                + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,"
+                + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id) "
+                + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
+                + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedTargetAddress,"
+                + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedPublicPort,"
+                + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedPortMode,"
+                + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedProtocolMode "
+                + "FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);
     }
@@ -1680,6 +2117,7 @@ public class CrossEntryFailoverService {
 
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
                                       Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
+    private record DirectTunnelResult(Tunnel tunnel, boolean created) {}
     record FaultStatsUpdate(int episodeDelta, int connectDelta, int latencyDelta, int lossDelta, int p95Delta,
                             int jitterDelta, int flapDelta, String type, String reason, Long at) {}
     private record DnsVerification(boolean providerMatched, boolean publicMatched, String message) {}
