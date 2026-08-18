@@ -65,4 +65,25 @@ class CrossEntryFailoverServiceTests {
         assertEquals(0, stats.episodeDelta());
         assertEquals(0, stats.connectDelta());
     }
+
+    @Test
+    void saveFailureMapsManagedForwardErrorsToConcreteFields() {
+        var fields = CrossEntryFailoverService.saveFieldErrors(
+                "managed_members",
+                "节点 香港入口 创建托管转发失败（公共端口 443，落地 203.0.113.10:443）：Agent 无响应");
+
+        assertTrue(fields.containsKey("managedEntryNodeIds"));
+        assertTrue(fields.containsKey("managedPublicPort"));
+        assertTrue(fields.containsKey("managedTargetAddress"));
+    }
+
+    @Test
+    void saveFailureMapsDnsAndForwardErrorsSeparately() {
+        assertTrue(CrossEntryFailoverService.saveFieldErrors(
+                "dns_configuration", "请选择已在 DNS 与域名中登记的 Cloudflare Zone")
+                .containsKey("dnsZoneId"));
+        assertTrue(CrossEntryFailoverService.saveFieldErrors(
+                "forward_validation", "候选转发必须来自不同入口节点")
+                .containsKey("memberForwardIds"));
+    }
 }

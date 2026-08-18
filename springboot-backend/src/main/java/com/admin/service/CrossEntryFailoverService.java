@@ -220,25 +220,32 @@ public class CrossEntryFailoverService {
     public R save(CrossEntryFailoverSaveDto dto) {
         List<ManagedResourceDraft> createdManagedResources = new ArrayList<>();
         Long createdGroupId = null;
+        String saveStage = "validation";
         try {
             normalizeAndValidate(dto);
             if (isManagedCreate(dto)) {
+                saveStage = "managed_members";
                 prepareManagedMembers(dto, createdManagedResources);
             } else if (dto.getId() != null && hasManagedResources(dto.getId())) {
+                saveStage = "managed_members";
                 assertManagedMembersUnchanged(dto);
             }
+            saveStage = "database_validation";
             Integer duplicate = dto.getId() == null
                     ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_group WHERE domain=? AND record_type=?",
                     Integer.class, dto.getDomain(), dto.getRecordType())
                     : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_group WHERE domain=? AND record_type=? AND id<>?",
                     Integer.class, dto.getDomain(), dto.getRecordType(), dto.getId());
             if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该域名已配置跨入口容灾");
+            saveStage = "forward_validation";
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
+            saveStage = "conflict_validation";
             schedulingConflictService.assertDnsRecordAvailable("cross_entry", dto.getId(), dto.getDomain(), dto.getRecordType());
             schedulingConflictService.assertForwardSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
             schedulingConflictService.assertForwardBackedTunnelSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
             long now = System.currentTimeMillis();
             boolean managedDns = dto.getDnsZoneId() != null;
+            saveStage = "dns_configuration";
             DnsProviderService.ZoneAccess zoneAccess = managedDns ? dnsProviderService.loadZoneAccess(dto.getDnsZoneId()) : null;
             String encryptedToken = "";
             String providerZoneId = managedDns ? zoneAccess.providerZoneId() : StringUtils.trimToEmpty(dto.getZoneId());
@@ -249,12 +256,14 @@ public class CrossEntryFailoverService {
             String requestedRecordId = dto.getRecordId();
             Map<Long, Map<String, Object>> previousMemberFaultStats = new LinkedHashMap<>();
             if (id == null) {
-                if (!managedDns) return R.err("请选择已在 DNS 与域名中登记的 Cloudflare Zone");
+                if (!managedDns) return saveFailureResponse("dns_configuration",
+                        "请选择已在 DNS 与域名中登记的 Cloudflare Zone", dto, 0);
             } else {
                 List<Map<String, Object>> existing = jdbcTemplate.queryForList(
                         "SELECT g.api_token,g.domain,g.dns_zone_id,g.zone_id,g.record_type,g.record_id,m.forward_id AS activeForwardId,m.node_name AS activeName "
                                 + "FROM cross_entry_failover_group g LEFT JOIN cross_entry_failover_member m ON m.id=g.active_member_id WHERE g.id=?", id);
-                if (existing.isEmpty()) return R.err("容灾组不存在");
+                if (existing.isEmpty()) return saveFailureResponse("database_validation",
+                        "容灾组不存在", dto, 0);
                 Map<String, Object> old = existing.get(0);
                 jdbcTemplate.queryForList(
                         "SELECT forward_id AS forwardId,status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,"
@@ -305,6 +314,7 @@ public class CrossEntryFailoverService {
             }
             String recordId = StringUtils.defaultString(requestedRecordId);
 
+            saveStage = "database_write";
             if (id == null) {
                 jdbcTemplate.update("INSERT INTO cross_entry_failover_group "
                                 + "(user_id,name,domain,dns_zone_id,zone_id,record_id,api_token,record_type,ttl,probe_interval_ms,connect_timeout_ms,"
@@ -472,6 +482,7 @@ public class CrossEntryFailoverService {
             if (!createdManagedResources.isEmpty()) {
                 persistManagedResources(id, createdManagedResources);
             }
+            saveStage = "dns_publish";
             if ("active_active".equals(dto.getRoutingMode())) {
                 syncActiveEntries(savedGroup, loadMembers(id), "已发布全部入口");
             } else {
@@ -479,22 +490,87 @@ public class CrossEntryFailoverService {
             }
             return R.ok(Map.of("id", id));
         } catch (IllegalArgumentException | IllegalStateException e) {
-            int cleanupFailed = cleanupManagedResources(createdManagedResources);
-            if (dto.getId() == null && isManagedCreate(dto)) {
-                if (createdGroupId != null) {
-                    jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", createdGroupId);
-                    jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", createdGroupId);
-                    jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", createdGroupId);
-                    jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", createdGroupId);
-                }
-                String suffix = cleanupFailed == 0
-                        ? ""
-                        : "；有 " + cleanupFailed + " 个自动资源清理失败，请检查转发管理";
-                return R.err(StringUtils.defaultIfBlank(e.getMessage(), "托管入口容灾创建失败") + suffix);
-            }
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            return R.err(e.getMessage());
+            return handleSaveFailure(dto, createdManagedResources, createdGroupId, saveStage, e);
+        } catch (RuntimeException e) {
+            return handleSaveFailure(dto, createdManagedResources, createdGroupId, saveStage, e);
         }
+    }
+
+    private R handleSaveFailure(CrossEntryFailoverSaveDto dto,
+                                List<ManagedResourceDraft> createdManagedResources,
+                                Long createdGroupId,
+                                String stage,
+                                RuntimeException error) {
+        int cleanupFailed = cleanupManagedResources(createdManagedResources);
+        if (dto.getId() == null && isManagedCreate(dto)) {
+            if (createdGroupId != null) {
+                jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", createdGroupId);
+                jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", createdGroupId);
+                jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", createdGroupId);
+                jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", createdGroupId);
+            }
+            return saveFailureResponse(stage,
+                    StringUtils.defaultIfBlank(error.getMessage(), "托管入口容灾创建失败"), dto, cleanupFailed);
+        }
+        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        return saveFailureResponse(stage,
+                StringUtils.defaultIfBlank(error.getMessage(), "入口容灾保存失败"), dto, cleanupFailed);
+    }
+
+    private R saveFailureResponse(String stage, String message, CrossEntryFailoverSaveDto dto, int cleanupFailed) {
+        String reason = StringUtils.defaultIfBlank(message, "入口容灾保存失败");
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("operation", "cross_entry_failover_save");
+        details.put("stage", stage);
+        details.put("stageLabel", saveStageLabel(stage));
+        details.put("reason", reason);
+        details.put("fieldErrors", saveFieldErrors(stage, reason));
+        if (cleanupFailed > 0) details.put("cleanupFailed", cleanupFailed);
+        R response = R.err(reason);
+        response.setData(details);
+        return response;
+    }
+
+    static Map<String, String> saveFieldErrors(String stage, String reason) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        String message = StringUtils.defaultString(reason);
+        if (message.contains("业务域名") || message.contains("域名格式") || message.contains("域名已配置")) {
+            errors.put("domain", message);
+        }
+        if (message.contains("Zone") || message.contains("DNS") || message.contains("Cloudflare") || message.contains("记录")) {
+            errors.put("dnsZoneId", message);
+        }
+        if (message.contains("已有转发") || message.contains("候选转发")
+                || (message.contains("转发") && "forward_validation".equals(stage))) {
+            errors.put("memberForwardIds", message);
+        }
+        if (message.contains("入口节点")
+                || (message.contains("节点") && ("managed_members".equals(stage) || message.contains("公共端口")))) {
+            errors.put("managedEntryNodeIds", message);
+        }
+        if (message.contains("落地")) errors.put("managedTargetAddress", message);
+        if (message.contains("公共端口") || message.contains("端口范围") || message.contains("端口模式")) {
+            errors.put("managedPublicPort", message);
+        }
+        if (message.contains("质量探测")) errors.put("qualityProbeSourceId", message);
+        if (message.contains("锁定入口")) errors.put("lockedMemberId", message);
+        if (errors.isEmpty() && "managed_members".equals(stage)) {
+            errors.put("managedEntryNodeIds", message);
+        }
+        return errors;
+    }
+
+    private static String saveStageLabel(String stage) {
+        return switch (stage) {
+            case "managed_members" -> "准备入口节点与托管转发";
+            case "database_validation" -> "检查容灾组与数据库记录";
+            case "forward_validation" -> "检查候选转发";
+            case "conflict_validation" -> "检查调度冲突";
+            case "dns_configuration" -> "读取 DNS 配置";
+            case "database_write" -> "写入容灾配置";
+            case "dns_publish" -> "发布 DNS 记录";
+            default -> "校验表单参数";
+        };
     }
 
     @Transactional

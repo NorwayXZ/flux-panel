@@ -207,6 +207,25 @@ const apiFailureMessage = (
     fallback
   );
 };
+
+type CrossEntrySaveFailure = {
+  stage?: string;
+  stageLabel?: string;
+  reason?: string;
+  fieldErrors?: Record<string, string>;
+  cleanupFailed?: number;
+};
+const saveFieldLabels: Record<string, string> = {
+  name: "容灾组名称",
+  domain: "业务域名",
+  dnsZoneId: "Cloudflare Zone",
+  memberForwardIds: "已有转发入口",
+  managedEntryNodeIds: "托管入口节点",
+  managedTargetAddress: "固定落地目标",
+  managedPublicPort: "公共端口",
+  qualityProbeSourceId: "质量探测源",
+  lockedMemberId: "锁定入口",
+};
 const durationText = (seconds?: number) => {
   const value = Number(seconds || 0);
 
@@ -1136,6 +1155,22 @@ export default function CrossEntryFailoverPage() {
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
   const [form, setForm] = useState(emptyForm);
+  const [saveError, setSaveError] = useState<CrossEntrySaveFailure>();
+
+  const saveFieldError = (field: string) =>
+    saveError?.fieldErrors?.[field] || undefined;
+  const reportSaveError = (
+    reason: string,
+    fieldErrors: Record<string, string> = {},
+  ) => {
+    setSaveError({
+      reason,
+      stage: "validation",
+      stageLabel: "校验表单参数",
+      fieldErrors,
+    });
+    toast.error(reason, { duration: 9000 });
+  };
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -1262,6 +1297,7 @@ export default function CrossEntryFailoverPage() {
 
   const openCreate = () => {
     setForm(emptyForm);
+    setSaveError(undefined);
     setFormOpen(true);
   };
 
@@ -1430,6 +1466,7 @@ export default function CrossEntryFailoverPage() {
       managedProtocolMode: group.managedProtocolMode || "tcp",
       memberForwardIds: group.members.map((item) => String(item.forwardId)),
     });
+    setSaveError(undefined);
     setFormOpen(true);
   };
 
@@ -1520,23 +1557,47 @@ export default function CrossEntryFailoverPage() {
   };
 
   const submit = async () => {
-    if (!form.name.trim() || !form.domain.trim() || !form.dnsZoneId)
-      return toast.error("请选择 Cloudflare Zone 并填写业务域名");
-    if (selectionProblem) return toast.error(selectionProblem);
+    setSaveError(undefined);
+    if (!form.name.trim() || !form.domain.trim() || !form.dnsZoneId) {
+      const fieldErrors: Record<string, string> = {};
+
+      if (!form.name.trim()) fieldErrors.name = "请输入容灾组名称";
+      if (!form.domain.trim()) fieldErrors.domain = "请输入业务域名或主机记录";
+      if (!form.dnsZoneId) fieldErrors.dnsZoneId = "请选择 Cloudflare Zone";
+
+      return reportSaveError(
+        "请补全 Cloudflare Zone、业务域名和容灾组名称",
+        fieldErrors,
+      );
+    }
+    if (selectionProblem) {
+      const field =
+        form.creationMode === "managed_forward"
+          ? form.managedTargetAddress.trim()
+            ? "managedEntryNodeIds"
+            : "managedTargetAddress"
+          : "memberForwardIds";
+
+      return reportSaveError(selectionProblem, { [field]: selectionProblem });
+    }
     if (
       form.routingMode === "failover" &&
       (form.qualityEnabled || form.tcpLatencySelectionEnabled) &&
       form.qualityProbeSourceType !== "panel" &&
       !form.qualityProbeSourceId
     ) {
-      return toast.error("请选择 TCP 探测源");
+      return reportSaveError("请选择 TCP 探测源", {
+        qualityProbeSourceId: "请选择 TCP 探测源",
+      });
     }
     if (
       form.routingMode === "failover" &&
       form.manualControlMode === "lock" &&
       !form.lockedMemberId
     )
-      return toast.error("请选择要锁定的入口");
+      return reportSaveError("请选择要锁定的入口", {
+        lockedMemberId: "请选择要锁定的入口",
+      });
     const tcpMode =
       form.routingMode === "failover" && form.tcpLatencySelectionEnabled;
     const qualityMode =
@@ -1644,10 +1705,19 @@ export default function CrossEntryFailoverPage() {
     });
 
     setSubmitting(false);
-    if (response.code !== 0)
+    if (response.code !== 0) {
+      const details = response.data as CrossEntrySaveFailure | null;
+      const failure: CrossEntrySaveFailure = {
+        ...(details || {}),
+        reason: apiFailureMessage(response, "保存入口容灾失败"),
+      };
+
+      setSaveError(failure);
+
       return toast.error(apiFailureMessage(response, "保存入口容灾失败"), {
         duration: 9000,
       });
+    }
     toast.success(form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口");
     setFormOpen(false);
     void loadData();
@@ -2249,11 +2319,53 @@ export default function CrossEntryFailoverPage() {
             {form.id ? "编辑入口容灾组" : "新建入口容灾组"}
           </ModalHeader>
           <ModalBody className="gap-4">
+            {saveError && (
+              <div className="rounded-xl border border-danger-200 bg-danger-50 px-4 py-3 text-sm text-danger-700 dark:border-danger-500/30 dark:bg-danger-500/10 dark:text-danger-200">
+                <div className="flex items-start gap-2">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0 space-y-1">
+                    <p className="font-semibold">保存失败，配置没有完成</p>
+                    <p className="break-words leading-5">
+                      {saveError.reason || "后端未返回具体原因"}
+                    </p>
+                    {saveError.stageLabel && (
+                      <p className="text-xs text-danger-600 dark:text-danger-300">
+                        失败阶段：{saveError.stageLabel}
+                      </p>
+                    )}
+                    {saveError.fieldErrors &&
+                      Object.entries(saveError.fieldErrors).length > 0 && (
+                        <div className="mt-2 space-y-1 border-t border-danger-200/70 pt-2 dark:border-danger-500/20">
+                          <p className="text-xs font-semibold">需要检查：</p>
+                          {Object.entries(saveError.fieldErrors).map(
+                            ([field, detail]) => (
+                              <p key={field} className="text-xs leading-5">
+                                <span className="font-medium">
+                                  {saveFieldLabels[field] || field}：
+                                </span>
+                                {detail}
+                              </p>
+                            ),
+                          )}
+                        </div>
+                      )}
+                    {saveError.cleanupFailed && (
+                      <p className="text-xs font-medium">
+                        有 {saveError.cleanupFailed}{" "}
+                        个自动资源未清理，请到转发管理检查。
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <section
               className={`${sectionCardClass} grid gap-3 sm:grid-cols-2`}
             >
               <Input
                 description="只用于面板识别，不影响 DNS 或转发。"
+                errorMessage={saveFieldError("name")}
+                isInvalid={Boolean(saveFieldError("name"))}
                 label="容灾组名称"
                 value={form.name}
                 onValueChange={(name) => setForm({ ...form, name })}
@@ -2297,6 +2409,8 @@ export default function CrossEntryFailoverPage() {
               </Select>
               <Select
                 description="选择要由面板自动维护记录的 Cloudflare Zone。"
+                errorMessage={saveFieldError("dnsZoneId")}
+                isInvalid={Boolean(saveFieldError("dnsZoneId"))}
                 label="Cloudflare Zone"
                 placeholder="选择已登记的域名区域"
                 selectedKeys={form.dnsZoneId ? [form.dnsZoneId] : []}
@@ -2324,6 +2438,8 @@ export default function CrossEntryFailoverPage() {
                       : `保存后自动创建 ${selectedZone.zoneName} 下的 DNS 记录`
                     : "凭据和 Zone 在“资源中心 - 域名管理”中统一维护"
                 }
+                errorMessage={saveFieldError("domain")}
+                isInvalid={Boolean(saveFieldError("domain"))}
                 label="业务域名或主机记录"
                 placeholder={
                   selectedZone
@@ -2463,7 +2579,11 @@ export default function CrossEntryFailoverPage() {
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Input
                       description="填写已经手工搭好的落地服务，例如 203.0.113.10:443；IPv6 使用 [IPv6]:端口。"
+                      errorMessage={saveFieldError("managedTargetAddress")}
                       isDisabled={Boolean(form.id)}
+                      isInvalid={Boolean(
+                        saveFieldError("managedTargetAddress"),
+                      )}
                       label="固定落地目标"
                       placeholder="例如 203.0.113.10:443"
                       value={form.managedTargetAddress}
@@ -2510,7 +2630,9 @@ export default function CrossEntryFailoverPage() {
                     {form.managedPortMode === "custom" ? (
                       <Input
                         description="所有入口都会使用这个公网端口。"
+                        errorMessage={saveFieldError("managedPublicPort")}
                         isDisabled={Boolean(form.id)}
+                        isInvalid={Boolean(saveFieldError("managedPublicPort"))}
                         label="公共端口"
                         max={65535}
                         min={1}
@@ -2660,6 +2782,11 @@ export default function CrossEntryFailoverPage() {
                       );
                     })}
                   </div>
+                  {saveFieldError("managedEntryNodeIds") && (
+                    <p className="text-xs text-danger">
+                      {saveFieldError("managedEntryNodeIds")}
+                    </p>
+                  )}
                   <Button
                     className="mt-1"
                     isDisabled={
@@ -2789,6 +2916,11 @@ export default function CrossEntryFailoverPage() {
                   {selectionProblem && (
                     <p className="mt-2 text-xs text-warning">
                       {selectionProblem}
+                    </p>
+                  )}
+                  {saveFieldError("memberForwardIds") && (
+                    <p className="mt-2 text-xs text-danger">
+                      {saveFieldError("memberForwardIds")}
                     </p>
                   )}
                 </div>

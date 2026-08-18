@@ -1,3 +1,10 @@
+## 2.51.30 Database and failover diagnostics
+
+- Synchronizes the legacy `gost.sql` template with the 500-character monitoring detail columns.
+- Returns the Cross-entry Failover save stage, concrete field errors, and underlying reason; the editor now marks the relevant Zone, domain, entry node, public port, managed target, or existing-forward field.
+- Adds a real MySQL integration path that applies the monitoring migration, verifies startup expansion of legacy 255-character columns, and confirms the scheduled monitoring service persists an alert without detail overflow.
+- Keeps Agent and Connector binaries at `2.51.13`; this is a panel-only release.
+
 ## 2.51.29 Monitoring detail bounds
 
 - Fixes monitoring scans failing when certificate, DDNS, or forwarding diagnostics produce a `detail` value longer than the database column.
