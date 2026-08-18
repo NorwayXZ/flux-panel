@@ -232,6 +232,80 @@ class CrossEntryFailoverPolicyTests {
     }
 
     @Test
+    void scheduledHealthyTargetOverridesNormalPrimaryOrder() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), member(2, 1, true, 8)), 1L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "auto", null, 2L, true, true));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(2L, decision.targetId());
+        assertEquals("按当前时段优先线路切换", decision.reason());
+    }
+
+    @Test
+    void scheduledUnhealthyTargetFallsBackToExistingRules() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), degradedMember(2, 1, true, 8), member(3, 2, true, 8)), 1L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "auto", null, 2L, true, true));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("保持当前入口", decision.reason());
+    }
+
+    @Test
+    void manualPauseTakesPriorityOverScheduledTarget() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), member(2, 1, true, 8)), 1L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "pause", null, 2L, true, true));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("已暂停自动切换", decision.reason());
+    }
+
+    @Test
+    void manualLockTakesPriorityOverScheduledTarget() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), member(2, 1, true, 8)), 1L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "lock", 1L, 2L, true, true));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("已锁定当前入口", decision.reason());
+    }
+
+    @Test
+    void scheduledTargetRespectsStrictQualityTarget() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), unacceptableMember(2, 1, true, 8)), 1L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "auto", null, 2L, true, true));
+
+        assertFalse(decision.switchRequired());
+        assertEquals("保持当前入口", decision.reason());
+    }
+
+    @Test
+    void returnsToPrimaryAfterScheduledWindowEnds() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(member(1, 0, true, 8), member(2, 1, true, 8)), 2L,
+                new CrossEntryFailoverPolicy.Settings(false, 3, true, true,
+                        true, true, true, true, false, 5, 10, 0, 0.0,
+                        "auto", null, null, false, true));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(1L, decision.targetId());
+        assertEquals("当前时段结束，恢复默认主入口", decision.reason());
+    }
+
+    @Test
     void strictFixedTargetSkipsBackupThatDoesNotMeetTarget() {
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 List.of(degradedMember(1, 0, true, 10), unacceptableMember(2, 1, true, 10), member(3, 2, true, 10)),
@@ -280,6 +354,20 @@ class CrossEntryFailoverPolicyTests {
         assertTrue(decision.switchRequired());
         assertEquals(3L, decision.targetId());
         assertEquals("TCP 延迟优选，自动切换至最低延迟入口", decision.reason());
+    }
+
+    @Test
+    void tcpLatencySelectionHandlesMissingActiveEntry() {
+        CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
+                List.of(
+                        qualityMember(1, 0, true, 5, false, true, false, 80, 0.0, 0, 0, 10, "203.0.113.10", "none"),
+                        qualityMember(2, 1, true, 5, false, true, false, 60, 0.0, 0, 0, 11, "198.51.100.20", "none")
+                ),
+                null,
+                settingsWithTcpLatency(true, 3, true, true, 5));
+
+        assertTrue(decision.switchRequired());
+        assertEquals(2L, decision.targetId());
     }
 
     @Test

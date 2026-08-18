@@ -47,6 +47,7 @@ import {
   type CrossEntryGroup,
   type CrossEntryNodeOption,
   type CrossEntryProbeSourceOverview,
+  type CrossEntrySchedule,
   type CrossEntrySummary,
   type DnsZoneOption,
 } from "@/api";
@@ -171,7 +172,34 @@ const emptyForm = {
   managedPortRangeEnd: "60000",
   managedProtocolMode: "tcp" as "tcp" | "tcp_udp",
   memberForwardIds: ["", ""],
+  schedules: [] as ScheduleForm[],
 };
+
+type ScheduleForm = {
+  days: number[];
+  startTime: string;
+  endTime: string;
+  preferredForwardId: string;
+  enabled: boolean;
+};
+
+const weekDays = [
+  [1, "周一"],
+  [2, "周二"],
+  [3, "周三"],
+  [4, "周四"],
+  [5, "周五"],
+  [6, "周六"],
+  [7, "周日"],
+] as const;
+
+const blankSchedule = (): ScheduleForm => ({
+  days: [1, 2, 3, 4, 5, 6, 7],
+  startTime: "09:00",
+  endTime: "11:00",
+  preferredForwardId: "",
+  enabled: true,
+});
 
 const truthy = (value: boolean | number) => value === true || value === 1;
 const timeText = (value?: number) =>
@@ -225,6 +253,7 @@ const saveFieldLabels: Record<string, string> = {
   managedPublicPort: "公共端口",
   qualityProbeSourceId: "质量探测源",
   lockedMemberId: "锁定入口",
+  schedules: "按时段优先线路",
 };
 const durationText = (seconds?: number) => {
   const value = Number(seconds || 0);
@@ -464,6 +493,9 @@ const activeGroupFlags = (group: CrossEntryGroup) => {
     flapGuardEnabled && truthy(group.qualityPenaltyEnabled ?? true);
   const smartSelectionEnabled =
     qualityEnabled && truthy(group.smartSelectionEnabled ?? true);
+  const scheduleEnabled = (group.schedules || []).some((item) =>
+    truthy(item.enabled ?? true),
+  );
 
   return {
     activeActive,
@@ -473,7 +505,22 @@ const activeGroupFlags = (group: CrossEntryGroup) => {
     flapGuardEnabled,
     penaltyEnabled,
     smartSelectionEnabled,
+    scheduleEnabled,
   };
+};
+const scheduleDaysText = (days: number[] = []) =>
+  days
+    .map((day) => weekDays.find(([value]) => value === day)?.[1] || `周${day}`)
+    .join("、");
+const scheduleSummaryText = (group: CrossEntryGroup) => {
+  const schedules = (group.schedules || []).filter((item) =>
+    truthy(item.enabled ?? true),
+  );
+
+  if (!schedules.length) return "未启用时段线路";
+  const first = schedules[0];
+
+  return `${schedules.length} 个北京时间时段 · ${scheduleDaysText(first.days)} ${first.startTime}-${first.endTime}`;
 };
 const currentDecisionHint = (group: CrossEntryGroup) => {
   const flags = activeGroupFlags(group);
@@ -489,6 +536,8 @@ const currentDecisionHint = (group: CrossEntryGroup) => {
     return group.manualLockUntil
       ? `当前处于锁定模式，直到 ${timeText(group.manualLockUntil)} 才恢复自动选择。`
       : "当前处于锁定模式，只会尝试使用你指定的入口。";
+  if (flags.scheduleEnabled)
+    return `已启用按时段优先线路（${scheduleSummaryText(group)}）；目标不可用时由现有质量、冷却和备用规则兜底。`;
   if (!active)
     return "当前没有确定承载入口，下一轮检测会尝试回到主入口或健康备用。";
   if (active.switchRejectedUntil && active.switchRejectedUntil > Date.now())
@@ -551,6 +600,9 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
   const flags = activeGroupFlags(group);
   const activeRules: RuleLine[] = [];
   const blockedRules: RuleLine[] = [];
+  const schedules = (group.schedules || []).filter((item) =>
+    truthy(item.enabled ?? true),
+  );
 
   activeRules.push(
     ruleLine(
@@ -574,6 +626,15 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
         "blocked",
       ),
       ruleLine("质量容灾", "质量切换只作用于主备容灾模式。", "blocked"),
+      ...(schedules.length
+        ? [
+            ruleLine(
+              "按时段优先线路",
+              "多入口同时运行没有唯一承载线路，与时段优先互斥。",
+              "blocked",
+            ),
+          ]
+        : []),
       ruleLine(
         "TCP 延迟优选",
         "DNS 多入口不能按连接实时选择最低 TCP 延迟。",
@@ -624,8 +685,24 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
         "TCP 优选只看实时延迟，不叠加质量黑名单和恢复观察。",
         "blocked",
       ),
+      ...(schedules.length
+        ? [
+            ruleLine(
+              "按时段优先线路",
+              "TCP 延迟优选已经接管自动选线，与时段目标互斥。",
+              "blocked",
+            ),
+          ]
+        : []),
     );
   } else {
+    if (schedules.length)
+      activeRules.push(
+        ruleLine(
+          "按时段优先线路",
+          `${scheduleSummaryText(group)}；目标不健康时由现有容灾规则选择备用，时段结束后恢复默认主入口。`,
+        ),
+      );
     if (truthy(group.autoFailback))
       activeRules.push(ruleLine("自动回主线", "主入口恢复稳定后自动切回。"));
     else activeRules.push(ruleLine("保持备用", "切到备用后不会主动回主线。"));
@@ -740,6 +817,7 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
     ),
   ];
   const blockedRules: RuleLine[] = [];
+  const schedules = form.schedules.filter((item) => item.enabled);
 
   if (form.routingMode === "active_active") {
     activeRules.push(
@@ -753,6 +831,15 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
         "DNS 解析无法做到每条连接实时最低延迟。",
         "blocked",
       ),
+      ...(schedules.length
+        ? [
+            ruleLine(
+              "按时段优先线路",
+              "多入口同时运行没有唯一承载线路。",
+              "blocked",
+            ),
+          ]
+        : []),
     );
 
     return {
@@ -798,6 +885,15 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
         "切换验证失败后的黑名单仍会生效，但不单独展示为选线规则。",
         "blocked",
       ),
+      ...(schedules.length
+        ? [
+            ruleLine(
+              "按时段优先线路",
+              "TCP 延迟优选已经接管自动选线。",
+              "blocked",
+            ),
+          ]
+        : []),
     );
 
     return {
@@ -812,6 +908,14 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
   }
 
   activeRules.push(
+    ...(schedules.length
+      ? [
+          ruleLine(
+            "按时段优先线路",
+            "目标线路健康时按北京时间切换；目标异常时沿用现有质量和备用规则。",
+          ),
+        ]
+      : []),
     form.autoFailback
       ? ruleLine("自动回主线", "主入口恢复并连续达标后自动回切。")
       : ruleLine("保持备用", "切到备用后不主动回主线，直到当前入口故障。"),
@@ -1465,6 +1569,15 @@ export default function CrossEntryFailoverPage() {
       managedPortRangeEnd: "60000",
       managedProtocolMode: group.managedProtocolMode || "tcp",
       memberForwardIds: group.members.map((item) => String(item.forwardId)),
+      schedules: (group.schedules || []).map(
+        (schedule: CrossEntrySchedule) => ({
+          days: schedule.days || [],
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+          preferredForwardId: String(schedule.preferredForwardId),
+          enabled: truthy(schedule.enabled ?? true),
+        }),
+      ),
     });
     setSaveError(undefined);
     setFormOpen(true);
@@ -1598,6 +1711,19 @@ export default function CrossEntryFailoverPage() {
       return reportSaveError("请选择要锁定的入口", {
         lockedMemberId: "请选择要锁定的入口",
       });
+    if (form.schedules.length > 0 && form.routingMode !== "failover") {
+      return reportSaveError("按时段优先线路只能用于主备容灾模式", {
+        schedules: "多入口同时运行没有唯一当前线路，不能使用时段优先",
+      });
+    }
+    if (form.schedules.length > 0 && form.tcpLatencySelectionEnabled) {
+      return reportSaveError(
+        "按时段优先线路与 TCP 延迟优选互斥，请只保留一种自动选线策略",
+        {
+          schedules: "请先关闭 TCP 延迟优选",
+        },
+      );
+    }
     const tcpMode =
       form.routingMode === "failover" && form.tcpLatencySelectionEnabled;
     const qualityMode =
@@ -1637,6 +1763,13 @@ export default function CrossEntryFailoverPage() {
       memberForwardIds: managedMode
         ? undefined
         : form.memberForwardIds.filter(Boolean).map(Number),
+      schedules: form.schedules.map((schedule) => ({
+        days: schedule.days,
+        startTime: schedule.startTime,
+        endTime: schedule.endTime,
+        preferredForwardId: Number(schedule.preferredForwardId),
+        enabled: schedule.enabled,
+      })),
       autoFailback: tcpMode ? false : form.autoFailback,
       qualityEnabled: qualityMode,
       qualityProbeSourceId:
@@ -1962,6 +2095,13 @@ export default function CrossEntryFailoverPage() {
                             智能选择
                           </Chip>
                         )}
+                        {(group.schedules || []).some((item) =>
+                          truthy(item.enabled ?? true),
+                        ) && (
+                          <Chip color="primary" size="sm" variant="flat">
+                            按时段选线
+                          </Chip>
+                        )}
                         {tcpLatencySelectionEnabled && (
                           <Chip color="secondary" size="sm" variant="flat">
                             TCP 延迟优选
@@ -2110,6 +2250,21 @@ export default function CrossEntryFailoverPage() {
                   </div>
 
                   <StrategySummaryPanel compact summary={strategy} />
+
+                  {(group.schedules || []).some((item) =>
+                    truthy(item.enabled ?? true),
+                  ) && (
+                    <div className="rounded-xl border border-primary/15 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+                      <span className="font-medium">北京时间时段：</span>{" "}
+                      {(group.schedules || [])
+                        .filter((item) => truthy(item.enabled ?? true))
+                        .map(
+                          (item) =>
+                            `${scheduleDaysText(item.days)} ${item.startTime}-${item.endTime} → ${item.preferredNodeName || item.preferredForwardName || "指定线路"}`,
+                        )
+                        .join("；")}
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     {group.members.map((member, index) => {
@@ -2927,6 +3082,195 @@ export default function CrossEntryFailoverPage() {
               )}
               {form.creationMode === "managed_forward" && selectionProblem && (
                 <p className="mt-2 text-xs text-warning">{selectionProblem}</p>
+              )}
+            </section>
+
+            <section className={sectionCardClass}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">按时段优先线路</h3>
+                  <p className="mt-1 max-w-3xl text-xs leading-5 text-default-500">
+                    使用北京时间（Asia/Shanghai）。时段内只把指定线路作为优先目标；目标故障、劣化、冷却或验证失败时，继续使用现有容灾规则选择备用。
+                  </p>
+                </div>
+                <Button
+                  isDisabled={
+                    form.routingMode !== "failover" ||
+                    form.tcpLatencySelectionEnabled ||
+                    form.schedules.length >= 32
+                  }
+                  size="sm"
+                  startContent={<Plus size={15} />}
+                  variant="flat"
+                  onPress={() =>
+                    setForm({
+                      ...form,
+                      schedules: [...form.schedules, blankSchedule()],
+                    })
+                  }
+                >
+                  添加时段
+                </Button>
+              </div>
+              {form.routingMode !== "failover" ? (
+                <p className="mt-3 rounded-lg border border-warning/30 bg-warning-50/60 px-3 py-2 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-200">
+                  多入口同时运行没有唯一承载线路，按时段优先与该模式互斥。
+                </p>
+              ) : form.tcpLatencySelectionEnabled ? (
+                <p className="mt-3 rounded-lg border border-warning/30 bg-warning-50/60 px-3 py-2 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-200">
+                  TCP 延迟优选已经接管自动选线，按时段优先与它互斥。请先关闭 TCP
+                  延迟优选，再配置时段线路。
+                </p>
+              ) : form.schedules.length === 0 ? (
+                <p className="mt-3 rounded-lg border border-dashed border-divider px-3 py-3 text-xs leading-5 text-default-500">
+                  未配置时段时，入口容灾继续按主入口、质量规则和备用顺序运行。
+                </p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <div className="grid gap-2 text-xs text-default-500 sm:grid-cols-[minmax(0,1fr)_auto_auto_minmax(0,1fr)_auto] sm:px-1">
+                    <span>星期</span>
+                    <span>开始</span>
+                    <span>结束</span>
+                    <span>优先线路</span>
+                    <span>状态</span>
+                  </div>
+                  {form.schedules.map((schedule, index) => (
+                    <div
+                      key={`schedule-${index}`}
+                      className="grid gap-2 rounded-xl border border-divider p-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_minmax(0,1fr)_auto_auto] sm:items-center"
+                    >
+                      <Select
+                        aria-label={`时段 ${index + 1} 星期`}
+                        placeholder="选择星期"
+                        selectedKeys={new Set(schedule.days.map(String))}
+                        selectionMode="multiple"
+                        onSelectionChange={(keys) => {
+                          if (keys === "all") return;
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.map((item, current) =>
+                              current === index
+                                ? {
+                                    ...item,
+                                    days: Array.from(keys).map(Number),
+                                  }
+                                : item,
+                            ),
+                          });
+                        }}
+                      >
+                        {weekDays.map(([value, label]) => (
+                          <SelectItem key={String(value)}>{label}</SelectItem>
+                        ))}
+                      </Select>
+                      <Input
+                        aria-label={`时段 ${index + 1} 开始时间`}
+                        description="HH:mm"
+                        type="text"
+                        value={schedule.startTime}
+                        onValueChange={(startTime) =>
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.map((item, current) =>
+                              current === index ? { ...item, startTime } : item,
+                            ),
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label={`时段 ${index + 1} 结束时间`}
+                        description="HH:mm，可填 24:00"
+                        type="text"
+                        value={schedule.endTime}
+                        onValueChange={(endTime) =>
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.map((item, current) =>
+                              current === index ? { ...item, endTime } : item,
+                            ),
+                          })
+                        }
+                      />
+                      <Select
+                        aria-label={`时段 ${index + 1} 优先线路`}
+                        errorMessage={saveFieldError("schedules")}
+                        isInvalid={Boolean(saveFieldError("schedules"))}
+                        placeholder="选择优先线路"
+                        selectedKeys={
+                          schedule.preferredForwardId
+                            ? [schedule.preferredForwardId]
+                            : []
+                        }
+                        onSelectionChange={(keys) =>
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.map((item, current) =>
+                              current === index
+                                ? {
+                                    ...item,
+                                    preferredForwardId: String(
+                                      Array.from(keys)[0] || "",
+                                    ),
+                                  }
+                                : item,
+                            ),
+                          })
+                        }
+                      >
+                        {selectedOptions.filter(Boolean).map((option) => (
+                          <SelectItem
+                            key={String(option!.id)}
+                            textValue={`${option!.nodeName} ${option!.name}`}
+                          >
+                            {option!.nodeName} · {option!.entryHost}:
+                            {option!.inPort}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                      <Switch
+                        aria-label={`启用时段 ${index + 1}`}
+                        isSelected={schedule.enabled}
+                        onValueChange={(enabled) =>
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.map((item, current) =>
+                              current === index ? { ...item, enabled } : item,
+                            ),
+                          })
+                        }
+                      >
+                        启用
+                      </Switch>
+                      <Button
+                        isIconOnly
+                        aria-label={`删除时段 ${index + 1}`}
+                        color="danger"
+                        size="sm"
+                        title="删除时段"
+                        variant="light"
+                        onPress={() =>
+                          setForm({
+                            ...form,
+                            schedules: form.schedules.filter(
+                              (_, current) => current !== index,
+                            ),
+                          })
+                        }
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
+                  ))}
+                  <p className="rounded-lg border border-primary/15 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
+                    同一天的时间段不能重叠；支持跨午夜，例如
+                    23:00-02:00。时段结束后，系统会在通过冷却、驻留和健康确认后恢复默认主入口。人工暂停/锁定和硬故障保护优先于本规则。
+                  </p>
+                  {saveFieldError("schedules") && (
+                    <p className="text-xs text-danger">
+                      {saveFieldError("schedules")}
+                    </p>
+                  )}
+                </div>
               )}
             </section>
 

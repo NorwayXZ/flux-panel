@@ -1,3 +1,12 @@
+## 2.51.31 Beijing-time scheduled entry preference
+
+- Adds optional Beijing-time (`Asia/Shanghai`) preference windows to Cross-entry Failover, with weekday selection, ordinary windows, and overnight windows such as `23:00-02:00`.
+- Keeps hard outage protection, quality degradation, cooldown, preheat isolation, post-switch verification, and failed-switch blacklist active. If the scheduled target is unhealthy, the existing failover rules choose the next eligible entry; after the window ends, the default primary is restored after health, cooldown, and residency checks.
+- Enforces mutual exclusion: scheduled preference cannot be combined with active-active DNS or TCP latency auto-selection; manual pause and manual lock always take priority. Overlapping windows and targets outside the current entry group are rejected with field-level errors.
+- Removes scheduled rules together with their Cross-entry Failover group, preventing deleted configurations from affecting future groups.
+- Adds policy coverage for schedule precedence, fallback, manual controls, strict quality targets, and empty active-entry TCP selection.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.30 Database and failover diagnostics
 
 - Synchronizes the legacy `gost.sql` template with the 500-character monitoring detail columns.

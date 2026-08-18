@@ -1615,6 +1615,17 @@ export interface CrossEntryMember {
   lastCheckedAt?: number;
 }
 
+export interface CrossEntrySchedule {
+  id?: number;
+  days: number[];
+  startTime: string;
+  endTime: string;
+  preferredForwardId: number;
+  preferredForwardName?: string;
+  preferredNodeName?: string;
+  enabled?: boolean | number;
+}
+
 export interface CrossEntryGroup {
   id: number;
   name: string;
@@ -1690,6 +1701,7 @@ export interface CrossEntryGroup {
   lastSwitchAt?: number;
   apiTokenConfigured: boolean | number;
   members: CrossEntryMember[];
+  schedules?: CrossEntrySchedule[];
   lastSwitchEvent?: CrossEntryEvent;
 }
 

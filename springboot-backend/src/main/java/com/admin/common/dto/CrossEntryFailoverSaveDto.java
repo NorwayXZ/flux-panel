@@ -106,6 +106,9 @@ public class CrossEntryFailoverSaveDto {
     private Integer managedPortRangeEnd = 60000;
     private String managedProtocolMode = "tcp";
 
+    /** Beijing-time preference windows. Empty keeps the existing failover behaviour. */
+    private List<CrossEntryFailoverScheduleDto> schedules = new java.util.ArrayList<>();
+
     /** 第一项为主入口，其余按顺序作为备用入口。 */
     private List<Long> memberForwardIds;
 }

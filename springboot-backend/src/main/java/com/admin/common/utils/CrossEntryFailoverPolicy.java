@@ -35,6 +35,19 @@ public final class CrossEntryFailoverPolicy {
             return Decision.switchTo(locked.id(), "手动锁定入口");
         }
 
+        Member scheduled = members.stream()
+                .filter(member -> Objects.equals(member.id(), settings.scheduledPreferredMemberId()))
+                .findFirst().orElse(null);
+        if (settings.scheduleActive() && isUsableScheduledTarget(scheduled)
+                && (active == null || !Objects.equals(active.id(), scheduled.id()))) {
+            if (active == null || !active.healthy()) {
+                return Decision.switchTo(scheduled.id(), "入口故障，按当前时段优先线路切换");
+            }
+            if (!settings.cooldownElapsed()) return Decision.stay("当前时段目标可用，但切换仍在冷却期");
+            if (!settings.minResidencyElapsed()) return Decision.stay("当前时段目标可用，但当前入口驻留时间不足");
+            return Decision.switchTo(scheduled.id(), "按当前时段优先线路切换");
+        }
+
         if (active == null || !active.healthy()) {
             Member target = members.stream()
                     .filter(Member::healthy)
@@ -85,6 +98,15 @@ public final class CrossEntryFailoverPolicy {
                             && member.suppressed());
             if (hasSuppressedBackup) return Decision.stay("当前入口质量劣化，但备用入口处于抖动保护期");
             return Decision.stay("当前入口质量劣化，但没有质量正常的备用入口");
+        }
+        if (!settings.scheduleActive() && settings.scheduleConfigured()) {
+            Member primary = members.stream().min(Comparator.comparingInt(Member::priority)).orElse(null);
+            if (primary != null && !Objects.equals(primary.id(), active.id())
+                    && isUsableScheduledTarget(primary)) {
+                if (!settings.cooldownElapsed()) return Decision.stay("时段结束，回主线仍在冷却期");
+                if (!settings.minResidencyElapsed()) return Decision.stay("时段结束，当前入口驻留时间不足");
+                return Decision.switchTo(primary.id(), "当前时段结束，恢复默认主入口");
+            }
         }
         if (settings.tcpLatencySelectionEnabled()) {
             Member lowestLatency = members.stream()
@@ -145,6 +167,11 @@ public final class CrossEntryFailoverPolicy {
         return Decision.switchTo(preferred.id(), "主入口持续恢复，自动回切");
     }
 
+    private static boolean isUsableScheduledTarget(Member member) {
+        return member != null && member.healthy() && !member.degraded()
+                && !member.suppressed() && member.acceptableForQualitySwitch();
+    }
+
     public record Member(long id, int priority, boolean healthy, int successCount, boolean degraded,
                          boolean acceptableForQualitySwitch, boolean suppressed,
                          Integer latencyMs, Double lossPercent, int flapCount, int failCount,
@@ -172,7 +199,8 @@ public final class CrossEntryFailoverPolicy {
                            boolean preheatPreferred,
                            boolean tcpLatencySelectionEnabled, int tcpLatencySwitchThresholdMs,
                            int tcpPrimaryPreferenceToleranceMs, int failbackGainMs, double failbackGainPercent,
-                           String manualControlMode, Long lockedMemberId) {
+                           String manualControlMode, Long lockedMemberId, Long scheduledPreferredMemberId,
+                           boolean scheduleActive, boolean scheduleConfigured) {
         public Settings {
             manualControlMode = manualControlMode == null ? "auto" : manualControlMode;
             recoveryThreshold = Math.max(1, recoveryThreshold);
@@ -190,7 +218,21 @@ public final class CrossEntryFailoverPolicy {
             this(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
                     degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled,
                     preheatPreferred, false, 5, 10, failbackGainMs, failbackGainPercent,
-                    manualControlMode, lockedMemberId);
+                    manualControlMode, lockedMemberId, null, false, false);
+        }
+
+        public Settings(boolean autoFailback, int recoveryThreshold, boolean cooldownElapsed,
+                        boolean minResidencyElapsed, boolean degradedFallbackEnabled,
+                        boolean sameFaultAvoidanceEnabled, boolean topologyAvoidanceEnabled,
+                        boolean preheatPreferred, boolean tcpLatencySelectionEnabled,
+                        int tcpLatencySwitchThresholdMs, int tcpPrimaryPreferenceToleranceMs,
+                        int failbackGainMs, double failbackGainPercent,
+                        String manualControlMode, Long lockedMemberId) {
+            this(autoFailback, recoveryThreshold, cooldownElapsed, minResidencyElapsed,
+                    degradedFallbackEnabled, sameFaultAvoidanceEnabled, topologyAvoidanceEnabled,
+                    preheatPreferred, tcpLatencySelectionEnabled, tcpLatencySwitchThresholdMs,
+                    tcpPrimaryPreferenceToleranceMs, failbackGainMs, failbackGainPercent,
+                    manualControlMode, lockedMemberId, null, false, false);
         }
     }
 
@@ -245,7 +287,7 @@ public final class CrossEntryFailoverPolicy {
                 && !member.suppressed()
                 && member.acceptableForQualitySwitch()
                 && member.latencyMs() != null
-                && (Objects.equals(member.id(), active.id())
+                && (active == null || Objects.equals(member.id(), active.id())
                 || member.successCount() >= settings.recoveryThreshold());
     }
 

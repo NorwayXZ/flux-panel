@@ -1,6 +1,7 @@
 package com.admin.service;
 
 import com.admin.common.dto.CrossEntryFailoverSaveDto;
+import com.admin.common.dto.CrossEntryFailoverScheduleDto;
 import com.admin.common.dto.ForwardDto;
 import com.admin.common.dto.PortLedgerEntryDto;
 import com.admin.common.dto.GostDto;
@@ -11,6 +12,7 @@ import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.CrossEntryFailoverPolicy;
+import com.admin.common.utils.CrossEntryFailoverSchedule;
 import com.admin.common.utils.CrossEntryQualityFlapGuard;
 import com.admin.common.utils.CrossEntryQualityEvaluator;
 import com.admin.common.utils.CrossEntryTopology;
@@ -49,6 +51,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -197,6 +200,7 @@ public class CrossEntryFailoverService {
         for (Map<String, Object> group : groups) {
             long id = number(group.get("id")).longValue();
             group.put("members", loadMembers(id));
+            group.put("schedules", loadSchedules(id));
             List<Map<String, Object>> latestSwitch = jdbcTemplate.queryForList(
                     "SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
                             + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,"
@@ -239,6 +243,7 @@ public class CrossEntryFailoverService {
             if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该域名已配置跨入口容灾");
             saveStage = "forward_validation";
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
+            validateSchedules(dto, forwards);
             saveStage = "conflict_validation";
             schedulingConflictService.assertDnsRecordAvailable("cross_entry", dto.getId(), dto.getDomain(), dto.getRecordType());
             schedulingConflictService.assertForwardSetAvailable("cross_entry", dto.getId(), dto.getMemberForwardIds());
@@ -455,6 +460,7 @@ public class CrossEntryFailoverService {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,locked_member_id=?,manual_lock_until=?,last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END WHERE id=?",
                     activeMemberId, lockedMemberId, "lock".equals(dto.getManualControlMode()) ? dto.getManualLockUntil() : null,
                     configuredEntryChanged, now, id);
+            replaceSchedules(id, dto.getSchedules(), now);
 
             Map<String, Object> selectedEntry = loadMember(activeMemberId);
             if (managedDns) {
@@ -584,6 +590,7 @@ public class CrossEntryFailoverService {
         dnsProviderService.clearCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")), id);
         dnsProviderService.releaseRecord(id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", id);
+        jdbcTemplate.update("DELETE FROM cross_entry_failover_schedule WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", id);
         int cleanupFailed = cleanupPersistedManagedResources(id, managedResources);
@@ -664,6 +671,7 @@ public class CrossEntryFailoverService {
         for (ProbeResult result : results) updateMemberHealth(result, failureThreshold, now);
 
         members = loadMembers(groupId);
+        ScheduleContext schedule = scheduleContext(groupId, members, now);
         boolean tcpLatencySelection = bool(group.get("tcpLatencySelectionEnabled"));
         boolean qualityDecisionEnabled = false;
         boolean detailedLatencyMeasured = false;
@@ -695,7 +703,8 @@ public class CrossEntryFailoverService {
         boolean adaptiveSelection = smartSelection || tcpLatencySelection;
         CrossEntryFailoverPolicy.Settings policySettings = new CrossEntryFailoverPolicy.Settings(
                 bool(group.get("autoFailback")), number(group.get("recoveryThreshold")).intValue(),
-                cooldownElapsed(group, now), !adaptiveSelection || minResidencyElapsed(group, now),
+                cooldownElapsed(group, now),
+                (!adaptiveSelection && !schedule.configured()) || minResidencyElapsed(group, now),
                 smartSelection && bool(group.get("degradedFallbackEnabled")),
                 smartSelection && bool(group.get("sameFaultAvoidanceEnabled")),
                 smartSelection && bool(group.get("topologyAvoidanceEnabled")),
@@ -704,7 +713,8 @@ public class CrossEntryFailoverService {
                 number(group.get("tcpPrimaryPreferenceToleranceMs")).intValue(),
                 smartSelection ? number(group.get("failbackGainMs")).intValue() : 0,
                 smartSelection ? doubleNumber(group.get("failbackGainPercent")) : 0.0,
-                Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")));
+                Objects.toString(group.get("manualControlMode"), "auto"), nullableLong(group.get("lockedMemberId")),
+                schedule.preferredMemberId(), schedule.activeWindow() != null, schedule.configured());
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 snapshots, active == null ? null : number(active.get("id")).longValue(), policySettings);
         Map<String, Object> target = decision.switchRequired() ? memberById(members, decision.targetId()) : null;
@@ -1886,6 +1896,115 @@ public class CrossEntryFailoverService {
             dto.setLockedMemberId(null);
             dto.setManualLockUntil(null);
         }
+        normalizeSchedules(dto);
+        if (!dto.getSchedules().isEmpty() && "active_active".equals(dto.getRoutingMode())) {
+            throw new IllegalArgumentException("按时段优先线路只能用于主备容灾模式");
+        }
+        if (!dto.getSchedules().isEmpty() && dto.getTcpLatencySelectionEnabled()) {
+            throw new IllegalArgumentException("按时段优先线路与 TCP 延迟优选互斥，请只保留一种自动选线策略");
+        }
+    }
+
+    private void normalizeSchedules(CrossEntryFailoverSaveDto dto) {
+        if (dto.getSchedules() == null) dto.setSchedules(new ArrayList<>());
+        if (dto.getSchedules().size() > 32) throw new IllegalArgumentException("最多配置 32 个时段规则");
+        List<CrossEntryFailoverSchedule.Spec> active = new ArrayList<>();
+        for (CrossEntryFailoverScheduleDto schedule : dto.getSchedules()) {
+            if (schedule == null) throw new IllegalArgumentException("时段规则不能为空");
+            int mask = CrossEntryFailoverSchedule.daysMask(schedule.getDays());
+            int start = CrossEntryFailoverSchedule.parseStart(schedule.getStartTime());
+            int end = CrossEntryFailoverSchedule.parseEnd(schedule.getEndTime());
+            if (!CrossEntryFailoverSchedule.validInterval(start, end)) {
+                throw new IllegalArgumentException("时段开始和结束时间不能相同");
+            }
+            if (schedule.getPreferredForwardId() == null) throw new IllegalArgumentException("请选择时段优先线路");
+            schedule.setEnabled(!Boolean.FALSE.equals(schedule.getEnabled()));
+            if (schedule.getEnabled()) {
+                CrossEntryFailoverSchedule.Spec spec = new CrossEntryFailoverSchedule.Spec(mask, start, end);
+                if (active.stream().anyMatch(existing -> CrossEntryFailoverSchedule.overlaps(existing, spec))) {
+                    throw new IllegalArgumentException("时段规则存在重叠，请调整星期或时间范围");
+                }
+                active.add(spec);
+            }
+        }
+    }
+
+    private void validateSchedules(CrossEntryFailoverSaveDto dto, List<Map<String, Object>> forwards) {
+        if (dto.getSchedules() == null || dto.getSchedules().isEmpty()) return;
+        Set<Long> forwardIds = forwards.stream()
+                .map(row -> number(row.get("id")).longValue())
+                .collect(Collectors.toSet());
+        for (CrossEntryFailoverScheduleDto schedule : dto.getSchedules()) {
+            if (!forwardIds.contains(schedule.getPreferredForwardId())) {
+                throw new IllegalArgumentException("时段优先线路必须来自当前入口顺序");
+            }
+        }
+    }
+
+    private void replaceSchedules(long groupId, List<CrossEntryFailoverScheduleDto> schedules, long now) {
+        jdbcTemplate.update("DELETE FROM cross_entry_failover_schedule WHERE group_id=?", groupId);
+        if (schedules == null) return;
+        for (CrossEntryFailoverScheduleDto schedule : schedules) {
+            jdbcTemplate.update("INSERT INTO cross_entry_failover_schedule "
+                            + "(group_id,days_mask,start_minute,end_minute,preferred_forward_id,enabled,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?)",
+                    groupId,
+                    CrossEntryFailoverSchedule.daysMask(schedule.getDays()),
+                    CrossEntryFailoverSchedule.parseStart(schedule.getStartTime()),
+                    CrossEntryFailoverSchedule.parseEnd(schedule.getEndTime()),
+                    schedule.getPreferredForwardId(),
+                    schedule.getEnabled(), now, now);
+        }
+    }
+
+    private List<Map<String, Object>> loadSchedules(long groupId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT s.id,s.days_mask AS daysMask,s.start_minute AS startMinute,s.end_minute AS endMinute,"
+                        + "s.preferred_forward_id AS preferredForwardId,s.enabled,"
+                        + "COALESCE(m.forward_name,CONCAT('线路 ',s.preferred_forward_id)) AS preferredForwardName,"
+                        + "COALESCE(m.node_name,'已移除入口') AS preferredNodeName "
+                        + "FROM cross_entry_failover_schedule s "
+                        + "LEFT JOIN cross_entry_failover_member m ON m.group_id=s.group_id AND m.forward_id=s.preferred_forward_id "
+                        + "WHERE s.group_id=? ORDER BY s.start_minute,s.id", groupId);
+        for (Map<String, Object> row : rows) {
+            int mask = number(row.get("daysMask")).intValue();
+            row.put("days", daysFromMask(mask));
+            row.put("startTime", formatMinute(number(row.get("startMinute")).intValue()));
+            row.put("endTime", formatMinute(number(row.get("endMinute")).intValue()));
+        }
+        return rows;
+    }
+
+    private List<Integer> daysFromMask(int mask) {
+        List<Integer> days = new ArrayList<>();
+        for (int day = 1; day <= 7; day++) {
+            if (CrossEntryFailoverSchedule.containsDay(mask, day)) days.add(day);
+        }
+        return days;
+    }
+
+    private String formatMinute(int minute) {
+        if (minute >= 1440) return "24:00";
+        return String.format(Locale.ROOT, "%02d:%02d", minute / 60, minute % 60);
+    }
+
+    private ScheduleContext scheduleContext(long groupId, List<Map<String, Object>> members, long now) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,days_mask AS daysMask,start_minute AS startMinute,end_minute AS endMinute,preferred_forward_id AS preferredForwardId "
+                        + "FROM cross_entry_failover_schedule WHERE group_id=? AND enabled=1 ORDER BY start_minute,id", groupId);
+        ZonedDateTime time = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(now), CrossEntryFailoverSchedule.ZONE);
+        for (Map<String, Object> row : rows) {
+            CrossEntryFailoverSchedule.Spec spec = new CrossEntryFailoverSchedule.Spec(
+                    number(row.get("daysMask")).intValue(), number(row.get("startMinute")).intValue(), number(row.get("endMinute")).intValue());
+            if (!spec.activeAt(time)) continue;
+            long forwardId = number(row.get("preferredForwardId")).longValue();
+            Map<String, Object> member = members.stream()
+                    .filter(item -> number(item.get("forwardId")).longValue() == forwardId)
+                    .findFirst().orElse(null);
+            String label = formatMinute(spec.startMinute()) + "-" + formatMinute(spec.endMinute());
+            return new ScheduleContext(true, member == null ? null : nullableLong(member.get("id")), label);
+        }
+        return new ScheduleContext(!rows.isEmpty(), null, null);
     }
 
     private Map<String, Object> loadGroup(long id) {
@@ -2256,4 +2375,5 @@ public class CrossEntryFailoverService {
                             int jitterDelta, int flapDelta, String type, String reason, Long at) {}
     private record DnsVerification(boolean providerMatched, boolean publicMatched, String message) {}
     private record PublicDnsVerification(boolean matched, String detail) {}
+    private record ScheduleContext(boolean configured, Long preferredMemberId, String activeWindow) {}
 }
