@@ -1,3 +1,9 @@
+## 2.51.27 Cross-entry managed create error fallback
+
+- Fixes managed Cross-entry Failover creation returning a blank failure reason when the underlying forward creation path throws or returns an empty result.
+- Adds node name, managed public port, target address, and the underlying reason to managed-forward creation failures.
+- Makes uncaught API exceptions return a readable fallback containing the exception type and request ID instead of an empty `msg`. Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.26 Cross-entry failover creation diagnostics
 
 - Surfaces backend `msg/message/error/detail` responses in the frontend instead of falling back to a generic creation failure.

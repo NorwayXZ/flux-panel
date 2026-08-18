@@ -3,6 +3,7 @@ package com.admin.common.exception;
 import com.admin.common.lang.R;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.catalina.connector.ClientAbortException;
+import org.slf4j.MDC;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.ObjectError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -39,7 +40,15 @@ public class GlobalExceptionHandler {
         } else {
             log.error("未处理的 API 异常", e);
         }
-        return R.err(-2, e.getMessage());
+        String message = e.getMessage();
+        if (message == null || message.isBlank()) {
+            message = "服务器内部异常：" + e.getClass().getSimpleName();
+        }
+        String requestId = MDC.get("requestId");
+        if (requestId != null && !requestId.isBlank()) {
+            message += "，请求ID：" + requestId;
+        }
+        return R.err(-2, message);
     }
 
 }

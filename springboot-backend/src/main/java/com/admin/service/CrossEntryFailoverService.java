@@ -1335,9 +1335,9 @@ public class CrossEntryFailoverService {
             forward.setRemoteAddr(target);
             forward.setInPort(publicPort);
             forward.setProtocolMode(dto.getManagedProtocolMode());
-            R result = forwardService.createForward(forward);
+            R result = createManagedForward(node, forward, publicPort, target);
             if (result.getCode() != 0) {
-                throw new IllegalStateException("节点 " + node.getName() + " 的托管转发创建失败：" + result.getMsg());
+                throw new IllegalStateException(result.getMsg());
             }
             Long forwardId = extractId(result.getData());
             if (forwardId == null) {
@@ -1347,6 +1347,30 @@ public class CrossEntryFailoverService {
             forwardIds.add(forwardId);
         }
         dto.setMemberForwardIds(forwardIds);
+    }
+
+    private R createManagedForward(Node node, ForwardDto forward, int publicPort, String target) {
+        try {
+            R result = forwardService.createForward(forward);
+            if (result == null) {
+                return R.err(managedForwardFailurePrefix(node, publicPort, target) + "转发服务返回空结果");
+            }
+            if (result.getCode() != 0) {
+                return R.err(managedForwardFailurePrefix(node, publicPort, target)
+                        + StringUtils.defaultIfBlank(result.getMsg(), "转发服务未返回失败原因"));
+            }
+            return result;
+        } catch (RuntimeException e) {
+            log.warn("托管入口容灾创建转发异常 nodeId={} nodeName={} port={} target={}",
+                    node.getId(), node.getName(), publicPort, target, e);
+            return R.err(managedForwardFailurePrefix(node, publicPort, target)
+                    + StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getSimpleName()));
+        }
+    }
+
+    private String managedForwardFailurePrefix(Node node, int publicPort, String target) {
+        return "节点 " + node.getName() + " 创建托管转发失败（公共端口 " + publicPort
+                + "，落地 " + target + "）：";
     }
 
     private int chooseManagedPublicPort(CrossEntryFailoverSaveDto dto, List<Node> nodes) {
