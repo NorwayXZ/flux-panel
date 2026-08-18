@@ -1,3 +1,10 @@
+## 2.51.32 Scheduled entry layout alignment
+
+- Aligns the scheduled entry preference header and rule rows to the same five-column grid: weekday, start, end, preferred entry, and actions.
+- Combines the enable switch and delete action in one stable action column so the controls no longer shift the time and route columns out of alignment.
+- Keeps the mobile single-column layout and all scheduling behavior unchanged.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.31 Beijing-time scheduled entry preference
 
 - Adds optional Beijing-time (`Asia/Shanghai`) preference windows to Cross-entry Failover, with weekday selection, ordinary windows, and overnight windows such as `23:00-02:00`.

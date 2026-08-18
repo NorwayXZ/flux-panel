@@ -3127,17 +3127,17 @@ export default function CrossEntryFailoverPage() {
                 </p>
               ) : (
                 <div className="mt-4 space-y-3">
-                  <div className="grid gap-2 text-xs text-default-500 sm:grid-cols-[minmax(0,1fr)_auto_auto_minmax(0,1fr)_auto] sm:px-1">
+                  <div className="grid gap-2 text-xs text-default-500 sm:grid-cols-[minmax(0,1.15fr)_110px_110px_minmax(0,1fr)_150px] sm:px-1">
                     <span>星期</span>
                     <span>开始</span>
                     <span>结束</span>
                     <span>优先线路</span>
-                    <span>状态</span>
+                    <span>操作</span>
                   </div>
                   {form.schedules.map((schedule, index) => (
                     <div
                       key={`schedule-${index}`}
-                      className="grid gap-2 rounded-xl border border-divider p-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_minmax(0,1fr)_auto_auto] sm:items-center"
+                      className="grid gap-2 rounded-xl border border-divider p-3 sm:grid-cols-[minmax(0,1.15fr)_110px_110px_minmax(0,1fr)_150px] sm:items-center"
                     >
                       <Select
                         aria-label={`时段 ${index + 1} 星期`}
@@ -3227,38 +3227,40 @@ export default function CrossEntryFailoverPage() {
                           </SelectItem>
                         ))}
                       </Select>
-                      <Switch
-                        aria-label={`启用时段 ${index + 1}`}
-                        isSelected={schedule.enabled}
-                        onValueChange={(enabled) =>
-                          setForm({
-                            ...form,
-                            schedules: form.schedules.map((item, current) =>
-                              current === index ? { ...item, enabled } : item,
-                            ),
-                          })
-                        }
-                      >
-                        启用
-                      </Switch>
-                      <Button
-                        isIconOnly
-                        aria-label={`删除时段 ${index + 1}`}
-                        color="danger"
-                        size="sm"
-                        title="删除时段"
-                        variant="light"
-                        onPress={() =>
-                          setForm({
-                            ...form,
-                            schedules: form.schedules.filter(
-                              (_, current) => current !== index,
-                            ),
-                          })
-                        }
-                      >
-                        <Trash2 size={16} />
-                      </Button>
+                      <div className="flex min-h-10 items-center justify-between gap-2">
+                        <Switch
+                          aria-label={`启用时段 ${index + 1}`}
+                          isSelected={schedule.enabled}
+                          onValueChange={(enabled) =>
+                            setForm({
+                              ...form,
+                              schedules: form.schedules.map((item, current) =>
+                                current === index ? { ...item, enabled } : item,
+                              ),
+                            })
+                          }
+                        >
+                          启用
+                        </Switch>
+                        <Button
+                          isIconOnly
+                          aria-label={`删除时段 ${index + 1}`}
+                          color="danger"
+                          size="sm"
+                          title="删除时段"
+                          variant="light"
+                          onPress={() =>
+                            setForm({
+                              ...form,
+                              schedules: form.schedules.filter(
+                                (_, current) => current !== index,
+                              ),
+                            })
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                   <p className="rounded-lg border border-primary/15 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
