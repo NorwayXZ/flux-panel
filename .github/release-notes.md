@@ -1,3 +1,10 @@
+## 2.51.33 Scheduled entry control alignment
+
+- Aligns all scheduled-entry controls to the top of the rule row so descriptions with different heights cannot move the start and end inputs onto different vertical baselines.
+- Gives both time columns enough width for `HH:mm, can fill 24:00` without wrapping and matches the header padding to the rule card content.
+- Keeps the existing schedule data, mutual-exclusion rules, mobile stacking, and failover behavior unchanged.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.32 Scheduled entry layout alignment
 
 - Aligns the scheduled entry preference header and rule rows to the same five-column grid: weekday, start, end, preferred entry, and actions.

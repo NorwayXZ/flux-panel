@@ -3127,7 +3127,7 @@ export default function CrossEntryFailoverPage() {
                 </p>
               ) : (
                 <div className="mt-4 space-y-3">
-                  <div className="grid gap-2 text-xs text-default-500 sm:grid-cols-[minmax(0,1.15fr)_110px_110px_minmax(0,1fr)_150px] sm:px-1">
+                  <div className="grid gap-2 text-xs text-default-500 sm:grid-cols-[minmax(0,1.15fr)_128px_128px_minmax(0,1fr)_150px] sm:px-3">
                     <span>星期</span>
                     <span>开始</span>
                     <span>结束</span>
@@ -3137,7 +3137,7 @@ export default function CrossEntryFailoverPage() {
                   {form.schedules.map((schedule, index) => (
                     <div
                       key={`schedule-${index}`}
-                      className="grid gap-2 rounded-xl border border-divider p-3 sm:grid-cols-[minmax(0,1.15fr)_110px_110px_minmax(0,1fr)_150px] sm:items-center"
+                      className="grid gap-2 rounded-xl border border-divider p-3 sm:grid-cols-[minmax(0,1.15fr)_128px_128px_minmax(0,1fr)_150px] sm:items-start"
                     >
                       <Select
                         aria-label={`时段 ${index + 1} 星期`}
