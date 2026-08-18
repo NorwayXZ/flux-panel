@@ -1335,6 +1335,7 @@ public class CrossEntryFailoverService {
             forward.setRemoteAddr(target);
             forward.setInPort(publicPort);
             forward.setProtocolMode(dto.getManagedProtocolMode());
+            forward.setRouteBalanceStrategy("round");
             R result = createManagedForward(node, forward, publicPort, target);
             if (result.getCode() != 0) {
                 throw new IllegalStateException(result.getMsg());

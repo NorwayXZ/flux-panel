@@ -1,3 +1,9 @@
+## 2.51.28 Managed cross-entry forward default strategy
+
+- Fixes managed Cross-entry Failover creation failing when the generated forward does not provide a route balance strategy.
+- Defaults missing forward balance strategy values to `round` in the forwarding service and explicitly sets the managed generated forward strategy to `round`.
+- Keeps the detailed creation-failure diagnostics from `2.51.27`; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.27 Cross-entry managed create error fallback
 
 - Fixes managed Cross-entry Failover creation returning a blank failure reason when the underlying forward creation path throws or returns an empty result.

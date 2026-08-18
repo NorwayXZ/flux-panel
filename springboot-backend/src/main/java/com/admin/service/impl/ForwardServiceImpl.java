@@ -1408,6 +1408,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private String normalizeBalanceStrategy(String strategy) {
+        if (strategy == null) return "round";
         if (Set.of("round", "rand", "weighted", "hash").contains(strategy)) return strategy;
         return "round";
     }
