@@ -1,3 +1,10 @@
+## 2.51.34 Docker application center layout
+
+- Prevents the Docker node column from stretching the deployed-application column to the height of a long node list.
+- Makes a single deployed application use the full available application area; multiple applications continue to use a responsive two-column layout.
+- Keeps Docker discovery, deployment, upgrade, backup, rollback, command, event, and removal behavior unchanged.
+- Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.33 Scheduled entry control alignment
 
 - Aligns all scheduled-entry controls to the top of the rule row so descriptions with different heights cannot move the start and end inputs onto different vertical baselines.

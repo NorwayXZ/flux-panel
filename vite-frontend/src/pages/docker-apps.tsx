@@ -311,8 +311,8 @@ export default function DockerAppsPage() {
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
-        <div className="space-y-3">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-3">
           <h2 className="text-base font-semibold">Docker 节点</h2>
           {data.nodes.map((node) => (
             <div
@@ -358,7 +358,7 @@ export default function DockerAppsPage() {
           ))}
         </div>
 
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <h2 className="text-base font-semibold">已部署应用</h2>
           {data.apps.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center gap-3 border border-dashed border-divider text-default-400">
@@ -366,7 +366,11 @@ export default function DockerAppsPage() {
               <p>还没有 Docker 应用</p>
             </div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div
+              className={`grid gap-4 ${
+                data.apps.length > 1 ? "lg:grid-cols-2" : "grid-cols-1"
+              }`}
+            >
               {data.apps.map((app) => {
                 const meta = stateMeta(app.state);
 
