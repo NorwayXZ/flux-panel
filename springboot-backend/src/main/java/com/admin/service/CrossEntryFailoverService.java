@@ -238,6 +238,15 @@ public class CrossEntryFailoverService {
         return Math.min(Math.max(0L, rawConnections), Math.max(0L, pendingProbes));
     }
 
+    static int successfulProbeCount(int requested, int samples, boolean success, double lossPercent) {
+        if (requested <= 0) return 0;
+        if (samples > 0) return Math.min(requested, samples);
+        double loss = Double.isFinite(lossPercent) ? Math.max(0.0, Math.min(100.0, lossPercent)) : 100.0;
+        int inferred = requested - (int) Math.round(requested * loss / 100.0);
+        if (success && inferred == 0) inferred = 1;
+        return Math.max(0, Math.min(requested, inferred));
+    }
+
     public R listGroups() {
         List<Map<String, Object>> groups = jdbcTemplate.queryForList(
                 "SELECT g.id,g.name,g.domain,g.dns_zone_id AS dnsZoneId,g.zone_id AS zoneId,z.zone_name AS zoneName,g.record_id AS recordId,g.record_type AS recordType,g.ttl,"
@@ -1006,7 +1015,7 @@ public class CrossEntryFailoverService {
         boolean success = data.getBooleanValue("success");
         double loss = data.containsKey("packetLoss") ? data.getDoubleValue("packetLoss") : (success ? 0.0 : 100.0);
         List<Integer> samples = numericSamples(data.getJSONArray("samples"));
-        recordSuccessfulProbes(member, samples.size());
+        recordSuccessfulProbes(member, successfulProbeCount(count, samples.size(), success, loss));
         Integer latency = success ? roundedMetric(data, "averageTime", 1) : null;
         if (latency == null) latency = average(samples);
         Integer p95 = roundedMetric(data, "p95Time", 1);

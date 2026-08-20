@@ -47,6 +47,9 @@ class CrossEntryFailoverServiceTests {
         assertEquals(0, CrossEntryFailoverService.businessConnectionDelta(3, 5));
         assertEquals(0, CrossEntryFailoverService.consumableProbeConnections(0, 5, false));
         assertEquals(3, CrossEntryFailoverService.consumableProbeConnections(3, 5, true));
+        assertEquals(4, CrossEntryFailoverService.successfulProbeCount(4, 0, true, 0.0));
+        assertEquals(3, CrossEntryFailoverService.successfulProbeCount(4, 0, true, 25.0));
+        assertEquals(2, CrossEntryFailoverService.successfulProbeCount(4, 2, true, 0.0));
     }
 
     @Test

@@ -1,3 +1,9 @@
+## 2.51.40 Legacy remote-probe accounting compatibility
+
+- Derives successful TCP probe connections from request count and packet loss when an older Agent or Connector omits per-attempt `samples`.
+- Prevents low-frequency quality probes from appearing as business connections without requiring an immediate Agent upgrade.
+- Keeps the `2.51.39` telemetry-baseline protection; Agent and Connector targets remain at `2.51.37`.
+
 ## 2.51.39 Preserve probe deductions across telemetry baseline
 
 - Keeps successful health-probe deductions pending while the first Agent telemetry report establishes its baseline.
