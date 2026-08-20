@@ -1653,8 +1653,7 @@ export default function CrossEntryFailoverPage() {
 
       if (
         target < 0 ||
-        target >= current.managedEntryNodeIds.length ||
-        current.id
+        target >= current.managedEntryNodeIds.length
       ) {
         return current;
       }
@@ -1851,7 +1850,13 @@ export default function CrossEntryFailoverPage() {
         duration: 9000,
       });
     }
-    toast.success(form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口");
+    const successData = response.data as { message?: string } | undefined;
+
+    toast.success(
+      successData?.message ||
+        (form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口"),
+      { duration: successData?.message ? 9000 : 4000 },
+    );
     setFormOpen(false);
     void loadData();
   };
@@ -2528,7 +2533,7 @@ export default function CrossEntryFailoverPage() {
               <Select
                 description={
                   form.id
-                    ? "创建方式不能在编辑时切换；托管基础资源需要删除后重新创建。"
+                    ? "创建方式不能在编辑时切换；托管组可调整入口节点，固定落地和端口保持不变。"
                     : "旧模式引用已有转发；托管模式自动为每个入口创建到同一落地的转发。"
                 }
                 isDisabled={Boolean(form.id)}
@@ -2833,7 +2838,7 @@ export default function CrossEntryFailoverPage() {
                   <div className="rounded-xl border border-primary/20 bg-primary-50/50 px-3 py-2 text-xs leading-5 text-primary-700 dark:bg-primary-500/10 dark:text-primary-200">
                     面板会为每个入口节点复用或创建一个内部直连隧道，再调用原有转发服务创建
                     “入口公共端口 → 固定落地”的转发。质量容灾、DNS
-                    切换和故障保护规则与普通入口容灾完全相同。
+                    切换和故障保护规则与普通入口容灾完全相同。编辑时可增删或调整入口顺序，固定落地和公共端口不会改变。
                   </div>
                   <div className="space-y-2">
                     {form.managedEntryNodeIds.map((id, index) => {
@@ -2853,7 +2858,6 @@ export default function CrossEntryFailoverPage() {
                             aria-label={
                               index === 0 ? "主入口节点" : `备用入口 ${index}`
                             }
-                            isDisabled={Boolean(form.id)}
                             placeholder="选择入口节点"
                             selectedKeys={id ? [id] : []}
                             onSelectionChange={(keys) => {
@@ -2881,7 +2885,7 @@ export default function CrossEntryFailoverPage() {
                             <Button
                               isIconOnly
                               aria-label="上移入口节点"
-                              isDisabled={Boolean(form.id) || index === 0}
+                              isDisabled={index === 0}
                               size="sm"
                               title="上移"
                               variant="light"
@@ -2893,7 +2897,6 @@ export default function CrossEntryFailoverPage() {
                               isIconOnly
                               aria-label="下移入口节点"
                               isDisabled={
-                                Boolean(form.id) ||
                                 index === form.managedEntryNodeIds.length - 1
                               }
                               size="sm"
@@ -2907,7 +2910,6 @@ export default function CrossEntryFailoverPage() {
                               isIconOnly
                               aria-label="移除入口节点"
                               isDisabled={
-                                Boolean(form.id) ||
                                 form.managedEntryNodeIds.length <= 2
                               }
                               size="sm"
@@ -2944,9 +2946,7 @@ export default function CrossEntryFailoverPage() {
                   )}
                   <Button
                     className="mt-1"
-                    isDisabled={
-                      Boolean(form.id) || form.managedEntryNodeIds.length >= 10
-                    }
+                    isDisabled={form.managedEntryNodeIds.length >= 10}
                     size="sm"
                     startContent={<Plus size={16} />}
                     variant="flat"

@@ -223,16 +223,20 @@ public class CrossEntryFailoverService {
     @Transactional(rollbackFor = Exception.class)
     public R save(CrossEntryFailoverSaveDto dto) {
         List<ManagedResourceDraft> createdManagedResources = new ArrayList<>();
+        List<ManagedResourceDraft> removedManagedResources = new ArrayList<>();
         Long createdGroupId = null;
         String saveStage = "validation";
         try {
-            normalizeAndValidate(dto);
+            boolean existingManaged = dto.getId() != null && hasManagedResources(dto.getId());
+            normalizeAndValidate(dto, existingManaged);
             if (isManagedCreate(dto)) {
                 saveStage = "managed_members";
                 prepareManagedMembers(dto, createdManagedResources);
-            } else if (dto.getId() != null && hasManagedResources(dto.getId())) {
+            } else if (existingManaged) {
                 saveStage = "managed_members";
-                assertManagedMembersUnchanged(dto);
+                prepareManagedMemberEdit(dto, createdManagedResources, removedManagedResources);
+            } else if (dto.getId() != null && "managed_forward".equals(dto.getCreationMode())) {
+                throw new IllegalArgumentException("已有入口容灾组不能切换为托管落地模式，请新建托管组");
             }
             saveStage = "database_validation";
             Integer duplicate = dto.getId() == null
@@ -494,7 +498,16 @@ public class CrossEntryFailoverService {
             } else {
                 updateCloudflareDns(savedGroup, selectedEntry);
             }
-            return R.ok(Map.of("id", id));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", id);
+            if (!removedManagedResources.isEmpty()) {
+                int cleanupFailed = cleanupRemovedManagedResources(id, removedManagedResources);
+                if (cleanupFailed > 0) {
+                    result.put("cleanupFailed", cleanupFailed);
+                    result.put("message", "容灾组已更新，但有 " + cleanupFailed + " 个已移除入口的托管资源清理失败，节点恢复后请在转发管理中检查");
+                }
+            }
+            return R.ok(result);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return handleSaveFailure(dto, createdManagedResources, createdGroupId, saveStage, e);
         } catch (RuntimeException e) {
@@ -1341,99 +1354,205 @@ public class CrossEntryFailoverService {
         return count != null && count > 0;
     }
 
-    private void assertManagedMembersUnchanged(CrossEntryFailoverSaveDto dto) {
-        List<Map<String, Object>> stored = jdbcTemplate.queryForList(
-                "SELECT mr.forward_id AS forwardId,mr.entry_node_id AS entryNodeId,mr.target_address AS targetAddress,"
-                        + "mr.public_port AS publicPort,m.priority "
-                        + "FROM cross_entry_managed_resource mr "
-                        + "LEFT JOIN cross_entry_failover_member m ON m.group_id=mr.group_id AND m.forward_id=mr.forward_id "
-                        + "WHERE mr.group_id=? ORDER BY COALESCE(m.priority,999),mr.id", dto.getId());
-        if (stored.isEmpty()) return;
-
-        List<Long> storedForwardIds = stored.stream()
-                .map(row -> number(row.get("forwardId")).longValue())
-                .collect(Collectors.toList());
-        List<Long> requestedForwardIds = dto.getMemberForwardIds() == null
-                ? List.of()
-                : dto.getMemberForwardIds().stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
-        if (!requestedForwardIds.isEmpty() && !requestedForwardIds.equals(storedForwardIds)) {
-            throw new IllegalArgumentException("托管入口的节点顺序不能在编辑时修改，请删除后重新创建");
-        }
-        if (requestedForwardIds.isEmpty()) dto.setMemberForwardIds(storedForwardIds);
-
-        if (dto.getManagedEntryNodeIds() != null && !dto.getManagedEntryNodeIds().isEmpty()) {
-            List<Long> storedNodeIds = stored.stream()
-                    .map(row -> number(row.get("entryNodeId")).longValue())
-                    .collect(Collectors.toList());
-            if (!dto.getManagedEntryNodeIds().equals(storedNodeIds)) {
-                throw new IllegalArgumentException("托管入口的节点顺序不能在编辑时修改，请删除后重新创建");
-            }
-        }
-        String requestedTarget = StringUtils.trimToNull(dto.getManagedTargetAddress());
-        if (requestedTarget != null
-                && !requestedTarget.equalsIgnoreCase(Objects.toString(stored.get(0).get("targetAddress"), ""))) {
-            throw new IllegalArgumentException("托管落地目标不能在编辑时修改，请删除后重新创建");
-        }
-        if (dto.getManagedPublicPort() != null
-                && dto.getManagedPublicPort() != number(stored.get(0).get("publicPort")).intValue()) {
-            throw new IllegalArgumentException("托管公共端口不能在编辑时修改，请删除后重新创建");
-        }
-    }
-
     private void prepareManagedMembers(CrossEntryFailoverSaveDto dto,
                                        List<ManagedResourceDraft> createdResources) {
-        List<Long> nodeIds = dto.getManagedEntryNodeIds() == null
-                ? List.of()
-                : dto.getManagedEntryNodeIds().stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
+        List<Long> nodeIds = normalizeManagedEntryNodeIds(dto.getManagedEntryNodeIds());
         if (nodeIds.size() < 2) throw new IllegalArgumentException("托管入口容灾至少需要两个入口节点");
         if (nodeIds.size() > 10) throw new IllegalArgumentException("单个容灾组最多配置10个入口节点");
 
         String target = normalizeManagedTargetAddress(dto.getManagedTargetAddress());
         dto.setManagedTargetAddress(target);
-        List<Node> nodes = new ArrayList<>();
-        Set<String> addresses = new HashSet<>();
-        for (Long nodeId : nodeIds) {
-            Node node = nodeService.getNodeById(nodeId);
-            if (node == null) throw new IllegalArgumentException("托管入口节点不存在：" + nodeId);
-            if (!WebSocketServer.isNodeOnline(nodeId)) {
-                throw new IllegalArgumentException("托管入口节点离线：" + node.getName());
-            }
-            String host = nodeAddress(node);
-            if (StringUtils.isBlank(host)) throw new IllegalArgumentException("入口节点缺少公网地址：" + node.getName());
-            String address = resolveAddress(host, dto.getRecordType());
-            if (!addresses.add(address)) throw new IllegalArgumentException("托管入口节点不能使用相同的公网 IP：" + address);
-            nodes.add(node);
-        }
+        List<Node> nodes = loadAndValidateManagedEntryNodes(nodeIds, dto.getRecordType(), new HashSet<>(nodeIds));
 
         int publicPort = chooseManagedPublicPort(dto, nodes);
         dto.setManagedPublicPort(publicPort);
         List<Long> forwardIds = new ArrayList<>();
         for (Node node : nodes) {
-            DirectTunnelResult tunnel = ensureManagedDirectTunnel(node);
-            ManagedResourceDraft draft = new ManagedResourceDraft(
-                    tunnel.tunnel().getId(), node.getId(), tunnel.created(), target, publicPort,
-                    dto.getManagedPortMode(), dto.getManagedProtocolMode());
-            createdResources.add(draft);
-
-            ForwardDto forward = new ForwardDto();
-            forward.setName(dto.getName().trim() + " · " + node.getName());
-            forward.setTunnelId(tunnel.tunnel().getId().intValue());
-            forward.setRemoteAddr(target);
-            forward.setInPort(publicPort);
-            forward.setProtocolMode(dto.getManagedProtocolMode());
-            forward.setRouteBalanceStrategy("round");
-            R result = createManagedForward(node, forward, publicPort, target);
-            if (result.getCode() != 0) {
-                throw new IllegalStateException(result.getMsg());
-            }
-            Long forwardId = extractId(result.getData());
-            if (forwardId == null) {
-                throw new IllegalStateException("节点 " + node.getName() + " 的托管转发已返回成功，但未能读取转发 ID");
-            }
-            draft.forwardId = forwardId;
-            forwardIds.add(forwardId);
+            forwardIds.add(createManagedResource(node, dto.getName().trim(), target, publicPort,
+                    dto.getManagedPortMode(), dto.getManagedProtocolMode(), createdResources));
         }
         dto.setMemberForwardIds(forwardIds);
+    }
+
+    private void prepareManagedMemberEdit(CrossEntryFailoverSaveDto dto,
+                                          List<ManagedResourceDraft> createdResources,
+                                          List<ManagedResourceDraft> removedResources) {
+        if (!"managed_forward".equals(dto.getCreationMode())) {
+            throw new IllegalArgumentException("托管入口创建方式不能在编辑时切换");
+        }
+        List<ManagedResourceState> stored = loadManagedResourceStates(dto.getId());
+        if (stored.isEmpty()) throw new IllegalArgumentException("托管资源记录不存在，请删除后重新创建");
+
+        ManagedResourceState spec = stored.get(0);
+        assertManagedResourceSpecConsistent(stored, spec);
+        assertManagedFixedSettingsUnchanged(dto, spec);
+        dto.setManagedTargetAddress(spec.targetAddress());
+        dto.setManagedPublicPort(spec.publicPort());
+        dto.setManagedPortMode(spec.portMode());
+        dto.setManagedProtocolMode(spec.protocolMode());
+
+        List<Long> nodeIds = normalizeManagedEntryNodeIds(dto.getManagedEntryNodeIds());
+        if (nodeIds.isEmpty() && dto.getMemberForwardIds() != null && !dto.getMemberForwardIds().isEmpty()) {
+            nodeIds = nodeIdsFromManagedForwards(stored, dto.getMemberForwardIds());
+        }
+        if (nodeIds.size() < 2) throw new IllegalArgumentException("托管入口容灾至少需要两个入口节点");
+        if (nodeIds.size() > 10) throw new IllegalArgumentException("单个容灾组最多配置10个入口节点");
+
+        Map<Long, ManagedResourceState> byNode = new LinkedHashMap<>();
+        for (ManagedResourceState resource : stored) {
+            if (byNode.put(resource.entryNodeId(), resource) != null) {
+                throw new IllegalArgumentException("托管入口节点存在重复资源，请删除后重新创建");
+            }
+        }
+
+        Set<Long> newNodeIds = nodeIds.stream()
+                .filter(nodeId -> !byNode.containsKey(nodeId))
+                .collect(Collectors.toSet());
+        List<Node> nodes = loadAndValidateManagedEntryNodes(nodeIds, dto.getRecordType(), newNodeIds);
+        List<Node> newNodes = nodes.stream()
+                .filter(node -> newNodeIds.contains(node.getId()))
+                .collect(Collectors.toList());
+        if (!newNodes.isEmpty()) {
+            ManagedPortAvailability availability = managedPortAvailability(newNodes, spec.publicPort(), spec.protocolMode());
+            if (!availability.available()) {
+                throw new IllegalArgumentException("新增入口公共端口 " + spec.publicPort() + " 不可用：" + availability.reason());
+            }
+        }
+
+        Set<Long> desiredNodeIds = new HashSet<>(nodeIds);
+        List<Long> forwardIds = new ArrayList<>();
+        for (Node node : nodes) {
+            ManagedResourceState existing = byNode.get(node.getId());
+            if (existing == null) {
+                forwardIds.add(createManagedResource(node, dto.getName().trim(), spec.targetAddress(), spec.publicPort(),
+                        spec.portMode(), spec.protocolMode(), createdResources));
+            } else {
+                forwardIds.add(existing.forwardId());
+            }
+        }
+        stored.stream()
+                .filter(resource -> !desiredNodeIds.contains(resource.entryNodeId()))
+                .map(this::toManagedResourceDraft)
+                .forEach(removedResources::add);
+        dto.setMemberForwardIds(forwardIds);
+    }
+
+    private List<ManagedResourceState> loadManagedResourceStates(Long groupId) {
+        return jdbcTemplate.queryForList(
+                        "SELECT mr.forward_id AS forwardId,mr.tunnel_id AS tunnelId,mr.entry_node_id AS entryNodeId,"
+                                + "mr.target_address AS targetAddress,mr.public_port AS publicPort,"
+                                + "mr.port_mode AS portMode,mr.protocol_mode AS protocolMode,mr.created_tunnel AS createdTunnel,m.priority "
+                                + "FROM cross_entry_managed_resource mr "
+                                + "LEFT JOIN cross_entry_failover_member m ON m.group_id=mr.group_id AND m.forward_id=mr.forward_id "
+                                + "WHERE mr.group_id=? ORDER BY COALESCE(m.priority,999),mr.id", groupId)
+                .stream()
+                .map(row -> new ManagedResourceState(
+                        number(row.get("forwardId")).longValue(),
+                        nullableLong(row.get("tunnelId")),
+                        number(row.get("entryNodeId")).longValue(),
+                        normalizeManagedTargetAddress(Objects.toString(row.get("targetAddress"), "")),
+                        number(row.get("publicPort")).intValue(),
+                        StringUtils.lowerCase(Objects.toString(row.get("portMode"), "auto"), Locale.ROOT),
+                        StringUtils.lowerCase(Objects.toString(row.get("protocolMode"), "tcp"), Locale.ROOT),
+                        bool(row.get("createdTunnel"))))
+                .collect(Collectors.toList());
+    }
+
+    private void assertManagedResourceSpecConsistent(List<ManagedResourceState> resources, ManagedResourceState spec) {
+        for (ManagedResourceState resource : resources) {
+            if (!resource.targetAddress().equalsIgnoreCase(spec.targetAddress())
+                    || resource.publicPort() != spec.publicPort()
+                    || !resource.portMode().equals(spec.portMode())
+                    || !resource.protocolMode().equals(spec.protocolMode())) {
+                throw new IllegalArgumentException("托管资源的落地目标、公共端口或协议不一致，请删除后重新创建");
+            }
+        }
+    }
+
+    private void assertManagedFixedSettingsUnchanged(CrossEntryFailoverSaveDto dto, ManagedResourceState spec) {
+        String requestedTarget = StringUtils.trimToNull(dto.getManagedTargetAddress());
+        if (requestedTarget != null && !normalizeManagedTargetAddress(requestedTarget).equalsIgnoreCase(spec.targetAddress())) {
+            throw new IllegalArgumentException("托管落地目标不能在编辑时修改，请删除后重新创建");
+        }
+        if (dto.getManagedPublicPort() != null && dto.getManagedPublicPort() != spec.publicPort()) {
+            throw new IllegalArgumentException("托管公共端口不能在编辑时修改，请删除后重新创建");
+        }
+        String requestedProtocol = StringUtils.lowerCase(StringUtils.defaultIfBlank(dto.getManagedProtocolMode(), spec.protocolMode()), Locale.ROOT);
+        if (!requestedProtocol.equals(spec.protocolMode())) {
+            throw new IllegalArgumentException("托管转发协议不能在编辑时修改，请删除后重新创建");
+        }
+    }
+
+    private List<Long> nodeIdsFromManagedForwards(List<ManagedResourceState> stored, List<Long> requestedForwardIds) {
+        Map<Long, ManagedResourceState> byForward = stored.stream()
+                .collect(Collectors.toMap(ManagedResourceState::forwardId, resource -> resource, (first, ignored) -> first, LinkedHashMap::new));
+        List<Long> result = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        for (Long forwardId : requestedForwardIds) {
+            if (forwardId == null) continue;
+            ManagedResourceState resource = byForward.get(forwardId);
+            if (resource == null) throw new IllegalArgumentException("托管入口只能引用本组自动创建的转发");
+            if (!seen.add(resource.entryNodeId())) throw new IllegalArgumentException("托管入口节点不能重复");
+            result.add(resource.entryNodeId());
+        }
+        return result;
+    }
+
+    private List<Long> normalizeManagedEntryNodeIds(List<Long> rawIds) {
+        List<Long> result = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        if (rawIds == null) return result;
+        for (Long id : rawIds) {
+            if (id == null) continue;
+            if (!seen.add(id)) throw new IllegalArgumentException("托管入口节点不能重复");
+            result.add(id);
+        }
+        return result;
+    }
+
+    private List<Node> loadAndValidateManagedEntryNodes(List<Long> nodeIds, String recordType, Set<Long> requireOnlineNodeIds) {
+        List<Node> nodes = new ArrayList<>();
+        Set<String> addresses = new HashSet<>();
+        for (Long nodeId : nodeIds) {
+            Node node = nodeService.getNodeById(nodeId);
+            if (node == null) throw new IllegalArgumentException("托管入口节点不存在：" + nodeId);
+            if (requireOnlineNodeIds.contains(nodeId) && !WebSocketServer.isNodeOnline(nodeId)) {
+                throw new IllegalArgumentException("托管入口节点离线：" + node.getName());
+            }
+            String host = nodeAddress(node);
+            if (StringUtils.isBlank(host)) throw new IllegalArgumentException("入口节点缺少公网地址：" + node.getName());
+            String address = resolveAddress(host, recordType);
+            if (!addresses.add(address)) throw new IllegalArgumentException("托管入口节点不能使用相同的公网 IP：" + address);
+            nodes.add(node);
+        }
+        return nodes;
+    }
+
+    private Long createManagedResource(Node node, String groupName, String target, int publicPort,
+                                       String portMode, String protocolMode,
+                                       List<ManagedResourceDraft> createdResources) {
+        DirectTunnelResult tunnel = ensureManagedDirectTunnel(node);
+        ManagedResourceDraft draft = new ManagedResourceDraft(
+                tunnel.tunnel().getId(), node.getId(), tunnel.created(), target, publicPort, portMode, protocolMode);
+        createdResources.add(draft);
+
+        ForwardDto forward = new ForwardDto();
+        forward.setName(groupName + " · " + node.getName());
+        forward.setTunnelId(tunnel.tunnel().getId().intValue());
+        forward.setRemoteAddr(target);
+        forward.setInPort(publicPort);
+        forward.setProtocolMode(protocolMode);
+        forward.setRouteBalanceStrategy("round");
+        R result = createManagedForward(node, forward, publicPort, target);
+        if (result.getCode() != 0) {
+            throw new IllegalStateException(result.getMsg());
+        }
+        Long forwardId = extractId(result.getData());
+        if (forwardId == null) {
+            throw new IllegalStateException("节点 " + node.getName() + " 的托管转发已返回成功，但未能读取转发 ID");
+        }
+        draft.forwardId = forwardId;
+        return forwardId;
     }
 
     private R createManagedForward(Node node, ForwardDto forward, int publicPort, String target) {
@@ -1696,6 +1815,37 @@ public class CrossEntryFailoverService {
         return failures;
     }
 
+    private int cleanupRemovedManagedResources(Long groupId, List<ManagedResourceDraft> resources) {
+        int failures = cleanupManagedResources(resources);
+        List<Long> forwardIds = resources.stream()
+                .map(resource -> resource.forwardId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        if (!forwardIds.isEmpty()) {
+            String placeholders = forwardIds.stream().map(ignored -> "?").collect(Collectors.joining(","));
+            List<Object> args = new ArrayList<>();
+            args.add(groupId);
+            args.addAll(forwardIds);
+            try {
+                jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=? AND forward_id IN (" + placeholders + ")",
+                        args.toArray());
+            } catch (DataAccessException e) {
+                failures += forwardIds.size();
+                log.warn("托管入口容灾已移除资源记录清理失败 groupId={} forwards={}: {}",
+                        groupId, forwardIds, e.getMessage());
+            }
+        }
+        return failures;
+    }
+
+    private ManagedResourceDraft toManagedResourceDraft(ManagedResourceState resource) {
+        ManagedResourceDraft draft = new ManagedResourceDraft(
+                resource.tunnelId(), resource.entryNodeId(), resource.createdTunnel(), resource.targetAddress(),
+                resource.publicPort(), resource.portMode(), resource.protocolMode());
+        draft.forwardId = resource.forwardId();
+        return draft;
+    }
+
     private boolean isMissingResource(String message) {
         String value = StringUtils.defaultString(message);
         return value.contains("不存在") || value.contains("not found");
@@ -1754,7 +1904,7 @@ public class CrossEntryFailoverService {
         throw new IllegalArgumentException("入口地址无法解析为 " + recordType + " 记录：" + host);
     }
 
-    private void normalizeAndValidate(CrossEntryFailoverSaveDto dto) {
+    private void normalizeAndValidate(CrossEntryFailoverSaveDto dto, boolean existingManaged) {
         dto.setDomain(dto.getDnsZoneId() == null
                 ? StringUtils.lowerCase(StringUtils.trim(dto.getDomain()), Locale.ROOT)
                 : dnsProviderService.normalizeDomain(dto.getDnsZoneId(), dto.getDomain()));
@@ -1770,7 +1920,9 @@ public class CrossEntryFailoverService {
         }
         dto.setCreationMode(creationMode);
         if ("managed_forward".equals(creationMode)) {
-            dto.setManagedTargetAddress(normalizeManagedTargetAddress(dto.getManagedTargetAddress()));
+            if (StringUtils.isNotBlank(dto.getManagedTargetAddress()) || !existingManaged) {
+                dto.setManagedTargetAddress(normalizeManagedTargetAddress(dto.getManagedTargetAddress()));
+            }
             String portMode = StringUtils.lowerCase(
                     StringUtils.defaultIfBlank(dto.getManagedPortMode(), "auto"), Locale.ROOT);
             if (!Set.of("auto", "custom").contains(portMode)) {
@@ -1789,10 +1941,12 @@ public class CrossEntryFailoverService {
                 throw new IllegalArgumentException("自动端口范围结束端口不能小于起始端口");
             }
             if ("custom".equals(portMode)) {
-                if (dto.getManagedPublicPort() == null) {
+                if (dto.getManagedPublicPort() == null && !existingManaged) {
                     throw new IllegalArgumentException("请填写自定义公共端口");
                 }
-                dto.setManagedPublicPort(clamp(dto.getManagedPublicPort(), 1, 65535));
+                if (dto.getManagedPublicPort() != null) {
+                    dto.setManagedPublicPort(clamp(dto.getManagedPublicPort(), 1, 65535));
+                }
             }
         }
         dto.setTtl(clamp(dto.getTtl(), 60, 86400));
@@ -2370,6 +2524,8 @@ public class CrossEntryFailoverService {
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
                                       Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
     private record DirectTunnelResult(Tunnel tunnel, boolean created) {}
+    private record ManagedResourceState(Long forwardId, Long tunnelId, Long entryNodeId, String targetAddress,
+                                        int publicPort, String portMode, String protocolMode, boolean createdTunnel) {}
     private record ManagedPortAvailability(boolean available, String reason, boolean fatal) {}
     record FaultStatsUpdate(int episodeDelta, int connectDelta, int latencyDelta, int lossDelta, int p95Delta,
                             int jitterDelta, int flapDelta, String type, String reason, Long at) {}
