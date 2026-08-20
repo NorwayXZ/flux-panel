@@ -45,6 +45,8 @@ class CrossEntryFailoverServiceTests {
     void failoverHealthProbesAreRemovedFromDisplayedBusinessConnections() {
         assertEquals(2, CrossEntryFailoverService.businessConnectionDelta(7, 5));
         assertEquals(0, CrossEntryFailoverService.businessConnectionDelta(3, 5));
+        assertEquals(0, CrossEntryFailoverService.consumableProbeConnections(0, 5, false));
+        assertEquals(3, CrossEntryFailoverService.consumableProbeConnections(3, 5, true));
     }
 
     @Test

@@ -1,3 +1,9 @@
+## 2.51.39 Preserve probe deductions across telemetry baseline
+
+- Keeps successful health-probe deductions pending while the first Agent telemetry report establishes its baseline.
+- Prevents probes completed during panel startup from appearing as business connections in a later, delayed Agent report.
+- Applies the same baseline rule to Cross-entry Failover and Source IP routing telemetry; Agent and Connector stay at `2.51.37`.
+
 ## 2.51.38 Business-only failover connection totals
 
 - Excludes Cross-entry Failover's own availability checks, quality probes, and post-switch verification connections from each line's cumulative new-connection total.

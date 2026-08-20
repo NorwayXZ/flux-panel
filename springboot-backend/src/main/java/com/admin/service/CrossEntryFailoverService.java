@@ -191,7 +191,7 @@ public class CrossEntryFailoverService {
                         previous, previousGeneration, reported, generation, baselineReady);
                 if (!counter.accepted()) continue;
                 long pendingProbes = number(state.get("pendingProbeConnections")).longValue();
-                long consumedProbes = baselineReady ? Math.min(counter.delta(), pendingProbes) : pendingProbes;
+                long consumedProbes = consumableProbeConnections(counter.delta(), pendingProbes, baselineReady);
                 long businessDelta = businessConnectionDelta(counter.delta(), consumedProbes);
                 long now = System.currentTimeMillis();
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=1,"
@@ -231,6 +231,11 @@ public class CrossEntryFailoverService {
 
     static long businessConnectionDelta(long rawConnections, long probeConnections) {
         return Math.max(0L, rawConnections - Math.max(0L, probeConnections));
+    }
+
+    static long consumableProbeConnections(long rawConnections, long pendingProbes, boolean baselineReady) {
+        if (!baselineReady) return 0L;
+        return Math.min(Math.max(0L, rawConnections), Math.max(0L, pendingProbes));
     }
 
     public R listGroups() {

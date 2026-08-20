@@ -321,7 +321,8 @@ public class SmartEntryService {
                         : connectionDelta(previousReported, Math.max(0L, reportedTotalConnections), telemetryReady);
                 long pendingProbeConnections = number(state.get("pending_probe_connections"));
                 long consumedProbeConnections = reportedTotalConnections == null ? 0L
-                        : (telemetryReady ? Math.min(rawConnectionDelta, pendingProbeConnections) : pendingProbeConnections);
+                        : CrossEntryFailoverService.consumableProbeConnections(
+                                rawConnectionDelta, pendingProbeConnections, telemetryReady);
                 long connectionDelta = businessConnectionDelta(rawConnectionDelta, consumedProbeConnections);
                 long currentConnections = reportedCurrentConnections == null
                         ? number(state.get("current_connections")) : Math.max(0L, reportedCurrentConnections);
