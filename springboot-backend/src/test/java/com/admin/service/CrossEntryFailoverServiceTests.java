@@ -11,10 +11,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CrossEntryFailoverServiceTests {
     @Test
-    void connectionCounterEstablishesBaselineAndSurvivesAgentRestart() {
-        assertEquals(0, CrossEntryFailoverService.connectionDelta(0, 120, false));
-        assertEquals(8, CrossEntryFailoverService.connectionDelta(120, 128, true));
-        assertEquals(3, CrossEntryFailoverService.connectionDelta(128, 3, true));
+    void connectionCounterEstablishesBaselineAndCountsWithinOneServiceInstance() {
+        var baseline = CrossEntryFailoverService.connectionCounterUpdate(0, 0, 120, 1000, false);
+        var next = CrossEntryFailoverService.connectionCounterUpdate(120, 1000, 128, 1000, true);
+
+        assertEquals(0, baseline.delta());
+        assertEquals(120, baseline.baseline());
+        assertEquals(8, next.delta());
+        assertTrue(next.accepted());
+    }
+
+    @Test
+    void newerServiceInstanceRebasesAndRejectsLateReportsFromOldInstance() {
+        var restarted = CrossEntryFailoverService.connectionCounterUpdate(128, 1000, 3, 2000, true);
+        var stale = CrossEntryFailoverService.connectionCounterUpdate(3, 2000, 129, 1000, true);
+
+        assertEquals(0, restarted.delta());
+        assertEquals(3, restarted.baseline());
+        assertEquals(2000, restarted.generation());
+        assertEquals(false, stale.accepted());
+    }
+
+    @Test
+    void legacyAgentCounterRegressionDoesNotDuplicateItsHistory() {
+        var regression = CrossEntryFailoverService.connectionCounterUpdate(344_669, 0, 344_665, 0, true);
+
+        assertEquals(0, regression.delta());
+        assertEquals(344_669, regression.baseline());
+        assertTrue(regression.accepted());
     }
 
     @Test

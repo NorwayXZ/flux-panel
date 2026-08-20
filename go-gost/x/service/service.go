@@ -392,6 +392,7 @@ func (s *defaultService) observeStats(ctx context.Context) {
 						C: currentConns,
 						E: st.Get(stats.KindTotalErrs),
 						A: time.Now().UnixMilli(),
+						G: s.status.CreateTime().UnixNano(),
 						S: sources,
 						H: hosts,
 					})
@@ -426,6 +427,7 @@ func (s *defaultService) observeStats(ctx context.Context) {
 						C: currentConns,
 						E: totalErrs,
 						A: time.Now().UnixMilli(),
+						G: s.status.CreateTime().UnixNano(),
 						S: sources,
 						H: hosts,
 					}

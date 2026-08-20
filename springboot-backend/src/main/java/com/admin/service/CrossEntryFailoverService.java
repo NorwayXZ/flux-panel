@@ -166,7 +166,7 @@ public class CrossEntryFailoverService {
     }
 
     public void recordActivity(Long forwardId, Long reportingNodeId, Long reportedTotalConnections,
-                               Long reportedCurrentConnections) {
+                               Long reportedCurrentConnections, Long reportedGeneration) {
         if (forwardId == null || reportingNodeId == null
                 || reportedTotalConnections == null || reportedCurrentConnections == null) return;
         String routeKey = forwardId + ":" + reportingNodeId;
@@ -176,7 +176,8 @@ public class CrossEntryFailoverService {
         for (Long groupId : matches) {
             synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
                 List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                        "SELECT id,telemetry_ready AS telemetryReady,reported_total_connections AS reportedTotalConnections "
+                        "SELECT id,telemetry_ready AS telemetryReady,reported_total_connections AS reportedTotalConnections,"
+                                + "telemetry_generation AS telemetryGeneration "
                                 + "FROM cross_entry_failover_member WHERE group_id=? AND forward_id=? AND entry_node_id=? LIMIT 1",
                         groupId, forwardId, reportingNodeId);
                 if (rows.isEmpty()) continue;
@@ -184,20 +185,44 @@ public class CrossEntryFailoverService {
                 boolean baselineReady = bool(state.get("telemetryReady"));
                 long previous = number(state.get("reportedTotalConnections")).longValue();
                 long reported = Math.max(0L, reportedTotalConnections);
-                long delta = connectionDelta(previous, reported, baselineReady);
+                long previousGeneration = number(state.get("telemetryGeneration")).longValue();
+                long generation = Math.max(0L, reportedGeneration == null ? 0L : reportedGeneration);
+                ConnectionCounterUpdate counter = connectionCounterUpdate(
+                        previous, previousGeneration, reported, generation, baselineReady);
+                if (!counter.accepted()) continue;
                 long now = System.currentTimeMillis();
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=1,"
                                 + "total_connections=total_connections+?,current_connections=?,reported_total_connections=?,"
-                                + "last_telemetry_at=?,updated_time=? WHERE id=?",
-                        delta, Math.max(0L, reportedCurrentConnections), reported,
+                                + "telemetry_generation=?,last_telemetry_at=?,updated_time=? WHERE id=?",
+                        counter.delta(), Math.max(0L, reportedCurrentConnections), counter.baseline(), counter.generation(),
                         now, now, state.get("id"));
             }
         }
     }
 
-    static long connectionDelta(long previous, long reported, boolean baselineReady) {
-        if (!baselineReady) return 0L;
-        return reported >= previous ? reported - previous : reported;
+    static ConnectionCounterUpdate connectionCounterUpdate(long previous, long previousGeneration,
+                                                            long reported, long generation,
+                                                            boolean baselineReady) {
+        if (!baselineReady) return new ConnectionCounterUpdate(0L, reported, generation, true);
+        if (generation > 0L) {
+            if (previousGeneration == 0L || generation > previousGeneration) {
+                return new ConnectionCounterUpdate(0L, reported, generation, true);
+            }
+            if (generation < previousGeneration || reported < previous) {
+                return new ConnectionCounterUpdate(0L, previous, previousGeneration, false);
+            }
+            return new ConnectionCounterUpdate(reported - previous, reported, generation, true);
+        }
+        if (previousGeneration > 0L) {
+            return new ConnectionCounterUpdate(0L, previous, previousGeneration, false);
+        }
+        if (reported < previous) {
+            return new ConnectionCounterUpdate(0L, previous, 0L, true);
+        }
+        return new ConnectionCounterUpdate(reported - previous, reported, 0L, true);
+    }
+
+    record ConnectionCounterUpdate(long delta, long baseline, long generation, boolean accepted) {
     }
 
     public R listGroups() {
@@ -333,7 +358,8 @@ public class CrossEntryFailoverService {
                                 + "flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,last_fault_type AS lastFaultType,"
                                 + "last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt,"
                                 + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
-                                + "reported_total_connections AS reportedTotalConnections,last_telemetry_at AS lastTelemetryAt "
+                                + "reported_total_connections AS reportedTotalConnections,telemetry_generation AS telemetryGeneration,"
+                                + "last_telemetry_at AS lastTelemetryAt "
                                 + "FROM cross_entry_failover_member WHERE group_id=?", id)
                         .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
@@ -472,7 +498,8 @@ public class CrossEntryFailoverService {
                                     + "switch_rejected_until=?,switch_rejected_reason=?,switch_reject_count=?,"
                                     + "quality_last_error=?,quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
                                     + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=?,"
-                                    + "telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,last_telemetry_at=? WHERE id=?",
+                                    + "telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,"
+                                    + "telemetry_generation=?,last_telemetry_at=? WHERE id=?",
                             oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
                             oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
                             oldFaultStats.get("lastHealthyAt"), oldFaultStats.get("lastFailureAt"), oldFaultStats.get("qualityLatencyMs"),
@@ -489,7 +516,8 @@ public class CrossEntryFailoverService {
                             oldFaultStats.get("jitterFaultCount"), oldFaultStats.get("flapFaultCount"), oldFaultStats.get("switchTriggerCount"),
                             oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"),
                             oldFaultStats.get("telemetryReady"), oldFaultStats.get("totalConnections"), oldFaultStats.get("currentConnections"),
-                            oldFaultStats.get("reportedTotalConnections"), oldFaultStats.get("lastTelemetryAt"), memberId);
+                            oldFaultStats.get("reportedTotalConnections"), oldFaultStats.get("telemetryGeneration"),
+                            oldFaultStats.get("lastTelemetryAt"), memberId);
                 }
                 if (priority == 0) primaryMemberId = memberId;
                 if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
@@ -2354,7 +2382,8 @@ public class CrossEntryFailoverService {
                 + "last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt,"
                 + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
-                + "reported_total_connections AS reportedTotalConnections,last_telemetry_at AS lastTelemetryAt "
+                + "reported_total_connections AS reportedTotalConnections,telemetry_generation AS telemetryGeneration,"
+                + "last_telemetry_at AS lastTelemetryAt "
                 + "FROM cross_entry_failover_member WHERE group_id=? ORDER BY priority", groupId);
         long liveAfter = System.currentTimeMillis() - TELEMETRY_LIVE_WINDOW_MS;
         for (Map<String, Object> member : members) {

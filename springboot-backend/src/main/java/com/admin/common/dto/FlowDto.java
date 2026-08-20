@@ -28,6 +28,9 @@ public class FlowDto {
     // Agent 采样时间，毫秒时间戳
     private Long a;
 
+    // GOST 服务实例启动时间，用于忽略配置热更新后旧实例的迟到上报
+    private Long g;
+
     // 最近来源地址与域名的有界摘要
     private List<TelemetrySample> s;
     private List<TelemetrySample> h;

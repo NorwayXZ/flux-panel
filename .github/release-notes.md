@@ -1,3 +1,10 @@
+## 2.51.37 Accurate failover connection telemetry
+
+- Fixes inflated cumulative connection totals when GOST configuration refreshes leave old and new service instances reporting the same forward briefly.
+- Adds a service-instance generation to Agent telemetry. The panel rebases on a newer instance and ignores late reports from an older instance; legacy Agents conservatively ignore counter regressions instead of recounting their full history.
+- Resets only the inaccurate connection baseline and cumulative values introduced in `2.51.36` during the one-time schema upgrade. Failover order, DNS, forwards, tunnels, quality history, and fault counters are unchanged.
+- Updates Panel, Agent, and Connector to `2.51.37`; existing nodes can be upgraded in one batch from the Update page.
+
 ## 2.51.36 Cross-entry live connection telemetry
 
 - Shows current connections, cumulative new connections, TCP latency, and telemetry freshness for every line in Cross-entry Failover.

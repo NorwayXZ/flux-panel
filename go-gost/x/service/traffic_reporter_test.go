@@ -14,6 +14,7 @@ func TestTrafficReportIncludesConnectionCounters(t *testing.T) {
 		C: 2,
 		E: 3,
 		A: 1700000000000,
+		G: 1700000000000000000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -28,5 +29,8 @@ func TestTrafficReportIncludesConnectionCounters(t *testing.T) {
 	}
 	if report["e"] != float64(3) || report["a"] != float64(1700000000000) {
 		t.Fatalf("telemetry counters missing from report: %s", payload)
+	}
+	if report["g"] != float64(1700000000000000000) {
+		t.Fatalf("service generation missing from report: %s", payload)
 	}
 }

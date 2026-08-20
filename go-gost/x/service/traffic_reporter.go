@@ -29,6 +29,7 @@ type TrafficReportItem struct {
 	C uint64             `json:"c"`           // 当前连接数（current缩写）
 	E uint64             `json:"e,omitempty"` // 累计失败数（errors缩写）
 	A int64              `json:"a,omitempty"` // Agent 采样时间（at缩写）
+	G int64              `json:"g,omitempty"` // 服务实例启动时间（generation缩写）
 	S []telemetry.Sample `json:"s,omitempty"` // 有界来源地址摘要
 	H []telemetry.Sample `json:"h,omitempty"` // 有界域名摘要
 }
