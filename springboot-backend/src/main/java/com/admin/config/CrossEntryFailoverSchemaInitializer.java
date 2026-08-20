@@ -144,9 +144,18 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,forward_id bigint NOT NULL,"
                     + "tunnel_id bigint NOT NULL,entry_node_id bigint NOT NULL,target_address varchar(255) NOT NULL,"
                     + "public_port int NOT NULL,port_mode varchar(16) NOT NULL DEFAULT 'auto',protocol_mode varchar(16) NOT NULL DEFAULT 'tcp',"
-                    + "created_tunnel tinyint NOT NULL DEFAULT 0,created_time bigint NOT NULL,"
+                    + "created_tunnel tinyint NOT NULL DEFAULT 0,created_time bigint NOT NULL,cleanup_state varchar(24) NOT NULL DEFAULT 'active',"
+                    + "cleanup_attempts int NOT NULL DEFAULT 0,cleanup_last_error varchar(500) DEFAULT NULL,cleanup_last_at bigint DEFAULT NULL,"
                     + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_managed_forward (group_id,forward_id),"
                     + "KEY idx_cross_entry_managed_group (group_id),KEY idx_cross_entry_managed_forward_id (forward_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_managed_cleanup ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint DEFAULT NULL,forward_id bigint DEFAULT NULL,"
+                    + "tunnel_id bigint DEFAULT NULL,entry_node_id bigint DEFAULT NULL,target_address varchar(255) DEFAULT NULL,"
+                    + "public_port int DEFAULT NULL,port_mode varchar(16) NOT NULL DEFAULT 'auto',protocol_mode varchar(16) NOT NULL DEFAULT 'tcp',"
+                    + "created_tunnel tinyint NOT NULL DEFAULT 0,reason varchar(255) DEFAULT NULL,attempts int NOT NULL DEFAULT 0,"
+                    + "last_error varchar(500) DEFAULT NULL,last_attempt_at bigint DEFAULT NULL,created_time bigint NOT NULL,"
+                    + "PRIMARY KEY (id),KEY idx_cross_entry_cleanup_forward (forward_id),KEY idx_cross_entry_cleanup_attempt (last_attempt_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_failover_schedule ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,days_mask int NOT NULL,"
@@ -159,6 +168,14 @@ public class CrossEntryFailoverSchemaInitializer {
                     "varchar(16) NOT NULL DEFAULT 'auto' AFTER public_port");
             ensureColumn("cross_entry_managed_resource", "protocol_mode",
                     "varchar(16) NOT NULL DEFAULT 'tcp' AFTER port_mode");
+            ensureColumn("cross_entry_managed_resource", "cleanup_state",
+                    "varchar(24) NOT NULL DEFAULT 'active' AFTER created_time");
+            ensureColumn("cross_entry_managed_resource", "cleanup_attempts",
+                    "int NOT NULL DEFAULT 0 AFTER cleanup_state");
+            ensureColumn("cross_entry_managed_resource", "cleanup_last_error",
+                    "varchar(500) DEFAULT NULL AFTER cleanup_attempts");
+            ensureColumn("cross_entry_managed_resource", "cleanup_last_at",
+                    "bigint DEFAULT NULL AFTER cleanup_last_error");
             normalizeFailbackToleranceDefaults();
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);

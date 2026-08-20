@@ -87,9 +87,11 @@ public class CrossEntryFailoverService {
     private final TunnelService tunnelService;
     private final NodeService nodeService;
     private final PortLedgerService portLedgerService;
+    private final CrossEntryManagedCleanupService managedCleanupService;
     private final ExecutorService probeExecutor = boundedExecutor(8, 64, "cross-entry-probe");
     private final ExecutorService groupExecutor = boundedExecutor(4, 100, "cross-entry-group");
     private final AtomicBoolean checking = new AtomicBoolean(false);
+    private final AtomicBoolean managedCleanupRunning = new AtomicBoolean(false);
     private final Map<Long, Object> groupLocks = new ConcurrentHashMap<>();
     private final Set<Long> inFlightGroups = ConcurrentHashMap.newKeySet();
 
@@ -103,7 +105,8 @@ public class CrossEntryFailoverService {
                                      ForwardService forwardService,
                                      TunnelService tunnelService,
                                      NodeService nodeService,
-                                     PortLedgerService portLedgerService) {
+                                     PortLedgerService portLedgerService,
+                                     CrossEntryManagedCleanupService managedCleanupService) {
         this.jdbcTemplate = jdbcTemplate;
         this.restTemplate = restTemplate;
         this.telegramNotificationService = telegramNotificationService;
@@ -113,6 +116,7 @@ public class CrossEntryFailoverService {
         this.tunnelService = tunnelService;
         this.nodeService = nodeService;
         this.portLedgerService = portLedgerService;
+        this.managedCleanupService = managedCleanupService;
     }
 
     private static final class ManagedResourceDraft {
@@ -189,12 +193,12 @@ public class CrossEntryFailoverService {
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
-                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id) "
+                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active') "
                         + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
-                        + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedTargetAddress,"
-                        + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedPublicPort,"
-                        + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedPortMode,"
-                        + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id LIMIT 1) AS managedProtocolMode,"
+                        + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active' LIMIT 1) AS managedTargetAddress,"
+                        + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active' LIMIT 1) AS managedPublicPort,"
+                        + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active' LIMIT 1) AS managedPortMode,"
+                        + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active' LIMIT 1) AS managedProtocolMode,"
                         + "CASE WHEN g.api_token IS NULL OR g.api_token='' THEN 0 ELSE 1 END AS apiTokenConfigured "
                         + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
@@ -521,6 +525,19 @@ public class CrossEntryFailoverService {
                                 String stage,
                                 RuntimeException error) {
         int cleanupFailed = cleanupManagedResources(createdManagedResources);
+        if (cleanupFailed > 0) {
+            try {
+                managedCleanupService.enqueue(createdManagedResources.stream()
+                                .map(resource -> new CrossEntryManagedCleanupService.Item(
+                                        dto.getId(), resource.forwardId, resource.tunnelId, resource.entryNodeId,
+                                        resource.targetAddress, resource.publicPort, resource.portMode,
+                                        resource.protocolMode, resource.createdTunnel))
+                                .collect(Collectors.toList()),
+                        "保存失败后的托管资源清理重试");
+            } catch (RuntimeException enqueueError) {
+                log.error("托管资源清理任务入队失败 groupId={}", dto.getId(), enqueueError);
+            }
+        }
         if (dto.getId() == null && isManagedCreate(dto)) {
             if (createdGroupId != null) {
                 jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", createdGroupId);
@@ -601,7 +618,11 @@ public class CrossEntryFailoverService {
                         + "FROM cross_entry_managed_resource WHERE group_id=?", id);
         Map<String, Object> group = loadGroup(id);
         dnsProviderService.clearCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")), id);
-        dnsProviderService.releaseRecord(id);
+        if (nullableLong(group.get("dnsZoneId")) != null) {
+            dnsProviderService.deleteCrossEntryManagedRecords(id);
+        } else {
+            deleteLegacyCloudflareRecord(group);
+        }
         jdbcTemplate.update("DELETE FROM cross_entry_failover_event WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_schedule WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
@@ -612,6 +633,24 @@ public class CrossEntryFailoverService {
                     "message", "容灾组已删除，但有 " + cleanupFailed + " 个托管资源清理失败，节点恢复后请在转发管理中检查"));
         }
         return R.ok();
+    }
+
+    private void deleteLegacyCloudflareRecord(Map<String, Object> group) {
+        String recordId = StringUtils.trimToNull(Objects.toString(group.get("recordId"), null));
+        String zoneId = StringUtils.trimToNull(Objects.toString(group.get("zoneId"), null));
+        if (recordId == null || zoneId == null) return;
+        String token = crypto().decryptString(Objects.toString(group.get("apiToken"), ""));
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    CF_API + "/zones/" + zoneId + "/dns_records/" + recordId,
+                    HttpMethod.DELETE, new HttpEntity<>(cloudflareHeaders(token)), String.class);
+            JSONObject json = JSON.parseObject(response.getBody());
+            if (json == null || !json.getBooleanValue("success")) {
+                throw new IllegalStateException(cloudflareError(json));
+            }
+        } catch (RestClientException e) {
+            throw new IllegalStateException("删除旧版入口容灾 DNS 记录失败，请确认 Cloudflare Token 和网络");
+        }
     }
 
     public R checkNow(Long id) {
@@ -660,6 +699,46 @@ public class CrossEntryFailoverService {
             log.debug("Cross-entry failover scheduler waiting for schema: {}", e.getMessage());
         } finally {
             checking.set(false);
+        }
+    }
+
+    @Scheduled(initialDelay = 30000, fixedDelay = 30000)
+    public void scheduledManagedResourceCleanup() {
+        if (!managedCleanupRunning.compareAndSet(false, true)) return;
+        try {
+            List<Map<String, Object>> pending = jdbcTemplate.queryForList(
+                    "SELECT mr.group_id AS groupId,mr.forward_id AS forwardId,mr.tunnel_id AS tunnelId,"
+                            + "mr.entry_node_id AS entryNodeId,mr.target_address AS targetAddress,mr.public_port AS publicPort,"
+                            + "mr.port_mode AS portMode,mr.protocol_mode AS protocolMode,mr.created_tunnel AS createdTunnel "
+                            + "FROM cross_entry_managed_resource mr "
+                            + "WHERE mr.cleanup_state='cleanup_pending' "
+                            + "OR NOT EXISTS (SELECT 1 FROM cross_entry_failover_group g WHERE g.id=mr.group_id) "
+                            + "OR NOT EXISTS (SELECT 1 FROM cross_entry_failover_member m WHERE m.group_id=mr.group_id AND m.forward_id=mr.forward_id) "
+                            + "OR NOT EXISTS (SELECT 1 FROM forward f WHERE f.id=mr.forward_id) "
+                            + "ORDER BY COALESCE(mr.cleanup_last_at,0),mr.id LIMIT 20");
+            for (Map<String, Object> row : pending) {
+                ManagedResourceDraft resource = managedResourceDraft(row);
+                cleanupManagedResourceRow(number(row.get("groupId")).longValue(), resource,
+                        "检测到托管资源已失去容灾成员归属");
+            }
+
+            for (Map<String, Object> row : managedCleanupService.listPending(20)) {
+                long cleanupId = number(row.get("id")).longValue();
+                managedCleanupService.markAttempt(cleanupId);
+                ManagedResourceDraft resource = managedResourceDraft(row);
+                int failures = cleanupManagedResources(List.of(resource));
+                if (failures == 0) {
+                    managedCleanupService.markDone(cleanupId);
+                } else {
+                    managedCleanupService.markFailed(cleanupId, "托管转发或隧道仍未清理成功");
+                }
+            }
+        } catch (DataAccessException e) {
+            log.debug("Managed cross-entry cleanup waiting for schema: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("Managed cross-entry cleanup failed: {}", e.getMessage());
+        } finally {
+            managedCleanupRunning.set(false);
         }
     }
 
@@ -1444,7 +1523,7 @@ public class CrossEntryFailoverService {
                                 + "mr.port_mode AS portMode,mr.protocol_mode AS protocolMode,mr.created_tunnel AS createdTunnel,m.priority "
                                 + "FROM cross_entry_managed_resource mr "
                                 + "LEFT JOIN cross_entry_failover_member m ON m.group_id=mr.group_id AND m.forward_id=mr.forward_id "
-                                + "WHERE mr.group_id=? ORDER BY COALESCE(m.priority,999),mr.id", groupId)
+                        + "WHERE mr.group_id=? AND mr.cleanup_state='active' ORDER BY COALESCE(m.priority,999),mr.id", groupId)
                 .stream()
                 .map(row -> new ManagedResourceState(
                         number(row.get("forwardId")).longValue(),
@@ -1800,42 +1879,53 @@ public class CrossEntryFailoverService {
     }
 
     private int cleanupPersistedManagedResources(Long groupId, List<Map<String, Object>> rows) {
-        List<ManagedResourceDraft> resources = rows.stream()
-                .map(row -> {
-                    ManagedResourceDraft draft = new ManagedResourceDraft(
-                            nullableLong(row.get("tunnelId")), null, bool(row.get("createdTunnel")), null, 0,
-                            Objects.toString(row.get("portMode"), "auto"),
-                            Objects.toString(row.get("protocolMode"), "tcp"));
-                    draft.forwardId = nullableLong(row.get("forwardId"));
-                    return draft;
-                })
-                .collect(Collectors.toList());
-        int failures = cleanupManagedResources(resources);
-        jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=?", groupId);
+        int failures = 0;
+        for (Map<String, Object> row : rows) {
+            ManagedResourceDraft resource = managedResourceDraft(row);
+            failures += cleanupManagedResourceRow(groupId, resource, "容灾组已删除");
+        }
         return failures;
     }
 
     private int cleanupRemovedManagedResources(Long groupId, List<ManagedResourceDraft> resources) {
-        int failures = cleanupManagedResources(resources);
-        List<Long> forwardIds = resources.stream()
-                .map(resource -> resource.forwardId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-        if (!forwardIds.isEmpty()) {
-            String placeholders = forwardIds.stream().map(ignored -> "?").collect(Collectors.joining(","));
-            List<Object> args = new ArrayList<>();
-            args.add(groupId);
-            args.addAll(forwardIds);
-            try {
-                jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=? AND forward_id IN (" + placeholders + ")",
-                        args.toArray());
-            } catch (DataAccessException e) {
-                failures += forwardIds.size();
-                log.warn("托管入口容灾已移除资源记录清理失败 groupId={} forwards={}: {}",
-                        groupId, forwardIds, e.getMessage());
-            }
+        int failures = 0;
+        for (ManagedResourceDraft resource : resources) {
+            failures += cleanupManagedResourceRow(groupId, resource, "入口已从容灾组移除");
         }
         return failures;
+    }
+
+    private ManagedResourceDraft managedResourceDraft(Map<String, Object> row) {
+        ManagedResourceDraft draft = new ManagedResourceDraft(
+                nullableLong(row.get("tunnelId")), nullableLong(row.get("entryNodeId")),
+                bool(row.get("createdTunnel")), Objects.toString(row.get("targetAddress"), null),
+                row.get("publicPort") == null ? 0 : number(row.get("publicPort")).intValue(),
+                Objects.toString(row.get("portMode"), "auto"),
+                Objects.toString(row.get("protocolMode"), "tcp"));
+        draft.forwardId = nullableLong(row.get("forwardId"));
+        return draft;
+    }
+
+    private int cleanupManagedResourceRow(Long groupId, ManagedResourceDraft resource, String reason) {
+        if (resource.forwardId == null && !resource.createdTunnel) return 0;
+        markManagedResourcePending(groupId, resource, reason);
+        int failures = cleanupManagedResources(List.of(resource));
+        if (failures == 0) {
+            jdbcTemplate.update("DELETE FROM cross_entry_managed_resource WHERE group_id=? AND forward_id=?",
+                    groupId, resource.forwardId);
+            return 0;
+        }
+        jdbcTemplate.update("UPDATE cross_entry_managed_resource SET cleanup_state='cleanup_pending',"
+                        + "cleanup_last_error=?,cleanup_last_at=? WHERE group_id=? AND forward_id=?",
+                "托管转发或隧道清理失败，等待自动重试", System.currentTimeMillis(), groupId, resource.forwardId);
+        return 1;
+    }
+
+    private void markManagedResourcePending(Long groupId, ManagedResourceDraft resource, String reason) {
+        jdbcTemplate.update("UPDATE cross_entry_managed_resource SET cleanup_state='cleanup_pending',"
+                        + "cleanup_attempts=cleanup_attempts+1,cleanup_last_error=?,cleanup_last_at=? "
+                        + "WHERE group_id=? AND forward_id=?",
+                reason, System.currentTimeMillis(), groupId, resource.forwardId);
     }
 
     private ManagedResourceDraft toManagedResourceDraft(ManagedResourceState resource) {
@@ -2189,12 +2279,12 @@ public class CrossEntryFailoverService {
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,"
-                + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id) "
+                + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active') "
                 + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
-                + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedTargetAddress,"
-                + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedPublicPort,"
-                + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedPortMode,"
-                + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id LIMIT 1) AS managedProtocolMode "
+                + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedTargetAddress,"
+                + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedPublicPort,"
+                + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedPortMode,"
+                + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedProtocolMode "
                 + "FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);

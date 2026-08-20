@@ -1,3 +1,11 @@
+## 2.51.35 Managed cross-entry lifecycle safety
+
+- Allows fixed-target Cross-entry Failover groups to add, remove, and reorder entry nodes without changing the fixed landing target or shared public port.
+- Retains existing managed forwards and their failure/quality statistics when an entry stays in the group; new entries are port-checked before any managed resource is created.
+- Deletes only DNS records, forwards, and tunnels owned by the Cross-entry group. User-created forwards and tunnels are never removed by group deletion.
+- Records failed forward/tunnel cleanup in a durable retry queue so an offline Agent does not leave an untracked managed resource forever; the scheduler retries after the node returns.
+- Failed saves keep the original database configuration and report the failing stage and field-level reason. Panel-only release; Agent and Connector binaries remain `2.51.13`.
+
 ## 2.51.34 Docker application center layout
 
 - Prevents the Docker node column from stretching the deployed-application column to the height of a long node list.

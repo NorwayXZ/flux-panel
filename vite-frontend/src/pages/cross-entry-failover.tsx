@@ -1651,10 +1651,7 @@ export default function CrossEntryFailoverPage() {
     setForm((current) => {
       const target = index + direction;
 
-      if (
-        target < 0 ||
-        target >= current.managedEntryNodeIds.length
-      ) {
+      if (target < 0 || target >= current.managedEntryNodeIds.length) {
         return current;
       }
       const managedEntryNodeIds = [...current.managedEntryNodeIds];
@@ -1850,13 +1847,19 @@ export default function CrossEntryFailoverPage() {
         duration: 9000,
       });
     }
-    const successData = response.data as { message?: string } | undefined;
-
-    toast.success(
+    const successData = response.data as
+      { message?: string; cleanupFailed?: number } | undefined;
+    const successMessage =
       successData?.message ||
-        (form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口"),
-      { duration: successData?.message ? 9000 : 4000 },
-    );
+      (form.id ? "容灾组已更新" : "容灾组已创建，DNS 已指向主入口");
+
+    if (successData?.cleanupFailed) {
+      toast.error(successMessage, { duration: 9000 });
+    } else {
+      toast.success(successMessage, {
+        duration: successData?.message ? 9000 : 4000,
+      });
+    }
     setFormOpen(false);
     void loadData();
   };
@@ -1875,14 +1878,23 @@ export default function CrossEntryFailoverPage() {
   const remove = async (group: CrossEntryGroup) => {
     const message =
       group.creationMode === "managed_forward"
-        ? `确认删除“${group.name}”吗？这会同时删除面板自动创建的托管转发；如果入口节点离线，可能需要在转发管理中补充清理。`
-        : `确认删除“${group.name}”吗？现有转发不会被删除。`;
+        ? `确认删除“${group.name}”吗？这会删除本组托管的 DNS 记录、自动创建的转发和本组新建的隧道；用户手工创建的转发和隧道不会被删除。`
+        : `确认删除“${group.name}”吗？本组托管的 DNS 记录会删除，现有手工转发和隧道不会被删除。`;
 
     if (!window.confirm(message)) return;
     const response = await deleteCrossEntryGroup(group.id);
 
     if (response.code !== 0) return toast.error(response.msg || "删除失败");
-    toast.success("容灾组已删除");
+    const result = response.data as
+      { message?: string; cleanupFailed?: number } | undefined;
+
+    if (result?.cleanupFailed) {
+      toast.error(result.message || "容灾组已删除，但仍有托管资源待清理", {
+        duration: 9000,
+      });
+    } else {
+      toast.success("容灾组已删除");
+    }
     void loadData();
   };
 
@@ -2909,9 +2921,7 @@ export default function CrossEntryFailoverPage() {
                             <Button
                               isIconOnly
                               aria-label="移除入口节点"
-                              isDisabled={
-                                form.managedEntryNodeIds.length <= 2
-                              }
+                              isDisabled={form.managedEntryNodeIds.length <= 2}
                               size="sm"
                               title="移除"
                               variant="light"

@@ -373,6 +373,20 @@ public class DnsProviderService {
                 System.currentTimeMillis(), ownerId);
     }
 
+    /** Deletes the primary DNS records owned by a cross-entry group. */
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteCrossEntryManagedRecords(Long ownerId) {
+        if (ownerId == null) return;
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,provider_record_id AS providerRecordId,zone_id AS zoneId FROM dns_managed_record "
+                        + "WHERE owner_type='cross_entry' AND owner_id=?", ownerId);
+        for (Map<String, Object> row : rows) {
+            ZoneAccess zone = loadZoneAccess(number(row.get("zoneId")).longValue());
+            deleteRecord(zone, Objects.toString(row.get("providerRecordId")));
+            jdbcTemplate.update("DELETE FROM dns_managed_record WHERE id=?", row.get("id"));
+        }
+    }
+
     /**
      * Keeps one managed record as the stable anchor and creates/removes the extra
      * Cloudflare records required by an active-active entry group. The anchor is
