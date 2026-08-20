@@ -11,6 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CrossEntryFailoverServiceTests {
     @Test
+    void connectionCounterEstablishesBaselineAndSurvivesAgentRestart() {
+        assertEquals(0, CrossEntryFailoverService.connectionDelta(0, 120, false));
+        assertEquals(8, CrossEntryFailoverService.connectionDelta(120, 128, true));
+        assertEquals(3, CrossEntryFailoverService.connectionDelta(128, 3, true));
+    }
+
+    @Test
     void roundedMetricTreatsMissingOrInvalidAgentMetricsAsAbsent() {
         JSONObject data = new JSONObject();
 

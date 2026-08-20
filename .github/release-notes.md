@@ -1,3 +1,10 @@
+## 2.51.36 Cross-entry live connection telemetry
+
+- Shows current connections, cumulative new connections, TCP latency, and telemetry freshness for every line in Cross-entry Failover.
+- Reuses the existing five-second Agent service telemetry and only counts the actual entry service, so no extra Agent request or duplicate landing-hop count is introduced.
+- Establishes a baseline on the first report, preserves cumulative counts across Agent restarts and failover-group edits, and reports stale current connections as zero after 30 seconds without telemetry.
+- Adds additive database columns and an indexed forward/node lookup. Existing failover rules, DNS, forwards, tunnels, fault statistics, and Agent binaries remain unchanged. Agent and Connector stay at `2.51.13`.
+
 ## 2.51.35 Managed cross-entry lifecycle safety
 
 - Allows fixed-target Cross-entry Failover groups to add, remove, and reorder entry nodes without changing the fixed landing target or shared public port.

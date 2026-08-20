@@ -74,6 +74,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class CrossEntryFailoverService {
+    private static final long TELEMETRY_LIVE_WINDOW_MS = 30_000L;
     private static final String CF_API = "https://api.cloudflare.com/client/v4";
     private static final int MAX_GROUPS_PER_TICK = 50;
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
@@ -94,6 +95,7 @@ public class CrossEntryFailoverService {
     private final AtomicBoolean managedCleanupRunning = new AtomicBoolean(false);
     private final Map<Long, Object> groupLocks = new ConcurrentHashMap<>();
     private final Set<Long> inFlightGroups = ConcurrentHashMap.newKeySet();
+    private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
 
     @Value("${jwt-secret}")
     private String encryptionSecret;
@@ -161,6 +163,41 @@ public class CrossEntryFailoverService {
                         + "FROM internal_connector WHERE status=1 ORDER BY last_seen DESC,name,id"));
         result.put("minimumRemoteVersion", MIN_REMOTE_QUALITY_VERSION);
         return R.ok(result);
+    }
+
+    public void recordActivity(Long forwardId, Long reportingNodeId, Long reportedTotalConnections,
+                               Long reportedCurrentConnections) {
+        if (forwardId == null || reportingNodeId == null
+                || reportedTotalConnections == null || reportedCurrentConnections == null) return;
+        String routeKey = forwardId + ":" + reportingNodeId;
+        List<Long> matches = activityGroups.computeIfAbsent(routeKey, ignored -> List.copyOf(jdbcTemplate.queryForList(
+                "SELECT DISTINCT group_id FROM cross_entry_failover_member WHERE forward_id=? AND entry_node_id=?",
+                Long.class, forwardId, reportingNodeId)));
+        for (Long groupId : matches) {
+            synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
+                List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        "SELECT id,telemetry_ready AS telemetryReady,reported_total_connections AS reportedTotalConnections "
+                                + "FROM cross_entry_failover_member WHERE group_id=? AND forward_id=? AND entry_node_id=? LIMIT 1",
+                        groupId, forwardId, reportingNodeId);
+                if (rows.isEmpty()) continue;
+                Map<String, Object> state = rows.get(0);
+                boolean baselineReady = bool(state.get("telemetryReady"));
+                long previous = number(state.get("reportedTotalConnections")).longValue();
+                long reported = Math.max(0L, reportedTotalConnections);
+                long delta = connectionDelta(previous, reported, baselineReady);
+                long now = System.currentTimeMillis();
+                jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=1,"
+                                + "total_connections=total_connections+?,current_connections=?,reported_total_connections=?,"
+                                + "last_telemetry_at=?,updated_time=? WHERE id=?",
+                        delta, Math.max(0L, reportedCurrentConnections), reported,
+                        now, now, state.get("id"));
+            }
+        }
+    }
+
+    static long connectionDelta(long previous, long reported, boolean baselineReady) {
+        if (!baselineReady) return 0L;
+        return reported >= previous ? reported - previous : reported;
     }
 
     public R listGroups() {
@@ -294,7 +331,9 @@ public class CrossEntryFailoverService {
                                 + "fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,latency_fault_count AS latencyFaultCount,"
                                 + "loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,jitter_fault_count AS jitterFaultCount,"
                                 + "flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,last_fault_type AS lastFaultType,"
-                                + "last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt "
+                                + "last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt,"
+                                + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
+                                + "reported_total_connections AS reportedTotalConnections,last_telemetry_at AS lastTelemetryAt "
                                 + "FROM cross_entry_failover_member WHERE group_id=?", id)
                         .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
@@ -432,7 +471,8 @@ public class CrossEntryFailoverService {
                                     + "quality_penalty_episode_count=?,quality_penalty_window_started_at=?,quality_penalty_last_at=?,quality_recovery_observe_until=?,"
                                     + "switch_rejected_until=?,switch_rejected_reason=?,switch_reject_count=?,"
                                     + "quality_last_error=?,quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
-                                    + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=? WHERE id=?",
+                                    + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=?,"
+                                    + "telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,last_telemetry_at=? WHERE id=?",
                             oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
                             oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
                             oldFaultStats.get("lastHealthyAt"), oldFaultStats.get("lastFailureAt"), oldFaultStats.get("qualityLatencyMs"),
@@ -447,7 +487,9 @@ public class CrossEntryFailoverService {
                             oldFaultStats.get("qualityCheckedAt"), oldFaultStats.get("faultEpisodeCount"), oldFaultStats.get("connectFaultCount"),
                             oldFaultStats.get("latencyFaultCount"), oldFaultStats.get("lossFaultCount"), oldFaultStats.get("p95FaultCount"),
                             oldFaultStats.get("jitterFaultCount"), oldFaultStats.get("flapFaultCount"), oldFaultStats.get("switchTriggerCount"),
-                            oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"), memberId);
+                            oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"),
+                            oldFaultStats.get("telemetryReady"), oldFaultStats.get("totalConnections"), oldFaultStats.get("currentConnections"),
+                            oldFaultStats.get("reportedTotalConnections"), oldFaultStats.get("lastTelemetryAt"), memberId);
                 }
                 if (priority == 0) primaryMemberId = memberId;
                 if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
@@ -511,6 +553,7 @@ public class CrossEntryFailoverService {
                     result.put("message", "容灾组已更新，但有 " + cleanupFailed + " 个已移除入口的托管资源清理失败，节点恢复后请在转发管理中检查");
                 }
             }
+            activityGroups.clear();
             return R.ok(result);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return handleSaveFailure(dto, createdManagedResources, createdGroupId, saveStage, e);
@@ -628,6 +671,7 @@ public class CrossEntryFailoverService {
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", id);
         int cleanupFailed = cleanupPersistedManagedResources(id, managedResources);
+        activityGroups.clear();
         if (cleanupFailed > 0) {
             return R.ok(Map.of("cleanupFailed", cleanupFailed,
                     "message", "容灾组已删除，但有 " + cleanupFailed + " 个托管资源清理失败，节点恢复后请在转发管理中检查"));
@@ -2291,7 +2335,7 @@ public class CrossEntryFailoverService {
     }
 
     private List<Map<String, Object>> loadMembers(long groupId) {
-        return jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
+        List<Map<String, Object>> members = jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
                 + "entry_host AS entryHost,entry_address AS entryAddress,topology_signature AS topologySignature,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
                 + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,quality_latency_ms AS qualityLatencyMs,"
                 + "quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
@@ -2308,8 +2352,18 @@ public class CrossEntryFailoverService {
                 + "jitter_fault_count AS jitterFaultCount,flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,"
                 + "last_fault_type AS lastFaultType,last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt,"
                 + "last_error AS lastError,"
-                + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt "
+                + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt,"
+                + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
+                + "reported_total_connections AS reportedTotalConnections,last_telemetry_at AS lastTelemetryAt "
                 + "FROM cross_entry_failover_member WHERE group_id=? ORDER BY priority", groupId);
+        long liveAfter = System.currentTimeMillis() - TELEMETRY_LIVE_WINDOW_MS;
+        for (Map<String, Object> member : members) {
+            Long lastTelemetryAt = nullableLong(member.get("lastTelemetryAt"));
+            boolean live = bool(member.get("telemetryReady")) && lastTelemetryAt != null && lastTelemetryAt >= liveAfter;
+            member.put("telemetryLive", live);
+            if (!live) member.put("currentConnections", 0L);
+        }
+        return members;
     }
 
     private Map<String, Object> loadMember(Long id) {

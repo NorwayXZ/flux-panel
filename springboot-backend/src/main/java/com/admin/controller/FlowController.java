@@ -7,6 +7,7 @@ import com.admin.common.lang.R;
 import com.admin.service.UserQuotaService;
 import com.admin.service.PrivateProxyService;
 import com.admin.service.SmartEntryService;
+import com.admin.service.CrossEntryFailoverService;
 import com.admin.service.ServiceTelemetryService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
@@ -84,6 +85,9 @@ public class FlowController extends BaseController {
 
     @Resource
     SmartEntryService smartEntryService;
+
+    @Resource
+    CrossEntryFailoverService crossEntryFailoverService;
 
     @Resource
     ServiceTelemetryService serviceTelemetryService;
@@ -282,6 +286,10 @@ public class FlowController extends BaseController {
         smartEntryService.recordActivity(forward.getId(), reportingNodeId,
                 reportConnections ? flowDataList.getT() : null, reportConnections ? flowDataList.getC() : null,
                 flowDataList.getD(), flowDataList.getU());
+        if (reportConnections) {
+            crossEntryFailoverService.recordActivity(forward.getId(), reportingNodeId,
+                    flowDataList.getT(), flowDataList.getC());
+        }
 
         // 获取流量计费类型
         int flowType = getFlowType(forward);

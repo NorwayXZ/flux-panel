@@ -1613,6 +1613,11 @@ export interface CrossEntryMember {
   lastFaultAt?: number;
   lastError?: string;
   lastCheckedAt?: number;
+  telemetryReady?: boolean | number;
+  telemetryLive?: boolean;
+  totalConnections?: number;
+  currentConnections?: number;
+  lastTelemetryAt?: number;
 }
 
 export interface CrossEntrySchedule {

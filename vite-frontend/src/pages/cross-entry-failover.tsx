@@ -210,6 +210,9 @@ const metricText = (value?: number, unit = "") =>
   typeof value === "number" && Number.isFinite(value)
     ? `${Math.round(value * 10) / 10}${unit}`
     : "-";
+
+const connectionCountText = (value?: number) =>
+  new Intl.NumberFormat("zh-CN").format(Math.max(0, Number(value) || 0));
 const displayDomain = (value: string, zoneName?: string) => {
   let domain = value.trim().toLowerCase();
 
@@ -2311,7 +2314,7 @@ export default function CrossEntryFailoverPage() {
                       return (
                         <div
                           key={member.id}
-                          className={`grid min-h-16 grid-cols-1 gap-3 border-l-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${isActive ? "border-primary bg-primary-50/50 dark:bg-primary-500/5" : "border-divider"}`}
+                          className={`grid min-h-20 grid-cols-1 gap-3 border-l-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_minmax(360px,auto)] md:items-center ${isActive ? "border-primary bg-primary-50/50 dark:bg-primary-500/5" : "border-divider"}`}
                         >
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -2409,14 +2412,40 @@ export default function CrossEntryFailoverPage() {
                               </p>
                             )}
                           </div>
-                          <div className="text-left text-xs sm:text-right">
-                            <p className="font-medium">
-                              {detailedProbeEnabled
-                                ? metricText(member.qualityLatencyMs, " ms")
-                                : member.latencyMs
-                                  ? `${member.latencyMs} ms`
-                                  : "-"}
-                            </p>
+                          <div className="min-w-0 text-left text-xs md:text-right">
+                            <div className="grid grid-cols-[repeat(auto-fit,minmax(82px,1fr))] gap-3 md:justify-items-end">
+                              <div className="min-w-0">
+                                <p className="flex items-center gap-1 text-default-500 md:justify-end">
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${member.telemetryLive ? "bg-success" : "bg-default-300"}`}
+                                  />
+                                  当前连接
+                                </p>
+                                <p className="mt-1 whitespace-nowrap text-xs font-semibold tabular-nums sm:text-sm">
+                                  {truthy(member.telemetryReady || false)
+                                    ? `${connectionCountText(member.currentConnections)} 个`
+                                    : "等待上报"}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-default-500">累计新增</p>
+                                <p className="mt-1 whitespace-nowrap text-xs font-semibold tabular-nums sm:text-sm">
+                                  {truthy(member.telemetryReady || false)
+                                    ? `${connectionCountText(member.totalConnections)} 个`
+                                    : "-"}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-default-500">TCP 延迟</p>
+                                <p className="mt-1 whitespace-nowrap text-xs font-semibold tabular-nums sm:text-sm">
+                                  {detailedProbeEnabled
+                                    ? metricText(member.qualityLatencyMs, " ms")
+                                    : member.latencyMs
+                                      ? `${member.latencyMs} ms`
+                                      : "-"}
+                                </p>
+                              </div>
+                            </div>
                             {qualityEnabled ? (
                               <p className="mt-1 text-default-500">
                                 均值{" "}
@@ -2441,6 +2470,15 @@ export default function CrossEntryFailoverPage() {
                             <p className="mt-1 text-default-400">
                               {faultSummaryText(member)}
                             </p>
+                            {truthy(member.telemetryReady || false) && (
+                              <p className="mt-1 text-default-400">
+                                连接统计
+                                {member.telemetryLive ? "实时" : "暂未更新"}
+                                {member.lastTelemetryAt
+                                  ? ` · ${timeText(member.lastTelemetryAt)}`
+                                  : ""}
+                              </p>
+                            )}
                             {member.lastFaultReason && (
                               <p className="mt-1 truncate text-default-400">
                                 {member.lastFaultReason}

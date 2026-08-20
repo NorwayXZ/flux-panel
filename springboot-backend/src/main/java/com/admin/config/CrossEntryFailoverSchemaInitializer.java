@@ -37,8 +37,11 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "forward_name varchar(100) NOT NULL, node_name varchar(100) NOT NULL, status varchar(24) NOT NULL DEFAULT 'unknown', "
                     + "fail_count int NOT NULL DEFAULT 0, success_count int NOT NULL DEFAULT 0, latency_ms int DEFAULT NULL, "
                     + "last_error varchar(500) DEFAULT NULL, last_checked_at bigint DEFAULT NULL, last_healthy_at bigint DEFAULT NULL, "
-                    + "last_failure_at bigint DEFAULT NULL, created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
-                    + "UNIQUE KEY uk_cross_entry_member (group_id, forward_id), KEY idx_cross_entry_member_group (group_id, priority)"
+                    + "last_failure_at bigint DEFAULT NULL, telemetry_ready tinyint NOT NULL DEFAULT 0, total_connections bigint NOT NULL DEFAULT 0, "
+                    + "current_connections bigint NOT NULL DEFAULT 0, reported_total_connections bigint NOT NULL DEFAULT 0, "
+                    + "last_telemetry_at bigint DEFAULT NULL, created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
+                    + "UNIQUE KEY uk_cross_entry_member (group_id, forward_id), KEY idx_cross_entry_member_group (group_id, priority), "
+                    + "KEY idx_cross_entry_activity (forward_id, entry_node_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_failover_event ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, group_id bigint NOT NULL, from_member_id bigint DEFAULT NULL, "
@@ -134,6 +137,12 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "last_fault_type", "varchar(32) DEFAULT NULL AFTER switch_trigger_count");
             ensureColumn("cross_entry_failover_member", "last_fault_reason", "varchar(255) DEFAULT NULL AFTER last_fault_type");
             ensureColumn("cross_entry_failover_member", "last_fault_at", "bigint DEFAULT NULL AFTER last_fault_reason");
+            ensureColumn("cross_entry_failover_member", "telemetry_ready", "tinyint NOT NULL DEFAULT 0 AFTER last_failure_at");
+            ensureColumn("cross_entry_failover_member", "total_connections", "bigint NOT NULL DEFAULT 0 AFTER telemetry_ready");
+            ensureColumn("cross_entry_failover_member", "current_connections", "bigint NOT NULL DEFAULT 0 AFTER total_connections");
+            ensureColumn("cross_entry_failover_member", "reported_total_connections", "bigint NOT NULL DEFAULT 0 AFTER current_connections");
+            ensureColumn("cross_entry_failover_member", "last_telemetry_at", "bigint DEFAULT NULL AFTER reported_total_connections");
+            ensureIndex("cross_entry_failover_member", "idx_cross_entry_activity", "forward_id,entry_node_id");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"
                     + "provider_record_id varchar(64) NOT NULL,content varchar(255) NOT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"
@@ -187,6 +196,15 @@ public class CrossEntryFailoverSchemaInitializer {
                 "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?",
                 Integer.class, table, column);
         if (count == null || count == 0) jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
+    }
+
+    private void ensureIndex(String table, String index, String columns) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?",
+                Integer.class, table, index);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD INDEX `" + index + "` (" + columns + ")");
+        }
     }
 
     private void normalizeFailbackToleranceDefaults() {
