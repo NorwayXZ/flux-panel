@@ -32,6 +32,7 @@ class CrossEntryFailoverSchemaInitializerTests {
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `current_connections`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `reported_total_connections`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `telemetry_generation`")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `pending_probe_connections`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `last_telemetry_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD INDEX `idx_cross_entry_activity`")));
     }

@@ -1,3 +1,10 @@
+## 2.51.38 Business-only failover connection totals
+
+- Excludes Cross-entry Failover's own availability checks, quality probes, and post-switch verification connections from each line's cumulative new-connection total.
+- Tracks successful panel and remote Connector/Agent TCP probes until the next service telemetry report, then consumes them before adding business connections.
+- Rebuilds only the new connection counters once during upgrade; routing order, DNS, forwards, tunnels, fault history, and quality policy state remain unchanged.
+- Panel-only follow-up release. Agent and Connector stay at `2.51.37`, which already provides exact service-instance telemetry.
+
 ## 2.51.37 Accurate failover connection telemetry
 
 - Fixes inflated cumulative connection totals when GOST configuration refreshes leave old and new service instances reporting the same forward briefly.

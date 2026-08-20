@@ -42,6 +42,12 @@ class CrossEntryFailoverServiceTests {
     }
 
     @Test
+    void failoverHealthProbesAreRemovedFromDisplayedBusinessConnections() {
+        assertEquals(2, CrossEntryFailoverService.businessConnectionDelta(7, 5));
+        assertEquals(0, CrossEntryFailoverService.businessConnectionDelta(3, 5));
+    }
+
+    @Test
     void roundedMetricTreatsMissingOrInvalidAgentMetricsAsAbsent() {
         JSONObject data = new JSONObject();
 

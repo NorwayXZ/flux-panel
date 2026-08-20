@@ -39,7 +39,8 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "last_error varchar(500) DEFAULT NULL, last_checked_at bigint DEFAULT NULL, last_healthy_at bigint DEFAULT NULL, "
                     + "last_failure_at bigint DEFAULT NULL, telemetry_ready tinyint NOT NULL DEFAULT 0, total_connections bigint NOT NULL DEFAULT 0, "
                     + "current_connections bigint NOT NULL DEFAULT 0, reported_total_connections bigint NOT NULL DEFAULT 0, "
-                    + "telemetry_generation bigint NOT NULL DEFAULT 0, last_telemetry_at bigint DEFAULT NULL, "
+                    + "telemetry_generation bigint NOT NULL DEFAULT 0, pending_probe_connections bigint NOT NULL DEFAULT 0, "
+                    + "last_telemetry_at bigint DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                     + "UNIQUE KEY uk_cross_entry_member (group_id, forward_id), KEY idx_cross_entry_member_group (group_id, priority), "
                     + "KEY idx_cross_entry_activity (forward_id, entry_node_id)"
@@ -144,10 +145,13 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "reported_total_connections", "bigint NOT NULL DEFAULT 0 AFTER current_connections");
             boolean generationAdded = ensureColumn("cross_entry_failover_member", "telemetry_generation",
                     "bigint NOT NULL DEFAULT 0 AFTER reported_total_connections");
-            ensureColumn("cross_entry_failover_member", "last_telemetry_at", "bigint DEFAULT NULL AFTER telemetry_generation");
-            if (generationAdded) {
+            boolean probeTrackingAdded = ensureColumn("cross_entry_failover_member", "pending_probe_connections",
+                    "bigint NOT NULL DEFAULT 0 AFTER telemetry_generation");
+            ensureColumn("cross_entry_failover_member", "last_telemetry_at", "bigint DEFAULT NULL AFTER pending_probe_connections");
+            if (generationAdded || probeTrackingAdded) {
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=0,total_connections=0,"
-                        + "current_connections=0,reported_total_connections=0,telemetry_generation=0,last_telemetry_at=NULL");
+                        + "current_connections=0,reported_total_connections=0,telemetry_generation=0,"
+                        + "pending_probe_connections=0,last_telemetry_at=NULL");
             }
             ensureIndex("cross_entry_failover_member", "idx_cross_entry_activity", "forward_id,entry_node_id");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
