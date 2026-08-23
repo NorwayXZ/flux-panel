@@ -159,6 +159,14 @@ const stateMeta = (state: SmartEntryGroup["state"]) =>
     error: { label: "DNS 异常", color: "danger" as const },
     unknown: { label: "等待检测", color: "default" as const },
   })[state] || { label: "等待检测", color: "default" as const };
+const activityChipMeta = (state?: string) =>
+  ({
+    connected: { label: "TCP 活跃", color: "success" as const },
+    active_without_tcp_current: { label: "有流量", color: "warning" as const },
+    idle: { label: "空闲", color: "default" as const },
+    stale: { label: "上报中断", color: "warning" as const },
+    waiting: { label: "等待上报", color: "default" as const },
+  })[state || "waiting"] || { label: "等待上报", color: "default" as const };
 
 export default function SmartEntryPage() {
   const navigate = useNavigate();
@@ -745,6 +753,9 @@ export default function SmartEntryPage() {
                           Date.now() - activity.lastTelemetryAt > 30_000,
                         );
                         const shared = activity.carriers.includes(",");
+                        const activityMeta = activityChipMeta(
+                          activity.activityState,
+                        );
 
                         return (
                           <div
@@ -770,19 +781,32 @@ export default function SmartEntryPage() {
                                     上报中断
                                   </Chip>
                                 )}
+                                <Chip
+                                  color={activityMeta.color}
+                                  size="sm"
+                                  variant="flat"
+                                >
+                                  {activityMeta.label}
+                                </Chip>
                               </div>
                               <p className="mt-1 truncate text-default-500">
                                 {activity.nodeName} · {activity.entryAddress}
                               </p>
                             </div>
                             <div>
-                              <p className="text-default-500">当前连接</p>
+                              <p className="text-default-500">TCP 当前连接</p>
                               <p className="mt-1 font-medium">
                                 {telemetryReady
                                   ? `${activity.currentConnections || 0} 个`
                                   : agentReady
                                     ? "等待业务"
                                     : "等待新版 Agent"}
+                              </p>
+                              <p className="mt-1 line-clamp-2 text-default-400">
+                                {activity.activityHint ||
+                                  (telemetryReady
+                                    ? "实时连接采样正常"
+                                    : "等待 Agent 上报连接遥测")}
                               </p>
                             </div>
                             <div>
@@ -806,6 +830,11 @@ export default function SmartEntryPage() {
                                   ? timeText(activity.lastActivityAt)
                                   : `Agent ${activity.agentVersion || "未知"} · 等待业务`}
                               </p>
+                              {activity.lastTelemetryAt && (
+                                <p className="mt-1 text-default-400">
+                                  上报：{timeText(activity.lastTelemetryAt)}
+                                </p>
+                              )}
                             </div>
                           </div>
                         );

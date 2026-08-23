@@ -1,3 +1,9 @@
+## 2.51.41 Smart-entry live connection diagnostics
+
+- Clarifies that Smart Entry's live count is the instantaneous TCP connection sample, not the same thing as recent traffic or DNS route usage.
+- Adds backend activity state and hints for each Smart Entry route so the UI can distinguish active TCP connections, recent traffic with zero sampled TCP connections, idle services, stale telemetry, and waiting-for-Agent states.
+- Keeps DNS records, routing decisions, forwards, tunnels, connection totals, and Agent/Connector targets unchanged; Agent and Connector remain at `2.51.37`.
+
 ## 2.51.40 Legacy remote-probe accounting compatibility
 
 - Derives successful TCP probe connections from request count and packet loss when an older Agent or Connector omits per-attempt `samples`.

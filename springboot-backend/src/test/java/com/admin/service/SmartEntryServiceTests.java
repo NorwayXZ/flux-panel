@@ -27,6 +27,15 @@ class SmartEntryServiceTests {
     }
 
     @Test
+    void activityStateExplainsZeroCurrentConnectionsWithRecentTraffic() {
+        assertEquals("connected", SmartEntryService.activityState(true, true, true, 2));
+        assertEquals("active_without_tcp_current", SmartEntryService.activityState(true, true, true, 0));
+        assertEquals("idle", SmartEntryService.activityState(true, true, false, 0));
+        assertEquals("stale", SmartEntryService.activityState(true, false, true, 0));
+        assertEquals("waiting", SmartEntryService.activityState(false, false, false, 0));
+    }
+
+    @Test
     void dnsFailureDoesNotRewriteRecordsOnEveryHealthCheck() {
         long failedAt = 1_000_000L;
         assertEquals(false, SmartEntryService.shouldWriteDnsRecord(

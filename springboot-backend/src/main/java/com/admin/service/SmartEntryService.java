@@ -38,6 +38,8 @@ public class SmartEntryService {
     private static final long ACTIVITY_RESUME_AFTER_MS = 30L * 60L * 1000L;
     private static final long DNS_RETRY_INTERVAL_MS = 60_000L;
     private static final long DNS_VERIFY_INTERVAL_MS = 10L * 60L * 1000L;
+    private static final long TELEMETRY_LIVE_WINDOW_MS = 30_000L;
+    private static final long RECENT_ACTIVITY_WINDOW_MS = 60_000L;
 
     private final JdbcTemplate jdbcTemplate;
     private final DynamicDnsService dynamicDnsService;
@@ -665,7 +667,8 @@ public class SmartEntryService {
     }
 
     private List<Map<String, Object>> activities(Long groupId) {
-        return jdbcTemplate.queryForList("SELECT r.forward_id AS forwardId,r.entry_node_id AS entryNodeId,MAX(r.node_name) AS nodeName,"
+        long now = System.currentTimeMillis();
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT r.forward_id AS forwardId,r.entry_node_id AS entryNodeId,MAX(r.node_name) AS nodeName,"
                         + "MAX(r.entry_address) AS entryAddress,MAX(n.version) AS agentVersion,"
                         + "GROUP_CONCAT(r.carrier ORDER BY FIELD(r.carrier,'default','telecom','unicom','mobile') SEPARATOR ',') AS carriers,"
                         + "MAX(r.telemetry_ready) AS telemetryReady,MAX(r.total_connections) AS totalConnections,"
@@ -673,6 +676,38 @@ public class SmartEntryService {
                         + "MAX(r.activity_out_flow) AS outFlow,MAX(r.last_activity_at) AS lastActivityAt,MAX(r.last_telemetry_at) AS lastTelemetryAt "
                         + "FROM smart_entry_route r LEFT JOIN node n ON n.id=r.entry_node_id WHERE r.group_id=? "
                         + "GROUP BY r.forward_id,r.entry_node_id ORDER BY MIN(FIELD(r.carrier,'default','telecom','unicom','mobile'))", groupId);
+        for (Map<String, Object> row : rows) {
+            Long lastTelemetryAt = nullableLong(row.get("lastTelemetryAt"));
+            Long lastActivityAt = nullableLong(row.get("lastActivityAt"));
+            boolean telemetryReady = truth(row.get("telemetryReady"));
+            boolean telemetryLive = lastTelemetryAt != null && now - lastTelemetryAt <= TELEMETRY_LIVE_WINDOW_MS;
+            boolean recentlyActive = lastActivityAt != null && now - lastActivityAt <= RECENT_ACTIVITY_WINDOW_MS;
+            long currentConnections = number(row.get("currentConnections"));
+            row.put("telemetryLive", telemetryLive);
+            row.put("recentlyActive", recentlyActive);
+            row.put("activityState", activityState(telemetryReady, telemetryLive, recentlyActive, currentConnections));
+            row.put("activityHint", activityHint(telemetryReady, telemetryLive, recentlyActive, currentConnections));
+        }
+        return rows;
+    }
+
+    static String activityState(boolean telemetryReady, boolean telemetryLive, boolean recentlyActive, long currentConnections) {
+        if (!telemetryReady) return "waiting";
+        if (!telemetryLive) return "stale";
+        if (currentConnections > 0) return "connected";
+        if (recentlyActive) return "active_without_tcp_current";
+        return "idle";
+    }
+
+    static String activityHint(boolean telemetryReady, boolean telemetryLive, boolean recentlyActive, long currentConnections) {
+        String state = activityState(telemetryReady, telemetryLive, recentlyActive, currentConnections);
+        return switch (state) {
+            case "connected" -> "Agent 正在上报 TCP 活跃连接";
+            case "active_without_tcp_current" -> "最近有业务流量，但采样时没有持续 TCP 连接；常见于短连接、UDP 或客户端快速重连";
+            case "idle" -> "Agent 上报正常，最近没有检测到业务流量";
+            case "stale" -> "Agent 超过 30 秒没有上报实时连接数据";
+            default -> "等待新版 Agent 或等待第一次业务流量上报";
+        };
     }
 
     private String activityLabel(long groupId, long forwardId, long nodeId) {

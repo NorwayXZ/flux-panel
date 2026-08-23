@@ -2011,6 +2011,11 @@ export interface SmartEntryActivity {
   agentVersion?: string;
   carriers: string;
   telemetryReady: boolean | number;
+  telemetryLive?: boolean;
+  recentlyActive?: boolean;
+  activityState?:
+    "waiting" | "stale" | "connected" | "active_without_tcp_current" | "idle";
+  activityHint?: string;
   totalConnections: number;
   currentConnections: number;
   inFlow: number;
