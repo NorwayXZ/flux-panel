@@ -2640,17 +2640,46 @@ export default function CrossEntryFailoverPage() {
                 value={form.name}
                 onValueChange={(name) => setForm({ ...form, name })}
               />
-              <Input
-                description="留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS 调度。"
-                errorMessage={saveFieldError("expiresAt")}
-                isClearable
-                isInvalid={Boolean(saveFieldError("expiresAt"))}
-                label="链接到期时间（北京时间）"
-                type="datetime-local"
-                value={form.expiresAt}
-                onClear={() => setForm({ ...form, expiresAt: "" })}
-                onValueChange={(expiresAt) => setForm({ ...form, expiresAt })}
-              />
+              <div className="min-w-0">
+                <label
+                  className="mb-2 block text-sm font-medium text-foreground"
+                  htmlFor="cross-entry-expires-at"
+                >
+                  链接到期时间（北京时间）
+                </label>
+                <div className="relative">
+                  <input
+                    aria-invalid={Boolean(saveFieldError("expiresAt"))}
+                    className="h-14 w-full rounded-xl border border-default-200 bg-default-100 px-4 pr-20 text-base text-foreground outline-none transition-colors hover:border-default-400 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-default-700 dark:bg-default-50/5"
+                    id="cross-entry-expires-at"
+                    type="datetime-local"
+                    value={form.expiresAt}
+                    onChange={(event) =>
+                      setForm({ ...form, expiresAt: event.target.value })
+                    }
+                  />
+                  {form.expiresAt && (
+                    <button
+                      aria-label="清空链接到期时间"
+                      className="absolute right-10 top-1/2 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
+                      title="清空链接到期时间"
+                      type="button"
+                      onClick={() => setForm({ ...form, expiresAt: "" })}
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-default-500">
+                  留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS
+                  调度。
+                </p>
+                {saveFieldError("expiresAt") && (
+                  <p className="mt-1 text-xs text-danger">
+                    {saveFieldError("expiresAt")}
+                  </p>
+                )}
+              </div>
               <Select
                 description={
                   form.id

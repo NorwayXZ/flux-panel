@@ -1,3 +1,9 @@
+## 2.51.44 Cross-entry expiry field layout
+
+- Replaces the HeroUI floating-label wrapper around the native `datetime-local` control with a fixed label and separated description/error rows, preventing the label and selected date from overlapping.
+- Reserves space for both the browser calendar affordance and the clear action so the controls remain distinct when an expiry is set.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.43 Reliable release-tag online updates
 
 - The Update page now submits the exact detected Release version to the host updater.
