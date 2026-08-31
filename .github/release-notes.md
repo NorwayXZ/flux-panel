@@ -1,3 +1,11 @@
+## 2.51.42 Optional cross-entry link expiry
+
+- Adds an optional Beijing-time expiry to each Cross-entry Failover group. Leaving it blank keeps the existing permanent-link behaviour.
+- Shows permanent, expiring-soon, remaining-days, and expired states in the editor and group cards; expired groups cannot be manually probed until renewed.
+- At expiry, the panel disables the group, stops probes and DNS scheduling, and removes only DNS records managed by that group. Existing hand-created forwards, tunnels, member order, and fault statistics are retained.
+- DNS cleanup failures are recorded and retried every 30 seconds. Existing clients that omit the new field retain the stored expiry; explicitly clearing it restores permanent validity.
+- Panel-only release. Agent and Connector remain at `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.41 Smart-entry live connection diagnostics
 
 - Clarifies that Smart Entry's live count is the instantaneous TCP connection sample, not the same thing as recent traffic or DNS route usage.

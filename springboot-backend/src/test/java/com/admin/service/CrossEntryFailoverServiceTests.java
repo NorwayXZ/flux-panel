@@ -128,4 +128,11 @@ class CrossEntryFailoverServiceTests {
                 "forward_validation", "候选转发必须来自不同入口节点")
                 .containsKey("memberForwardIds"));
     }
+
+    @Test
+    void saveFailureMapsExpiryErrorsToExpiryField() {
+        assertTrue(CrossEntryFailoverService.saveFieldErrors(
+                "validation", "链接到期时间必须晚于当前时间；永久使用请清空此项")
+                .containsKey("expiresAt"));
+    }
 }

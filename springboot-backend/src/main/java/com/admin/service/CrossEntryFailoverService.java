@@ -252,7 +252,7 @@ public class CrossEntryFailoverService {
                 "SELECT g.id,g.name,g.domain,g.dns_zone_id AS dnsZoneId,g.zone_id AS zoneId,z.zone_name AS zoneName,g.record_id AS recordId,g.record_type AS recordType,g.ttl,"
                         + "probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                         + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,"
-                        + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,"
+                        + "cooldown_seconds AS cooldownSeconds,auto_failback AS autoFailback,expires_at AS expiresAt,routing_mode AS routingMode,enabled,state,active_member_id AS activeMemberId,"
                         + "quality_enabled AS qualityEnabled,quality_probe_source_type AS qualityProbeSourceType,quality_probe_source_id AS qualityProbeSourceId,"
                         + "quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                         + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
@@ -315,6 +315,11 @@ public class CrossEntryFailoverService {
         Long createdGroupId = null;
         String saveStage = "validation";
         try {
+            if (dto.getId() != null && !dto.isExpiresAtProvided()) {
+                List<Long> existingExpiry = jdbcTemplate.queryForList(
+                        "SELECT expires_at FROM cross_entry_failover_group WHERE id=?", Long.class, dto.getId());
+                if (!existingExpiry.isEmpty()) dto.setExpiresAt(existingExpiry.get(0));
+            }
             boolean existingManaged = dto.getId() != null && hasManagedResources(dto.getId());
             normalizeAndValidate(dto, existingManaged);
             if (isManagedCreate(dto)) {
@@ -492,6 +497,7 @@ public class CrossEntryFailoverService {
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET expires_at=? WHERE id=?", dto.getExpiresAt(), id);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET tcp_primary_preference_tolerance_ms=?,"
                             + "quality_probe_status=? WHERE id=?",
                     dto.getTcpPrimaryPreferenceToleranceMs(),
@@ -684,6 +690,7 @@ public class CrossEntryFailoverService {
         }
         if (message.contains("质量探测")) errors.put("qualityProbeSourceId", message);
         if (message.contains("锁定入口")) errors.put("lockedMemberId", message);
+        if (message.contains("到期时间") || message.contains("永久使用")) errors.put("expiresAt", message);
         if (errors.isEmpty() && "managed_members".equals(stage)) {
             errors.put("managedEntryNodeIds", message);
         }
@@ -773,10 +780,12 @@ public class CrossEntryFailoverService {
         if (!checking.compareAndSet(false, true)) return;
         try {
             long now = System.currentTimeMillis();
+            expireDueGroups(now);
             List<Map<String, Object>> dueGroups = jdbcTemplate.queryForList(
                     "SELECT id FROM cross_entry_failover_group WHERE enabled=1 "
+                            + "AND (expires_at IS NULL OR expires_at > ?) "
                             + "AND (last_checked_at IS NULL OR last_checked_at + probe_interval_ms <= ?) "
-                            + "ORDER BY COALESCE(last_checked_at,0) ASC LIMIT " + MAX_GROUPS_PER_TICK, now);
+                            + "ORDER BY COALESCE(last_checked_at,0) ASC LIMIT " + MAX_GROUPS_PER_TICK, now, now);
             for (Map<String, Object> row : dueGroups) {
                 long groupId = number(row.get("id")).longValue();
                 if (!inFlightGroups.add(groupId)) continue;
@@ -837,6 +846,56 @@ public class CrossEntryFailoverService {
         }
     }
 
+    /**
+     * Expires links independently from the probe interval so a long interval cannot
+     * leave an expired DNS answer active for an extra probe cycle.
+     */
+    private void expireDueGroups(long now) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id FROM cross_entry_failover_group WHERE expires_at IS NOT NULL AND expires_at <= ? "
+                        + "AND (enabled=1 OR (state='expired' AND last_error LIKE '链接已到期，但 DNS 记录清理失败%' AND updated_time <= ?)) "
+                        + "ORDER BY expires_at ASC LIMIT 50", now, now - 30_000L);
+        for (Map<String, Object> row : rows) {
+            try {
+                Map<String, Object> group = loadGroup(number(row.get("id")).longValue());
+                expireGroupIfDue(group, now);
+            } catch (RuntimeException e) {
+                log.warn("Failed to expire cross-entry group {}: {}", row.get("id"), e.getMessage());
+            }
+        }
+    }
+
+    private boolean expireGroupIfDue(Map<String, Object> group, long now) {
+        Long expiresAt = nullableLong(group.get("expiresAt"));
+        if (expiresAt == null || expiresAt > now) return false;
+        long groupId = number(group.get("id")).longValue();
+        int updated = jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='expired',"
+                        + "last_error=?,updated_time=? WHERE id=? AND enabled=1 AND expires_at IS NOT NULL AND expires_at <= ?",
+                "链接已到期，自动检测与 DNS 调度已停止", now, groupId, now);
+        boolean retryCleanup = updated == 0
+                && "expired".equals(Objects.toString(group.get("state")))
+                && Objects.toString(group.get("lastError"), "").startsWith("链接已到期，但 DNS 记录清理失败");
+        if (updated == 0 && !retryCleanup) return true;
+        try {
+            Long zoneId = nullableLong(group.get("dnsZoneId"));
+            dnsProviderService.clearCrossEntryActiveRecords(zoneId, groupId);
+            if (zoneId != null) {
+                dnsProviderService.deleteCrossEntryManagedRecords(groupId);
+            } else {
+                deleteLegacyCloudflareRecord(group);
+            }
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_error=?,updated_time=? WHERE id=?",
+                    "链接已到期，DNS 记录已清理", System.currentTimeMillis(), groupId);
+        } catch (RuntimeException e) {
+            String error = shorten("链接已到期，但 DNS 记录清理失败：" + e.getMessage(), 500);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_error=?,updated_time=? WHERE id=?",
+                    error, System.currentTimeMillis(), groupId);
+            log.warn("Failed to clear expired cross-entry DNS group {}: {}", groupId, e.getMessage());
+        }
+        activityGroups.clear();
+        return true;
+    }
+
     private void probeGroup(long groupId, boolean manual) {
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
         synchronized (lock) {
@@ -846,6 +905,7 @@ public class CrossEntryFailoverService {
 
     private void doProbeGroup(long groupId, boolean manual) {
         Map<String, Object> group = loadGroup(groupId);
+        if (expireGroupIfDue(group, System.currentTimeMillis())) return;
         if (!manual && !bool(group.get("enabled"))) return;
         List<Map<String, Object>> members = loadMembers(groupId);
         int timeout = number(group.get("connectTimeoutMs")).intValue();
@@ -2106,6 +2166,9 @@ public class CrossEntryFailoverService {
         if (!dto.getDomain().matches("(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$")) {
             throw new IllegalArgumentException("业务域名格式不正确");
         }
+        if (dto.getExpiresAt() != null && dto.getExpiresAt() <= System.currentTimeMillis()) {
+            throw new IllegalArgumentException("链接到期时间必须晚于当前时间；续期请设置新的时间，永久使用请清空此项");
+        }
         if (!Set.of("A", "AAAA").contains(dto.getRecordType())) throw new IllegalArgumentException("记录类型仅支持 A 或 AAAA");
         String creationMode = StringUtils.lowerCase(
                 StringUtils.defaultIfBlank(dto.getCreationMode(), "existing_forward"), Locale.ROOT);
@@ -2359,7 +2422,7 @@ public class CrossEntryFailoverService {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,name,domain,dns_zone_id AS dnsZoneId,zone_id AS zoneId,record_id AS recordId,api_token AS apiToken,"
                 + "record_type AS recordType,ttl,probe_interval_ms AS probeIntervalMs,connect_timeout_ms AS connectTimeoutMs,"
                 + "failure_threshold AS failureThreshold,recovery_threshold AS recoveryThreshold,cooldown_seconds AS cooldownSeconds,"
-                + "auto_failback AS autoFailback,routing_mode AS routingMode,quality_enabled AS qualityEnabled,quality_probe_source_type AS qualityProbeSourceType,"
+                + "auto_failback AS autoFailback,expires_at AS expiresAt,routing_mode AS routingMode,quality_enabled AS qualityEnabled,quality_probe_source_type AS qualityProbeSourceType,"
                 + "quality_probe_source_id AS qualityProbeSourceId,quality_probe_count AS qualityProbeCount,quality_degrade_threshold_ms AS qualityDegradeThresholdMs,"
                 + "quality_recover_threshold_ms AS qualityRecoverThresholdMs,quality_degrade_factor AS qualityDegradeFactor,quality_recover_factor AS qualityRecoverFactor,"
                 + "quality_degrade_samples AS qualityDegradeSamples,quality_recover_samples AS qualityRecoverSamples,"

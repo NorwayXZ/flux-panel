@@ -113,6 +113,7 @@ const emptyForm = {
   recordId: "",
   recordType: "A" as "A" | "AAAA",
   ttl: "60",
+  expiresAt: "",
   profile: "fast" as ProfileKey,
   probeIntervalMs: "2000",
   connectTimeoutMs: "1200",
@@ -206,6 +207,25 @@ const timeText = (value?: number) =>
   value
     ? new Date(value).toLocaleString("zh-CN", { hour12: false })
     : "尚未检测";
+const beijingDateTimeInput = (value?: number) =>
+  value ? new Date(value + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) : "";
+const beijingTimestamp = (value: string) =>
+  value ? Date.parse(`${value}:00+08:00`) : undefined;
+const expiryText = (value?: number) => {
+  if (!value) return "永久有效";
+  const remaining = value - Date.now();
+
+  if (remaining <= 0) return "已到期";
+  const days = Math.ceil(remaining / 86400000);
+
+  const formatted = new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "Asia/Shanghai",
+  }).format(new Date(value));
+
+  return `到期：${formatted}（剩余 ${days} 天）`;
+};
 const metricText = (value?: number, unit = "") =>
   typeof value === "number" && Number.isFinite(value)
     ? `${Math.round(value * 10) / 10}${unit}`
@@ -390,6 +410,7 @@ const stateMeta = (state: CrossEntryGroup["state"]) =>
     offline: { label: "全部离线", color: "danger" as const },
     switching: { label: "切换中", color: "warning" as const },
     error: { label: "切换失败", color: "danger" as const },
+    expired: { label: "已到期", color: "danger" as const },
     unknown: { label: "等待检测", color: "default" as const },
   })[state] || { label: "等待检测", color: "default" as const };
 const qualityMeta = (
@@ -1429,6 +1450,7 @@ export default function CrossEntryFailoverPage() {
       recordId: group.recordId,
       recordType: group.recordType,
       ttl: String(group.ttl),
+      expiresAt: beijingDateTimeInput(group.expiresAt),
       profile,
       probeIntervalMs: String(group.probeIntervalMs),
       connectTimeoutMs: String(group.connectTimeoutMs),
@@ -1682,6 +1704,16 @@ export default function CrossEntryFailoverPage() {
         fieldErrors,
       );
     }
+    if (form.expiresAt) {
+      const expiresAt = beijingTimestamp(form.expiresAt);
+
+      if (!expiresAt || expiresAt <= Date.now()) {
+        return reportSaveError(
+          "链接到期时间必须晚于当前时间；永久使用请清空此项",
+          { expiresAt: "请选择未来的到期时间" },
+        );
+      }
+    }
     if (selectionProblem) {
       const field =
         form.creationMode === "managed_forward"
@@ -1735,6 +1767,7 @@ export default function CrossEntryFailoverPage() {
       ...form,
       dnsZoneId: Number(form.dnsZoneId),
       ttl: Number(form.ttl),
+      expiresAt: form.expiresAt ? beijingTimestamp(form.expiresAt) : null,
       probeIntervalMs: Number(form.probeIntervalMs),
       connectTimeoutMs: Number(form.connectTimeoutMs),
       failureThreshold: Number(form.failureThreshold),
@@ -2042,9 +2075,19 @@ export default function CrossEntryFailoverPage() {
       ) : (
         <section className="grid gap-4 xl:grid-cols-2">
           {groups.map((group) => {
-            const meta = truthy(group.enabled)
-              ? stateMeta(group.state)
-              : { label: "已停用", color: "default" as const };
+            const expired =
+              group.state === "expired" ||
+              Boolean(group.expiresAt && group.expiresAt <= Date.now());
+            const expiringSoon = Boolean(
+              group.expiresAt &&
+              group.expiresAt > Date.now() &&
+              group.expiresAt - Date.now() <= 7 * 86400000,
+            );
+            const meta = expired
+              ? stateMeta("expired")
+              : truthy(group.enabled)
+                ? stateMeta(group.state)
+                : { label: "已停用", color: "default" as const };
             const active = group.members.find(
               (item) => item.id === group.activeMemberId,
             );
@@ -2096,6 +2139,17 @@ export default function CrossEntryFailoverPage() {
                         >
                           {activeActive ? "多入口同时运行" : "主备容灾"}
                         </Chip>
+                        {group.expiresAt && (
+                          <Chip
+                            color={
+                              expired || expiringSoon ? "warning" : "default"
+                            }
+                            size="sm"
+                            variant="flat"
+                          >
+                            {expiryText(group.expiresAt)}
+                          </Chip>
+                        )}
                         {group.creationMode === "managed_forward" && (
                           <Chip color="primary" size="sm" variant="flat">
                             托管落地
@@ -2160,11 +2214,17 @@ export default function CrossEntryFailoverPage() {
                           group.managedTargetAddress &&
                           ` · 落地 ${group.managedTargetAddress}`}
                       </p>
+                      <p
+                        className={`mt-1 truncate text-xs ${expired ? "text-danger" : expiringSoon ? "text-warning" : "text-default-400"}`}
+                      >
+                        {expiryText(group.expiresAt)}
+                      </p>
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
                         isIconOnly
                         aria-label="立即检测"
+                        isDisabled={expired}
                         isLoading={checkingId === group.id}
                         size="sm"
                         title="立即检测"
@@ -2579,6 +2639,17 @@ export default function CrossEntryFailoverPage() {
                 label="容灾组名称"
                 value={form.name}
                 onValueChange={(name) => setForm({ ...form, name })}
+              />
+              <Input
+                description="留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS 调度。"
+                errorMessage={saveFieldError("expiresAt")}
+                isClearable
+                isInvalid={Boolean(saveFieldError("expiresAt"))}
+                label="链接到期时间（北京时间）"
+                type="datetime-local"
+                value={form.expiresAt}
+                onClear={() => setForm({ ...form, expiresAt: "" })}
+                onValueChange={(expiresAt) => setForm({ ...form, expiresAt })}
               />
               <Select
                 description={

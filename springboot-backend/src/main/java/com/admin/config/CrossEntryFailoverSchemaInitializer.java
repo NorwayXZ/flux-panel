@@ -26,6 +26,7 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "probe_interval_ms int NOT NULL DEFAULT 2000, connect_timeout_ms int NOT NULL DEFAULT 1200, "
                     + "failure_threshold int NOT NULL DEFAULT 2, recovery_threshold int NOT NULL DEFAULT 3, "
                     + "cooldown_seconds int NOT NULL DEFAULT 30, auto_failback tinyint NOT NULL DEFAULT 0, enabled tinyint NOT NULL DEFAULT 1, "
+                    + "expires_at bigint DEFAULT NULL, "
                     + "state varchar(24) NOT NULL DEFAULT 'unknown', active_member_id bigint DEFAULT NULL, "
                     + "last_error varchar(500) DEFAULT NULL, last_checked_at bigint DEFAULT NULL, last_switch_at bigint DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
@@ -55,6 +56,7 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_event", "from_node_name", "varchar(100) DEFAULT NULL AFTER to_member_id");
             ensureColumn("cross_entry_failover_event", "to_node_name", "varchar(100) DEFAULT NULL AFTER from_node_name");
             ensureColumn("cross_entry_failover_group", "dns_zone_id", "bigint DEFAULT NULL AFTER domain");
+            ensureColumn("cross_entry_failover_group", "expires_at", "bigint DEFAULT NULL AFTER enabled");
             // Default stays failover so upgrading never changes existing DNS behaviour.
             ensureColumn("cross_entry_failover_group", "routing_mode", "varchar(24) NOT NULL DEFAULT 'failover' AFTER auto_failback");
             ensureColumn("cross_entry_failover_group", "quality_enabled", "tinyint NOT NULL DEFAULT 0 AFTER routing_mode");

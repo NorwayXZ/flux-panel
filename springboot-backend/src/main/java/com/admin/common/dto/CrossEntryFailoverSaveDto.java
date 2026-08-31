@@ -1,5 +1,6 @@
 package com.admin.common.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import javax.validation.constraints.NotBlank;
@@ -26,6 +27,10 @@ public class CrossEntryFailoverSaveDto {
     private String apiToken;
     private String recordType = "A";
     private Integer ttl = 60;
+    /** Null means the link is permanent; otherwise the link is disabled at this epoch millisecond. */
+    private Long expiresAt;
+    @JsonIgnore
+    private boolean expiresAtProvided;
     private Integer probeIntervalMs = 2000;
     private Integer connectTimeoutMs = 1200;
     private Integer failureThreshold = 2;
@@ -111,4 +116,9 @@ public class CrossEntryFailoverSaveDto {
 
     /** 第一项为主入口，其余按顺序作为备用入口。 */
     private List<Long> memberForwardIds;
+
+    public void setExpiresAt(Long expiresAt) {
+        this.expiresAt = expiresAt;
+        this.expiresAtProvided = true;
+    }
 }

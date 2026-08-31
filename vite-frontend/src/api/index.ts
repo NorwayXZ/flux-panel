@@ -1646,6 +1646,7 @@ export interface CrossEntryGroup {
   recordId: string;
   recordType: "A" | "AAAA";
   ttl: number;
+  expiresAt?: number;
   probeIntervalMs: number;
   connectTimeoutMs: number;
   failureThreshold: number;
@@ -1699,7 +1700,14 @@ export interface CrossEntryGroup {
   qualityProbeError?: string;
   qualityProbeAt?: number;
   enabled: boolean | number;
-  state: "unknown" | "healthy" | "degraded" | "offline" | "switching" | "error";
+  state:
+    | "unknown"
+    | "healthy"
+    | "degraded"
+    | "offline"
+    | "switching"
+    | "error"
+    | "expired";
   activeMemberId?: number;
   lastError?: string;
   lastCheckedAt?: number;
