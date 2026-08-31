@@ -1,3 +1,10 @@
+## 2.51.43 Reliable release-tag online updates
+
+- The Update page now submits the exact detected Release version to the host updater.
+- The updater reads that version from the request, downloads the matching Git tag instead of silently using `main`, and verifies the downloaded `VERSION` before replacing the running source.
+- A missing or malformed target version, or a tag/version mismatch, fails before deployment. Existing rollback and database-volume protection remain active.
+- The confirmation dialog and fallback command now use a versioned release tag. Panel-only update; Agent and Connector remain at `2.51.37`.
+
 ## 2.51.42 Optional cross-entry link expiry
 
 - Adds an optional Beijing-time expiry to each Cross-entry Failover group. Leaving it blank keeps the existing permanent-link behaviour.

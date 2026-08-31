@@ -2540,8 +2540,11 @@ export interface SystemUpdateStatus {
 
 export const getSystemUpdateStatus = () =>
   Network.post<SystemUpdateStatus>("/system-update/status");
-export const triggerSystemUpdate = () =>
-  Network.post<SystemUpdateStatus>("/system-update/trigger");
+export const triggerSystemUpdate = (version?: string) =>
+  Network.post<SystemUpdateStatus>(
+    "/system-update/trigger",
+    version ? { version } : {},
+  );
 
 export interface InternalConnector {
   id: number;

@@ -43,6 +43,10 @@ public class SystemUpdateService {
     }
 
     public synchronized R triggerUpdate() {
+        return triggerUpdate(null);
+    }
+
+    public synchronized R triggerUpdate(String requestedVersion) {
         if (!isSupported()) {
             return R.err(503, "当前安装未启用在线更新服务，请先通过一键脚本完成升级或迁移");
         }
@@ -54,10 +58,11 @@ public class SystemUpdateService {
         }
 
         try {
+            String version = normalizeVersion(requestedVersion);
             writeStatus("queued", "Waiting for the host update service", 0, 0);
             Files.writeString(
                     stateDirectory.resolve("update.request"),
-                    Long.toString(System.currentTimeMillis()),
+                    "version=" + version + "\nrequestedAt=" + System.currentTimeMillis() + "\n",
                     StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE_NEW,
                     StandardOpenOption.WRITE
@@ -66,6 +71,15 @@ public class SystemUpdateService {
         } catch (IOException exception) {
             return R.err(500, "无法提交更新任务：" + exception.getMessage());
         }
+    }
+
+    private String normalizeVersion(String value) {
+        if (value == null || value.isBlank()) return "";
+        String normalized = value.trim().replaceFirst("^[vV]", "");
+        if (!normalized.matches("[0-9]+\\.[0-9]+\\.[0-9]+([.-][0-9A-Za-z.-]+)?")) {
+            throw new IllegalArgumentException("更新版本号格式不正确");
+        }
+        return normalized;
     }
 
     private boolean isSupported() {

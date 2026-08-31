@@ -239,7 +239,7 @@ export default function UpdatePage() {
 
   const submitUpdate = async () => {
     setSubmitting(true);
-    const response = await triggerSystemUpdate();
+    const response = await triggerSystemUpdate(remoteVersion?.version);
 
     setSubmitting(false);
 
@@ -465,8 +465,9 @@ export default function UpdatePage() {
                   </p>
                   <code className="mt-2 block overflow-x-auto text-xs text-foreground">
                     curl -fsSL
-                    https://raw.githubusercontent.com/NorwayXZ/flux-panel/main/scripts/flux-panel.sh
-                    | sudo bash -s -- update
+                    https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.51.43/scripts/flux-panel.sh
+                    | sudo env FLUX_PANEL_UPDATE_VERSION=2.51.43 bash -s --
+                    update
                   </code>
                 </div>
               )}
@@ -487,8 +488,9 @@ export default function UpdatePage() {
               <ModalHeader>确认在线更新</ModalHeader>
               <ModalBody>
                 <p className="text-sm text-default-600 dark:text-default-300">
-                  将从固定的 main
-                  分支下载源码、重新构建前后端并执行健康检查。构建完成后服务会短暂重启；构建失败会恢复上一份源码，数据库卷不会删除。
+                  将按检测到的正式版本标签下载源码（当前目标：
+                  {remoteVersion?.version || "最新版本"}
+                  ），重新构建前后端并执行健康检查。构建完成后服务会短暂重启；构建失败会恢复上一份源码，数据库卷不会删除。
                 </p>
               </ModalBody>
               <ModalFooter>

@@ -11,6 +11,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SystemUpdateServiceTests {
@@ -46,5 +47,33 @@ class SystemUpdateServiceTests {
         assertTrue(Files.isRegularFile(stateDirectory.resolve("update.request")));
         assertEquals(409, secondResponse.getCode());
         assertEquals("queued", service.getStatus().get("state"));
+    }
+
+    @Test
+    void queuesTheRequestedReleaseVersion() throws Exception {
+        Files.createFile(stateDirectory.resolve("enabled"));
+        Files.writeString(
+                stateDirectory.resolve("status.properties"),
+                "state=idle\nmessage=Ready\nstartedAt=0\nfinishedAt=0\n",
+                StandardCharsets.UTF_8
+        );
+        SystemUpdateService service = new SystemUpdateService(stateDirectory.toString());
+
+        assertEquals(0, service.triggerUpdate("v2.51.43").getCode());
+        assertTrue(Files.readString(stateDirectory.resolve("update.request"))
+                .startsWith("version=2.51.43\nrequestedAt="));
+    }
+
+    @Test
+    void rejectsMalformedRequestedReleaseVersion() throws Exception {
+        Files.createFile(stateDirectory.resolve("enabled"));
+        Files.writeString(
+                stateDirectory.resolve("status.properties"),
+                "state=idle\nmessage=Ready\nstartedAt=0\nfinishedAt=0\n",
+                StandardCharsets.UTF_8
+        );
+        SystemUpdateService service = new SystemUpdateService(stateDirectory.toString());
+
+        assertThrows(IllegalArgumentException.class, () -> service.triggerUpdate("main"));
     }
 }

@@ -8,7 +8,6 @@ CONFIG_DIR="${FLUX_PANEL_CONFIG_DIR:-/etc/flux-panel}"
 ENV_FILE="${CONFIG_DIR}/flux-panel.env"
 COMPOSE_FILE="${FLUX_PANEL_COMPOSE_FILE:-${INSTALL_DIR}/docker-compose.yml}"
 SOURCE_COMPOSE_FILE="${INSTALL_DIR}/docker-compose-source.yml"
-SOURCE_URL="https://github.com/${REPOSITORY}/archive/refs/heads/${BRANCH}.tar.gz"
 UPDATER_STATE_DIR="${FLUX_PANEL_UPDATER_STATE_DIR:-/var/lib/flux-panel-updater}"
 MANAGER_BIN="${FLUX_PANEL_MANAGER_BIN:-/usr/local/sbin/flux-panel-manager}"
 WORKER_BIN="${FLUX_PANEL_WORKER_BIN:-/usr/local/sbin/flux-panel-update-worker}"
@@ -219,10 +218,18 @@ validate_port() {
 
 download_source() {
   local destination="$1"
+  local reference="${2:-${BRANCH}}"
   local archive
   archive="$(mktemp)"
-  log "downloading ${REPOSITORY} (${BRANCH})"
-  curl -fL --retry 3 --connect-timeout 15 "${SOURCE_URL}" -o "${archive}"
+  local source_url
+  if [[ "${reference}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    source_url="https://github.com/${REPOSITORY}/archive/refs/tags/${reference}.tar.gz"
+    log "downloading ${REPOSITORY} release ${reference}"
+  else
+    source_url="https://github.com/${REPOSITORY}/archive/refs/heads/${reference}.tar.gz"
+    log "downloading ${REPOSITORY} branch ${reference}"
+  fi
+  curl -fL --retry 3 --connect-timeout 15 "${source_url}" -o "${archive}"
   mkdir -p "${destination}"
   tar -xzf "${archive}" --strip-components=1 -C "${destination}"
   rm -f "${archive}"
@@ -529,11 +536,18 @@ update_panel() {
   flock -n 9 || fail "another Flux Panel update is already running"
 
   local staging backup target_version previous_version
+  local requested_version="${FLUX_PANEL_UPDATE_VERSION:-}"
+  if [[ -n "${requested_version}" && ! "${requested_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+    fail "invalid requested update version: ${requested_version}"
+  fi
   staging="$(mktemp -d)"
   backup="${INSTALL_DIR}.previous"
   trap 'rm -rf "${staging:-}"' EXIT
-  download_source "${staging}"
+  download_source "${staging}" "${requested_version:-${BRANCH}}"
   target_version="$(project_version "${staging}")"
+  if [[ -n "${requested_version}" && "${target_version}" != "${requested_version}" ]]; then
+    fail "downloaded release version ${target_version} does not match requested version ${requested_version}"
+  fi
   previous_version="$(read_env_value PANEL_VERSION)"
   if [[ -z "${previous_version}" && -f "${INSTALL_DIR}/VERSION" ]]; then
     previous_version="$(project_version "${INSTALL_DIR}")"
