@@ -1,3 +1,9 @@
+## 2.51.45 Cross-entry expiry field visual alignment
+
+- Aligns the expiry field with the neighboring form controls by using the same card height, background, internal label, value row, and spacing.
+- Removes the browser-native white border appearance while retaining the native date picker, clear action, validation, and Beijing-time semantics.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.44 Cross-entry expiry field layout
 
 - Replaces the HeroUI floating-label wrapper around the native `datetime-local` control with a fixed label and separated description/error rows, preventing the label and selected date from overlapping.

@@ -20,6 +20,7 @@ import {
   ArrowDown,
   ArrowRight,
   ArrowUp,
+  Calendar,
   CheckCircle2,
   History,
   Pencil,
@@ -2641,34 +2642,46 @@ export default function CrossEntryFailoverPage() {
                 onValueChange={(name) => setForm({ ...form, name })}
               />
               <div className="min-w-0">
-                <label
-                  className="mb-2 block text-sm font-medium text-foreground"
-                  htmlFor="cross-entry-expires-at"
+                <div
+                  className={`h-28 rounded-xl bg-default-100 px-4 py-3 transition-colors dark:bg-default-50/5 ${
+                    saveFieldError("expiresAt")
+                      ? "ring-2 ring-danger/30"
+                      : "focus-within:ring-2 focus-within:ring-primary/20"
+                  }`}
                 >
-                  链接到期时间（北京时间）
-                </label>
-                <div className="relative">
-                  <input
-                    aria-invalid={Boolean(saveFieldError("expiresAt"))}
-                    className="h-14 w-full rounded-xl border border-default-200 bg-default-100 px-4 pr-20 text-base text-foreground outline-none transition-colors hover:border-default-400 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-default-700 dark:bg-default-50/5"
-                    id="cross-entry-expires-at"
-                    type="datetime-local"
-                    value={form.expiresAt}
-                    onChange={(event) =>
-                      setForm({ ...form, expiresAt: event.target.value })
-                    }
-                  />
-                  {form.expiresAt && (
-                    <button
-                      aria-label="清空链接到期时间"
-                      className="absolute right-10 top-1/2 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
-                      title="清空链接到期时间"
-                      type="button"
-                      onClick={() => setForm({ ...form, expiresAt: "" })}
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
+                  <label
+                    className="block text-base font-medium leading-6 text-default-700 dark:text-default-400"
+                    htmlFor="cross-entry-expires-at"
+                  >
+                    链接到期时间（北京时间）
+                  </label>
+                  <div className="relative mt-1">
+                    <input
+                      aria-invalid={Boolean(saveFieldError("expiresAt"))}
+                      className="h-8 w-full appearance-none border-0 bg-transparent p-0 pr-20 text-xl leading-8 text-foreground outline-none placeholder:text-default-500 focus:ring-0"
+                      id="cross-entry-expires-at"
+                      type="datetime-local"
+                      value={form.expiresAt}
+                      onChange={(event) =>
+                        setForm({ ...form, expiresAt: event.target.value })
+                      }
+                    />
+                    <Calendar
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-1 top-1/2 h-5 w-5 -translate-y-1/2 text-default-500"
+                    />
+                    {form.expiresAt && (
+                      <button
+                        aria-label="清空链接到期时间"
+                        className="absolute right-8 top-1/2 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
+                        title="清空链接到期时间"
+                        type="button"
+                        onClick={() => setForm({ ...form, expiresAt: "" })}
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <p className="mt-2 text-xs leading-5 text-default-500">
                   留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS
