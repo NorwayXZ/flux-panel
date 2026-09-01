@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@heroui/button";
@@ -1285,9 +1285,22 @@ export default function CrossEntryFailoverPage() {
   const [checkingId, setCheckingId] = useState<number>();
   const [form, setForm] = useState(emptyForm);
   const [saveError, setSaveError] = useState<CrossEntrySaveFailure>();
+  const expiresAtInputRef = useRef<HTMLInputElement>(null);
 
   const saveFieldError = (field: string) =>
     saveError?.fieldErrors?.[field] || undefined;
+  const openExpiryPicker = () => {
+    const input = expiresAtInputRef.current;
+
+    if (!input) return;
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+
+      return;
+    }
+    input.focus();
+    input.click();
+  };
   const reportSaveError = (
     reason: string,
     fieldErrors: Record<string, string> = {},
@@ -2642,66 +2655,58 @@ export default function CrossEntryFailoverPage() {
                 onValueChange={(name) => setForm({ ...form, name })}
               />
               <div className="min-w-0">
-                <div
-                  className={`h-28 rounded-xl bg-default-100 px-4 py-3 transition-colors dark:bg-default-50/5 ${
-                    saveFieldError("expiresAt")
-                      ? "ring-2 ring-danger/30"
-                      : "focus-within:ring-2 focus-within:ring-primary/20"
-                  }`}
-                >
-                  <label
-                    className="block text-base font-medium leading-6 text-default-700 dark:text-default-400"
-                    htmlFor="cross-entry-expires-at"
-                  >
-                    链接到期时间（北京时间）
-                  </label>
-                  <div className="relative mt-1 flex h-8 items-center">
-                    <span
-                      className={`pointer-events-none block truncate pr-20 text-xl leading-8 ${
-                        form.expiresAt ? "text-foreground" : "text-default-500"
-                      }`}
-                    >
-                      {form.expiresAt
-                        ? form.expiresAt.replace("T", " ")
-                        : "未设置（永久有效）"}
-                    </span>
-                    <input
-                      aria-invalid={Boolean(saveFieldError("expiresAt"))}
-                      aria-label="链接到期时间（北京时间）"
-                      className="absolute inset-0 z-0 h-8 w-full cursor-pointer opacity-0"
-                      id="cross-entry-expires-at"
-                      type="datetime-local"
-                      value={form.expiresAt}
-                      onChange={(event) =>
-                        setForm({ ...form, expiresAt: event.target.value })
-                      }
-                    />
-                    <Calendar
-                      aria-hidden="true"
-                      className="pointer-events-none absolute right-1 top-1/2 z-0 h-5 w-5 -translate-y-1/2 text-default-500"
-                    />
-                    {form.expiresAt && (
+                <Input
+                  classNames={{
+                    input: "cursor-pointer",
+                    inputWrapper: "cursor-pointer",
+                  }}
+                  description="留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS 调度。"
+                  endContent={
+                    <div className="flex items-center gap-1">
+                      {form.expiresAt && (
+                        <button
+                          aria-label="清空链接到期时间"
+                          className="rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
+                          title="清空链接到期时间"
+                          type="button"
+                          onClick={() => setForm({ ...form, expiresAt: "" })}
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
                       <button
-                        aria-label="清空链接到期时间"
-                        className="absolute right-8 top-1/2 z-10 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
-                        title="清空链接到期时间"
+                        aria-label="打开链接到期时间选择器"
+                        className="rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
+                        title="打开链接到期时间选择器"
                         type="button"
-                        onClick={() => setForm({ ...form, expiresAt: "" })}
+                        onClick={openExpiryPicker}
                       >
-                        <X size={16} />
+                        <Calendar size={18} />
                       </button>
-                    )}
-                  </div>
-                </div>
-                <p className="mt-2 text-xs leading-5 text-default-500">
-                  留空表示永久有效；填写后按北京时间到期并停止这条链接的 DNS
-                  调度。
-                </p>
-                {saveFieldError("expiresAt") && (
-                  <p className="mt-1 text-xs text-danger">
-                    {saveFieldError("expiresAt")}
-                  </p>
-                )}
+                    </div>
+                  }
+                  errorMessage={saveFieldError("expiresAt")}
+                  isInvalid={Boolean(saveFieldError("expiresAt"))}
+                  isReadOnly
+                  label="链接到期时间（北京时间）"
+                  value={
+                    form.expiresAt
+                      ? form.expiresAt.replace("T", " ")
+                      : "未设置（永久有效）"
+                  }
+                  onClick={openExpiryPicker}
+                />
+                <input
+                  ref={expiresAtInputRef}
+                  aria-label="链接到期时间（北京时间）"
+                  className="pointer-events-none absolute h-px w-px opacity-0"
+                  id="cross-entry-expires-at"
+                  type="datetime-local"
+                  value={form.expiresAt}
+                  onChange={(event) =>
+                    setForm({ ...form, expiresAt: event.target.value })
+                  }
+                />
               </div>
               <Select
                 description={

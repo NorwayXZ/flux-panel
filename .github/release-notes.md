@@ -1,3 +1,9 @@
+## 2.51.47 Cross-entry expiry control sizing
+
+- Restores the standard HeroUI input as the expiry field's visual shell so its height, label, spacing, and helper text match neighboring controls.
+- Keeps date selection in a separate native control and exposes independent clear and calendar actions, preventing the browser date UI from stretching the grid or producing duplicate icons.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.46 Cross-entry expiry field final alignment
 
 - Makes the expiry control match the neighboring fields in card size, internal label, value typography, spacing, and vertical alignment.
