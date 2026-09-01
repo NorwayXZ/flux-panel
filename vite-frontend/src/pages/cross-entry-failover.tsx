@@ -2655,10 +2655,20 @@ export default function CrossEntryFailoverPage() {
                   >
                     链接到期时间（北京时间）
                   </label>
-                  <div className="relative mt-1">
+                  <div className="relative mt-1 flex h-8 items-center">
+                    <span
+                      className={`pointer-events-none block truncate pr-20 text-xl leading-8 ${
+                        form.expiresAt ? "text-foreground" : "text-default-500"
+                      }`}
+                    >
+                      {form.expiresAt
+                        ? form.expiresAt.replace("T", " ")
+                        : "未设置（永久有效）"}
+                    </span>
                     <input
                       aria-invalid={Boolean(saveFieldError("expiresAt"))}
-                      className="h-8 w-full appearance-none border-0 bg-transparent p-0 pr-20 text-xl leading-8 text-foreground outline-none placeholder:text-default-500 focus:ring-0"
+                      aria-label="链接到期时间（北京时间）"
+                      className="absolute inset-0 z-0 h-8 w-full cursor-pointer opacity-0"
                       id="cross-entry-expires-at"
                       type="datetime-local"
                       value={form.expiresAt}
@@ -2668,12 +2678,12 @@ export default function CrossEntryFailoverPage() {
                     />
                     <Calendar
                       aria-hidden="true"
-                      className="pointer-events-none absolute right-1 top-1/2 h-5 w-5 -translate-y-1/2 text-default-500"
+                      className="pointer-events-none absolute right-1 top-1/2 z-0 h-5 w-5 -translate-y-1/2 text-default-500"
                     />
                     {form.expiresAt && (
                       <button
                         aria-label="清空链接到期时间"
-                        className="absolute right-8 top-1/2 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
+                        className="absolute right-8 top-1/2 z-10 -translate-y-1/2 rounded-full p-1 text-default-500 transition-colors hover:bg-default-200 hover:text-foreground dark:hover:bg-default-700"
                         title="清空链接到期时间"
                         type="button"
                         onClick={() => setForm({ ...form, expiresAt: "" })}

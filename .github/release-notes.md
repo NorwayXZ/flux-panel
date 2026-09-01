@@ -1,3 +1,10 @@
+## 2.51.46 Cross-entry expiry field final alignment
+
+- Makes the expiry control match the neighboring fields in card size, internal label, value typography, spacing, and vertical alignment.
+- Keeps the native `datetime-local` picker usable through a transparent interaction layer while presenting one consistent calendar affordance and a separate clear action.
+- Prevents browser-native date text and borders from changing the form grid height or creating duplicate calendar icons.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.45 Cross-entry expiry field visual alignment
 
 - Aligns the expiry field with the neighboring form controls by using the same card height, background, internal label, value row, and spacing.
