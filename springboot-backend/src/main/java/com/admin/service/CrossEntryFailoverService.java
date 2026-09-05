@@ -54,6 +54,9 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.net.URI;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -81,6 +84,7 @@ public class CrossEntryFailoverService {
     private static final String CF_API = "https://api.cloudflare.com/client/v4";
     private static final int MAX_GROUPS_PER_TICK = 50;
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
+    private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -291,7 +295,7 @@ public class CrossEntryFailoverService {
                         + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,manual_lock_until AS manualLockUntil,"
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
-                        + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,g.created_time AS createdTime,"
+                        + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,g.created_time AS createdTime,"
                         + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active') "
                         + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
                         + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active' LIMIT 1) AS managedTargetAddress,"
@@ -302,7 +306,9 @@ public class CrossEntryFailoverService {
                         + "FROM cross_entry_failover_group g LEFT JOIN dns_zone z ON z.id=g.dns_zone_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
             long id = number(group.get("id")).longValue();
-            group.put("members", loadMembers(id));
+            List<Map<String, Object>> members = loadMembers(id);
+            applyTodayUsage(group, members, System.currentTimeMillis());
+            group.put("members", members);
             group.put("schedules", loadSchedules(id));
             List<Map<String, Object>> latestSwitch = jdbcTemplate.queryForList(
                     "SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
@@ -368,6 +374,9 @@ public class CrossEntryFailoverService {
             String providerZoneId = managedDns ? zoneAccess.providerZoneId() : StringUtils.trimToEmpty(dto.getZoneId());
             Long id = dto.getId();
             Long previousActiveForwardId = null;
+            Long previousActiveMemberId = null;
+            Long previousActiveSinceAt = null;
+            boolean previousGroupEnabled = false;
             String previousActiveName = null;
             Long requestedLockedForwardId = null;
             String requestedRecordId = dto.getRecordId();
@@ -377,7 +386,8 @@ public class CrossEntryFailoverService {
                         "请选择已在 DNS 与域名中登记的 Cloudflare Zone", dto, 0);
             } else {
                 List<Map<String, Object>> existing = jdbcTemplate.queryForList(
-                        "SELECT g.api_token,g.domain,g.dns_zone_id,g.zone_id,g.record_type,g.record_id,m.forward_id AS activeForwardId,m.node_name AS activeName "
+                        "SELECT g.api_token,g.domain,g.dns_zone_id,g.zone_id,g.record_type,g.record_id,g.active_member_id AS activeMemberId,"
+                                + "g.active_since_at AS activeSinceAt,g.enabled AS groupEnabled,m.forward_id AS activeForwardId,m.node_name AS activeName "
                                 + "FROM cross_entry_failover_group g LEFT JOIN cross_entry_failover_member m ON m.id=g.active_member_id WHERE g.id=?", id);
                 if (existing.isEmpty()) return saveFailureResponse("database_validation",
                         "容灾组不存在", dto, 0);
@@ -408,6 +418,9 @@ public class CrossEntryFailoverService {
                                 + "FROM cross_entry_failover_member WHERE group_id=?", id)
                         .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
+                previousActiveMemberId = nullableLong(old.get("activeMemberId"));
+                previousActiveSinceAt = nullableLong(old.get("activeSinceAt"));
+                previousGroupEnabled = bool(old.get("groupEnabled"));
                 previousActiveName = Objects.toString(old.get("activeName"), null);
                 if (!managedDns) {
                     Long oldZoneRef = nullableLong(old.get("dns_zone_id"));
@@ -512,6 +525,9 @@ public class CrossEntryFailoverService {
                         dto.getDnsVerifyEnabled(), dto.getManualControlMode(), dto.getLockedMemberId(), dto.getManualLockUntil(),
                         dto.getQualityEnabled() ? "pending" : "disabled", dto.getEnabled(), now, id);
                 dnsProviderService.clearCrossEntryActiveRecords(dto.getDnsZoneId(), id);
+                if (previousGroupEnabled) {
+                    settleActiveUsage(id, previousActiveMemberId, previousActiveSinceAt, now);
+                }
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
             }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET expires_at=? WHERE id=?", dto.getExpiresAt(), id);
@@ -585,9 +601,12 @@ public class CrossEntryFailoverService {
             }
             Long lockedMemberId = "lock".equals(dto.getManualControlMode()) ? retainedLockedMemberId : null;
             boolean configuredEntryChanged = previousActiveForwardId != null && retainedActiveMemberId == null;
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,locked_member_id=?,manual_lock_until=?,last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END WHERE id=?",
+            boolean resetActiveSince = dto.getId() == null || previousActiveMemberId != null;
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,locked_member_id=?,manual_lock_until=?,"
+                            + "last_switch_at=CASE WHEN ? THEN ? ELSE last_switch_at END,"
+                            + "active_since_at=CASE WHEN ? THEN ? ELSE active_since_at END WHERE id=?",
                     activeMemberId, lockedMemberId, "lock".equals(dto.getManualControlMode()) ? dto.getManualLockUntil() : null,
-                    configuredEntryChanged, now, id);
+                    configuredEntryChanged, now, resetActiveSince, now, id);
             replaceSchedules(id, dto.getSchedules(), now);
 
             Map<String, Object> selectedEntry = loadMember(activeMemberId);
@@ -800,13 +819,14 @@ public class CrossEntryFailoverService {
             if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能重新启用容灾组");
             if (bool(group.get("enabled")) == enabled) return listGroups();
             if (!enabled) {
-                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
+                settleActiveUsage(groupId, nullableLong(group.get("activeMemberId")), nullableLong(group.get("activeSinceAt")), now);
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='unknown',last_error=NULL,active_since_at=NULL,updated_time=? WHERE id=?",
                         now, groupId);
                 addEvent(groupId, nullableLong(group.get("activeMemberId")), null, "管理员关闭容灾组", "success",
                         "已暂停该组全部入口的探测、自动切换和 DNS 调度；既有转发与连接未被删除或强制断开");
             } else {
-                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=1,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
-                        now, groupId);
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=1,state='unknown',last_error=NULL,active_since_at=?,updated_time=? WHERE id=?",
+                        now, now, groupId);
                 addEvent(groupId, null, nullableLong(group.get("activeMemberId")), "管理员开启容灾组", "success",
                         "将立即重新探测所有启用入口，并按现有规则恢复调度");
                 doProbeGroup(groupId, true);
@@ -984,8 +1004,11 @@ public class CrossEntryFailoverService {
         Long expiresAt = nullableLong(group.get("expiresAt"));
         if (expiresAt == null || expiresAt > now) return false;
         long groupId = number(group.get("id")).longValue();
+        if (bool(group.get("enabled"))) {
+            settleActiveUsage(groupId, nullableLong(group.get("activeMemberId")), nullableLong(group.get("activeSinceAt")), now);
+        }
         int updated = jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='expired',"
-                        + "last_error=?,updated_time=? WHERE id=? AND enabled=1 AND expires_at IS NOT NULL AND expires_at <= ?",
+                        + "last_error=?,active_since_at=NULL,updated_time=? WHERE id=? AND enabled=1 AND expires_at IS NOT NULL AND expires_at <= ?",
                 "链接已到期，自动检测与 DNS 调度已停止", now, groupId, now);
         boolean retryCleanup = updated == 0
                 && "expired".equals(Objects.toString(group.get("state")))
@@ -1504,9 +1527,11 @@ public class CrossEntryFailoverService {
                     dnsDetail = "；" + dnsVerification.message();
                 }
             }
+            settleActiveUsage(groupId, from == null ? null : nullableLong(from.get("id")),
+                    nullableLong(group.get("activeSinceAt")), now);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state='healthy',last_error=NULL,"
-                            + "last_checked_at=?,last_switch_at=?,updated_time=? WHERE id=?",
-                    to.get("id"), now, now, now, groupId);
+                            + "last_checked_at=?,last_switch_at=?,active_since_at=?,updated_time=? WHERE id=?",
+                    to.get("id"), now, now, now, now, groupId);
             addEvent(groupId, from == null ? null : nullableLong(from.get("id")), nullableLong(to.get("id")), reason,
                     "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress") + dnsDetail);
             telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
@@ -2585,7 +2610,7 @@ public class CrossEntryFailoverService {
                 + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,manual_lock_until AS manualLockUntil,"
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
-                + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,"
+                + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,"
                 + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active') "
                 + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
                 + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedTargetAddress,"
@@ -2595,6 +2620,71 @@ public class CrossEntryFailoverService {
                 + "FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);
+    }
+
+    private void applyTodayUsage(Map<String, Object> group, List<Map<String, Object>> members, long now) {
+        if ("active_active".equals(Objects.toString(group.get("routingMode"), "failover"))) {
+            group.put("todayUsageMode", "active_active");
+            group.put("todayLongestMemberId", null);
+            group.put("todayLongestUsageMillis", 0L);
+            for (Map<String, Object> member : members) member.put("todayUsageMillis", 0L);
+            return;
+        }
+        LocalDate today = Instant.ofEpochMilli(now).atZone(PANEL_ZONE).toLocalDate();
+        Map<Long, Long> usage = new LinkedHashMap<>();
+        for (Map<String, Object> row : jdbcTemplate.queryForList(
+                "SELECT member_id AS memberId,active_millis AS activeMillis FROM cross_entry_member_daily_usage "
+                        + "WHERE group_id=? AND usage_date=?", number(group.get("id")).longValue(), java.sql.Date.valueOf(today))) {
+            usage.put(number(row.get("memberId")).longValue(), number(row.get("activeMillis")).longValue());
+        }
+        Long activeId = nullableLong(group.get("activeMemberId"));
+        Long activeSince = nullableLong(group.get("activeSinceAt"));
+        if (bool(group.get("enabled")) && activeId != null && activeSince != null) {
+            long todayStartedAt = today.atStartOfDay(PANEL_ZONE).toInstant().toEpochMilli();
+            usage.merge(activeId, Math.max(0L, now - Math.max(activeSince, todayStartedAt)), Long::sum);
+        }
+        Long longestMemberId = null;
+        long longestMillis = 0L;
+        for (Map<String, Object> member : members) {
+            long memberId = number(member.get("id")).longValue();
+            long millis = usage.getOrDefault(memberId, 0L);
+            member.put("todayUsageMillis", millis);
+            if (millis > longestMillis) {
+                longestMillis = millis;
+                longestMemberId = memberId;
+            }
+        }
+        group.put("todayUsageMode", "failover");
+        group.put("todayLongestMemberId", longestMemberId);
+        group.put("todayLongestUsageMillis", longestMillis);
+    }
+
+    private void settleActiveUsage(long groupId, Long memberId, Long activeSinceAt, long now) {
+        if (memberId == null || activeSinceAt == null || now <= activeSinceAt) return;
+        for (DailyUsageSlice slice : dailyUsageSlices(activeSinceAt, now)) {
+            jdbcTemplate.update("INSERT INTO cross_entry_member_daily_usage "
+                            + "(group_id,member_id,usage_date,active_millis,updated_time) VALUES (?,?,?,?,?) "
+                            + "ON DUPLICATE KEY UPDATE active_millis=active_millis+VALUES(active_millis),updated_time=VALUES(updated_time)",
+                    groupId, memberId, java.sql.Date.valueOf(slice.day()), slice.millis(), now);
+        }
+    }
+
+    static List<DailyUsageSlice> dailyUsageSlices(long startAt, long endAt) {
+        if (endAt <= startAt) return List.of();
+        List<DailyUsageSlice> slices = new ArrayList<>();
+        long cursor = startAt;
+        while (cursor < endAt) {
+            ZonedDateTime point = Instant.ofEpochMilli(cursor).atZone(PANEL_ZONE);
+            long nextDay = point.toLocalDate().plusDays(1).atStartOfDay(PANEL_ZONE).toInstant().toEpochMilli();
+            long end = Math.min(endAt, nextDay);
+            long millis = Math.max(0L, end - cursor);
+            if (millis > 0) slices.add(new DailyUsageSlice(point.toLocalDate(), millis));
+            cursor = end;
+        }
+        return slices;
+    }
+
+    record DailyUsageSlice(LocalDate day, long millis) {
     }
 
     private List<Map<String, Object>> loadMembers(long groupId) {

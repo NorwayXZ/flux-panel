@@ -1,3 +1,10 @@
+## 2.51.52 Daily entry usage duration
+
+- Adds Beijing-time daily active duration to every failover entry and highlights the longest-used entry in each failover group.
+- Settles the outgoing active entry on successful switches, group pauses, expiry, and configuration edits; intervals that cross midnight are split between days.
+- Active time is computed only for primary/backup failover. Active-active DNS has no single bearer route, so it deliberately does not report misleading per-entry duration.
+- Existing groups begin accurate daily accumulation after this upgrade. Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.51 Failover group master switch
 
 - Adds a visible master switch to every cross-entry failover group.

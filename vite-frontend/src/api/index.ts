@@ -1625,6 +1625,7 @@ export interface CrossEntryMember {
   lastInFlowAt?: number;
   lastOutFlowAt?: number;
   lastActivityAt?: number;
+  todayUsageMillis?: number;
 }
 
 export interface CrossEntrySchedule {
@@ -1719,6 +1720,10 @@ export interface CrossEntryGroup {
   lastError?: string;
   lastCheckedAt?: number;
   lastSwitchAt?: number;
+  activeSinceAt?: number;
+  todayUsageMode?: "failover" | "active_active";
+  todayLongestMemberId?: number;
+  todayLongestUsageMillis?: number;
   apiTokenConfigured: boolean | number;
   members: CrossEntryMember[];
   schedules?: CrossEntrySchedule[];

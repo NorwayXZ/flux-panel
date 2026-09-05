@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -150,5 +152,20 @@ class CrossEntryFailoverServiceTests {
                 new ConnectException("No route to host"), "203.0.113.8:443", 1200).contains("无可用网络路由"));
         assertTrue(CrossEntryFailoverService.probeFailureMessage(
                 new UnknownHostException(), "entry.example:443", 1200).contains("解析失败"));
+    }
+
+    @Test
+    void dailyUsageSplitsAnActivePeriodAtBeijingMidnight() {
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        long start = ZonedDateTime.of(2026, 9, 5, 23, 50, 0, 0, zone).toInstant().toEpochMilli();
+        long end = ZonedDateTime.of(2026, 9, 6, 0, 10, 0, 0, zone).toInstant().toEpochMilli();
+
+        var slices = CrossEntryFailoverService.dailyUsageSlices(start, end);
+
+        assertEquals(2, slices.size());
+        assertEquals(600_000L, slices.get(0).millis());
+        assertEquals(600_000L, slices.get(1).millis());
+        assertEquals(java.time.LocalDate.of(2026, 9, 5), slices.get(0).day());
+        assertEquals(java.time.LocalDate.of(2026, 9, 6), slices.get(1).day());
     }
 }

@@ -27,7 +27,7 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "failure_threshold int NOT NULL DEFAULT 2, recovery_threshold int NOT NULL DEFAULT 3, "
                     + "cooldown_seconds int NOT NULL DEFAULT 30, auto_failback tinyint NOT NULL DEFAULT 0, enabled tinyint NOT NULL DEFAULT 1, "
                     + "expires_at bigint DEFAULT NULL, "
-                    + "state varchar(24) NOT NULL DEFAULT 'unknown', active_member_id bigint DEFAULT NULL, "
+                    + "state varchar(24) NOT NULL DEFAULT 'unknown', active_member_id bigint DEFAULT NULL, active_since_at bigint DEFAULT NULL, "
                     + "last_error varchar(500) DEFAULT NULL, last_checked_at bigint DEFAULT NULL, last_switch_at bigint DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                     + "UNIQUE KEY uk_cross_entry_domain (domain, record_type), KEY idx_cross_entry_due (enabled, last_checked_at)"
@@ -59,6 +59,7 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_event", "to_node_name", "varchar(100) DEFAULT NULL AFTER from_node_name");
             ensureColumn("cross_entry_failover_group", "dns_zone_id", "bigint DEFAULT NULL AFTER domain");
             ensureColumn("cross_entry_failover_group", "expires_at", "bigint DEFAULT NULL AFTER enabled");
+            boolean activeSinceAdded = ensureColumn("cross_entry_failover_group", "active_since_at", "bigint DEFAULT NULL AFTER active_member_id");
             // Default stays failover so upgrading never changes existing DNS behaviour.
             ensureColumn("cross_entry_failover_group", "routing_mode", "varchar(24) NOT NULL DEFAULT 'failover' AFTER auto_failback");
             ensureColumn("cross_entry_failover_group", "quality_enabled", "tinyint NOT NULL DEFAULT 0 AFTER routing_mode");
@@ -163,6 +164,16 @@ public class CrossEntryFailoverSchemaInitializer {
                         + "pending_probe_connections=0,last_telemetry_at=NULL");
             }
             ensureIndex("cross_entry_failover_member", "idx_cross_entry_activity", "forward_id,entry_node_id");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_member_daily_usage ("
+                    + "group_id bigint NOT NULL,member_id bigint NOT NULL,usage_date date NOT NULL,active_millis bigint NOT NULL DEFAULT 0,updated_time bigint NOT NULL,"
+                    + "PRIMARY KEY (group_id,member_id,usage_date),KEY idx_cross_entry_daily_usage (group_id,usage_date,active_millis)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            if (activeSinceAdded) {
+                long now = System.currentTimeMillis();
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_since_at=? "
+                                + "WHERE enabled=1 AND active_member_id IS NOT NULL AND active_since_at IS NULL",
+                        now);
+            }
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_record ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,member_id bigint NOT NULL,"
                     + "provider_record_id varchar(64) NOT NULL,content varchar(255) NOT NULL,created_time bigint NOT NULL,updated_time bigint NOT NULL,"

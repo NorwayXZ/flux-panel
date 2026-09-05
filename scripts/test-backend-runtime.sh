@@ -128,6 +128,12 @@ for column in activity_in_flow activity_out_flow last_in_flow_at last_out_flow_a
     "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_member' AND column_name='${column}'")
   [[ "${column_exists}" -eq 1 ]]
 done
+active_since_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name='active_since_at'")
+[[ "${active_since_exists}" -eq 1 ]]
+daily_usage_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage'")
+[[ "${daily_usage_table_exists}" -eq 1 ]]
 
 for table in monitoring_current monitoring_history monitoring_alert; do
   width=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \

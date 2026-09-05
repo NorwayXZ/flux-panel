@@ -2261,6 +2261,9 @@ export default function CrossEntryFailoverPage() {
             const active = group.members.find(
               (item) => item.id === group.activeMemberId,
             );
+            const todayLongest = group.members.find(
+              (item) => item.id === group.todayLongestMemberId,
+            );
             const activeActive = group.routingMode === "active_active";
             const tcpLatencySelectionEnabled =
               !activeActive &&
@@ -2364,6 +2367,18 @@ export default function CrossEntryFailoverPage() {
                             {penaltyEnabled ? "阶梯惩罚" : "抖动保护"}
                           </Chip>
                         )}
+                        {group.todayUsageMode === "failover" &&
+                          todayLongest &&
+                          (group.todayLongestUsageMillis || 0) > 0 && (
+                            <Chip color="secondary" size="sm" variant="flat">
+                              今日最长：{todayLongest.nodeName} ·{" "}
+                              {durationText(
+                                Math.floor(
+                                  (group.todayLongestUsageMillis || 0) / 1000,
+                                ),
+                              )}
+                            </Chip>
+                          )}
                         {group.manualControlMode &&
                           group.manualControlMode !== "auto" && (
                             <Chip
@@ -2667,6 +2682,19 @@ export default function CrossEntryFailoverPage() {
                               · {member.entryAddress}:{member.entryPort} ·{" "}
                               {member.forwardName}
                             </p>
+                            {group.todayUsageMode === "failover" && (
+                              <p className="mt-1 text-xs text-default-500">
+                                今日承载{" "}
+                                {durationText(
+                                  Math.floor(
+                                    (member.todayUsageMillis || 0) / 1000,
+                                  ),
+                                )}
+                                {isActive && truthy(group.enabled)
+                                  ? " · 正在累计"
+                                  : ""}
+                              </p>
+                            )}
                             {qualitySuppressed && (
                               <p className="mt-1 truncate text-xs text-warning">
                                 {member.qualitySuppressedReason ||

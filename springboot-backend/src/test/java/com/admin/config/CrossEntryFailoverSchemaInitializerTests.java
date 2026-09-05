@@ -39,6 +39,8 @@ class CrossEntryFailoverSchemaInitializerTests {
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `last_in_flow_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `last_out_flow_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `last_activity_at`")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `active_since_at`")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_member_daily_usage")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `expires_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD INDEX `idx_cross_entry_activity`")));
     }
