@@ -175,6 +175,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          release_notes="$(mktemp)"
+          trap 'rm -f "${release_notes}"' EXIT
+          awk 'NR > 1 && /^## / { exit } { print }' .github/release-notes.md > "${release_notes}"
+          test -s "${release_notes}"
           gh release create "${VERSION}" \
             gost-amd64 gost-arm64 \
             gost-windows-amd64.exe gost-windows-arm64.exe \
@@ -182,4 +187,4 @@ jobs:
             SHA256SUMS install.sh install-connector.ps1 install-connector-macos.sh \
             --verify-tag \
             --title "Flux Panel ${VERSION}" \
-            --notes-file .github/release-notes.md
+            --notes-file "${release_notes}"

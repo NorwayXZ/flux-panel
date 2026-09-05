@@ -1,3 +1,9 @@
+## 2.51.49 Release-note size guard
+
+- Publishes only the current release-note section so the GitHub Release body remains below GitHub's size limit as historical notes accumulate.
+- Includes the `2.51.48` cross-entry data-path diagnostics, legacy database migration, and runtime upgrade gate.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.48 Cross-entry data-path diagnostics
 
 - Separates accepted entry connections from actual bidirectional traffic and classifies each route as bidirectional traffic, requests without responses, connections without recent traffic, stale telemetry, or idle.
