@@ -86,6 +86,9 @@ public class CrossEntryFailoverService {
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
     private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
     private static final long TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS = 15_000L;
+    static final String DAILY_USAGE_SELECT_SQL = "SELECT member_id AS memberId,active_millis AS activeMillis,"
+            + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
+            + "WHERE group_id=? AND usage_date=?";
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -2635,8 +2638,7 @@ public class CrossEntryFailoverService {
         Map<Long, Long> activeUsage = new LinkedHashMap<>();
         Map<Long, Long> trafficUsage = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbcTemplate.queryForList(
-                "SELECT member_id AS memberId,active_millis AS activeMillis,traffic_active_millis AS trafficActiveMillis "
-                        + "WHERE group_id=? AND usage_date=?", number(group.get("id")).longValue(), java.sql.Date.valueOf(today))) {
+                DAILY_USAGE_SELECT_SQL, number(group.get("id")).longValue(), java.sql.Date.valueOf(today))) {
             long memberId = number(row.get("memberId")).longValue();
             activeUsage.put(memberId, number(row.get("activeMillis")).longValue());
             trafficUsage.put(memberId, number(row.get("trafficActiveMillis")).longValue());

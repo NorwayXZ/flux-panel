@@ -176,4 +176,12 @@ class CrossEntryFailoverServiceTests {
         assertEquals(105_000L, CrossEntryFailoverService.trafficUsageWindowStart(110_000L, 105_000L));
         assertEquals(90_000L, CrossEntryFailoverService.trafficUsageWindowStart(1L, 105_000L));
     }
+
+    @Test
+    void dailyUsageQueryReadsTheDailyUsageTable() {
+        assertEquals("SELECT member_id AS memberId,active_millis AS activeMillis,"
+                        + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
+                        + "WHERE group_id=? AND usage_date=?",
+                CrossEntryFailoverService.DAILY_USAGE_SELECT_SQL);
+    }
 }

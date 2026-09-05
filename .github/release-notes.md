@@ -1,3 +1,8 @@
+## 2.51.54 Cross-entry usage query fix
+
+- Fixes the entry failover daily-usage query missing its source table, which caused the page to fail to load after `2.51.53`.
+- Adds a regression test for the exact daily usage query. Agent and Connector remain `2.51.37`.
+
 ## 2.51.53 Confirmed traffic usage time
 
 - Adds per-entry real usage time and highlights the route with the longest confirmed use today.
