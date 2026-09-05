@@ -234,6 +234,98 @@ const metricText = (value?: number, unit = "") =>
 
 const connectionCountText = (value?: number) =>
   new Intl.NumberFormat("zh-CN").format(Math.max(0, Number(value) || 0));
+const formatBytes = (value = 0) => {
+  if (value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1,
+  );
+  const amount = value / 1024 ** index;
+
+  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
+};
+const explainProbeError = (value?: string) => {
+  const reason = String(value || "").trim();
+
+  if (!reason) return "未知探测错误";
+  if (reason.includes("公网入口连接失败"))
+    return reason.replace(
+      "公网入口连接失败",
+      "面板到该入口公网 IP:端口 的 TCP 建连失败",
+    );
+  if (reason.includes("等待响应超时"))
+    return reason.replace(
+      "等待响应超时",
+      "面板等待探测 Agent 返回结果超时（控制链路或 Agent 响应异常）",
+    );
+
+  return reason;
+};
+const trafficActivityMeta = (
+  member: CrossEntryGroup["members"][number],
+  now = Date.now(),
+) => {
+  if (!truthy(member.telemetryReady || false)) {
+    return {
+      label: "等待上报",
+      color: "default" as const,
+      detail: "尚未收到该入口的连接与流量遥测。",
+    };
+  }
+  if (!member.telemetryLive) {
+    return {
+      label: "上报中断",
+      color: "warning" as const,
+      detail: "Agent 超过 30 秒没有更新连接与流量数据。",
+    };
+  }
+  const inputRecent = Boolean(
+    member.lastInFlowAt && now - member.lastInFlowAt <= 30_000,
+  );
+  const outputRecent = Boolean(
+    member.lastOutFlowAt && now - member.lastOutFlowAt <= 30_000,
+  );
+
+  if (inputRecent && outputRecent) {
+    return {
+      label: "双向有流量",
+      color: "success" as const,
+      detail: "客户端数据进入入口，入口也有数据返回客户端。",
+    };
+  }
+  if (inputRecent && !outputRecent) {
+    return {
+      label: "有请求无返回",
+      color: "danger" as const,
+      detail:
+        "客户端请求正在进入入口，但近 30 秒没有返回流量，疑似入口后链路、落地或出口异常。",
+    };
+  }
+  if (outputRecent) {
+    return {
+      label: "正在返回数据",
+      color: "success" as const,
+      detail: "入口近 30 秒有数据返回客户端。",
+    };
+  }
+  if ((member.currentConnections || 0) > 0) {
+    return {
+      label: "仅有连接",
+      color: "warning" as const,
+      detail:
+        "存在已接入连接，但近 30 秒没有实际流量；连接数本身不能证明代理链路可用。",
+    };
+  }
+
+  return {
+    label: "当前空闲",
+    color: "default" as const,
+    detail: member.lastActivityAt
+      ? `最近一次实际流量：${timeText(member.lastActivityAt)}`
+      : "尚未记录到实际流量。",
+  };
+};
 const displayDomain = (value: string, zoneName?: string) => {
   let domain = value.trim().toLowerCase();
 
@@ -2384,6 +2476,7 @@ export default function CrossEntryFailoverPage() {
                         qualityEnabled &&
                         truthy(member.qualityPreheated || false);
                       const penaltyLevel = member.qualityPenaltyLevel || 0;
+                      const trafficMeta = trafficActivityMeta(member, now);
 
                       return (
                         <div
@@ -2487,19 +2580,33 @@ export default function CrossEntryFailoverPage() {
                             )}
                           </div>
                           <div className="min-w-0 text-left text-xs md:text-right">
-                            <div className="grid grid-cols-[repeat(auto-fit,minmax(82px,1fr))] gap-3 md:justify-items-end">
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 md:justify-items-end">
                               <div className="min-w-0">
-                                <p className="flex items-center gap-1 text-default-500 md:justify-end">
+                                <p
+                                  className="flex items-center gap-1 text-default-500 md:justify-end"
+                                  title="客户端已接入该入口监听端口；连接存在不代表后续落地和出口可用"
+                                >
                                   <span
                                     className={`h-1.5 w-1.5 rounded-full ${member.telemetryLive ? "bg-success" : "bg-default-300"}`}
                                   />
-                                  当前连接
+                                  入口连接
                                 </p>
                                 <p className="mt-1 whitespace-nowrap text-xs font-semibold tabular-nums sm:text-sm">
                                   {truthy(member.telemetryReady || false)
                                     ? `${connectionCountText(member.currentConnections)} 个`
                                     : "等待上报"}
                                 </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-default-500">实际流量</p>
+                                <Chip
+                                  className="mt-1"
+                                  color={trafficMeta.color}
+                                  size="sm"
+                                  variant="flat"
+                                >
+                                  {trafficMeta.label}
+                                </Chip>
                               </div>
                               <div className="min-w-0">
                                 <p className="text-default-500">累计新增</p>
@@ -2545,19 +2652,51 @@ export default function CrossEntryFailoverPage() {
                               {faultSummaryText(member)}
                             </p>
                             {truthy(member.telemetryReady || false) && (
-                              <p className="mt-1 text-default-400">
-                                连接统计
-                                {member.telemetryLive ? "实时" : "暂未更新"}
-                                {member.lastTelemetryAt
-                                  ? ` · ${timeText(member.lastTelemetryAt)}`
+                              <>
+                                <p
+                                  className={`mt-1 ${trafficMeta.color === "danger" ? "text-danger" : trafficMeta.color === "warning" ? "text-warning" : "text-default-400"}`}
+                                >
+                                  {trafficMeta.detail}
+                                </p>
+                                <p className="mt-1 text-default-400">
+                                  入口收到 {formatBytes(member.activityInFlow)}{" "}
+                                  · 返回客户端{" "}
+                                  {formatBytes(member.activityOutFlow)}
+                                </p>
+                                <p className="mt-1 text-default-400">
+                                  遥测
+                                  {member.telemetryLive ? "实时" : "暂未更新"}
+                                  {member.lastTelemetryAt
+                                    ? ` · ${timeText(member.lastTelemetryAt)}`
+                                    : ""}
+                                </p>
+                              </>
+                            )}
+                            {member.lastError ? (
+                              <p className="mt-1 text-danger">
+                                当前入口 TCP 探测异常（连续 {member.failCount}/
+                                {group.failureThreshold} 次）：
+                                {explainProbeError(member.lastError)}
+                                {member.lastFailureAt
+                                  ? ` · ${timeText(member.lastFailureAt)}`
                                   : ""}
                               </p>
-                            )}
-                            {member.lastFaultReason && (
-                              <p className="mt-1 truncate text-default-400">
-                                {member.lastFaultReason}
+                            ) : member.lastCheckedAt ? (
+                              <p className="mt-1 text-success">
+                                入口 TCP 探测正常（仅验证公网端口） ·{" "}
+                                {timeText(member.lastCheckedAt)}
                               </p>
-                            )}
+                            ) : null}
+                            {!member.lastError &&
+                              member.lastFaultReason &&
+                              member.lastFaultAt && (
+                                <p className="mt-1 text-default-400">
+                                  最近故障（已恢复）：
+                                  {explainProbeError(
+                                    member.lastFaultReason,
+                                  )} · {timeText(member.lastFaultAt)}
+                                </p>
+                              )}
                           </div>
                         </div>
                       );
@@ -2577,12 +2716,15 @@ export default function CrossEntryFailoverPage() {
                   </div>
                   {detailedProbeEnabled && group.qualityProbeError && (
                     <p className="rounded-md bg-warning-50 px-3 py-2 text-xs text-warning-700 dark:bg-warning-500/10 dark:text-warning-300">
-                      {group.qualityProbeError}
+                      质量探测异常：{explainProbeError(group.qualityProbeError)}
+                      {group.qualityProbeAt
+                        ? ` · ${timeText(group.qualityProbeAt)}`
+                        : ""}
                     </p>
                   )}
                   {group.lastError && (
                     <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">
-                      {group.lastError}
+                      当前容灾组异常：{explainProbeError(group.lastError)}
                     </p>
                   )}
                 </CardBody>

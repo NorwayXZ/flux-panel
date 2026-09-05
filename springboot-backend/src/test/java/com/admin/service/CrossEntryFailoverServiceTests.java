@@ -5,6 +5,10 @@ import com.admin.common.utils.CrossEntryQualityEvaluator;
 import com.admin.common.utils.CrossEntryQualityFlapGuard;
 import org.junit.jupiter.api.Test;
 
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -134,5 +138,17 @@ class CrossEntryFailoverServiceTests {
         assertTrue(CrossEntryFailoverService.saveFieldErrors(
                 "validation", "链接到期时间必须晚于当前时间；永久使用请清空此项")
                 .containsKey("expiresAt"));
+    }
+
+    @Test
+    void entryProbeFailuresExplainTheFailedLayer() {
+        assertTrue(CrossEntryFailoverService.probeFailureMessage(
+                new SocketTimeoutException(), "203.0.113.8:443", 1200).contains("TCP 握手超时"));
+        assertTrue(CrossEntryFailoverService.probeFailureMessage(
+                new ConnectException("Connection refused"), "203.0.113.8:443", 1200).contains("端口未监听"));
+        assertTrue(CrossEntryFailoverService.probeFailureMessage(
+                new ConnectException("No route to host"), "203.0.113.8:443", 1200).contains("无可用网络路由"));
+        assertTrue(CrossEntryFailoverService.probeFailureMessage(
+                new UnknownHostException(), "entry.example:443", 1200).contains("解析失败"));
     }
 }

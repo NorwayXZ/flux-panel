@@ -41,7 +41,9 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "last_failure_at bigint DEFAULT NULL, telemetry_ready tinyint NOT NULL DEFAULT 0, total_connections bigint NOT NULL DEFAULT 0, "
                     + "current_connections bigint NOT NULL DEFAULT 0, reported_total_connections bigint NOT NULL DEFAULT 0, "
                     + "telemetry_generation bigint NOT NULL DEFAULT 0, pending_probe_connections bigint NOT NULL DEFAULT 0, "
-                    + "last_telemetry_at bigint DEFAULT NULL, "
+                    + "last_telemetry_at bigint DEFAULT NULL, activity_in_flow bigint NOT NULL DEFAULT 0, "
+                    + "activity_out_flow bigint NOT NULL DEFAULT 0, last_in_flow_at bigint DEFAULT NULL, "
+                    + "last_out_flow_at bigint DEFAULT NULL, last_activity_at bigint DEFAULT NULL, "
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                     + "UNIQUE KEY uk_cross_entry_member (group_id, forward_id), KEY idx_cross_entry_member_group (group_id, priority), "
                     + "KEY idx_cross_entry_activity (forward_id, entry_node_id)"
@@ -150,6 +152,11 @@ public class CrossEntryFailoverSchemaInitializer {
             boolean probeTrackingAdded = ensureColumn("cross_entry_failover_member", "pending_probe_connections",
                     "bigint NOT NULL DEFAULT 0 AFTER telemetry_generation");
             ensureColumn("cross_entry_failover_member", "last_telemetry_at", "bigint DEFAULT NULL AFTER pending_probe_connections");
+            ensureColumn("cross_entry_failover_member", "activity_in_flow", "bigint NOT NULL DEFAULT 0 AFTER last_telemetry_at");
+            ensureColumn("cross_entry_failover_member", "activity_out_flow", "bigint NOT NULL DEFAULT 0 AFTER activity_in_flow");
+            ensureColumn("cross_entry_failover_member", "last_in_flow_at", "bigint DEFAULT NULL AFTER activity_out_flow");
+            ensureColumn("cross_entry_failover_member", "last_out_flow_at", "bigint DEFAULT NULL AFTER last_in_flow_at");
+            ensureColumn("cross_entry_failover_member", "last_activity_at", "bigint DEFAULT NULL AFTER last_out_flow_at");
             if (generationAdded || probeTrackingAdded) {
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=0,total_connections=0,"
                         + "current_connections=0,reported_total_connections=0,telemetry_generation=0,"

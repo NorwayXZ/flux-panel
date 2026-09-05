@@ -55,6 +55,9 @@ docker exec "${DATABASE}" mysql -uroot -ptestroot -e \
    CREATE USER 'flux_test'@'%' IDENTIFIED WITH mysql_native_password BY 'testpass';
    GRANT ALL PRIVILEGES ON flux_test.* TO 'flux_test'@'%';"
 docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < "${PROJECT_DIR}/gost.sql"
+# Seed the original failover schema so startup exercises a real legacy-table upgrade.
+docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
+  "${PROJECT_DIR}/migrations/20260727_cross_entry_failover.sql"
 
 # Exercise both upgrade paths: an old installation may still have 255-character
 # monitoring columns before the migration or startup schema initializer runs.
@@ -119,6 +122,12 @@ fi
 
 [[ "$(docker inspect -f '{{.RestartCount}}' "${BACKEND}")" -eq 0 ]]
 docker exec "${BACKEND}" wget -qO- http://localhost:6365/health/ready | grep -Fq '"status":"ready"'
+
+for column in activity_in_flow activity_out_flow last_in_flow_at last_out_flow_at last_activity_at; do
+  column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_member' AND column_name='${column}'")
+  [[ "${column_exists}" -eq 1 ]]
+done
 
 for table in monitoring_current monitoring_history monitoring_alert; do
   width=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \

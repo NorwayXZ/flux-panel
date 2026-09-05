@@ -45,11 +45,14 @@ import org.springframework.web.util.UriComponentsBuilder;
 import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
 import java.math.BigDecimal;
+import java.net.ConnectException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.net.URI;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -167,6 +170,13 @@ public class CrossEntryFailoverService {
 
     public void recordActivity(Long forwardId, Long reportingNodeId, Long reportedTotalConnections,
                                Long reportedCurrentConnections, Long reportedGeneration) {
+        recordActivity(forwardId, reportingNodeId, reportedTotalConnections, reportedCurrentConnections,
+                reportedGeneration, null, null);
+    }
+
+    public void recordActivity(Long forwardId, Long reportingNodeId, Long reportedTotalConnections,
+                               Long reportedCurrentConnections, Long reportedGeneration,
+                               Long inboundBytes, Long outboundBytes) {
         if (forwardId == null || reportingNodeId == null
                 || reportedTotalConnections == null || reportedCurrentConnections == null) return;
         String routeKey = forwardId + ":" + reportingNodeId;
@@ -193,13 +203,18 @@ public class CrossEntryFailoverService {
                 long pendingProbes = number(state.get("pendingProbeConnections")).longValue();
                 long consumedProbes = consumableProbeConnections(counter.delta(), pendingProbes, baselineReady);
                 long businessDelta = businessConnectionDelta(counter.delta(), consumedProbes);
+                long inbound = Math.max(0L, inboundBytes == null ? 0L : inboundBytes);
+                long outbound = Math.max(0L, outboundBytes == null ? 0L : outboundBytes);
                 long now = System.currentTimeMillis();
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=1,"
                                 + "total_connections=total_connections+?,current_connections=?,reported_total_connections=?,"
                                 + "telemetry_generation=?,pending_probe_connections=GREATEST(pending_probe_connections-?,0),"
-                                + "last_telemetry_at=?,updated_time=? WHERE id=?",
+                                + "last_telemetry_at=?,activity_in_flow=activity_in_flow+?,activity_out_flow=activity_out_flow+?,"
+                                + "last_in_flow_at=CASE WHEN ? > 0 THEN ? ELSE last_in_flow_at END,"
+                                + "last_out_flow_at=CASE WHEN ? > 0 THEN ? ELSE last_out_flow_at END,"
+                                + "last_activity_at=CASE WHEN ? > 0 OR ? > 0 THEN ? ELSE last_activity_at END,updated_time=? WHERE id=?",
                         businessDelta, Math.max(0L, reportedCurrentConnections), counter.baseline(), counter.generation(), consumedProbes,
-                        now, now, state.get("id"));
+                        now, inbound, outbound, inbound, now, outbound, now, inbound, outbound, now, now, state.get("id"));
             }
         }
     }
@@ -387,7 +402,9 @@ public class CrossEntryFailoverService {
                                 + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
                                 + "reported_total_connections AS reportedTotalConnections,telemetry_generation AS telemetryGeneration,"
                                 + "pending_probe_connections AS pendingProbeConnections,"
-                                + "last_telemetry_at AS lastTelemetryAt "
+                                + "last_telemetry_at AS lastTelemetryAt,activity_in_flow AS activityInFlow,"
+                                + "activity_out_flow AS activityOutFlow,last_in_flow_at AS lastInFlowAt,"
+                                + "last_out_flow_at AS lastOutFlowAt,last_activity_at AS lastActivityAt "
                                 + "FROM cross_entry_failover_member WHERE group_id=?", id)
                         .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
@@ -528,7 +545,8 @@ public class CrossEntryFailoverService {
                                     + "quality_last_error=?,quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
                                     + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=?,"
                                     + "telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,"
-                                    + "telemetry_generation=?,pending_probe_connections=?,last_telemetry_at=? WHERE id=?",
+                                    + "telemetry_generation=?,pending_probe_connections=?,last_telemetry_at=?,activity_in_flow=?,activity_out_flow=?,"
+                                    + "last_in_flow_at=?,last_out_flow_at=?,last_activity_at=? WHERE id=?",
                             oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
                             oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
                             oldFaultStats.get("lastHealthyAt"), oldFaultStats.get("lastFailureAt"), oldFaultStats.get("qualityLatencyMs"),
@@ -546,7 +564,10 @@ public class CrossEntryFailoverService {
                             oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"),
                             oldFaultStats.get("telemetryReady"), oldFaultStats.get("totalConnections"), oldFaultStats.get("currentConnections"),
                             oldFaultStats.get("reportedTotalConnections"), oldFaultStats.get("telemetryGeneration"),
-                            oldFaultStats.get("pendingProbeConnections"), oldFaultStats.get("lastTelemetryAt"), memberId);
+                            oldFaultStats.get("pendingProbeConnections"), oldFaultStats.get("lastTelemetryAt"),
+                            oldFaultStats.get("activityInFlow"), oldFaultStats.get("activityOutFlow"),
+                            oldFaultStats.get("lastInFlowAt"), oldFaultStats.get("lastOutFlowAt"),
+                            oldFaultStats.get("lastActivityAt"), memberId);
                 }
                 if (priority == 0) primaryMemberId = memberId;
                 if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
@@ -1293,15 +1314,35 @@ public class CrossEntryFailoverService {
         if (!WebSocketServer.isNodeOnline(nodeId)) {
             return new ProbeResult(member, false, null, "入口节点离线");
         }
+        String address = Objects.toString(member.get("entryAddress"));
+        int port = number(member.get("entryPort")).intValue();
+        String endpoint = address + ":" + port;
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(Objects.toString(member.get("entryAddress")),
-                    number(member.get("entryPort")).intValue()), timeoutMs);
+            socket.connect(new InetSocketAddress(address, port), timeoutMs);
             recordSuccessfulProbes(member, 1);
             int latency = (int) Math.max(1, (System.nanoTime() - started) / 1_000_000L);
             return new ProbeResult(member, true, latency, null);
         } catch (Exception e) {
-            return new ProbeResult(member, false, null, "公网入口连接失败");
+            return new ProbeResult(member, false, null, probeFailureMessage(e, endpoint, timeoutMs));
         }
+    }
+
+    static String probeFailureMessage(Exception error, String endpoint, int timeoutMs) {
+        String target = StringUtils.defaultIfBlank(endpoint, "未知入口");
+        if (error instanceof SocketTimeoutException) {
+            return "面板到入口 " + target + " 的 TCP 握手超时（" + timeoutMs + "ms）";
+        }
+        if (error instanceof UnknownHostException) {
+            return "入口地址 " + target + " 解析失败";
+        }
+        String detail = StringUtils.defaultString(error == null ? null : error.getMessage()).toLowerCase(Locale.ROOT);
+        if (error instanceof ConnectException && detail.contains("refused")) {
+            return "入口 " + target + " 拒绝 TCP 连接（端口未监听或被防火墙拒绝）";
+        }
+        if (detail.contains("no route") || detail.contains("unreachable")) {
+            return "面板到入口 " + target + " 无可用网络路由";
+        }
+        return "面板无法与入口 " + target + " 建立 TCP 连接";
     }
 
     private void recordSuccessfulProbes(Map<String, Object> member, int count) {
@@ -2478,7 +2519,9 @@ public class CrossEntryFailoverService {
                 + "last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt,"
                 + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
                 + "reported_total_connections AS reportedTotalConnections,telemetry_generation AS telemetryGeneration,"
-                + "last_telemetry_at AS lastTelemetryAt "
+                + "last_telemetry_at AS lastTelemetryAt,activity_in_flow AS activityInFlow,"
+                + "activity_out_flow AS activityOutFlow,last_in_flow_at AS lastInFlowAt,"
+                + "last_out_flow_at AS lastOutFlowAt,last_activity_at AS lastActivityAt "
                 + "FROM cross_entry_failover_member WHERE group_id=? ORDER BY priority", groupId);
         long liveAfter = System.currentTimeMillis() - TELEMETRY_LIVE_WINDOW_MS;
         for (Map<String, Object> member : members) {

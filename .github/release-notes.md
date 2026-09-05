@@ -1,3 +1,11 @@
+## 2.51.48 Cross-entry data-path diagnostics
+
+- Separates accepted entry connections from actual bidirectional traffic and classifies each route as bidirectional traffic, requests without responses, connections without recent traffic, stale telemetry, or idle.
+- Stores cumulative bytes received by the entry, bytes returned to clients, and the latest timestamp for each direction using the existing Agent `2.51.37` telemetry; no Agent upgrade is required.
+- Distinguishes a current TCP probe failure from a recovered historical incident and adds timestamps. New failures identify handshake timeout, refused port, missing route, or address resolution failure instead of the generic public-entry error.
+- Adds an additive legacy-database migration plus a real MySQL runtime upgrade assertion. Existing forwards, tunnels, DNS records, failover order, and fault counters are preserved.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.47 Cross-entry expiry control sizing
 
 - Restores the standard HeroUI input as the expiry field's visual shell so its height, label, spacing, and helper text match neighboring controls.

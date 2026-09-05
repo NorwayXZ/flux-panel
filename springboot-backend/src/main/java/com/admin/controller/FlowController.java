@@ -288,7 +288,8 @@ public class FlowController extends BaseController {
                 flowDataList.getD(), flowDataList.getU());
         if (reportConnections) {
             crossEntryFailoverService.recordActivity(forward.getId(), reportingNodeId,
-                    flowDataList.getT(), flowDataList.getC(), flowDataList.getG());
+                    flowDataList.getT(), flowDataList.getC(), flowDataList.getG(),
+                    flowDataList.getD(), flowDataList.getU());
         }
 
         // 获取流量计费类型
