@@ -168,4 +168,12 @@ class CrossEntryFailoverServiceTests {
         assertEquals(java.time.LocalDate.of(2026, 9, 5), slices.get(0).day());
         assertEquals(java.time.LocalDate.of(2026, 9, 6), slices.get(1).day());
     }
+
+    @Test
+    void trafficUsageUsesOnlyTheBoundedObservedTelemetryWindow() {
+        assertEquals(100_000L, CrossEntryFailoverService.trafficUsageWindowStart(100_000L, 105_000L));
+        assertEquals(105_000L, CrossEntryFailoverService.trafficUsageWindowStart(null, 105_000L));
+        assertEquals(105_000L, CrossEntryFailoverService.trafficUsageWindowStart(110_000L, 105_000L));
+        assertEquals(90_000L, CrossEntryFailoverService.trafficUsageWindowStart(1L, 105_000L));
+    }
 }

@@ -165,9 +165,12 @@ public class CrossEntryFailoverSchemaInitializer {
             }
             ensureIndex("cross_entry_failover_member", "idx_cross_entry_activity", "forward_id,entry_node_id");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_member_daily_usage ("
-                    + "group_id bigint NOT NULL,member_id bigint NOT NULL,usage_date date NOT NULL,active_millis bigint NOT NULL DEFAULT 0,updated_time bigint NOT NULL,"
+                    + "group_id bigint NOT NULL,member_id bigint NOT NULL,usage_date date NOT NULL,active_millis bigint NOT NULL DEFAULT 0,"
+                    + "traffic_active_millis bigint NOT NULL DEFAULT 0,updated_time bigint NOT NULL,"
                     + "PRIMARY KEY (group_id,member_id,usage_date),KEY idx_cross_entry_daily_usage (group_id,usage_date,active_millis)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureColumn("cross_entry_member_daily_usage", "traffic_active_millis",
+                    "bigint NOT NULL DEFAULT 0 AFTER active_millis");
             if (activeSinceAdded) {
                 long now = System.currentTimeMillis();
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_since_at=? "

@@ -2264,6 +2264,9 @@ export default function CrossEntryFailoverPage() {
             const todayLongest = group.members.find(
               (item) => item.id === group.todayLongestMemberId,
             );
+            const todayTrafficLongest = group.members.find(
+              (item) => item.id === group.todayLongestTrafficMemberId,
+            );
             const activeActive = group.routingMode === "active_active";
             const tcpLatencySelectionEnabled =
               !activeActive &&
@@ -2371,10 +2374,22 @@ export default function CrossEntryFailoverPage() {
                           todayLongest &&
                           (group.todayLongestUsageMillis || 0) > 0 && (
                             <Chip color="secondary" size="sm" variant="flat">
-                              今日最长：{todayLongest.nodeName} ·{" "}
+                              调度最长：{todayLongest.nodeName} ·{" "}
                               {durationText(
                                 Math.floor(
                                   (group.todayLongestUsageMillis || 0) / 1000,
+                                ),
+                              )}
+                            </Chip>
+                          )}
+                        {todayTrafficLongest &&
+                          (group.todayLongestTrafficUsageMillis || 0) > 0 && (
+                            <Chip color="success" size="sm" variant="flat">
+                              真实最长：{todayTrafficLongest.nodeName} ·{" "}
+                              {durationText(
+                                Math.floor(
+                                  (group.todayLongestTrafficUsageMillis || 0) /
+                                    1000,
                                 ),
                               )}
                             </Chip>
@@ -2684,7 +2699,7 @@ export default function CrossEntryFailoverPage() {
                             </p>
                             {group.todayUsageMode === "failover" && (
                               <p className="mt-1 text-xs text-default-500">
-                                今日承载{" "}
+                                调度承载{" "}
                                 {durationText(
                                   Math.floor(
                                     (member.todayUsageMillis || 0) / 1000,
@@ -2695,6 +2710,14 @@ export default function CrossEntryFailoverPage() {
                                   : ""}
                               </p>
                             )}
+                            <p className="mt-1 text-xs text-success">
+                              真实使用{" "}
+                              {durationText(
+                                Math.floor(
+                                  (member.todayTrafficUsageMillis || 0) / 1000,
+                                ),
+                              )}
+                            </p>
                             {qualitySuppressed && (
                               <p className="mt-1 truncate text-xs text-warning">
                                 {member.qualitySuppressedReason ||

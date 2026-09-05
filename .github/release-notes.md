@@ -1,3 +1,10 @@
+## 2.51.53 Confirmed traffic usage time
+
+- Adds per-entry real usage time and highlights the route with the longest confirmed use today.
+- Counts only bounded telemetry windows that contain data returned from the entry to the client, confirming that traffic made it beyond the entry listener.
+- Idle connections, connection retries, and request-only windows without a response are excluded, so a broken downstream route is not reported as real use.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.52 Daily entry usage duration
 
 - Adds Beijing-time daily active duration to every failover entry and highlights the longest-used entry in each failover group.

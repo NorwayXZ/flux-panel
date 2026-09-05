@@ -134,6 +134,9 @@ active_since_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_tes
 daily_usage_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage'")
 [[ "${daily_usage_table_exists}" -eq 1 ]]
+traffic_usage_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage' AND column_name='traffic_active_millis'")
+[[ "${traffic_usage_column_exists}" -eq 1 ]]
 
 for table in monitoring_current monitoring_history monitoring_alert; do
   width=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \

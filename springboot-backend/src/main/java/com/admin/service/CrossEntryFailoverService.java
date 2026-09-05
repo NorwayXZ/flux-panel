@@ -85,6 +85,7 @@ public class CrossEntryFailoverService {
     private static final int MAX_GROUPS_PER_TICK = 50;
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
     private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final long TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS = 15_000L;
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
@@ -191,7 +192,8 @@ public class CrossEntryFailoverService {
             synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
                 List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                         "SELECT id,telemetry_ready AS telemetryReady,reported_total_connections AS reportedTotalConnections,"
-                                + "telemetry_generation AS telemetryGeneration,pending_probe_connections AS pendingProbeConnections "
+                                + "telemetry_generation AS telemetryGeneration,pending_probe_connections AS pendingProbeConnections,"
+                                + "last_telemetry_at AS lastTelemetryAt "
                                 + "FROM cross_entry_failover_member WHERE group_id=? AND forward_id=? AND entry_node_id=? LIMIT 1",
                         groupId, forwardId, reportingNodeId);
                 if (rows.isEmpty()) continue;
@@ -210,6 +212,11 @@ public class CrossEntryFailoverService {
                 long inbound = Math.max(0L, inboundBytes == null ? 0L : inboundBytes);
                 long outbound = Math.max(0L, outboundBytes == null ? 0L : outboundBytes);
                 long now = System.currentTimeMillis();
+                // A returned byte confirms the path reached beyond the entry listener.
+                if (outbound > 0) {
+                    recordTrafficUsage(groupId, number(state.get("id")).longValue(),
+                            trafficUsageWindowStart(nullableLong(state.get("lastTelemetryAt")), now), now);
+                }
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=1,"
                                 + "total_connections=total_connections+?,current_connections=?,reported_total_connections=?,"
                                 + "telemetry_generation=?,pending_probe_connections=GREATEST(pending_probe_connections-?,0),"
@@ -2623,40 +2630,47 @@ public class CrossEntryFailoverService {
     }
 
     private void applyTodayUsage(Map<String, Object> group, List<Map<String, Object>> members, long now) {
-        if ("active_active".equals(Objects.toString(group.get("routingMode"), "failover"))) {
-            group.put("todayUsageMode", "active_active");
-            group.put("todayLongestMemberId", null);
-            group.put("todayLongestUsageMillis", 0L);
-            for (Map<String, Object> member : members) member.put("todayUsageMillis", 0L);
-            return;
-        }
+        boolean activeActive = "active_active".equals(Objects.toString(group.get("routingMode"), "failover"));
         LocalDate today = Instant.ofEpochMilli(now).atZone(PANEL_ZONE).toLocalDate();
-        Map<Long, Long> usage = new LinkedHashMap<>();
+        Map<Long, Long> activeUsage = new LinkedHashMap<>();
+        Map<Long, Long> trafficUsage = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbcTemplate.queryForList(
-                "SELECT member_id AS memberId,active_millis AS activeMillis FROM cross_entry_member_daily_usage "
+                "SELECT member_id AS memberId,active_millis AS activeMillis,traffic_active_millis AS trafficActiveMillis "
                         + "WHERE group_id=? AND usage_date=?", number(group.get("id")).longValue(), java.sql.Date.valueOf(today))) {
-            usage.put(number(row.get("memberId")).longValue(), number(row.get("activeMillis")).longValue());
+            long memberId = number(row.get("memberId")).longValue();
+            activeUsage.put(memberId, number(row.get("activeMillis")).longValue());
+            trafficUsage.put(memberId, number(row.get("trafficActiveMillis")).longValue());
         }
         Long activeId = nullableLong(group.get("activeMemberId"));
         Long activeSince = nullableLong(group.get("activeSinceAt"));
-        if (bool(group.get("enabled")) && activeId != null && activeSince != null) {
+        if (!activeActive && bool(group.get("enabled")) && activeId != null && activeSince != null) {
             long todayStartedAt = today.atStartOfDay(PANEL_ZONE).toInstant().toEpochMilli();
-            usage.merge(activeId, Math.max(0L, now - Math.max(activeSince, todayStartedAt)), Long::sum);
+            activeUsage.merge(activeId, Math.max(0L, now - Math.max(activeSince, todayStartedAt)), Long::sum);
         }
         Long longestMemberId = null;
         long longestMillis = 0L;
+        Long longestTrafficMemberId = null;
+        long longestTrafficMillis = 0L;
         for (Map<String, Object> member : members) {
             long memberId = number(member.get("id")).longValue();
-            long millis = usage.getOrDefault(memberId, 0L);
+            long millis = activeUsage.getOrDefault(memberId, 0L);
+            long trafficMillis = trafficUsage.getOrDefault(memberId, 0L);
             member.put("todayUsageMillis", millis);
-            if (millis > longestMillis) {
+            member.put("todayTrafficUsageMillis", trafficMillis);
+            if (!activeActive && millis > longestMillis) {
                 longestMillis = millis;
                 longestMemberId = memberId;
             }
+            if (trafficMillis > longestTrafficMillis) {
+                longestTrafficMillis = trafficMillis;
+                longestTrafficMemberId = memberId;
+            }
         }
-        group.put("todayUsageMode", "failover");
+        group.put("todayUsageMode", activeActive ? "active_active" : "failover");
         group.put("todayLongestMemberId", longestMemberId);
         group.put("todayLongestUsageMillis", longestMillis);
+        group.put("todayLongestTrafficMemberId", longestTrafficMemberId);
+        group.put("todayLongestTrafficUsageMillis", longestTrafficMillis);
     }
 
     private void settleActiveUsage(long groupId, Long memberId, Long activeSinceAt, long now) {
@@ -2667,6 +2681,20 @@ public class CrossEntryFailoverService {
                             + "ON DUPLICATE KEY UPDATE active_millis=active_millis+VALUES(active_millis),updated_time=VALUES(updated_time)",
                     groupId, memberId, java.sql.Date.valueOf(slice.day()), slice.millis(), now);
         }
+    }
+
+    private void recordTrafficUsage(long groupId, long memberId, long startAt, long endAt) {
+        for (DailyUsageSlice slice : dailyUsageSlices(startAt, endAt)) {
+            jdbcTemplate.update("INSERT INTO cross_entry_member_daily_usage "
+                            + "(group_id,member_id,usage_date,active_millis,traffic_active_millis,updated_time) VALUES (?,?,?,?,?,?) "
+                            + "ON DUPLICATE KEY UPDATE traffic_active_millis=traffic_active_millis+VALUES(traffic_active_millis),updated_time=VALUES(updated_time)",
+                    groupId, memberId, java.sql.Date.valueOf(slice.day()), 0L, slice.millis(), endAt);
+        }
+    }
+
+    static long trafficUsageWindowStart(Long lastTelemetryAt, long now) {
+        if (lastTelemetryAt == null || lastTelemetryAt <= 0 || now <= lastTelemetryAt) return now;
+        return Math.max(lastTelemetryAt, now - TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS);
     }
 
     static List<DailyUsageSlice> dailyUsageSlices(long startAt, long endAt) {
