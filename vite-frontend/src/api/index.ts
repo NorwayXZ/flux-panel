@@ -1810,6 +1810,16 @@ export const checkCrossEntryGroup = (id: number) =>
     { id },
     ["/cross-entry-failover/list"],
   );
+export const setCrossEntryMemberEnabled = (
+  groupId: number,
+  memberId: number,
+  enabled: boolean,
+) =>
+  Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
+    "/cross-entry-failover/member-enabled",
+    { groupId, memberId, enabled },
+    ["/cross-entry-failover/list"],
+  );
 export const getCrossEntryEvents = (id: number) =>
   Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
 

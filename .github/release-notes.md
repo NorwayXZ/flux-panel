@@ -1,3 +1,10 @@
+## 2.51.50 Per-entry failover switches
+
+- Adds an independent enable/disable switch to every cross-entry failover route.
+- Disabled routes are excluded from basic probes, quality probes, failover candidate selection, and active-active DNS records without deleting their forwards, tunnels, ordering, or history.
+- Disabling the active route requires a healthy enabled backup and verifies that the switch completed; otherwise the route is automatically re-enabled. The final enabled route and a manually locked active route cannot be disabled.
+- Panel-only release. Agent and Connector remain `2.51.37`; iOS App and Agent binaries are unchanged.
+
 ## 2.51.49 Release-note size guard
 
 - Publishes only the current release-note section so the GitHub Release body remains below GitHub's size limit as historical notes accumulate.

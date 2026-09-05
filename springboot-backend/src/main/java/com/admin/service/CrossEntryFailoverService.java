@@ -786,6 +786,71 @@ public class CrossEntryFailoverService {
         }
     }
 
+    public R setMemberEnabled(Long groupId, Long memberId, boolean enabled) {
+        if (groupId == null || memberId == null) return R.err("请指定容灾组和入口线路");
+        Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
+        synchronized (lock) {
+            Map<String, Object> group;
+            try {
+                group = loadGroup(groupId);
+            } catch (IllegalArgumentException e) {
+                return R.err("容灾组不存在");
+            }
+            long now = System.currentTimeMillis();
+            if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能调整入口线路");
+            List<Map<String, Object>> members = loadMembers(groupId);
+            Map<String, Object> member = memberById(members, memberId);
+            if (member == null) return R.err("入口线路不属于该容灾组");
+            boolean currentlyEnabled = bool(member.get("enabled"));
+            if (currentlyEnabled == enabled) return listGroups();
+
+            boolean active = Objects.equals(memberId, nullableLong(group.get("activeMemberId")));
+            boolean activeActive = "active_active".equals(Objects.toString(group.get("routingMode"), "failover"));
+            boolean groupEnabled = bool(group.get("enabled"));
+            if (!enabled) {
+                long remaining = members.stream()
+                        .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
+                        .filter(candidate -> bool(candidate.get("enabled")))
+                        .count();
+                if (remaining == 0) return R.err("至少保留一条启用入口，不能停用最后一条线路");
+                if (active && "lock".equals(Objects.toString(group.get("manualControlMode"), "auto"))
+                        && Objects.equals(memberId, nullableLong(group.get("lockedMemberId")))) {
+                    return R.err("当前线路正被手动锁定，请先解除锁定后再停用");
+                }
+                if (active && !activeActive) {
+                    boolean healthyBackup = members.stream()
+                            .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
+                            .anyMatch(candidate -> bool(candidate.get("enabled")) && "healthy".equals(candidate.get("status")));
+                    if (!healthyBackup) {
+                        return R.err("当前承载入口没有健康备用线路，不能停用，避免链接立即断网");
+                    }
+                }
+                jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=0,updated_time=? WHERE id=? AND group_id=?",
+                        now, memberId, groupId);
+                addEvent(groupId, memberId, active ? null : nullableLong(group.get("activeMemberId")), "管理员停用入口", "success",
+                        "该线路已从探测、自动切换和 DNS 调度中摘除");
+                if (groupEnabled && (active || activeActive)) {
+                    doProbeGroup(groupId, true);
+                    Map<String, Object> refreshed = loadGroup(groupId);
+                    if (!activeActive && Objects.equals(memberId, nullableLong(refreshed.get("activeMemberId")))) {
+                        jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,updated_time=? WHERE id=? AND group_id=?",
+                                System.currentTimeMillis(), memberId, groupId);
+                        return R.err("停用当前入口后未能切换到备用线路，已自动恢复该入口启用状态："
+                                + StringUtils.defaultIfBlank(Objects.toString(refreshed.get("lastError"), ""), "请检查备用线路"));
+                    }
+                }
+            } else {
+                jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,status='unknown',fail_count=0,success_count=0,"
+                                + "last_error=NULL,last_checked_at=NULL,updated_time=? WHERE id=? AND group_id=?",
+                        now, memberId, groupId);
+                addEvent(groupId, nullableLong(group.get("activeMemberId")), memberId, "管理员启用入口", "success",
+                        "该线路将重新探测，健康后参与自动切换和 DNS 调度");
+                if (groupEnabled) doProbeGroup(groupId, true);
+            }
+            return listGroups();
+        }
+    }
+
     public R listEvents(Long id) {
         return R.ok(jdbcTemplate.queryForList("SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
                 + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
@@ -931,6 +996,7 @@ public class CrossEntryFailoverService {
         List<Map<String, Object>> members = loadMembers(groupId);
         int timeout = number(group.get("connectTimeoutMs")).intValue();
         List<CompletableFuture<ProbeResult>> futures = members.stream()
+                .filter(member -> bool(member.get("enabled")))
                 .map(member -> CompletableFuture.supplyAsync(() -> probe(member, timeout), probeExecutor))
                 .collect(Collectors.toList());
         List<ProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
@@ -960,7 +1026,7 @@ public class CrossEntryFailoverService {
             updateActiveActiveGroup(group, members, now);
             return;
         }
-        boolean activeFailed = active == null || "unhealthy".equals(active.get("status"));
+        boolean activeFailed = active == null || !bool(active.get("enabled")) || "unhealthy".equals(active.get("status"));
         final boolean useQualityDecision = qualityDecisionEnabled;
         final boolean useDetailedLatency = detailedLatencyMeasured;
         boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
@@ -990,9 +1056,12 @@ public class CrossEntryFailoverService {
         if (target != null) {
             switchEntry(group, active, target, decision.reason(), now);
         } else {
-            long healthy = members.stream().filter(member -> "healthy".equals(member.get("status"))).count();
+            long enabledCount = members.stream().filter(member -> bool(member.get("enabled"))).count();
+            long healthy = members.stream()
+                    .filter(member -> bool(member.get("enabled")) && "healthy".equals(member.get("status")))
+                    .count();
             String state = activeFailed ? (healthy > 0 ? "degraded" : "offline")
-                    : (activeQualityDegraded || healthy != members.size() ? "degraded" : "healthy");
+                    : (activeQualityDegraded || healthy != enabledCount ? "degraded" : "healthy");
             String error = activeFailed && healthy == 0 ? "所有入口均不可用"
                     : (activeQualityDegraded ? decision.reason() : null);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
@@ -1471,7 +1540,8 @@ public class CrossEntryFailoverService {
         Map<String, Object> representative = healthy.get(0);
         try {
             DnsProviderService.DnsPoolSyncResult result = syncActiveEntries(group, healthy, null);
-            String state = healthy.size() == members.size() ? "healthy" : "degraded";
+            long enabledCount = members.stream().filter(member -> bool(member.get("enabled"))).count();
+            String state = healthy.size() == enabledCount ? "healthy" : "degraded";
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=NULL,last_checked_at=?,updated_time=? WHERE id=?",
                     representative.get("id"), state, now, now, groupId);
             if (result.created() > 0 || result.removed() > 0) {
@@ -2582,7 +2652,7 @@ public class CrossEntryFailoverService {
         return new CrossEntryFailoverPolicy.Member(
                 number(member.get("id")).longValue(),
                 number(member.get("priority")).intValue(),
-                "healthy".equals(member.get("status")),
+                bool(member.get("enabled")) && "healthy".equals(member.get("status")),
                 number(member.get("successCount")).intValue(),
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),

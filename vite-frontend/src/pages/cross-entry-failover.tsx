@@ -43,6 +43,7 @@ import {
   getCrossEntryProbeSources,
   getDnsZoneOptions,
   saveCrossEntryGroup,
+  setCrossEntryMemberEnabled,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
   type CrossEntryGroup,
@@ -266,6 +267,13 @@ const trafficActivityMeta = (
   member: CrossEntryGroup["members"][number],
   now = Date.now(),
 ) => {
+  if (!truthy(member.enabled ?? true)) {
+    return {
+      label: "已停用",
+      color: "default" as const,
+      detail: "该线路不参与探测、自动切换或 DNS 调度。",
+    };
+  }
   if (!truthy(member.telemetryReady || false)) {
     return {
       label: "等待上报",
@@ -419,23 +427,31 @@ const sectionCardClass =
 const memberStatusCounts = (group: CrossEntryGroup) => {
   const now = Date.now();
   const members = group.members || [];
+  const enabled = (member: CrossEntryGroup["members"][number]) =>
+    truthy(member.enabled ?? true);
 
   return {
-    healthy: members.filter((member) => member.status === "healthy").length,
+    healthy: members.filter(
+      (member) => enabled(member) && member.status === "healthy",
+    ).length,
     warming: members.filter(
       (member) =>
+        enabled(member) &&
         (member.qualityState === "warming" ||
           member.qualityState === "unknown") &&
         Boolean(member.qualityCheckedAt),
     ).length,
-    observing: members.filter((member) =>
-      Boolean(
-        member.qualityRecoveryObserveUntil &&
-        member.qualityRecoveryObserveUntil > now,
-      ),
+    observing: members.filter(
+      (member) =>
+        enabled(member) &&
+        Boolean(
+          member.qualityRecoveryObserveUntil &&
+          member.qualityRecoveryObserveUntil > now,
+        ),
     ).length,
     cooling: members.filter(
       (member) =>
+        enabled(member) &&
         Boolean(
           member.qualitySuppressedUntil && member.qualitySuppressedUntil > now,
         ) &&
@@ -443,8 +459,10 @@ const memberStatusCounts = (group: CrossEntryGroup) => {
           member.switchRejectedUntil && member.switchRejectedUntil > now,
         ),
     ).length,
-    blacklisted: members.filter((member) =>
-      Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
+    blacklisted: members.filter(
+      (member) =>
+        enabled(member) &&
+        Boolean(member.switchRejectedUntil && member.switchRejectedUntil > now),
     ).length,
     disabled: members.filter(
       (member) => member.enabled === false || member.enabled === 0,
@@ -1375,6 +1393,7 @@ export default function CrossEntryFailoverPage() {
   const [historyGroup, setHistoryGroup] = useState<CrossEntryGroup>();
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
+  const [togglingMemberId, setTogglingMemberId] = useState<number>();
   const [form, setForm] = useState(emptyForm);
   const [saveError, setSaveError] = useState<CrossEntrySaveFailure>();
   const expiresAtInputRef = useRef<HTMLInputElement>(null);
@@ -2017,6 +2036,29 @@ export default function CrossEntryFailoverPage() {
     toast.success("入口检测已完成");
   };
 
+  const toggleMemberEnabled = async (
+    group: CrossEntryGroup,
+    member: CrossEntryGroup["members"][number],
+    enabled: boolean,
+  ) => {
+    setTogglingMemberId(member.id);
+    const response = await setCrossEntryMemberEnabled(
+      group.id,
+      member.id,
+      enabled,
+    );
+
+    setTogglingMemberId(undefined);
+    if (response.code !== 0) {
+      return toast.error(response.msg || "入口线路状态更新失败", {
+        duration: 9000,
+      });
+    }
+    setGroups(response.data?.groups || []);
+    setSummary(response.data?.summary || emptySummary);
+    toast.success(enabled ? "入口线路已启用" : "入口线路已停用");
+  };
+
   const remove = async (group: CrossEntryGroup) => {
     const message =
       group.creationMode === "managed_forward"
@@ -2477,6 +2519,7 @@ export default function CrossEntryFailoverPage() {
                         truthy(member.qualityPreheated || false);
                       const penaltyLevel = member.qualityPenaltyLevel || 0;
                       const trafficMeta = trafficActivityMeta(member, now);
+                      const memberEnabled = truthy(member.enabled ?? true);
 
                       return (
                         <div
@@ -2490,22 +2533,26 @@ export default function CrossEntryFailoverPage() {
                               </span>
                               <Chip
                                 color={
-                                  member.status === "healthy"
-                                    ? "success"
-                                    : member.status === "unhealthy"
-                                      ? "danger"
-                                      : "default"
+                                  !memberEnabled
+                                    ? "default"
+                                    : member.status === "healthy"
+                                      ? "success"
+                                      : member.status === "unhealthy"
+                                        ? "danger"
+                                        : "default"
                                 }
                                 size="sm"
                                 variant="flat"
                               >
-                                {member.status === "healthy"
-                                  ? "可用"
-                                  : member.status === "unhealthy"
-                                    ? "不可用"
-                                    : "检测中"}
+                                {!memberEnabled
+                                  ? "已停用"
+                                  : member.status === "healthy"
+                                    ? "可用"
+                                    : member.status === "unhealthy"
+                                      ? "不可用"
+                                      : "检测中"}
                               </Chip>
-                              {qualityEnabled && (
+                              {qualityEnabled && memberEnabled && (
                                 <Chip
                                   color={qMeta.color}
                                   size="sm"
@@ -2548,6 +2595,30 @@ export default function CrossEntryFailoverPage() {
                                   {activeActive ? "DNS 锚点" : "当前承载"}
                                 </Chip>
                               )}
+                              <Switch
+                                aria-label={`${member.nodeName}${memberEnabled ? "停用" : "启用"}入口线路`}
+                                isDisabled={
+                                  togglingMemberId === member.id ||
+                                  Boolean(
+                                    group.expiresAt &&
+                                    group.expiresAt <= Date.now(),
+                                  )
+                                }
+                                isSelected={memberEnabled}
+                                size="sm"
+                                title={
+                                  memberEnabled
+                                    ? "停用这条入口线路"
+                                    : "启用这条入口线路"
+                                }
+                                onValueChange={(enabled) =>
+                                  void toggleMemberEnabled(
+                                    group,
+                                    member,
+                                    enabled,
+                                  )
+                                }
+                              />
                             </div>
                             <p className="mt-1 truncate text-xs text-default-500">
                               {activeActive
