@@ -43,6 +43,7 @@ import {
   getCrossEntryProbeSources,
   getDnsZoneOptions,
   saveCrossEntryGroup,
+  setCrossEntryGroupEnabled,
   setCrossEntryMemberEnabled,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
@@ -1393,6 +1394,7 @@ export default function CrossEntryFailoverPage() {
   const [historyGroup, setHistoryGroup] = useState<CrossEntryGroup>();
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
+  const [togglingGroupId, setTogglingGroupId] = useState<number>();
   const [togglingMemberId, setTogglingMemberId] = useState<number>();
   const [form, setForm] = useState(emptyForm);
   const [saveError, setSaveError] = useState<CrossEntrySaveFailure>();
@@ -2036,6 +2038,26 @@ export default function CrossEntryFailoverPage() {
     toast.success("入口检测已完成");
   };
 
+  const toggleGroupEnabled = async (
+    group: CrossEntryGroup,
+    enabled: boolean,
+  ) => {
+    setTogglingGroupId(group.id);
+    const response = await setCrossEntryGroupEnabled(group.id, enabled);
+
+    setTogglingGroupId(undefined);
+    if (response.code !== 0) {
+      return toast.error(response.msg || "容灾组总开关更新失败", {
+        duration: 9000,
+      });
+    }
+    setGroups(response.data?.groups || []);
+    setSummary(response.data?.summary || emptySummary);
+    toast.success(
+      enabled ? "容灾组已开启并重新探测" : "容灾组已关闭，自动调度已暂停",
+    );
+  };
+
   const toggleMemberEnabled = async (
     group: CrossEntryGroup,
     member: CrossEntryGroup["members"][number],
@@ -2368,7 +2390,23 @@ export default function CrossEntryFailoverPage() {
                         {expiryText(group.expiresAt)}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        aria-label={`${group.name}${truthy(group.enabled) ? "关闭" : "开启"}容灾组总开关`}
+                        isDisabled={expired || togglingGroupId === group.id}
+                        isSelected={truthy(group.enabled)}
+                        size="sm"
+                        title={
+                          truthy(group.enabled)
+                            ? "关闭该容灾组的自动调度"
+                            : "开启该容灾组并立即重新探测"
+                        }
+                        onValueChange={(enabled) =>
+                          void toggleGroupEnabled(group, enabled)
+                        }
+                      >
+                        总开关
+                      </Switch>
                       <Button
                         isIconOnly
                         aria-label="立即检测"

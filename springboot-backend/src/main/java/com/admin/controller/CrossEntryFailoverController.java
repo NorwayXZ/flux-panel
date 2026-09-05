@@ -63,6 +63,17 @@ public class CrossEntryFailoverController {
     }
 
     @LogAnnotation
+    @PostMapping("/group-enabled")
+    @RequireRole
+    public R groupEnabled(@RequestBody Map<String, Object> params) {
+        Object enabled = params.get("enabled");
+        boolean value = enabled instanceof Boolean
+                ? (Boolean) enabled
+                : Boolean.parseBoolean(String.valueOf(enabled));
+        return service.setGroupEnabled(Long.valueOf(params.get("id").toString()), value);
+    }
+
+    @LogAnnotation
     @PostMapping("/member-enabled")
     @RequireRole
     public R memberEnabled(@RequestBody Map<String, Object> params) {

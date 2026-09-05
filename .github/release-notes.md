@@ -1,3 +1,9 @@
+## 2.51.51 Failover group master switch
+
+- Adds a visible master switch to every cross-entry failover group.
+- Turning it off pauses the group's probes, automatic switching, and DNS scheduling without deleting forwards, tunnels, records, per-entry states, or forcing existing connections closed.
+- Turning it on immediately re-probes enabled routes and restores normal scheduling. Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.50 Per-entry failover switches
 
 - Adds an independent enable/disable switch to every cross-entry failover route.

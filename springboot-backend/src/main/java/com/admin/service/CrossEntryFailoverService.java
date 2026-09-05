@@ -786,6 +786,35 @@ public class CrossEntryFailoverService {
         }
     }
 
+    public R setGroupEnabled(Long groupId, boolean enabled) {
+        if (groupId == null) return R.err("请指定容灾组");
+        Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
+        synchronized (lock) {
+            Map<String, Object> group;
+            try {
+                group = loadGroup(groupId);
+            } catch (IllegalArgumentException e) {
+                return R.err("容灾组不存在");
+            }
+            long now = System.currentTimeMillis();
+            if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能重新启用容灾组");
+            if (bool(group.get("enabled")) == enabled) return listGroups();
+            if (!enabled) {
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
+                        now, groupId);
+                addEvent(groupId, nullableLong(group.get("activeMemberId")), null, "管理员关闭容灾组", "success",
+                        "已暂停该组全部入口的探测、自动切换和 DNS 调度；既有转发与连接未被删除或强制断开");
+            } else {
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=1,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
+                        now, groupId);
+                addEvent(groupId, null, nullableLong(group.get("activeMemberId")), "管理员开启容灾组", "success",
+                        "将立即重新探测所有启用入口，并按现有规则恢复调度");
+                doProbeGroup(groupId, true);
+            }
+            return listGroups();
+        }
+    }
+
     public R setMemberEnabled(Long groupId, Long memberId, boolean enabled) {
         if (groupId == null || memberId == null) return R.err("请指定容灾组和入口线路");
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
