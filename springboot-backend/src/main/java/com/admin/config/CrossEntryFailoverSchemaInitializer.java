@@ -29,7 +29,11 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "expires_at bigint DEFAULT NULL, "
                     + "state varchar(24) NOT NULL DEFAULT 'unknown', active_member_id bigint DEFAULT NULL, active_since_at bigint DEFAULT NULL, "
                     + "last_error varchar(500) DEFAULT NULL, last_checked_at bigint DEFAULT NULL, last_switch_at bigint DEFAULT NULL, "
-                    + "created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
+                    + "traffic_quota_enabled tinyint NOT NULL DEFAULT 0, traffic_quota_limit_bytes bigint NOT NULL DEFAULT 0, "
+                    + "traffic_quota_reset_day tinyint NOT NULL DEFAULT 1, traffic_quota_used_bytes bigint NOT NULL DEFAULT 0, "
+                    + "traffic_quota_period_start_at bigint DEFAULT NULL, traffic_quota_exhausted tinyint NOT NULL DEFAULT 0, "
+                    + "traffic_quota_paused tinyint NOT NULL DEFAULT 0, traffic_quota_exhausted_at bigint DEFAULT NULL, "
+                    + "traffic_quota_last_error varchar(500) DEFAULT NULL, created_time bigint NOT NULL, updated_time bigint NOT NULL, PRIMARY KEY (id), "
                     + "UNIQUE KEY uk_cross_entry_domain (domain, record_type), KEY idx_cross_entry_due (enabled, last_checked_at)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_failover_member ("
@@ -158,6 +162,15 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "last_in_flow_at", "bigint DEFAULT NULL AFTER activity_out_flow");
             ensureColumn("cross_entry_failover_member", "last_out_flow_at", "bigint DEFAULT NULL AFTER last_in_flow_at");
             ensureColumn("cross_entry_failover_member", "last_activity_at", "bigint DEFAULT NULL AFTER last_out_flow_at");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_enabled", "tinyint NOT NULL DEFAULT 0 AFTER last_switch_at");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_limit_bytes", "bigint NOT NULL DEFAULT 0 AFTER traffic_quota_enabled");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_reset_day", "tinyint NOT NULL DEFAULT 1 AFTER traffic_quota_limit_bytes");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_used_bytes", "bigint NOT NULL DEFAULT 0 AFTER traffic_quota_reset_day");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_period_start_at", "bigint DEFAULT NULL AFTER traffic_quota_used_bytes");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_exhausted", "tinyint NOT NULL DEFAULT 0 AFTER traffic_quota_period_start_at");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_paused", "tinyint NOT NULL DEFAULT 0 AFTER traffic_quota_exhausted");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_exhausted_at", "bigint DEFAULT NULL AFTER traffic_quota_paused");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_last_error", "varchar(500) DEFAULT NULL AFTER traffic_quota_exhausted_at");
             if (generationAdded || probeTrackingAdded) {
                 jdbcTemplate.update("UPDATE cross_entry_failover_member SET telemetry_ready=0,total_connections=0,"
                         + "current_connections=0,reported_total_connections=0,telemetry_generation=0,"

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
@@ -183,5 +184,25 @@ class CrossEntryFailoverServiceTests {
                         + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
                         + "WHERE group_id=? AND usage_date=?",
                 CrossEntryFailoverService.DAILY_USAGE_SELECT_SQL);
+    }
+
+    @Test
+    void trafficQuotaCountsTheConfiguredDirectionOnly() {
+        assertEquals(120L, CrossEntryFailoverService.trafficQuotaUsageDelta("inbound", 120L, 80L));
+        assertEquals(80L, CrossEntryFailoverService.trafficQuotaUsageDelta("outbound", 120L, 80L));
+        assertEquals(200L, CrossEntryFailoverService.trafficQuotaUsageDelta("total", 120L, 80L));
+        assertEquals(80L, CrossEntryFailoverService.trafficQuotaUsageDelta(null, 120L, 80L));
+    }
+
+    @Test
+    void trafficQuotaPeriodResetsOnTheConfiguredBeijingDay() {
+        assertEquals(
+                Instant.parse("2026-09-07T16:00:00Z").toEpochMilli(),
+                CrossEntryFailoverService.trafficQuotaPeriodStartAt(8,
+                        Instant.parse("2026-09-08T00:00:00Z").toEpochMilli()));
+        assertEquals(
+                Instant.parse("2026-08-07T16:00:00Z").toEpochMilli(),
+                CrossEntryFailoverService.trafficQuotaPeriodStartAt(8,
+                        Instant.parse("2026-09-07T15:59:00Z").toEpochMilli()));
     }
 }

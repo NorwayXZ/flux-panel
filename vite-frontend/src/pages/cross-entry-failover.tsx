@@ -26,7 +26,9 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
+  Settings2,
   Trash2,
   TriangleAlert,
   X,
@@ -42,9 +44,11 @@ import {
   getCrossEntryNodeOptions,
   getCrossEntryProbeSources,
   getDnsZoneOptions,
+  resetCrossEntryTrafficQuota,
   saveCrossEntryGroup,
   setCrossEntryGroupEnabled,
   setCrossEntryMemberEnabled,
+  setCrossEntryTrafficQuota,
   type CrossEntryEvent,
   type CrossEntryForwardOption,
   type CrossEntryGroup,
@@ -185,6 +189,13 @@ type ScheduleForm = {
   endTime: string;
   preferredForwardId: string;
   enabled: boolean;
+};
+
+type TrafficQuotaForm = {
+  enabled: boolean;
+  direction: "inbound" | "outbound" | "total";
+  limitGiB: string;
+  resetDay: string;
 };
 
 const weekDays = [
@@ -1392,6 +1403,14 @@ export default function CrossEntryFailoverPage() {
   const [events, setEvents] = useState<CrossEntryEvent[]>([]);
   const [historyName, setHistoryName] = useState("");
   const [historyGroup, setHistoryGroup] = useState<CrossEntryGroup>();
+  const [quotaTarget, setQuotaTarget] = useState<CrossEntryGroup>();
+  const [quotaForm, setQuotaForm] = useState<TrafficQuotaForm>({
+    enabled: false,
+    direction: "outbound",
+    limitGiB: "200",
+    resetDay: "1",
+  });
+  const [quotaSubmitting, setQuotaSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
   const [togglingGroupId, setTogglingGroupId] = useState<number>();
@@ -2081,6 +2100,69 @@ export default function CrossEntryFailoverPage() {
     toast.success(enabled ? "入口线路已启用" : "入口线路已停用");
   };
 
+  const openTrafficQuota = (group: CrossEntryGroup) => {
+    setQuotaTarget(group);
+    setQuotaForm({
+      enabled: truthy(group.trafficQuotaEnabled ?? false),
+      direction: group.trafficQuotaDirection || "outbound",
+      limitGiB:
+        group.trafficQuotaLimitBytes && group.trafficQuotaLimitBytes > 0
+          ? String(
+              Math.round(
+                (group.trafficQuotaLimitBytes / 1024 ** 3) * 100,
+              ) / 100,
+            )
+          : "200",
+      resetDay: String(group.trafficQuotaResetDay || 1),
+    });
+  };
+
+  const saveTrafficQuota = async () => {
+    if (!quotaTarget) return;
+    const limitGiB = Number(quotaForm.limitGiB);
+    if (
+      quotaForm.enabled &&
+      (!Number.isFinite(limitGiB) || limitGiB <= 0 || limitGiB > 8_388_607)
+    ) {
+      return toast.error("请输入 0 到 8,388,607 GiB 之间的有效流量限额");
+    }
+    setQuotaSubmitting(true);
+    const resetDay = Number(quotaForm.resetDay);
+    if (!Number.isInteger(resetDay) || resetDay < 1 || resetDay > 28) {
+      return toast.error("每月重置日期必须为 1 到 28 号");
+    }
+    const response = await setCrossEntryTrafficQuota({
+      groupId: quotaTarget.id,
+      enabled: quotaForm.enabled,
+      direction: quotaForm.direction,
+      limitBytes: quotaForm.enabled ? Math.round(limitGiB * 1024 ** 3) : 0,
+      resetDay,
+    });
+    setQuotaSubmitting(false);
+    if (response.code !== 0) {
+      return toast.error(response.msg || "流量限额保存失败", { duration: 9000 });
+    }
+    setGroups(response.data?.groups || []);
+    setSummary(response.data?.summary || emptySummary);
+    setQuotaTarget(undefined);
+    toast.success(quotaForm.enabled ? "入口流量限额已保存" : "入口流量限额已关闭");
+  };
+
+  const resetTrafficQuota = async () => {
+    if (!quotaTarget) return;
+    if (!window.confirm("确认重置这条入口的已用流量并恢复转发吗？")) return;
+    setQuotaSubmitting(true);
+    const response = await resetCrossEntryTrafficQuota(quotaTarget.id);
+    setQuotaSubmitting(false);
+    if (response.code !== 0) {
+      return toast.error(response.msg || "流量重置失败", { duration: 9000 });
+    }
+    setGroups(response.data?.groups || []);
+    setSummary(response.data?.summary || emptySummary);
+    setQuotaTarget(undefined);
+    toast.success("已重置流量并恢复入口转发");
+  };
+
   const remove = async (group: CrossEntryGroup) => {
     const message =
       group.creationMode === "managed_forward"
@@ -2352,6 +2434,21 @@ export default function CrossEntryFailoverPage() {
                             按时段选线
                           </Chip>
                         )}
+                        {truthy(group.trafficQuotaEnabled ?? false) && (
+                          <Chip
+                            color={
+                              truthy(group.trafficQuotaExhausted ?? false)
+                                ? "danger"
+                                : "warning"
+                            }
+                            size="sm"
+                            variant="flat"
+                          >
+                            {truthy(group.trafficQuotaExhausted ?? false)
+                              ? "流量额度已用尽"
+                              : `月额度 ${formatBytes(group.trafficQuotaUsedBytes)} / ${formatBytes(group.trafficQuotaLimitBytes)}`}
+                          </Chip>
+                        )}
                         {tcpLatencySelectionEnabled && (
                           <Chip color="secondary" size="sm" variant="flat">
                             TCP 延迟优选
@@ -2421,6 +2518,16 @@ export default function CrossEntryFailoverPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        isIconOnly
+                        aria-label="设置容灾组总流量限额"
+                        size="sm"
+                        title="设置这个容灾链接的月度总流量限额"
+                        variant="flat"
+                        onPress={() => openTrafficQuota(group)}
+                      >
+                        <Settings2 size={15} />
+                      </Button>
                       <Switch
                         aria-label={`${group.name}${truthy(group.enabled) ? "关闭" : "开启"}容灾组总开关`}
                         isDisabled={expired || togglingGroupId === group.id}
@@ -4696,6 +4803,114 @@ export default function CrossEntryFailoverPage() {
             </Button>
             <Button color="primary" isLoading={submitting} onPress={submit}>
               保存并同步 DNS
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(quotaTarget)}
+        size="md"
+        onOpenChange={(open) => {
+          if (!open && !quotaSubmitting) setQuotaTarget(undefined);
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>
+            {quotaTarget?.name || "容灾链接"} · 总流量限额
+          </ModalHeader>
+          <ModalBody className="gap-4">
+            {quotaTarget && (
+              <>
+                <div className="border-y border-divider py-3 text-sm">
+                  <p className="font-medium">{quotaTarget.domain}</p>
+                  <p className="mt-1 text-xs text-default-500">
+                    本周期已用 {formatBytes(quotaTarget.trafficQuotaUsedBytes)}
+                    {truthy(quotaTarget.trafficQuotaExhausted ?? false) &&
+                      " · 已达到限额，整条链接已暂停"}
+                  </p>
+                </div>
+                <Switch
+                  isSelected={quotaForm.enabled}
+                  onValueChange={(enabled) =>
+                    setQuotaForm({ ...quotaForm, enabled })
+                  }
+                >
+                  启用这个容灾链接的月度总流量限额
+                </Switch>
+                <Input
+                  description="按 1024 进制填写；达到后会暂停这个容灾链接的全部入口转发。"
+                  isDisabled={!quotaForm.enabled}
+                  label="流量上限（GiB）"
+                  min={"0.01"}
+                  type="number"
+                  value={quotaForm.limitGiB}
+                  onValueChange={(limitGiB) =>
+                    setQuotaForm({ ...quotaForm, limitGiB })
+                  }
+                />
+                <Select
+                  isDisabled={!quotaForm.enabled}
+                  label="计量方向"
+                  selectedKeys={[quotaForm.direction]}
+                  onSelectionChange={(keys) =>
+                    setQuotaForm({
+                      ...quotaForm,
+                      direction: String(
+                        Array.from(keys)[0] || "outbound",
+                      ) as TrafficQuotaForm["direction"],
+                    })
+                  }
+                >
+                  <SelectItem key="outbound">返回客户端（单向）</SelectItem>
+                  <SelectItem key="inbound">入口收到（单向）</SelectItem>
+                  <SelectItem key="total">入口收到 + 返回客户端</SelectItem>
+                </Select>
+                <Input
+                  description="建议使用 1 到 28 号，避免月份天数不同导致重置日期不存在。重置时间为北京时间 00:00。"
+                  isDisabled={!quotaForm.enabled}
+                  label="每月重置日期"
+                  max={"28"}
+                  min={"1"}
+                  type="number"
+                  value={quotaForm.resetDay}
+                  onValueChange={(resetDay) =>
+                    setQuotaForm({ ...quotaForm, resetDay })
+                  }
+                />
+                <p className="text-xs leading-5 text-default-500">
+                  流量来自 Agent 遥测，通常按约 5 秒一批上报；暂停动作会在面板收到达到限额的上报后执行，可能存在最后一批数据的少量误差。
+                </p>
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {quotaTarget &&
+              (truthy(quotaTarget.trafficQuotaExhausted ?? false) ||
+                (quotaTarget.trafficQuotaUsedBytes || 0) > 0) && (
+                <Button
+                  className="mr-auto"
+                  color="warning"
+                  isDisabled={quotaSubmitting}
+                  startContent={<RotateCcw size={15} />}
+                  variant="flat"
+                  onPress={() => void resetTrafficQuota()}
+                >
+                  重置并恢复
+                </Button>
+              )}
+            <Button
+              variant="flat"
+              onPress={() => setQuotaTarget(undefined)}
+            >
+              取消
+            </Button>
+            <Button
+              color="primary"
+              isLoading={quotaSubmitting}
+              onPress={() => void saveTrafficQuota()}
+            >
+              保存限额
             </Button>
           </ModalFooter>
         </ModalContent>

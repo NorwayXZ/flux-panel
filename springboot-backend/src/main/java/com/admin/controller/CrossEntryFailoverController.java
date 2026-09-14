@@ -87,6 +87,31 @@ public class CrossEntryFailoverController {
                 value);
     }
 
+    @LogAnnotation
+    @PostMapping("/traffic-quota")
+    @RequireRole
+    public R trafficQuota(@RequestBody Map<String, Object> params) {
+        Object enabled = params.get("enabled");
+        boolean value = enabled instanceof Boolean
+                ? (Boolean) enabled
+                : Boolean.parseBoolean(String.valueOf(enabled));
+        long limitBytes = params.get("limitBytes") == null ? 0L : Long.parseLong(params.get("limitBytes").toString());
+        int resetDay = params.get("resetDay") == null ? 1 : Integer.parseInt(params.get("resetDay").toString());
+        return service.setTrafficQuota(
+                Long.valueOf(params.get("groupId").toString()),
+                value,
+                String.valueOf(params.getOrDefault("direction", "outbound")),
+                limitBytes,
+                resetDay);
+    }
+
+    @LogAnnotation
+    @PostMapping("/traffic-quota/reset")
+    @RequireRole
+    public R resetTrafficQuota(@RequestBody Map<String, Object> params) {
+        return service.resetTrafficQuota(Long.valueOf(params.get("groupId").toString()));
+    }
+
     @PostMapping("/events")
     @RequireRole
     public R events(@RequestBody Map<String, Object> params) {

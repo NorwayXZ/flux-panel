@@ -1708,6 +1708,16 @@ export interface CrossEntryGroup {
   qualityProbeStatus?: "disabled" | "pending" | "ok" | "warning" | "failed";
   qualityProbeError?: string;
   qualityProbeAt?: number;
+  trafficQuotaEnabled?: boolean | number;
+  trafficQuotaLimitBytes?: number;
+  trafficQuotaDirection?: "inbound" | "outbound" | "total";
+  trafficQuotaResetDay?: number;
+  trafficQuotaUsedBytes?: number;
+  trafficQuotaPeriodStartAt?: number;
+  trafficQuotaExhausted?: boolean | number;
+  trafficQuotaPaused?: boolean | number;
+  trafficQuotaExhaustedAt?: number;
+  trafficQuotaLastError?: string;
   enabled: boolean | number;
   state:
     | "unknown"
@@ -1832,6 +1842,24 @@ export const setCrossEntryMemberEnabled = (
   Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
     "/cross-entry-failover/member-enabled",
     { groupId, memberId, enabled },
+    ["/cross-entry-failover/list"],
+  );
+export const setCrossEntryTrafficQuota = (data: {
+  groupId: number;
+  enabled: boolean;
+  direction: "inbound" | "outbound" | "total";
+  limitBytes: number;
+  resetDay: number;
+}) =>
+  Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
+    "/cross-entry-failover/traffic-quota",
+    data,
+    ["/cross-entry-failover/list"],
+  );
+export const resetCrossEntryTrafficQuota = (groupId: number) =>
+  Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
+    "/cross-entry-failover/traffic-quota/reset",
+    { groupId },
     ["/cross-entry-failover/list"],
   );
 export const getCrossEntryEvents = (id: number) =>

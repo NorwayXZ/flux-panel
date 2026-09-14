@@ -229,8 +229,120 @@ public class CrossEntryFailoverService {
                                 + "last_activity_at=CASE WHEN ? > 0 OR ? > 0 THEN ? ELSE last_activity_at END,updated_time=? WHERE id=?",
                         businessDelta, Math.max(0L, reportedCurrentConnections), counter.baseline(), counter.generation(), consumedProbes,
                         now, inbound, outbound, inbound, now, outbound, now, inbound, outbound, now, now, state.get("id"));
+                Map<String, Object> quotaState = prepareTrafficQuotaPeriod(groupId, now);
+                enforceTrafficQuota(groupId, quotaState, inbound, outbound, now);
             }
         }
+    }
+
+    static long trafficQuotaUsageDelta(String direction, long inbound, long outbound) {
+        long safeInbound = Math.max(0L, inbound);
+        long safeOutbound = Math.max(0L, outbound);
+        return switch (StringUtils.lowerCase(StringUtils.defaultIfBlank(direction, "outbound"), Locale.ROOT)) {
+            case "inbound" -> safeInbound;
+            case "total" -> safeInbound > Long.MAX_VALUE - safeOutbound
+                    ? Long.MAX_VALUE : safeInbound + safeOutbound;
+            default -> safeOutbound;
+        };
+    }
+
+    private void enforceTrafficQuota(long groupId, Map<String, Object> state,
+                                     long inbound, long outbound, long now) {
+        if (state == null || !bool(state.get("trafficQuotaEnabled")) || bool(state.get("trafficQuotaExhausted"))) return;
+        long limit = number(state.get("trafficQuotaLimitBytes")).longValue();
+        if (limit <= 0L) return;
+        long delta = trafficQuotaUsageDelta(Objects.toString(state.get("trafficQuotaDirection"), "outbound"), inbound, outbound);
+        if (delta <= 0L) return;
+        long used = Math.max(0L, number(state.get("trafficQuotaUsedBytes")).longValue());
+        long next = used >= limit || delta >= limit - used ? limit : used + delta;
+        boolean exhausted = next >= limit;
+        int updated = jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=?,"
+                        + "traffic_quota_exhausted=?,traffic_quota_paused=?,traffic_quota_exhausted_at=CASE WHEN ? THEN ? ELSE traffic_quota_exhausted_at END,"
+                        + "updated_time=? WHERE id=? AND traffic_quota_enabled=1 AND traffic_quota_exhausted=0",
+                next, exhausted, exhausted, exhausted, now, now, groupId);
+        if (updated != 1 || !exhausted) return;
+
+        String pauseError = pauseGroupForTrafficQuota(groupId, now);
+        if (pauseError != null) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_last_error=?,updated_time=? WHERE id=?",
+                    shorten("流量已到上限，但暂停转发失败：" + pauseError, 500), now, groupId);
+        }
+        addEvent(groupId, null, null, "容灾组流量达到限额", pauseError == null ? "success" : "warning",
+                pauseError == null ? "已达到本周期流量上限，整组入口和对应转发已自动暂停"
+                        : "已达到本周期流量上限，但部分底层转发暂停失败：" + pauseError);
+    }
+
+    private Map<String, Object> prepareTrafficQuotaPeriod(long groupId, long now) {
+        Map<String, Object> state = loadQuotaGroup(groupId);
+        if (state == null || !bool(state.get("trafficQuotaEnabled"))) return state;
+        long periodStart = trafficQuotaPeriodStartAt(number(state.get("trafficQuotaResetDay")).intValue(), now);
+        Long storedPeriod = nullableLong(state.get("trafficQuotaPeriodStartAt"));
+        if (storedPeriod != null && storedPeriod == periodStart) return state;
+
+        boolean quotaPaused = bool(state.get("trafficQuotaPaused"));
+        if (quotaPaused) {
+            String resumeError = resumeQuotaPausedForwards(groupId);
+            if (resumeError != null) {
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_last_error=?,updated_time=? WHERE id=?",
+                        shorten("新周期已到，但恢复转发失败：" + resumeError, 500), now, groupId);
+                return state;
+            }
+        }
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=0,traffic_quota_exhausted=0,"
+                        + "traffic_quota_paused=0,traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,"
+                        + "traffic_quota_last_error=NULL,enabled=CASE WHEN ? THEN 1 ELSE enabled END,updated_time=? WHERE id=?",
+                periodStart, quotaPaused, now, groupId);
+        return loadQuotaGroup(groupId);
+    }
+
+    static long trafficQuotaPeriodStartAt(int resetDay, long now) {
+        int day = Math.max(1, Math.min(28, resetDay <= 0 ? 1 : resetDay));
+        ZonedDateTime current = Instant.ofEpochMilli(now).atZone(PANEL_ZONE);
+        LocalDate date = current.toLocalDate();
+        if (date.getDayOfMonth() < day) date = date.minusMonths(1);
+        return date.withDayOfMonth(day).atStartOfDay(PANEL_ZONE).toInstant().toEpochMilli();
+    }
+
+    private String pauseGroupForTrafficQuota(long groupId, long now) {
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,traffic_quota_paused=1,updated_time=? WHERE id=?",
+                now, groupId);
+        List<Long> forwardIds = jdbcTemplate.queryForList(
+                "SELECT forward_id FROM cross_entry_failover_member WHERE group_id=?", Long.class, groupId);
+        List<String> errors = new ArrayList<>();
+        for (Long forwardId : forwardIds) {
+            try {
+                R result = forwardService.pauseManagedForward(forwardId);
+                if (result.getCode() != 0) errors.add(result.getMsg());
+            } catch (RuntimeException e) {
+                errors.add(e.getMessage());
+            }
+        }
+        return errors.isEmpty() ? null : String.join("；", errors);
+    }
+
+    private String resumeQuotaPausedForwards(long groupId) {
+        List<Long> forwardIds = jdbcTemplate.queryForList(
+                "SELECT forward_id FROM cross_entry_failover_member WHERE group_id=?", Long.class, groupId);
+        List<String> errors = new ArrayList<>();
+        for (Long forwardId : forwardIds) {
+            try {
+                R result = forwardService.resumeManagedForward(forwardId);
+                if (result.getCode() != 0) errors.add(result.getMsg());
+            } catch (RuntimeException e) {
+                errors.add(e.getMessage());
+            }
+        }
+        return errors.isEmpty() ? null : String.join("；", errors);
+    }
+
+    private Map<String, Object> loadQuotaGroup(long groupId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT id,traffic_quota_enabled AS trafficQuotaEnabled,traffic_quota_limit_bytes AS trafficQuotaLimitBytes,"
+                        + "traffic_quota_direction AS trafficQuotaDirection,traffic_quota_reset_day AS trafficQuotaResetDay,"
+                        + "traffic_quota_used_bytes AS trafficQuotaUsedBytes,traffic_quota_period_start_at AS trafficQuotaPeriodStartAt,"
+                        + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused "
+                        + "FROM cross_entry_failover_group WHERE id=?", groupId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     static ConnectionCounterUpdate connectionCounterUpdate(long previous, long previousGeneration,
@@ -305,6 +417,11 @@ public class CrossEntryFailoverService {
                         + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,manual_lock_until AS manualLockUntil,"
                         + "quality_probe_status AS qualityProbeStatus,"
                         + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,"
+                        + "traffic_quota_enabled AS trafficQuotaEnabled,traffic_quota_limit_bytes AS trafficQuotaLimitBytes,"
+                        + "traffic_quota_direction AS trafficQuotaDirection,traffic_quota_reset_day AS trafficQuotaResetDay,"
+                        + "traffic_quota_used_bytes AS trafficQuotaUsedBytes,traffic_quota_period_start_at AS trafficQuotaPeriodStartAt,"
+                        + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused,"
+                        + "traffic_quota_exhausted_at AS trafficQuotaExhaustedAt,traffic_quota_last_error AS trafficQuotaLastError,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,g.created_time AS createdTime,"
                         + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active') "
                         + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
@@ -828,6 +945,9 @@ public class CrossEntryFailoverService {
             long now = System.currentTimeMillis();
             if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能重新启用容灾组");
             if (bool(group.get("enabled")) == enabled) return listGroups();
+            if (enabled && bool(group.get("trafficQuotaExhausted"))) {
+                return R.err("该容灾链接已达到本周期流量限额，请先重置流量");
+            }
             if (!enabled) {
                 settleActiveUsage(groupId, nullableLong(group.get("activeMemberId")), nullableLong(group.get("activeSinceAt")), now);
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,state='unknown',last_error=NULL,active_since_at=NULL,updated_time=? WHERE id=?",
@@ -862,7 +982,6 @@ public class CrossEntryFailoverService {
             if (member == null) return R.err("入口线路不属于该容灾组");
             boolean currentlyEnabled = bool(member.get("enabled"));
             if (currentlyEnabled == enabled) return listGroups();
-
             boolean active = Objects.equals(memberId, nullableLong(group.get("activeMemberId")));
             boolean activeActive = "active_active".equals(Objects.toString(group.get("routingMode"), "failover"));
             boolean groupEnabled = bool(group.get("enabled"));
@@ -910,6 +1029,51 @@ public class CrossEntryFailoverService {
         }
     }
 
+    public R setTrafficQuota(Long groupId, boolean enabled, String direction,
+                             long limitBytes, int resetDay) {
+        if (groupId == null) return R.err("请指定容灾组");
+        String normalizedDirection = StringUtils.lowerCase(StringUtils.defaultIfBlank(direction, "outbound"), Locale.ROOT);
+        if (!Set.of("inbound", "outbound", "total").contains(normalizedDirection)) return R.err("流量统计方向不正确");
+        if (enabled && limitBytes <= 0L) return R.err("流量限额必须大于 0");
+        if (resetDay < 1 || resetDay > 28) return R.err("每月重置日期必须为 1 到 28 号");
+        Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
+        synchronized (lock) {
+            Map<String, Object> group = loadQuotaGroup(groupId);
+            if (group == null) return R.err("容灾组不存在");
+            if (!enabled && bool(group.get("trafficQuotaPaused"))) {
+                String resumeError = resumeQuotaPausedForwards(groupId);
+                if (resumeError != null) return R.err("恢复流量限额暂停的转发失败：" + resumeError);
+            }
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_enabled=?,traffic_quota_limit_bytes=?,"
+                            + "traffic_quota_direction=?,traffic_quota_reset_day=?,traffic_quota_exhausted=CASE WHEN ? THEN traffic_quota_exhausted ELSE 0 END,"
+                            + "traffic_quota_paused=CASE WHEN ? THEN traffic_quota_paused ELSE 0 END,traffic_quota_last_error=NULL,"
+                            + "enabled=CASE WHEN ? THEN 1 ELSE enabled END,updated_time=? WHERE id=?",
+                    enabled, Math.max(0L, limitBytes), normalizedDirection, resetDay,
+                    enabled, enabled, !enabled && bool(group.get("trafficQuotaPaused")), System.currentTimeMillis(), groupId);
+            return listGroups();
+        }
+    }
+
+    public R resetTrafficQuota(Long groupId) {
+        if (groupId == null) return R.err("请指定容灾组");
+        Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
+        synchronized (lock) {
+            Map<String, Object> group = loadQuotaGroup(groupId);
+            if (group == null) return R.err("容灾组不存在");
+            if (bool(group.get("trafficQuotaPaused"))) {
+                String resumeError = resumeQuotaPausedForwards(groupId);
+                if (resumeError != null) return R.err("恢复流量限额暂停的转发失败：" + resumeError);
+            }
+            long now = System.currentTimeMillis();
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=0,traffic_quota_exhausted=0,"
+                            + "traffic_quota_paused=0,traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,"
+                            + "traffic_quota_last_error=NULL,enabled=1,updated_time=? WHERE id=?",
+                    trafficQuotaPeriodStartAt(number(group.get("trafficQuotaResetDay")).intValue(), now), now, groupId);
+            doProbeGroup(groupId, true);
+            return listGroups();
+        }
+    }
+
     public R listEvents(Long id) {
         return R.ok(jdbcTemplate.queryForList("SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
                 + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
@@ -948,6 +1112,26 @@ public class CrossEntryFailoverService {
             log.debug("Cross-entry failover scheduler waiting for schema: {}", e.getMessage());
         } finally {
             checking.set(false);
+        }
+    }
+
+    @Scheduled(initialDelay = 30000, fixedDelay = 60000)
+    public void scheduledTrafficQuotaReset() {
+        try {
+            long now = System.currentTimeMillis();
+            List<Long> groupIds = jdbcTemplate.queryForList(
+                    "SELECT id FROM cross_entry_failover_group WHERE traffic_quota_enabled=1",
+                    Long.class);
+            for (Long groupId : groupIds) {
+                Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
+                synchronized (lock) {
+                    prepareTrafficQuotaPeriod(groupId, now);
+                }
+            }
+        } catch (DataAccessException e) {
+            log.debug("Traffic quota scheduler waiting for schema: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("Traffic quota reset failed: {}", e.getMessage());
         }
     }
 
@@ -2620,6 +2804,11 @@ public class CrossEntryFailoverService {
                 + "manual_control_mode AS manualControlMode,locked_member_id AS lockedMemberId,manual_lock_until AS manualLockUntil,"
                 + "quality_probe_status AS qualityProbeStatus,"
                 + "quality_probe_error AS qualityProbeError,quality_probe_at AS qualityProbeAt,enabled,state,active_member_id AS activeMemberId,last_error AS lastError,"
+                + "traffic_quota_enabled AS trafficQuotaEnabled,traffic_quota_limit_bytes AS trafficQuotaLimitBytes,"
+                + "traffic_quota_direction AS trafficQuotaDirection,traffic_quota_reset_day AS trafficQuotaResetDay,"
+                + "traffic_quota_used_bytes AS trafficQuotaUsedBytes,traffic_quota_period_start_at AS trafficQuotaPeriodStartAt,"
+                + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused,"
+                + "traffic_quota_exhausted_at AS trafficQuotaExhaustedAt,traffic_quota_last_error AS trafficQuotaLastError,"
                 + "last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,"
                 + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active') "
                 + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
