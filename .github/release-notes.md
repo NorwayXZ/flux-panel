@@ -1,3 +1,9 @@
+## 2.51.56 Cross-entry quota schema compatibility fix
+
+- Ensures monthly failover-link quota columns are initialized before older optional schema upgrades can interrupt startup initialization.
+- Removes column-position dependencies from the quota migration so existing MySQL installations can add the fields safely.
+- Panel-only repair release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.55 Monthly failover-link traffic quota
 
 - Adds one total monthly traffic quota to each cross-entry failover link instead of separate quotas per entry route.
