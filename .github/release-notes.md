@@ -1,3 +1,9 @@
+## 2.51.57 Remote terminal viewport fit fix
+
+- Fixes the bottom row of the remote terminal being clipped when xterm measured a container that included visual padding.
+- Keeps the padding in an outer wrapper and fits xterm to a dedicated, unpadded viewport.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.56 Cross-entry quota schema compatibility fix
 
 - Ensures monthly failover-link quota columns are initialized before older optional schema upgrades can interrupt startup initialization.

@@ -461,10 +461,12 @@ export default function NodeTerminalPage() {
             <RefreshCw size={16} />
           </Button>
         </div>
-        <div
-          ref={terminalContainerRef}
-          className="h-[56vh] min-h-[420px] w-full p-3"
-        />
+        <div className="h-[56vh] min-h-[420px] w-full p-3">
+          <div
+            ref={terminalContainerRef}
+            className="h-full min-h-0 w-full min-w-0 overflow-hidden"
+          />
+        </div>
       </section>
 
       <section className="space-y-3 border-t border-divider pt-5">
