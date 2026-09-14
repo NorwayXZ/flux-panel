@@ -25,6 +25,7 @@ const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
 const CrossEntryFailoverPage = lazy(
   () => import("@/pages/cross-entry-failover"),
 );
+const AuthorizedEntryPage = lazy(() => import("@/pages/authorized-entry"));
 const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
@@ -320,6 +321,14 @@ function App() {
               </ProtectedRoute>
             }
             path="/cross-entry-failover"
+          />
+          <Route
+            element={
+              <ProtectedRoute>
+                <AuthorizedEntryPage />
+              </ProtectedRoute>
+            }
+            path="/authorized-entry"
           />
           <Route
             element={

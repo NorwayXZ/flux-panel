@@ -1,3 +1,11 @@
+## 2.51.58 Authorized entry grants
+
+- Adds an administrator-owned authorization-entry product on top of an existing cross-entry failover group. A recipient sees only the assigned `domain:port`, own public target, port count, quota, reset day, expiry, and state; entry nodes, tunnels, backup order, DNS, and internal failover remain hidden.
+- Administrators can create a private entry template, define the available port range and extra denied CIDRs, grant or edit independent quotas, pause/resume or revoke a grant, and safely clean the hidden forwards before deleting a recipient.
+- Tenant targets accept numeric public IPv4/IPv6 only. Loopback, private, CGNAT, link-local, metadata, documentation, benchmark, multicast/reserved addresses, platform node addresses, and the template's VPC/Docker/Kubernetes/admin CIDRs are rejected.
+- Each authorization entry is a separate billing entitlement. Its bytes appear in the recipient aggregate alongside tunnels and forwards but internal entry replicas never bill a user/tunnel quota a second time. Reaching the quota pauses only that grant and its ports; the configured Beijing-time reset resumes it. The existing Agent reports traffic periodically, so the cutoff is enforced on the next report rather than promising byte-zero overshoot.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.57 Remote terminal viewport fit fix
 
 - Fixes the bottom row of the remote terminal being clipped when xterm measured a container that included visual padding.

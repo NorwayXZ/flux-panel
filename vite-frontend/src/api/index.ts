@@ -1865,6 +1865,68 @@ export const resetCrossEntryTrafficQuota = (groupId: number) =>
 export const getCrossEntryEvents = (id: number) =>
   Network.post<CrossEntryEvent[]>("/cross-entry-failover/events", { id });
 
+export interface AuthorizedEntryPort {
+  id: number;
+  port: number;
+  targetHost: string;
+  targetPort: number;
+  protocolMode: "tcp" | "tcp_udp";
+  state: string;
+  inFlow: number;
+  outFlow: number;
+  chargedBytes: number;
+}
+
+export interface AuthorizedEntryGrant {
+  id: number;
+  name: string;
+  accessHost: string;
+  maxPorts: number;
+  flowLimitBytes: number;
+  usedBytes: number;
+  flowDirection: "inbound" | "outbound" | "total";
+  flowResetDay: number;
+  expiresAt?: number;
+  state: string;
+  ports: AuthorizedEntryPort[];
+  userId?: number;
+  templateId?: number;
+  templateName?: string;
+  lastError?: string;
+}
+
+export interface AuthorizedEntryTemplate {
+  id: number;
+  name: string;
+  sourceGroupId: number;
+  startPort: number;
+  endPort: number;
+  protocolMode: "tcp" | "tcp_udp";
+  blockedTargetCidrs?: string;
+  status: number;
+  domain: string;
+  grantCount: number;
+}
+
+export const getAuthorizedEntryGrants = (userId?: number) =>
+  Network.mutate<AuthorizedEntryGrant[]>("/authorized-entry/grants", userId ? { userId } : {}, ["/authorized-entry/grants"]);
+export const getAuthorizedEntryTemplates = () =>
+  Network.mutate<AuthorizedEntryTemplate[]>("/authorized-entry/template/list", {}, ["/authorized-entry/template/list"]);
+export const saveAuthorizedEntryTemplate = (data: Record<string, unknown>) =>
+  Network.mutate<{ id: number }>("/authorized-entry/template/save", data, ["/authorized-entry/template/list"]);
+export const saveAuthorizedEntryGrant = (data: Record<string, unknown>) =>
+  Network.mutate<{ id: number }>("/authorized-entry/grant/save", data, ["/authorized-entry/grants"]);
+export const createAuthorizedEntryPort = (data: Record<string, unknown>) =>
+  Network.mutate<AuthorizedEntryPort>("/authorized-entry/port/create", data, ["/authorized-entry/grants"]);
+export const deleteAuthorizedEntryPort = (id: number) =>
+  Network.mutate("/authorized-entry/port/delete", { id }, ["/authorized-entry/grants"]);
+export const updateAuthorizedEntryPort = (data: Record<string, unknown>) =>
+  Network.mutate("/authorized-entry/port/update", data, ["/authorized-entry/grants"]);
+export const setAuthorizedEntryGrantState = (id: number, active: boolean) =>
+  Network.mutate("/authorized-entry/grant/state", { id, active }, ["/authorized-entry/grants"]);
+export const revokeAuthorizedEntryGrant = (id: number) =>
+  Network.mutate("/authorized-entry/grant/revoke", { id }, ["/authorized-entry/grants"]);
+
 export interface SourceIpEntryRoute {
   id?: number;
   carrier: "default" | "telecom" | "unicom" | "mobile" | "custom";

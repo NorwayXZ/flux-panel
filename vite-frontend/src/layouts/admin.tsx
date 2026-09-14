@@ -148,6 +148,11 @@ export default function AdminLayout({
       adminOnly: true,
     },
     {
+      path: "/authorized-entry",
+      label: "授权入口",
+      icon: <ShieldCheck className="h-5 w-5" />,
+    },
+    {
       path: "/topology",
       label: "全链路拓扑",
       icon: <Network className="h-5 w-5" />,
@@ -336,6 +341,7 @@ export default function AdminLayout({
         "/smart-entry",
         "/source-ip-entry",
         "/cross-entry-failover",
+        "/authorized-entry",
         "/multi-line-aggregation",
       ],
     },

@@ -8,6 +8,7 @@ import com.admin.service.UserQuotaService;
 import com.admin.service.PrivateProxyService;
 import com.admin.service.SmartEntryService;
 import com.admin.service.CrossEntryFailoverService;
+import com.admin.service.AuthorizedEntryService;
 import com.admin.service.ServiceTelemetryService;
 import com.admin.common.task.CheckGostConfigAsync;
 import com.admin.common.utils.AESCrypto;
@@ -88,6 +89,9 @@ public class FlowController extends BaseController {
 
     @Resource
     CrossEntryFailoverService crossEntryFailoverService;
+
+    @Resource
+    AuthorizedEntryService authorizedEntryService;
 
     @Resource
     ServiceTelemetryService serviceTelemetryService;
@@ -282,6 +286,14 @@ public class FlowController extends BaseController {
         Forward forward = forwardService.getById(forwardId);
         if (forward == null) return SUCCESS_RESPONSE;
 
+        // Authorization-entry forwards are internal replicas. Their one tenant-facing
+        // billing binding is the grant, so never add them to a tunnel or owner ledger.
+        if (authorizedEntryService.isManagedForward(forward.getId())) {
+            authorizedEntryService.recordTraffic(forward.getId(), reportingNodeId,
+                    flowDataList.getD(), flowDataList.getU());
+            return SUCCESS_RESPONSE;
+        }
+
         boolean reportConnections = forwardServiceName.reportsConnections();
         smartEntryService.recordActivity(forward.getId(), reportingNodeId,
                 reportConnections ? flowDataList.getT() : null, reportConnections ? flowDataList.getC() : null,
@@ -291,6 +303,8 @@ public class FlowController extends BaseController {
                     flowDataList.getT(), flowDataList.getC(), flowDataList.getG(),
                     flowDataList.getD(), flowDataList.getU());
         }
+        authorizedEntryService.recordTraffic(forward.getId(), reportingNodeId,
+                flowDataList.getD(), flowDataList.getU());
 
         // 获取流量计费类型
         int flowType = getFlowType(forward);

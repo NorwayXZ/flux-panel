@@ -126,9 +126,23 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return createSingleForward(forwardDto);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R createManagedForward(ForwardDto forwardDto, Integer ownerUserId) {
+        if (ownerUserId == null) return R.err("托管转发缺少资源所有者");
+        User owner = userService.getById(ownerUserId);
+        if (owner == null) return R.err("托管转发资源所有者不存在");
+        if (forwardDto.getBatchEndPort() != null) return R.err("托管转发不支持批量创建");
+        portAllocationLockMapper.lockForUpdate();
+        return createSingleForward(forwardDto, new UserInfo(owner.getId().intValue(), ADMIN_ROLE_ID, owner.getUser()));
+    }
+
     private R createSingleForward(ForwardDto forwardDto) {
         // 1. 获取当前用户信息
-        UserInfo currentUser = getCurrentUserInfo();
+        return createSingleForward(forwardDto, getCurrentUserInfo());
+    }
+
+    private R createSingleForward(ForwardDto forwardDto, UserInfo currentUser) {
 
         RouteValidationResult routeValidation = validateRouteTunnels(
                 forwardDto.getTunnelId(),

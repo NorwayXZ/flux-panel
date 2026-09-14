@@ -25,6 +25,12 @@ public interface ForwardService extends IService<Forward> {
     R createForward(ForwardDto forwardDto);
 
     /**
+     * Creates a control-plane owned forward without exposing the backing tunnel
+     * to the end user that consumes the service.
+     */
+    R createManagedForward(ForwardDto forwardDto, Integer ownerUserId);
+
+    /**
      * 获取端口转发列表
      * @return 结果
      */

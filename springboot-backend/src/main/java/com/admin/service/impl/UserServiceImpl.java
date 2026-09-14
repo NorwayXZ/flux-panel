@@ -11,6 +11,7 @@ import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.Md5Util;
 import com.admin.entity.*;
 import com.admin.mapper.ForwardMapper;
+import com.admin.mapper.AuthorizedEntryGrantMapper;
 import com.admin.mapper.UserMapper;
 import com.admin.mapper.UserTunnelMapper;
 import com.admin.mapper.UserNodeMapper;
@@ -118,6 +119,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Resource
     private PortPoolGrantService portPoolGrantService;
+
+    @Resource
+    private AuthorizedEntryGrantMapper authorizedEntryGrantMapper;
+
+    @Resource
+    @Lazy
+    private AuthorizedEntryService authorizedEntryService;
 
     @Resource
     @Lazy
@@ -697,6 +705,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         Map<Integer, List<PortPoolGrant>> portGrants = portPoolGrantService.listGrants(null).stream()
                 .filter(item -> ids.contains(item.getUserId()))
                 .collect(Collectors.groupingBy(PortPoolGrant::getUserId));
+        Map<Integer, List<AuthorizedEntryGrant>> entryGrants = authorizedEntryGrantMapper.selectList(
+                        new QueryWrapper<AuthorizedEntryGrant>().in("user_id", ids).ne("state", "deleted"))
+                .stream().collect(Collectors.groupingBy(AuthorizedEntryGrant::getUserId));
         for (User user : users) {
             List<UserTunnel> tunnelItems = tunnels.getOrDefault(user.getId().intValue(), Collections.emptyList());
             List<UserNode> nodeItems = nodes.getOrDefault(user.getId().intValue(), Collections.emptyList());
@@ -718,6 +729,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                 usedFlow += valueOrZero(item.getInFlow()) + valueOrZero(item.getOutFlow());
                 flowUnlimited |= flag(item.getFlowUnlimited()) == 1;
                 numUnlimited |= flag(item.getForwardUnlimited()) == 1;
+            }
+            for (AuthorizedEntryGrant item : entryGrants.getOrDefault(user.getId().intValue(), Collections.emptyList())) {
+                if (item.getFlowLimitBytes() == null || item.getFlowLimitBytes() <= 0L) flowUnlimited = true;
+                else totalFlow += item.getFlowLimitBytes() / (1024L * 1024L * 1024L);
+                usedFlow += valueOrZero(item.getUsedBytes());
             }
             user.setTotalFlow(totalFlow);
             user.setTotalFlowUnlimited(flowUnlimited);
@@ -786,6 +802,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @param userId 用户ID
      */
     private void deleteUserRelatedData(Long userId) {
+        R entryCleanup = authorizedEntryService.revokeForUser(userId.intValue());
+        if (entryCleanup.getCode() != 0) throw new IllegalStateException(entryCleanup.getMsg());
         // Active published services keep their grants reserved until explicitly removed.
         portPoolGrantService.syncPermissions(userId.intValue(), Collections.emptyList());
         privateProxyService.deleteForUser(userId.intValue());
