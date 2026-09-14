@@ -1,3 +1,10 @@
+## 2.51.55 Monthly failover-link traffic quota
+
+- Adds one total monthly traffic quota to each cross-entry failover link instead of separate quotas per entry route.
+- Supports inbound-only, outbound-only, or bidirectional accounting and a Beijing-time reset day from the 1st through the 28th of each month.
+- When the quota is reached, the whole failover group and its underlying forwards are paused; the next monthly cycle resets usage and restores the group automatically.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.54 Cross-entry usage query fix
 
 - Fixes the entry failover daily-usage query missing its source table, which caused the page to fail to load after `2.51.53`.
