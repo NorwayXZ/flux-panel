@@ -68,7 +68,7 @@ export default function AuthorizedEntryPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const grantResult = await getAuthorizedEntryGrants(requestedUserId);
-    if (grantResult.code === 0) setGrants(grantResult.data || []);
+    if (grantResult.code === 0) setGrants((grantResult.data || []).filter((grant) => grant.state !== "deleted"));
     if (admin) {
       const [templateResult, groupResult, userResult] = await Promise.all([getAuthorizedEntryTemplates(), getCrossEntryGroups(), getAllUsers()]);
       if (templateResult.code === 0) setTemplates(templateResult.data || []);
@@ -143,7 +143,7 @@ export default function AuthorizedEntryPage() {
       <div><p className="text-sm text-default-500">隐藏入口池授权给用户</p><h1 className="mt-1 text-2xl font-semibold">授权入口</h1>{selectedUser && <p className="mt-1 text-sm text-primary">当前查看：{selectedUser.name || selectedUser.user}</p>}</div>
       {admin && <div className="flex gap-2"><Button startContent={<Plus size={16} />} variant="flat" onPress={() => { setTemplateForm(initialTemplateForm); setTemplateOpen(true); }}>新建入口模板</Button><Button color="primary" startContent={<Plus size={16} />} onPress={() => openGrantEditor()}>发放授权</Button></div>}
     </header>
-    {loading ? <p className="py-12 text-center text-default-500">正在加载授权链路…</p> : grants.length === 0 ? <div className="border-y border-divider py-16 text-center text-default-500">暂无授权入口</div> : <section className="grid gap-4 xl:grid-cols-2">{grants.map(grant => {
+    {loading ? <p className="py-12 text-center text-default-500">正在加载授权链路…</p> : grants.length === 0 ? <div className="border-y border-divider py-16 text-center text-default-500">暂无授权入口</div> : <section className="grid items-start gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">{grants.map(grant => {
       const percent = grant.flowLimitBytes > 0 ? Math.min(100, grant.usedBytes / grant.flowLimitBytes * 100) : 0;
       return <Card key={grant.id} radius="sm" shadow="none" className="border border-divider"><CardHeader className="flex justify-between gap-3"><div className="min-w-0"><h2 className="truncate font-semibold">{grant.name}</h2><p className="mt-1 truncate text-sm text-default-500">{grant.accessHost}</p></div><div className="flex items-center gap-1"><Chip color={stateColor(grant.state) as any} size="sm" variant="flat">{stateLabel[grant.state] || grant.state}</Chip>{admin && <><Button isIconOnly aria-label="编辑授权" size="sm" variant="light" onPress={() => openGrantEditor(grant)}><Pencil size={15} /></Button><Button isIconOnly aria-label={grant.state === "active" ? "暂停授权" : "恢复授权"} size="sm" variant="light" onPress={() => void changeGrantState(grant, grant.state !== "active")}>{grant.state === "active" ? <Pause size={15} /> : <Play size={15} />}</Button><Button isIconOnly aria-label="撤销授权" color="danger" size="sm" variant="light" onPress={() => void revokeGrant(grant)}><Trash2 size={15} /></Button></>}</div></CardHeader><CardBody className="gap-4 pt-0">
         <div className="grid grid-cols-2 gap-3 text-sm"><div><p className="text-default-500">端口额度</p><p className="mt-1 font-medium">{grant.ports.length} / {grant.maxPorts}</p></div><div><p className="text-default-500">流量额度</p><p className="mt-1 font-medium">{grant.flowLimitBytes > 0 ? `${formatBytes(grant.usedBytes)} / ${formatBytes(grant.flowLimitBytes)}` : "不限量"}</p></div></div>

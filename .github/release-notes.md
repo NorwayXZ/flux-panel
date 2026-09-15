@@ -1,3 +1,9 @@
+## 2.51.64 Authorized entry list and card layout
+
+- Removes revoked (`deleted`) authorized-entry grants from both the backend response and frontend rendering, so a deleted grant disappears after refresh instead of remaining as a large inactive card.
+- Changes authorized-entry cards to a compact responsive grid similar to the node page, with more cards per row and no equal-height stretching of shorter cards.
+- Panel-only fix release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.63 User resource authorization overview
 
 - Adds authorized-entry grants to the administrator's user resource editor. Each user now shows assigned authorization packages, visible `domain:port` mappings, landing targets, port allocation, traffic usage/quota, reset day, expiry, and state alongside tunnels, nodes, port pools, and private proxy grants.
