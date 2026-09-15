@@ -1,3 +1,9 @@
+## 2.51.59 Authorized entry select echo fix
+
+- Fixes the entry failover group, entry template, recipient, protocol, and billing-direction dropdowns in the authorized-entry forms not showing the selected label after a choice was made.
+- Adds the required HeroUI textValue to every SelectItem so the trigger renders the chosen option; dynamic option collections (groups, templates, users) previously rendered an empty trigger even though the value was stored.
+- Panel-only fix release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.58 Authorized entry grants
 
 - Adds an administrator-owned authorization-entry product on top of an existing cross-entry failover group. A recipient sees only the assigned `domain:port`, own public target, port count, quota, reset day, expiry, and state; entry nodes, tunnels, backup order, DNS, and internal failover remain hidden.
