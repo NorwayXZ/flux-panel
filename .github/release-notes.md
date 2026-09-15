@@ -1,3 +1,9 @@
+## 2.51.65 User editor deleted-grant cleanup
+
+- Adds a frontend fallback filter to the user resource editor so revoked (`deleted`) authorized-entry grants disappear even when an older cached/API response still contains them.
+- Keeps the user resource summary count and aggregate display aligned with the active authorized-entry grants only.
+- Panel-only fix release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.64 Authorized entry list and card layout
 
 - Removes revoked (`deleted`) authorized-entry grants from both the backend response and frontend rendering, so a deleted grant disappears after refresh instead of remaining as a large inactive card.

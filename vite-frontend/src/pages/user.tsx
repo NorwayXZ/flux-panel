@@ -576,7 +576,11 @@ export default function UserPage() {
     );
 
     setProxyGrants(proxyResponse.data || []);
-    setAuthorizedEntryGrants(authorizedEntryResponse.data || []);
+    setAuthorizedEntryGrants(
+      (authorizedEntryResponse.data || []).filter(
+        (grant: AuthorizedEntryGrant) => grant.state !== "deleted",
+      ),
+    );
     setUserForm({
       id: user.id,
       name: user.name,
