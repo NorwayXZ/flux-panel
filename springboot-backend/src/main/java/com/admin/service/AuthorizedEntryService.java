@@ -86,7 +86,15 @@ public class AuthorizedEntryService {
         if (name == null || sourceGroupId == null || startPort < 1 || endPort < startPort || endPort > 65535) {
             return R.err("请填写名称、入口容灾组和有效端口范围");
         }
-        SourceTemplate source = loadSourceTemplate(sourceGroupId);
+        SourceTemplate source;
+        try {
+            source = loadSourceTemplate(sourceGroupId);
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to load source failover group {} for authorized-entry template", sourceGroupId, e);
+            return R.err("读取入口容灾组失败：" + rootMessage(e));
+        }
         if (source.members().stream().map(SourceMember::nodeId).distinct().count() < 2) return R.err("入口模板至少需要两个不同节点的可用入口成员");
         AuthorizedEntryTemplate template = id == null ? new AuthorizedEntryTemplate() : templateMapper.selectById(id);
         if (template == null) return R.err("入口模板不存在");
@@ -102,11 +110,16 @@ public class AuthorizedEntryService {
         template.setBlockedTargetCidrs(blockedTargetCidrs);
         template.setStatus(1);
         template.setUpdatedTime(now);
-        if (id == null) {
-            template.setCreatedTime(now);
-            templateMapper.insert(template);
-        } else {
-            templateMapper.updateById(template);
+        try {
+            if (id == null) {
+                template.setCreatedTime(now);
+                templateMapper.insert(template);
+            } else {
+                templateMapper.updateById(template);
+            }
+        } catch (Exception e) {
+            log.error("Failed to save authorized-entry template {}", name, e);
+            return R.err("保存入口模板失败：" + rootMessage(e));
         }
         return R.ok(Map.of("id", template.getId()));
     }
@@ -149,7 +162,15 @@ public class AuthorizedEntryService {
         if (template == null || !Objects.equals(template.getStatus(), 1)) return R.err("入口模板不存在或已停用");
         Integer recipientCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM user WHERE id=? AND role_id<>0", Integer.class, userId);
         if (recipientCount == null || recipientCount == 0) return R.err("授权用户不存在或不是普通用户");
-        SourceTemplate source = loadSourceTemplate(template.getSourceGroupId());
+        SourceTemplate source;
+        try {
+            source = loadSourceTemplate(template.getSourceGroupId());
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to load source failover group {} for grant", template.getSourceGroupId(), e);
+            return R.err("读取入口容灾组失败：" + rootMessage(e));
+        }
         AuthorizedEntryGrant grant = id == null ? new AuthorizedEntryGrant() : grantMapper.selectById(id);
         if (grant == null) return R.err("入口授权不存在");
         if (id != null && (!Objects.equals(grant.getTemplateId(), templateId) || !Objects.equals(grant.getUserId(), userId))
@@ -174,14 +195,19 @@ public class AuthorizedEntryService {
             grant.setLastError(null);
         }
         grant.setUpdatedTime(now);
-        if (id == null) {
-            grant.setUsedBytes(0L);
-            grant.setLastResetAt(now);
-            grant.setCreatedTime(now);
-            grantMapper.insert(grant);
-        } else {
-            grantMapper.updateById(grant);
-            reconcile(grantMapper.selectById(grant.getId()), now);
+        try {
+            if (id == null) {
+                grant.setUsedBytes(0L);
+                grant.setLastResetAt(now);
+                grant.setCreatedTime(now);
+                grantMapper.insert(grant);
+            } else {
+                grantMapper.updateById(grant);
+                reconcile(grantMapper.selectById(grant.getId()), now);
+            }
+        } catch (Exception e) {
+            log.error("Failed to save authorized-entry grant {}", name, e);
+            return R.err("保存入口授权失败：" + rootMessage(e));
         }
         return R.ok(Map.of("id", grant.getId()));
     }
@@ -211,7 +237,15 @@ public class AuthorizedEntryService {
             if (portMapper.selectCount(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grantId).ne("state", "deleted")) >= grant.getMaxPorts()) {
                 return R.err("已达到该授权的端口数量上限");
             }
-            SourceTemplate source = loadSourceTemplate(template.getSourceGroupId());
+            SourceTemplate source;
+            try {
+                source = loadSourceTemplate(template.getSourceGroupId());
+            } catch (IllegalArgumentException e) {
+                return R.err(e.getMessage());
+            } catch (Exception e) {
+                log.error("Failed to load source failover group {} for port creation", template.getSourceGroupId(), e);
+                return R.err("读取入口容灾组失败：" + rootMessage(e));
+            }
             int port;
             synchronized (allocationLock) {
                 port = allocatePort(template, source, null);
@@ -642,6 +676,12 @@ public class AuthorizedEntryService {
     private String stringValue(Object value) { return value == null ? null : value.toString(); }
     private String stripPort(String target) { int i = target.lastIndexOf(':'); return target.substring(0, i); }
     private String toTarget(String host, Integer port) { return host != null && host.contains(":") && !host.startsWith("[") ? "[" + host + "]:" + port : host + ":" + port; }
+    private String rootMessage(Throwable e) {
+        Throwable current = e;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        return StringUtils.defaultIfBlank(current.getMessage(), current.getClass().getSimpleName());
+    }
+
     private String publicStateMessage(String state) { return switch (state) { case "quota_exhausted" -> "流量额度已用尽"; case "expired" -> "已到期"; case "admin_paused" -> "已被管理员暂停"; default -> "暂不可用"; }; }
     private record SourceMember(Long nodeId, Long tunnelId) {}
     private record SourceTemplate(Integer ownerUserId, String domain, List<SourceMember> members) {}

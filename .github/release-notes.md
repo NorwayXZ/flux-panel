@@ -1,3 +1,9 @@
+## 2.51.60 Authorized entry error surfacing
+
+- Converts silent authorization-entry template/grant/port failures into explicit Chinese error messages. Database or failover-group problems now return the concrete cause instead of an opaque timeout after the frontend aborts at 30 seconds.
+- Adds the same guard to port creation and grant saving so the panel never leaves the operator guessing about why a save failed.
+- Panel-only fix release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.59 Authorized entry select echo fix
 
 - Fixes the entry failover group, entry template, recipient, protocol, and billing-direction dropdowns in the authorized-entry forms not showing the selected label after a choice was made.
