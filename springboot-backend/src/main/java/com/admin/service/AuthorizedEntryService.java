@@ -138,7 +138,9 @@ public class AuthorizedEntryService {
         if (!admin && requestedUserId != null && !Objects.equals(requestedUserId, current)) return R.err("无权查看其他用户授权");
         Integer userId = admin ? requestedUserId : current;
         List<AuthorizedEntryGrant> grants = grantMapper.selectList(new QueryWrapper<AuthorizedEntryGrant>()
-                .eq(userId != null, "user_id", userId).orderByDesc("created_time"));
+                .eq(userId != null, "user_id", userId)
+                .ne("state", "deleted")
+                .orderByDesc("created_time"));
         long now = System.currentTimeMillis();
         List<Map<String, Object>> result = new ArrayList<>();
         for (AuthorizedEntryGrant grant : grants) {

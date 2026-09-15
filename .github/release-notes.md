@@ -1,3 +1,10 @@
+## 2.51.66 Authorized entry pre-authorization state
+
+- Makes authorized-entry grants with zero landing ports display as `待配置`, while grants with active landing ports display as `使用中`.
+- Clarifies that pre-created templates and grants do not allocate a tenant forwarding port or generate traffic until the user adds a landing target.
+- Keeps revoked grants excluded from both backend responses and user resource summaries.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.65 User editor deleted-grant cleanup
 
 - Adds a frontend fallback filter to the user resource editor so revoked (`deleted`) authorized-entry grants disappear even when an older cached/API response still contains them.

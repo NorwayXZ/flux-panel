@@ -119,6 +119,13 @@ const authorizedEntryStateLabel: Record<string, string> = {
   error: "需要修复",
 };
 
+const authorizedEntryLabel = (grant: AuthorizedEntryGrant) =>
+  grant.state === "active" && grant.ports.length === 0
+    ? "待配置"
+    : grant.state === "active"
+      ? "使用中"
+    : authorizedEntryStateLabel[grant.state] || grant.state;
+
 // 获取用户状态（根据status字段）
 const getUserStatus = (user: User) => {
   if (user.status === 1) {
@@ -1794,7 +1801,7 @@ export default function UserPage() {
                                 size="sm"
                                 variant="flat"
                               >
-                                {authorizedEntryStateLabel[grant.state] || grant.state}
+                                {authorizedEntryLabel(grant)}
                               </Chip>
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -1827,6 +1834,11 @@ export default function UserPage() {
                                   </p>
                                 ))}
                               </div>
+                            )}
+                            {grant.state === "active" && grant.ports.length === 0 && (
+                              <p className="mt-3 border-t border-divider pt-2 text-xs text-default-500">
+                                授权已发放，等待用户添加落地；当前不占用实际转发端口。
+                              </p>
                             )}
                           </div>
                         ))}
