@@ -10,4 +10,5 @@ public class AuthorizedEntryTemplate extends BaseEntity {
     private Integer endPort;
     private String protocolMode;
     private String blockedTargetCidrs;
+    private Integer blockPlatformNodes;
 }

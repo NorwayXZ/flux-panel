@@ -21,7 +21,7 @@ public class AuthorizedEntrySchemaInitializer {
         try {
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS authorized_entry_template ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,name varchar(100) NOT NULL,source_group_id bigint NOT NULL,"
-                    + "start_port int NOT NULL,end_port int NOT NULL,protocol_mode varchar(16) NOT NULL DEFAULT 'tcp',blocked_target_cidrs text DEFAULT NULL,status tinyint NOT NULL DEFAULT 1,"
+                    + "start_port int NOT NULL,end_port int NOT NULL,protocol_mode varchar(16) NOT NULL DEFAULT 'tcp',blocked_target_cidrs text DEFAULT NULL,block_platform_nodes tinyint NOT NULL DEFAULT 1,status tinyint NOT NULL DEFAULT 1,"
                     + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY (id),"
                     + "UNIQUE KEY uk_authorized_entry_template_group (source_group_id),KEY idx_authorized_entry_template_status (status)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS authorized_entry_grant ("
@@ -42,6 +42,7 @@ public class AuthorizedEntrySchemaInitializer {
                     + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY (id),"
                     + "UNIQUE KEY uk_authorized_entry_forward (forward_id),KEY idx_authorized_entry_port_forward (port_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("authorized_entry_template", "blocked_target_cidrs", "text DEFAULT NULL AFTER protocol_mode");
+            ensureColumn("authorized_entry_template", "block_platform_nodes", "tinyint NOT NULL DEFAULT 1 AFTER blocked_target_cidrs");
         } catch (DataAccessException e) {
             log.error("Authorized entry storage initialization failed", e);
         }

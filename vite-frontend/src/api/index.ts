@@ -1903,6 +1903,7 @@ export interface AuthorizedEntryTemplate {
   endPort: number;
   protocolMode: "tcp" | "tcp_udp";
   blockedTargetCidrs?: string;
+  blockPlatformNodes?: number;
   status: number;
   domain: string;
   grantCount: number;

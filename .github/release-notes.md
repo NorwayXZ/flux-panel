@@ -1,3 +1,9 @@
+## 2.51.61 Authorized entry forbidden-target clarity
+
+- Splits the combined "platform node / management address / denied CIDR" rejection into exact reasons. The error now names the matching platform node (including nodes whose multi-line entry IP list contains the address) or the exact denied CIDR that the tenant target hit.
+- Also fixes node-address matching for nodes whose entry IP field stores multiple addresses, which previously could miss or over-block depending on storage format.
+- Panel-only fix release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.60 Authorized entry error surfacing
 
 - Converts silent authorization-entry template/grant/port failures into explicit Chinese error messages. Database or failover-group problems now return the concrete cause instead of an opaque timeout after the frontend aborts at 30 seconds.

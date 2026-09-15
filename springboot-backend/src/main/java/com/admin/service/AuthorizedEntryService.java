@@ -62,10 +62,10 @@ public class AuthorizedEntryService {
     public R listTemplates() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT t.id,t.name,t.source_group_id AS sourceGroupId,t.start_port AS startPort,t.end_port AS endPort,"
-                        + "t.protocol_mode AS protocolMode,t.blocked_target_cidrs AS blockedTargetCidrs,t.status,g.domain,COUNT(gr.id) AS grantCount "
+                        + "t.protocol_mode AS protocolMode,t.blocked_target_cidrs AS blockedTargetCidrs,t.block_platform_nodes AS blockPlatformNodes,t.status,g.domain,COUNT(gr.id) AS grantCount "
                         + "FROM authorized_entry_template t JOIN cross_entry_failover_group g ON g.id=t.source_group_id "
                         + "LEFT JOIN authorized_entry_grant gr ON gr.template_id=t.id "
-                        + "GROUP BY t.id,t.name,t.source_group_id,t.start_port,t.end_port,t.protocol_mode,t.blocked_target_cidrs,t.status,g.domain ORDER BY t.created_time DESC");
+                        + "GROUP BY t.id,t.name,t.source_group_id,t.start_port,t.end_port,t.protocol_mode,t.blocked_target_cidrs,t.block_platform_nodes,t.status,g.domain ORDER BY t.created_time DESC");
         return R.ok(rows);
     }
 
@@ -83,6 +83,8 @@ public class AuthorizedEntryService {
         } catch (IllegalArgumentException e) {
             return R.err(e.getMessage());
         }
+        boolean blockPlatformNodes = input.get("blockPlatformNodes") == null
+                || Boolean.parseBoolean(String.valueOf(input.get("blockPlatformNodes")));
         if (name == null || sourceGroupId == null || startPort < 1 || endPort < startPort || endPort > 65535) {
             return R.err("请填写名称、入口容灾组和有效端口范围");
         }
@@ -108,6 +110,7 @@ public class AuthorizedEntryService {
         template.setEndPort(endPort);
         template.setProtocolMode(protocol);
         template.setBlockedTargetCidrs(blockedTargetCidrs);
+        template.setBlockPlatformNodes(blockPlatformNodes ? 1 : 0);
         template.setStatus(1);
         template.setUpdatedTime(now);
         try {
@@ -233,10 +236,6 @@ public class AuthorizedEntryService {
             }
             AuthorizedEntryTemplate template = templateMapper.selectById(grant.getTemplateId());
             if (template == null || !Objects.equals(template.getStatus(), 1)) return R.err("入口模板已停用");
-            if (isForbiddenTarget(target, template)) return R.err("落地不能使用平台节点、管理地址或模板禁止网段");
-            if (portMapper.selectCount(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grantId).ne("state", "deleted")) >= grant.getMaxPorts()) {
-                return R.err("已达到该授权的端口数量上限");
-            }
             SourceTemplate source;
             try {
                 source = loadSourceTemplate(template.getSourceGroupId());
@@ -245,6 +244,11 @@ public class AuthorizedEntryService {
             } catch (Exception e) {
                 log.error("Failed to load source failover group {} for port creation", template.getSourceGroupId(), e);
                 return R.err("读取入口容灾组失败：" + rootMessage(e));
+            }
+            String forbiddenReason = forbiddenTargetReason(target, template, source.memberNodeIds());
+            if (forbiddenReason != null) return R.err(forbiddenReason);
+            if (portMapper.selectCount(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grantId).ne("state", "deleted")) >= grant.getMaxPorts()) {
+                return R.err("已达到该授权的端口数量上限");
             }
             int port;
             synchronized (allocationLock) {
@@ -314,7 +318,17 @@ public class AuthorizedEntryService {
         }
         AuthorizedEntryTemplate template = templateMapper.selectById(grant.getTemplateId());
         if (template == null) return R.err("入口模板不存在");
-        if (isForbiddenTarget(target, template)) return R.err("落地不能使用平台节点、管理地址或模板禁止网段");
+        SourceTemplate source;
+        try {
+            source = loadSourceTemplate(template.getSourceGroupId());
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to load source failover group {} for port update", template.getSourceGroupId(), e);
+            return R.err("读取入口容灾组失败：" + rootMessage(e));
+        }
+        String forbiddenReason = forbiddenTargetReason(target, template, source.memberNodeIds());
+        if (forbiddenReason != null) return R.err(forbiddenReason);
         String previous = toTarget(port.getTargetHost(), port.getTargetPort());
         List<AuthorizedEntryForward> bindings = forwardMapper.selectList(new QueryWrapper<AuthorizedEntryForward>().eq("port_id", port.getId()));
         if (bindings.isEmpty()) return R.err("授权端口缺少托管转发，请联系管理员修复");
@@ -574,16 +588,55 @@ public class AuthorizedEntryService {
         return new SourceTemplate(intObject(rows.get(0).get("ownerUserId")), domain, members);
     }
 
-    private boolean isForbiddenTarget(String target, AuthorizedEntryTemplate template) {
-        if (isNodeAddress(target)) return true;
+    private String forbiddenTargetReason(String target, AuthorizedEntryTemplate template, List<Long> sourceMemberNodeIds) {
         String host = stripPort(target).replace("[", "").replace("]", "");
-        return StringUtils.isNotBlank(template.getBlockedTargetCidrs()) && IpAddressMatcher.isAllowed(host, template.getBlockedTargetCidrs());
+        String entryReason = entryNodeAddressName(target, sourceMemberNodeIds);
+        if (entryReason != null) return "落地 " + host + " 是该链路入口节点（" + entryReason + "）的地址，会导致流量回环，不能作为落地";
+        if (Objects.equals(template.getBlockPlatformNodes(), 0)) {
+            // Admin explicitly allows other platform node IPs as landing targets.
+        } else {
+            String otherReason = platformNodeAddressName(target, sourceMemberNodeIds);
+            if (otherReason != null) return "落地 " + host + " 是平台节点（" + otherReason + "）的地址；如需放行，请在入口模板中关闭“拦截其他平台节点 IP”";
+        }
+        if (StringUtils.isNotBlank(template.getBlockedTargetCidrs())) {
+            for (String rule : template.getBlockedTargetCidrs().split("[,\\s]+")) {
+                if (StringUtils.isBlank(rule)) continue;
+                try {
+                    if (IpAddressMatcher.isAllowed(host, rule.trim())) {
+                        return "落地 " + host + " 命中管理员设置的禁止网段 " + rule.trim();
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return null;
     }
 
-    private boolean isNodeAddress(String target) {
+    private String entryNodeAddressName(String target, List<Long> sourceMemberNodeIds) {
+        if (sourceMemberNodeIds == null || sourceMemberNodeIds.isEmpty()) return null;
         String host = stripPort(target).replace("[", "").replace("]", "");
-        for (Map<String, Object> node : jdbcTemplate.queryForList("SELECT server_ip AS serverIp,ip FROM node")) {
-            if (host.equalsIgnoreCase(stringValue(node.get("serverIp"))) || host.equalsIgnoreCase(stringValue(node.get("ip")))) return true;
+        for (Map<String, Object> node : jdbcTemplate.queryForList("SELECT name,server_ip AS serverIp,ip FROM node")) {
+            if (!sourceMemberNodeIds.contains(longValue(node.get("id")))) continue;
+            if (nodeMatchesAddress(node, host)) return stringValue(node.get("name"));
+        }
+        return null;
+    }
+
+    private String platformNodeAddressName(String target, List<Long> excludeNodeIds) {
+        String host = stripPort(target).replace("[", "").replace("]", "");
+        for (Map<String, Object> node : jdbcTemplate.queryForList("SELECT id,name,server_ip AS serverIp,ip FROM node")) {
+            if (excludeNodeIds != null && excludeNodeIds.contains(longValue(node.get("id")))) continue;
+            if (nodeMatchesAddress(node, host)) return stringValue(node.get("name"));
+        }
+        return null;
+    }
+
+    private boolean nodeMatchesAddress(Map<String, Object> node, String host) {
+        if (host.equalsIgnoreCase(stringValue(node.get("serverIp")))) return true;
+        Object ipField = node.get("ip");
+        if (ipField == null) return false;
+        for (String candidate : ipField.toString().split("[,\\s]+")) {
+            if (host.equalsIgnoreCase(candidate)) return true;
         }
         return false;
     }
@@ -684,5 +737,7 @@ public class AuthorizedEntryService {
 
     private String publicStateMessage(String state) { return switch (state) { case "quota_exhausted" -> "流量额度已用尽"; case "expired" -> "已到期"; case "admin_paused" -> "已被管理员暂停"; default -> "暂不可用"; }; }
     private record SourceMember(Long nodeId, Long tunnelId) {}
-    private record SourceTemplate(Integer ownerUserId, String domain, List<SourceMember> members) {}
+    private record SourceTemplate(Integer ownerUserId, String domain, List<SourceMember> members) {
+        List<Long> memberNodeIds() { return members.stream().map(SourceMember::nodeId).toList(); }
+    }
 }
