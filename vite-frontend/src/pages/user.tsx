@@ -26,6 +26,7 @@ import { Spinner } from "@heroui/spinner";
 import { Progress } from "@heroui/progress";
 import { Switch } from "@heroui/switch";
 import { Tabs, Tab } from "@heroui/tabs";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { parseDate } from "@internationalized/date";
 import { KeyRound, RotateCcw } from "lucide-react";
@@ -68,6 +69,8 @@ import {
   type PrivateProxyItem,
   type PrivateProxyType,
   type PublishingPortPool,
+  getAuthorizedEntryGrants,
+  type AuthorizedEntryGrant,
 } from "@/api";
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from "@/components/icons";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
@@ -105,6 +108,15 @@ const getExpireStatus = (expTime: number) => {
   }
 
   return { color: "success" as const, text: "正常" };
+};
+
+const authorizedEntryStateLabel: Record<string, string> = {
+  active: "可用",
+  provisioning: "部署中",
+  quota_exhausted: "额度用尽",
+  expired: "已到期",
+  admin_paused: "管理员暂停",
+  error: "需要修复",
 };
 
 // 获取用户状态（根据status字段）
@@ -221,6 +233,7 @@ const randomProxySecret = () =>
   ).join("");
 
 export default function UserPage() {
+  const navigate = useNavigate();
   // 状态管理
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -275,6 +288,7 @@ export default function UserPage() {
   const [proxyGrantEditor, setProxyGrantEditor] =
     useState<ProxyGrantEditorState | null>(null);
   const [proxyGrantSaving, setProxyGrantSaving] = useState(false);
+  const [authorizedEntryGrants, setAuthorizedEntryGrants] = useState<AuthorizedEntryGrant[]>([]);
 
   // 隧道权限管理相关状态
   const { isOpen: isTunnelModalOpen, onClose: onTunnelModalClose } =
@@ -455,6 +469,7 @@ export default function UserPage() {
     setResourceEditor(null);
     setPortEditor(null);
     setProxyGrants([]);
+    setAuthorizedEntryGrants([]);
     setProxyGrantEditor(null);
     setUserForm({
       user: "",
@@ -485,14 +500,16 @@ export default function UserPage() {
     let nodeResponse: any;
     let portResponse: any;
     let proxyResponse: any;
+    let authorizedEntryResponse: any;
 
     try {
-      [tunnelResponse, nodeResponse, portResponse, proxyResponse] =
+      [tunnelResponse, nodeResponse, portResponse, proxyResponse, authorizedEntryResponse] =
         await Promise.all([
           getUserTunnelList({ userId: user.id }),
           getUserNodeList(user.id),
           getPublishingPortGrants(user.id),
           getPrivateProxyGrants(user.id),
+          getAuthorizedEntryGrants(user.id),
         ]);
     } catch {
       toast.error("加载用户资源权限失败，请重试");
@@ -504,12 +521,14 @@ export default function UserPage() {
       nodeResponse.code !== 0 ||
       portResponse.code !== 0 ||
       proxyResponse.code !== 0
+      || authorizedEntryResponse.code !== 0
     ) {
       toast.error(
         tunnelResponse.msg ||
           nodeResponse.msg ||
           portResponse.msg ||
           proxyResponse.msg ||
+          authorizedEntryResponse.msg ||
           "加载用户资源权限失败",
       );
 
@@ -557,6 +576,7 @@ export default function UserPage() {
     );
 
     setProxyGrants(proxyResponse.data || []);
+    setAuthorizedEntryGrants(authorizedEntryResponse.data || []);
     setUserForm({
       id: user.id,
       name: user.name,
@@ -879,6 +899,14 @@ export default function UserPage() {
     userForm.flow +
     userForm.tunnelPermissions.reduce((sum, item) => sum + item.flow, 0) +
     userForm.nodePermissions.reduce((sum, item) => sum + item.flow, 0);
+  const authorizedEntryQuota = authorizedEntryGrants.reduce(
+    (sum, grant) => sum + (grant.flowLimitBytes > 0 ? grant.flowLimitBytes / (1024 ** 3) : 0),
+    0,
+  );
+  const authorizedEntryUnlimited = authorizedEntryGrants.some(
+    (grant) => grant.flowLimitBytes <= 0,
+  );
+  const totalQuotaWithAuthorizedEntries = totalQuota + authorizedEntryQuota;
   const totalForwardUnlimited =
     userForm.forwardUnlimited ||
     userForm.tunnelPermissions.some((item) => item.forwardUnlimited) ||
@@ -1481,11 +1509,13 @@ export default function UserPage() {
         <ModalContent>
           <ModalHeader className="flex flex-col gap-3 border-b border-divider">
             <span>{isEdit ? "编辑用户与资源额度" : "新增用户与资源额度"}</span>
-            <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-3 lg:grid-cols-7">
               <div className="rounded-md bg-default-100 px-3 py-2">
                 <span className="text-default-500">汇总流量</span>
                 <p className="mt-0.5 font-semibold text-foreground">
-                  {totalQuotaUnlimited ? "无限制" : `${totalQuota} GB`}
+                  {totalQuotaUnlimited || authorizedEntryUnlimited
+                    ? "无限制"
+                    : `${totalQuotaWithAuthorizedEntries} GB`}
                 </p>
               </div>
               <div className="rounded-md bg-default-100 px-3 py-2">
@@ -1516,6 +1546,12 @@ export default function UserPage() {
                 <span className="text-default-500">代理授权</span>
                 <p className="mt-0.5 font-semibold text-foreground">
                   {proxyGrants.length} 个
+                </p>
+              </div>
+              <div className="rounded-md bg-default-100 px-3 py-2">
+                <span className="text-default-500">授权入口</span>
+                <p className="mt-0.5 font-semibold text-foreground">
+                  {authorizedEntryGrants.length} 个
                 </p>
               </div>
             </div>
@@ -1696,6 +1732,100 @@ export default function UserPage() {
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="space-y-3 border-t border-divider pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">授权入口</h3>
+                        <p className="mt-1 text-xs text-default-500">
+                          {authorizedEntryGrants.length} 个授权套餐 · 入口模板属于线路资源
+                        </p>
+                      </div>
+                      <Button
+                        color="primary"
+                        size="sm"
+                        startContent={<KeyRound className="h-4 w-4" />}
+                        variant="flat"
+                        onPress={() => {
+                          onUserModalClose();
+                          navigate(
+                            userForm.id
+                              ? `/authorized-entry?userId=${userForm.id}`
+                              : "/authorized-entry",
+                          );
+                        }}
+                      >
+                        管理授权入口
+                      </Button>
+                    </div>
+                    {!isEdit ? (
+                      <div className="rounded-md border border-dashed border-divider px-4 py-5 text-center text-sm text-default-500">
+                        创建用户并保存后，可在这里查看和管理授权入口。
+                      </div>
+                    ) : authorizedEntryGrants.length === 0 ? (
+                      <div className="rounded-md border border-dashed border-divider px-4 py-5 text-center text-sm text-default-500">
+                        尚未分配授权入口
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {authorizedEntryGrants.map((grant) => (
+                          <div
+                            key={grant.id}
+                            className="rounded-md border border-divider px-3 py-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {grant.name}
+                                </p>
+                                <p className="mt-1 truncate font-mono text-xs text-default-500">
+                                  {grant.accessHost} · {grant.ports.length}/{grant.maxPorts} 个端口
+                                </p>
+                              </div>
+                              <Chip
+                                color={grant.state === "active" ? "success" : grant.state === "provisioning" ? "warning" : "danger"}
+                                size="sm"
+                                variant="flat"
+                              >
+                                {authorizedEntryStateLabel[grant.state] || grant.state}
+                              </Chip>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                              <div>
+                                <p className="text-default-500">流量</p>
+                                <p className="mt-1 font-medium">
+                                  {grant.flowLimitBytes > 0
+                                    ? `${formatFlow(grant.usedBytes)} / ${formatFlow(grant.flowLimitBytes)}`
+                                    : "不限量"}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-default-500">重置</p>
+                                <p className="mt-1 font-medium">
+                                  {grant.flowResetDay ? `每月 ${grant.flowResetDay} 日` : "不重置"}
+                                </p>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <p className="text-default-500">到期</p>
+                                <p className="mt-1 font-medium">
+                                  {grant.expiresAt ? formatDate(grant.expiresAt) : "永久"}
+                                </p>
+                              </div>
+                            </div>
+                            {grant.ports.length > 0 && (
+                              <div className="mt-3 space-y-1 border-t border-divider pt-2 text-xs text-default-500">
+                                {grant.ports.map((port) => (
+                                  <p key={port.id} className="truncate font-mono">
+                                    {grant.accessHost}:{port.port} → {port.targetHost}:{port.targetPort}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </section>

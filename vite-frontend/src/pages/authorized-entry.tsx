@@ -6,6 +6,7 @@ import { Input, Textarea } from "@heroui/input";
 import { Switch } from "@heroui/switch";
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from "@heroui/modal";
 import { Select, SelectItem } from "@heroui/select";
+import { useSearchParams } from "react-router-dom";
 import { Pause, Pencil, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -44,6 +45,8 @@ const formatDate = (value?: number) => value ? new Date(value).toLocaleString("z
 
 export default function AuthorizedEntryPage() {
   const admin = isAdmin();
+  const [searchParams] = useSearchParams();
+  const requestedUserId = admin ? Number(searchParams.get("userId")) || undefined : undefined;
   const [grants, setGrants] = useState<AuthorizedEntryGrant[]>([]);
   const [templates, setTemplates] = useState<AuthorizedEntryTemplate[]>([]);
   const [groups, setGroups] = useState<CrossEntryGroup[]>([]);
@@ -58,10 +61,13 @@ export default function AuthorizedEntryPage() {
   const [templateForm, setTemplateForm] = useState(initialTemplateForm);
   const [grantForm, setGrantForm] = useState(initialGrantForm);
   const [portForm, setPortForm] = useState({ targetHost: "", targetPort: "" });
+  const selectedUser = requestedUserId
+    ? users.find((user) => Number(user.id) === requestedUserId)
+    : undefined;
 
   const load = useCallback(async () => {
     setLoading(true);
-    const grantResult = await getAuthorizedEntryGrants();
+    const grantResult = await getAuthorizedEntryGrants(requestedUserId);
     if (grantResult.code === 0) setGrants(grantResult.data || []);
     if (admin) {
       const [templateResult, groupResult, userResult] = await Promise.all([getAuthorizedEntryTemplates(), getCrossEntryGroups(), getAllUsers()]);
@@ -70,7 +76,7 @@ export default function AuthorizedEntryPage() {
       if (userResult.code === 0) setUsers(userResult.data?.list || userResult.data || []);
     }
     setLoading(false);
-  }, [admin]);
+  }, [admin, requestedUserId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -134,7 +140,7 @@ export default function AuthorizedEntryPage() {
 
   return <div className="space-y-6">
     <header className="flex flex-wrap items-end justify-between gap-3 border-b border-divider pb-5">
-      <div><p className="text-sm text-default-500">隐藏入口池授权给用户</p><h1 className="mt-1 text-2xl font-semibold">授权入口</h1></div>
+      <div><p className="text-sm text-default-500">隐藏入口池授权给用户</p><h1 className="mt-1 text-2xl font-semibold">授权入口</h1>{selectedUser && <p className="mt-1 text-sm text-primary">当前查看：{selectedUser.name || selectedUser.user}</p>}</div>
       {admin && <div className="flex gap-2"><Button startContent={<Plus size={16} />} variant="flat" onPress={() => { setTemplateForm(initialTemplateForm); setTemplateOpen(true); }}>新建入口模板</Button><Button color="primary" startContent={<Plus size={16} />} onPress={() => openGrantEditor()}>发放授权</Button></div>}
     </header>
     {loading ? <p className="py-12 text-center text-default-500">正在加载授权链路…</p> : grants.length === 0 ? <div className="border-y border-divider py-16 text-center text-default-500">暂无授权入口</div> : <section className="grid gap-4 xl:grid-cols-2">{grants.map(grant => {

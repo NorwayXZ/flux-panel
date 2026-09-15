@@ -1,3 +1,9 @@
+## 2.51.63 User resource authorization overview
+
+- Adds authorized-entry grants to the administrator's user resource editor. Each user now shows assigned authorization packages, visible `domain:port` mappings, landing targets, port allocation, traffic usage/quota, reset day, expiry, and state alongside tunnels, nodes, port pools, and private proxy grants.
+- The user editor's aggregate traffic summary includes authorized-entry quotas, and its management action opens the authorized-entry page filtered to that user. Shared entry templates remain managed from the authorized-entry resource page because they are reusable administrator-owned line resources rather than user-owned grants.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.62 Multiple templates per failover group
 
 - Removes the database constraint that limited each cross-entry failover group to a single authorized-entry template. The same group can now back several templates as long as their port ranges stay disjoint; port allocation already rejects conflicts at assignment time.
