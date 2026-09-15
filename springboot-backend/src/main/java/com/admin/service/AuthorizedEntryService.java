@@ -122,7 +122,11 @@ public class AuthorizedEntryService {
             }
         } catch (Exception e) {
             log.error("Failed to save authorized-entry template {}", name, e);
-            return R.err("保存入口模板失败：" + rootMessage(e));
+            String message = rootMessage(e);
+            if (message != null && message.contains("uk_authorized_entry_template_group")) {
+                return R.err("该入口容灾组已被另一个模板使用；每个容灾组只能属于一个模板");
+            }
+            return R.err("保存入口模板失败：" + message);
         }
         return R.ok(Map.of("id", template.getId()));
     }

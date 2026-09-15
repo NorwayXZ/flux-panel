@@ -1,3 +1,9 @@
+## 2.51.62 Multiple templates per failover group
+
+- Removes the database constraint that limited each cross-entry failover group to a single authorized-entry template. The same group can now back several templates as long as their port ranges stay disjoint; port allocation already rejects conflicts at assignment time.
+- Existing installations drop the legacy unique index automatically at startup and fall back to a normal lookup index.
+- Panel-only release. Agent and Connector remain `2.51.37`.
+
 ## 2.51.61 Authorized entry forbidden-target clarity
 
 - Splits the combined "platform node / management address / denied CIDR" rejection into exact reasons. The error now names the matching platform node (including nodes whose multi-line entry IP list contains the address) or the exact denied CIDR that the tenant target hit.
