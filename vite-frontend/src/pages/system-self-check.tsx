@@ -353,7 +353,7 @@ export default function SystemSelfCheckPage() {
           </article>
         ))}
         {!loading && findings.length === 0 && (
-          <div className="py-16 text-center text-default-400">
+          <div className="py-10 text-center text-default-400">
             当前筛选条件没有结果
           </div>
         )}

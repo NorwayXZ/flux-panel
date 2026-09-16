@@ -199,7 +199,7 @@ const LoginRoute = () => {
 };
 
 const PageLoading = () => (
-  <div className="flex min-h-[50vh] items-center justify-center text-sm text-default-500">
+  <div className="flex min-h-[28vh] items-center justify-center text-sm text-default-500">
     正在打开页面...
   </div>
 );

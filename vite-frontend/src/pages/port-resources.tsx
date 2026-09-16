@@ -288,11 +288,11 @@ export default function PortResourcesPage() {
       </section>
 
       {loading ? (
-        <div className="flex min-h-64 items-center justify-center">
+        <div className="flex min-h-40 items-center justify-center">
           <Spinner />
         </div>
       ) : pools.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
           <Boxes size={30} />
           <span>暂无端口池</span>
         </div>

@@ -371,11 +371,11 @@ export default function NftForwardPage() {
       </section>
 
       {loading ? (
-        <div className="flex min-h-64 items-center justify-center">
+        <div className="flex min-h-40 items-center justify-center">
           <Spinner />
         </div>
       ) : rules.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-b border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-b border-divider text-default-500">
           <ShieldCheck size={30} />
           <span>尚未创建 nftables 转发规则</span>
         </div>

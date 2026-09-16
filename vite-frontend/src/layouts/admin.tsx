@@ -341,12 +341,11 @@ export default function AdminLayout({
         "/smart-entry",
         "/source-ip-entry",
         "/cross-entry-failover",
-        "/authorized-entry",
         "/multi-line-aggregation",
       ],
     },
     {
-      label: "接入与发布",
+      label: "资源与服务",
       paths: [
         "/port-resources",
         "/service-publishing",
@@ -357,7 +356,11 @@ export default function AdminLayout({
       ],
     },
     {
-      label: "诊断与观测",
+      label: "用户与授权",
+      paths: ["/user", "/authorized-entry"],
+    },
+    {
+      label: "监控与检测",
       paths: [
         "/monitoring",
         "/topology",
@@ -370,8 +373,7 @@ export default function AdminLayout({
         "/system-self-check",
       ],
     },
-    { label: "系统管理", paths: ["/server-assets", "/user", "/config"] },
-    { label: "版本维护", paths: ["/update"] },
+    { label: "系统管理", paths: ["/server-assets", "/config", "/update"] },
     { label: "帮助", paths: ["/guide"] },
   ];
 

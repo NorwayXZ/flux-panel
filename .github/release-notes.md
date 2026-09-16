@@ -1,3 +1,10 @@
+## 2.51.67 Flux Panel layout system
+
+- Unifies the main business-page container width, padding, spacing, and responsive alignment across the dashboard, resource, authorization, routing, and management views.
+- Compresses ordinary empty states so an empty list does not occupy most of the viewport, while preserving larger diagnostic output areas where the extra space is useful.
+- Adds a mobile "more" menu and current-page title, keeps frequent actions in the bottom navigation, and prevents the user resource editor's long form from losing its summary or save controls while scrolling.
+- Keeps `2.51.66` available as the previous rollback version. Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.66 Authorized entry pre-authorization state
 
 - Makes authorized-entry grants with zero landing ports display as `待配置`, while grants with active landing ports display as `使用中`.

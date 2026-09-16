@@ -768,7 +768,7 @@ export default function SourceIpEntryPage() {
       </section>
 
       {groups.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
           <RadioTower className="h-9 w-9" />
           <p>暂无来源 IP 分流</p>
           <Button

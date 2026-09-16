@@ -13,6 +13,7 @@ import {
   deletePanelAddress,
   validatePanelAddress,
 } from "@/utils/panel";
+import PageShell from "@/components/page-shell";
 
 interface PanelAddress {
   name: string;
@@ -113,7 +114,7 @@ export const SettingsPage = () => {
       </div>
 
       {/* 内容区域 */}
-      <div className="max-w-4xl mx-auto px-4 py-6">
+      <PageShell width="standard" className="space-y-5">
         <div className="space-y-6">
           {/* 添加新地址 */}
           <Card className="border border-gray-200 dark:border-gray-700">
@@ -204,7 +205,7 @@ export const SettingsPage = () => {
             </CardBody>
           </Card>
         </div>
-      </div>
+      </PageShell>
     </div>
   );
 };

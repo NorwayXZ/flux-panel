@@ -19,6 +19,7 @@ import { siteConfig } from "@/config/site";
 import { updatePassword } from "@/api";
 import { safeLogout } from "@/utils/logout";
 import { getCurrentUsername, isAdmin as isAdminUser } from "@/utils/auth";
+import PageShell from "@/components/page-shell";
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -183,8 +184,8 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="px-3 lg:px-6 py-8 flex flex-col h-full">
-      <div className="space-y-6 flex-1">
+    <PageShell className="space-y-5 pb-20">
+      <div className="space-y-5">
         {/* 用户信息卡片 */}
         <Card className="border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow">
           <CardBody className="p-4">
@@ -228,9 +229,9 @@ export default function ProfilePage() {
         {/* 功能网格 */}
         <Card className="border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow">
           <CardBody className="p-4">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
               <button
-                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+                className="flex min-h-24 flex-col items-center justify-center rounded-md bg-gray-50 p-3 transition-colors duration-200 hover:bg-gray-100 dark:bg-default-100 dark:hover:bg-default-200"
                 onClick={() => navigate("/service-publishing")}
               >
                 <div className="w-10 h-10 bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 rounded-full flex items-center justify-center mb-2">
@@ -241,7 +242,7 @@ export default function ProfilePage() {
                 </span>
               </button>
               <button
-                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+                className="flex min-h-24 flex-col items-center justify-center rounded-md bg-gray-50 p-3 transition-colors duration-200 hover:bg-gray-100 dark:bg-default-100 dark:hover:bg-default-200"
                 onClick={() => navigate("/guide")}
               >
                 <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mb-2">
@@ -256,7 +257,7 @@ export default function ProfilePage() {
                 adminMenuItems.map((item) => (
                   <button
                     key={item.path}
-                    className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+                    className="flex min-h-24 flex-col items-center justify-center rounded-md bg-gray-50 p-3 transition-colors duration-200 hover:bg-gray-100 dark:bg-default-100 dark:hover:bg-default-200"
                     onClick={() => navigate(item.path)}
                   >
                     <div
@@ -272,7 +273,7 @@ export default function ProfilePage() {
 
               {/* 修改密码 */}
               <button
-                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+                className="flex min-h-24 flex-col items-center justify-center rounded-md bg-gray-50 p-3 transition-colors duration-200 hover:bg-gray-100 dark:bg-default-100 dark:hover:bg-default-200"
                 onClick={onOpen}
               >
                 <div className="w-10 h-10 bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full flex items-center justify-center mb-2">
@@ -295,7 +296,7 @@ export default function ProfilePage() {
 
               {/* 退出登录 */}
               <button
-                className="flex flex-col items-center p-3 rounded-2xl bg-gray-50 dark:bg-default-100 hover:bg-gray-100 dark:hover:bg-default-200 transition-colors duration-200"
+                className="flex min-h-24 flex-col items-center justify-center rounded-md bg-gray-50 p-3 transition-colors duration-200 hover:bg-gray-100 dark:bg-default-100 dark:hover:bg-default-200"
                 onClick={handleLogout}
               >
                 <div className="w-10 h-10 bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mb-2">
@@ -319,7 +320,7 @@ export default function ProfilePage() {
           </CardBody>
         </Card>
 
-        <div className="fixed inset-x-0 bottom-20 text-center py-4">
+        <div className="border-t border-divider pt-4 text-center">
           <p className="text-xs text-gray-400 dark:text-gray-500">
             Powered by{" "}
             <a
@@ -426,6 +427,6 @@ export default function ProfilePage() {
           )}
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

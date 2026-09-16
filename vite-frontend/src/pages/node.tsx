@@ -30,6 +30,7 @@ import { useNavigate } from "react-router-dom";
 
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
+import PageShell from "@/components/page-shell";
 import { isAdmin } from "@/utils/auth";
 import {
   createNode,
@@ -1610,7 +1611,7 @@ export default function NodePage() {
   );
 
   return (
-    <div className="px-3 lg:px-6 py-8">
+    <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex-1" />
@@ -1704,7 +1705,7 @@ export default function NodePage() {
         </div>
       ) : nodeList.length === 0 ? (
         <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
-          <CardBody className="text-center py-16">
+          <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
                 <svg
@@ -2416,6 +2417,6 @@ export default function NodePage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

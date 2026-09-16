@@ -30,6 +30,7 @@ import {
 
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
+import PageShell from "@/components/page-shell";
 import {
   getAllUsers,
   getForwardList,
@@ -862,7 +863,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="px-3 lg:px-6 py-2 lg:py-4">
+    <PageShell width="wide" className="space-y-6 py-2 lg:py-4">
       {/* 响应式统计卡片 */}
       <SortableCardGrid
         className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6 lg:mb-8"
@@ -2105,6 +2106,6 @@ export default function DashboardPage() {
           </CardBody>
         </Card>
       )}
-    </div>
+    </PageShell>
   );
 }

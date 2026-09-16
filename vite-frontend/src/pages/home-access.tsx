@@ -533,11 +533,11 @@ export default function HomeAccessPage() {
       </div>
 
       {loading ? (
-        <div className="flex min-h-64 items-center justify-center">
+        <div className="flex min-h-40 items-center justify-center">
           <Spinner />
         </div>
       ) : routes.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
           <Home size={32} />
           <span>暂无家庭网络中转</span>
         </div>

@@ -1,6 +1,22 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Bell } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  BookOpen,
+  Boxes,
+  Cable,
+  MoreHorizontal,
+  Network,
+  ShieldCheck,
+} from "lucide-react";
+import { Button } from "@heroui/button";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownMenu,
+  DropdownTrigger,
+} from "@heroui/dropdown";
 
 import { Logo } from "@/components/icons";
 import { siteConfig } from "@/config/site";
@@ -20,6 +36,23 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [isAdmin, setIsAdmin] = useState(false);
   const { count: unreadAlertCount } = useAlertUnreadCount();
+
+  const pageTitles: Record<string, string> = {
+    "/dashboard": "仪表板",
+    "/forward": "转发管理",
+    "/tunnel": "隧道组建",
+    "/node": "节点管理",
+    "/profile": "我的",
+    "/service-publishing": "内网映射",
+    "/private-proxy": "私人代理",
+    "/home-access": "家庭网络中转",
+    "/authorized-entry": "授权入口",
+    "/monitoring": "告警中心",
+    "/guide": "使用教程",
+  };
+  const currentPageTitle =
+    pageTitles[location.pathname] ||
+    (location.pathname.startsWith("/node/") ? "节点远程终端" : "Flux Panel");
 
   // Tabbar配置
   const tabItems: TabItem[] = [
@@ -82,6 +115,52 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
     },
   ];
 
+  const moreItems: TabItem[] = [
+    {
+      path: "/service-publishing",
+      label: "内网映射",
+      icon: <Network className="h-4 w-4" />,
+    },
+    {
+      path: "/private-proxy",
+      label: "私人代理",
+      icon: <ShieldCheck className="h-4 w-4" />,
+    },
+    {
+      path: "/home-access",
+      label: "家庭网络中转",
+      icon: <Cable className="h-4 w-4" />,
+    },
+    {
+      path: "/authorized-entry",
+      label: "授权入口",
+      icon: <ShieldCheck className="h-4 w-4" />,
+    },
+    {
+      path: "/monitoring",
+      label: "告警中心",
+      icon: <Bell className="h-4 w-4" />,
+      adminOnly: true,
+    },
+    {
+      path: "/network-tools",
+      label: "网络诊断",
+      icon: <Activity className="h-4 w-4" />,
+      adminOnly: true,
+    },
+    {
+      path: "/port-resources",
+      label: "资源中心",
+      icon: <Boxes className="h-4 w-4" />,
+      adminOnly: true,
+    },
+    {
+      path: "/guide",
+      label: "使用教程",
+      icon: <BookOpen className="h-4 w-4" />,
+    },
+  ];
+
   useEffect(() => {
     setIsAdmin(isAdminUser());
   }, []);
@@ -110,12 +189,17 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col min-h-screen bg-gray-100 dark:bg-black">
       {/* 顶部导航栏 */}
-      <header className="bg-white dark:bg-black shadow-sm border-b border-gray-200 dark:border-gray-600 h-14 safe-top flex-shrink-0 flex items-center justify-between px-4 relative z-10">
+      <header className="bg-white dark:bg-black shadow-sm border-b border-gray-200 dark:border-gray-600 h-14 safe-top flex-shrink-0 flex items-center justify-between px-3 relative z-10">
         <div className="flex items-center gap-2">
           <Logo size={20} />
-          <h1 className="text-sm font-bold text-foreground">
-            {siteConfig.name}
-          </h1>
+          <div className="min-w-0">
+            <p className="truncate text-[11px] text-default-500">
+              {siteConfig.name}
+            </p>
+            <h1 className="truncate text-sm font-semibold text-foreground">
+              {currentPageTitle}
+            </h1>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -149,7 +233,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
       <div aria-hidden className="h-16 safe-bottom" />
 
       {/* 底部Tabbar */}
-      <nav className="bg-white dark:bg-black border-t border-gray-200 dark:border-gray-600 h-16 safe-bottom flex-shrink-0 flex items-center justify-around px-2 fixed bottom-0 left-0 right-0 z-30">
+      <nav className="bg-white dark:bg-black border-t border-gray-200 dark:border-gray-600 h-16 safe-bottom flex-shrink-0 flex items-center justify-around gap-0.5 px-1 fixed bottom-0 left-0 right-0 z-30">
         {filteredTabItems.map((item) => {
           const isActive = location.pathname === item.path;
 
@@ -158,7 +242,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
               key={item.path}
               className={`
                 flex flex-col items-center justify-center flex-1 h-full
-                transition-colors duration-200 min-h-[44px]
+                transition-colors duration-200 min-h-[44px] rounded-md
                 ${
                   isActive
                     ? "text-primary-600 dark:text-primary-400"
@@ -174,6 +258,36 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
             </button>
           );
         })}
+        <Dropdown placement="top-end">
+          <DropdownTrigger>
+            <Button
+              isIconOnly
+              aria-label="打开更多页面"
+              className={`h-full min-h-[44px] min-w-0 flex-1 rounded-md ${
+                moreItems.some((item) => location.pathname === item.path)
+                  ? "text-primary-600 dark:text-primary-400"
+                  : "text-gray-500 dark:text-gray-400"
+              }`}
+              title="更多"
+              variant="light"
+            >
+              <MoreHorizontal className="h-5 w-5" />
+              <span className="sr-only">更多</span>
+            </Button>
+          </DropdownTrigger>
+          <DropdownMenu aria-label="更多页面">
+            {moreItems
+              .filter((item) => !item.adminOnly || isAdmin)
+              .map((item) => (
+                <DropdownItem
+                  key={item.path}
+                  onPress={() => handleTabClick(item.path)}
+                >
+                  {item.label}
+                </DropdownItem>
+              ))}
+          </DropdownMenu>
+        </Dropdown>
       </nav>
     </div>
   );

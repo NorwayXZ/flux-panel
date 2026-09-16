@@ -75,6 +75,7 @@ import {
 import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from "@/components/icons";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
+import PageShell from "@/components/page-shell";
 
 // 工具函数
 const formatFlow = (value: number, unit: string = "bytes"): string => {
@@ -1258,7 +1259,7 @@ export default function UserPage() {
       : adminNodes.find((item) => item.id === resourceEditor?.resourceId)?.name;
 
   return (
-    <div className="px-3 lg:px-6 py-8">
+    <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
       <div className="flex flex-col gap-4 mb-6">
         <div className="flex items-center gap-3" />
@@ -1306,7 +1307,7 @@ export default function UserPage() {
         </div>
       ) : users.length === 0 ? (
         <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
-          <CardBody className="text-center py-16">
+            <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
                 <UserIcon className="w-8 h-8 text-default-400" />
@@ -1510,7 +1511,7 @@ export default function UserPage() {
       {/* 用户表单模态框 */}
       <Modal
         backdrop="blur"
-        classNames={{ base: "max-w-[96vw] h-[88vh]" }}
+        classNames={{ base: "max-w-[96vw] max-h-[90vh]" }}
         isOpen={isUserModalOpen}
         placement="center"
         scrollBehavior="inside"
@@ -1518,7 +1519,7 @@ export default function UserPage() {
         onClose={onUserModalClose}
       >
         <ModalContent>
-          <ModalHeader className="flex flex-col gap-3 border-b border-divider">
+          <ModalHeader className="sticky top-0 z-20 flex flex-col gap-3 border-b border-divider bg-content1">
             <span>{isEdit ? "编辑用户与资源额度" : "新增用户与资源额度"}</span>
             <div className="grid w-full grid-cols-2 gap-2 text-xs font-normal sm:grid-cols-3 lg:grid-cols-7">
               <div className="rounded-md bg-default-100 px-3 py-2">
@@ -1575,7 +1576,7 @@ export default function UserPage() {
               variant="underlined"
               onSelectionChange={(key) => setUserModalTab(String(key))}
             >
-              <Tab key="resources" title="账号与资源">
+              <Tab key="resources" title="账号与隧道">
                 <div className="space-y-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input
@@ -1746,7 +1747,11 @@ export default function UserPage() {
                       </div>
                     )}
                   </section>
+                </div>
+              </Tab>
 
+              <Tab key="service-grants" title="服务授权">
+                <div className="space-y-5">
                   <section className="space-y-3 border-t border-divider pt-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -2007,6 +2012,11 @@ export default function UserPage() {
                     )}
                   </section>
 
+                </div>
+              </Tab>
+
+              <Tab key="network-resources" title="节点与端口">
+                <div className="space-y-5">
                   <section className="space-y-3 border-t border-divider pt-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -2406,7 +2416,7 @@ export default function UserPage() {
               </Tab>
             </Tabs>
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="sticky bottom-0 z-20 border-t border-divider bg-content1">
             <Button onPress={onUserModalClose}>取消</Button>
             <Button
               color="primary"
@@ -4054,6 +4064,6 @@ export default function UserPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

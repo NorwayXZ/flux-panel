@@ -53,6 +53,7 @@ import {
   testAggregation,
   toggleAggregation,
 } from "@/api";
+import PageShell from "@/components/page-shell";
 
 type FormState = {
   id?: number;
@@ -326,7 +327,7 @@ export default function MultiLineAggregationPage() {
   };
 
   return (
-    <div className="space-y-6 pb-10">
+    <PageShell width="wide" className="space-y-6 pb-10">
       <div className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -890,6 +891,6 @@ export default function MultiLineAggregationPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

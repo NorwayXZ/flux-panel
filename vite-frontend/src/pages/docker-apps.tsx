@@ -361,7 +361,7 @@ export default function DockerAppsPage() {
         <div className="min-w-0 space-y-3">
           <h2 className="text-base font-semibold">已部署应用</h2>
           {data.apps.length === 0 ? (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border border-dashed border-divider text-default-400">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border border-dashed border-divider text-default-400">
               <Boxes size={32} />
               <p>还没有 Docker 应用</p>
             </div>

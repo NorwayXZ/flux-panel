@@ -425,11 +425,11 @@ export default function PrivateProxyPage() {
       </section>
 
       {loading ? (
-        <div className="flex min-h-64 items-center justify-center">
+        <div className="flex min-h-40 items-center justify-center">
           <Spinner />
         </div>
       ) : items.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
           <ShieldCheck size={30} />
           <span>暂无私人代理</span>
         </div>
