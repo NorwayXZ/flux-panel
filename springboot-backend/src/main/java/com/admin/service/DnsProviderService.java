@@ -612,4 +612,117 @@ public class DnsProviderService {
     public record CrossEntryDnsTarget(long memberId, String content) {}
     public record DnsPoolSyncResult(int created, int removed, int active) {}
     private record CloudflareZone(String id, String name) {}
+
+    /**
+     * Auto-detects and imports a Cloudflare Zone for the given domain.
+     * If the domain is a subdomain of an existing zone, imports that zone.
+     * If the domain itself is a zone in Cloudflare, imports it.
+     * Returns null if no matching zone found.
+     */
+    private CloudflareZone autoDetectAndImportZone(Long accountId, String domainInput, String token) {
+        String domain = StringUtils.trimToEmpty(domainInput).toLowerCase(Locale.ROOT);
+        while (domain.endsWith(".")) domain = domain.substring(0, domain.length() - 1);
+        if (domain.isEmpty()) return null;
+
+        // Fetch all zones from Cloudflare
+        List<CloudflareZone> zones = fetchZones(token);
+        if (zones.isEmpty()) return null;
+
+        // Try to find exact match first
+        for (CloudflareZone zone : zones) {
+            if (zone.name().equals(domain)) {
+                importZone(accountId, zone);
+                return zone;
+            }
+        }
+
+        // Try to find parent zone (for subdomains like glglg.example.com -> example.com)
+        for (CloudflareZone zone : zones) {
+            String zoneName = zone.name();
+            if (domain.equals(zoneName) || domain.endsWith("." + zoneName)) {
+                importZone(accountId, zone);
+                return zone;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Imports a Cloudflare Zone into the panel database.
+     */
+    private void importZone(Long accountId, CloudflareZone zone) {
+        long now = System.currentTimeMillis();
+        String zoneName = zone.name().toLowerCase(Locale.ROOT);
+
+        // Check if already exists
+        Integer exists = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM dns_zone WHERE provider_zone_id=?", Integer.class, zone.id());
+        if (exists != null && exists > 0) {
+            // Update existing
+            jdbcTemplate.update("UPDATE dns_zone SET account_id=?,zone_name=?,status='active',updated_time=? WHERE provider_zone_id=?",
+                    accountId, zoneName, now, zone.id());
+        } else {
+            // Insert new
+            jdbcTemplate.update("INSERT INTO dns_zone (account_id,provider_zone_id,zone_name,status,created_time,updated_time) VALUES (?,?,?,'active',?,?)",
+                    accountId, zone.id(), zoneName, now, now);
+        }
+    }
+
+    /**
+     * Finds the best matching Cloudflare account and zone for a given domain.
+     * Returns ZoneAccess if found, null otherwise.
+     */
+    public ZoneAccess findOrImportZoneForDomain(String domain) {
+        String normalizedDomain = StringUtils.trimToEmpty(domain).toLowerCase(Locale.ROOT);
+        while (normalizedDomain.endsWith(".")) normalizedDomain = normalizedDomain.substring(0, normalizedDomain.length() - 1);
+        if (normalizedDomain.isEmpty()) return null;
+
+        // Get all active Cloudflare accounts
+        List<Map<String, Object>> accounts = jdbcTemplate.queryForList(
+                "SELECT id,api_token AS apiToken FROM dns_provider_account WHERE provider='cloudflare' AND enabled=1");
+
+        for (Map<String, Object> account : accounts) {
+            Long accountId = number(account.get("id")).longValue();
+            final String token;
+            try {
+                token = decryptToken(Objects.toString(account.get("apiToken"), ""));
+            } catch (IllegalArgumentException e) {
+                log.warn("跳过无法解密的 Cloudflare 配置 {}：{}", accountId, e.getMessage());
+                continue;
+            }
+
+            // First check already imported zones
+            List<Map<String, Object>> zones = jdbcTemplate.queryForList(
+                    "SELECT id,provider_zone_id AS providerZoneId,zone_name AS zoneName "
+                            + "FROM dns_zone WHERE account_id=? AND status='active'", accountId);
+
+            // Check for exact match
+            for (Map<String, Object> zone : zones) {
+                String zoneName = Objects.toString(zone.get("zoneName"), "").toLowerCase();
+                if (normalizedDomain.equals(zoneName) || normalizedDomain.endsWith("." + zoneName)) {
+                    return new ZoneAccess(number(zone.get("id")).longValue(),
+                            Objects.toString(zone.get("providerZoneId")), zoneName, token);
+                }
+            }
+
+            // Try to auto-import
+            CloudflareZone imported = autoDetectAndImportZone(accountId, normalizedDomain, token);
+            if (imported != null) {
+                // Reload zone info after import
+                List<Map<String, Object>> importedZones = jdbcTemplate.queryForList(
+                        "SELECT id,provider_zone_id AS providerZoneId,zone_name AS zoneName "
+                                + "FROM dns_zone WHERE provider_zone_id=? AND status='active'",
+                        imported.id());
+                if (!importedZones.isEmpty()) {
+                    Map<String, Object> zone = importedZones.get(0);
+                    return new ZoneAccess(number(zone.get("id")).longValue(),
+                            Objects.toString(zone.get("providerZoneId")),
+                            Objects.toString(zone.get("zoneName")).toLowerCase(), token);
+                }
+            }
+        }
+
+        return null;
+    }
 }

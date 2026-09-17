@@ -28,8 +28,7 @@ class DnsProviderServiceTests {
     void setUp() {
         String secret = "dns-provider-test-secret";
         JdbcTemplate jdbcTemplate = new JdbcTemplate() {
-            @Override
-            public List<Map<String, Object>> queryForList(String sql, Object... args) {
+            private List<Map<String, Object>> rows() {
                 return List.of(Map.of(
                         "id", 7L,
                         "providerZoneId", "zone-424982",
@@ -37,6 +36,16 @@ class DnsProviderServiceTests {
                         "apiToken", new AESCrypto(secret).encrypt("token"),
                         "enabled", 1
                 ));
+            }
+
+            @Override
+            public List<Map<String, Object>> queryForList(String sql) {
+                return rows();
+            }
+
+            @Override
+            public List<Map<String, Object>> queryForList(String sql, Object... args) {
+                return rows();
             }
         };
         service = new DnsProviderService(jdbcTemplate, new RestTemplate());
@@ -51,6 +60,16 @@ class DnsProviderServiceTests {
     @Test
     void keepsFullDomainInsideSelectedZone() {
         assertEquals("api.dev.424982.xyz", service.normalizeDomain(7L, "api.dev.424982.xyz."));
+    }
+
+    @Test
+    void findsAnAlreadyImportedZoneForSubdomain() {
+        DnsProviderService.ZoneAccess zone = service.findOrImportZoneForDomain("api.dev.424982.xyz.");
+
+        assertEquals(7L, zone.id());
+        assertEquals("zone-424982", zone.providerZoneId());
+        assertEquals("424982.xyz", zone.zoneName());
+        assertEquals("token", zone.token());
     }
 
     @Test

@@ -760,20 +760,25 @@ export default function SmartEntryPage() {
                         return (
                           <div
                             key={`${activity.forwardId}-${activity.entryNodeId}`}
-                            className="grid gap-2 px-1 py-3 text-xs sm:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(90px,auto))] sm:items-center"
+                            className="grid min-w-0 gap-3 px-1 py-3 text-xs sm:grid-cols-2 2xl:grid-cols-[minmax(220px,1.3fr)_minmax(140px,0.9fr)_minmax(120px,0.75fr)_minmax(200px,1fr)] 2xl:items-center"
                           >
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium text-foreground">
+                                <span className="shrink-0 whitespace-nowrap font-medium text-foreground">
                                   {activityCarriers(activity.carriers)}
                                 </span>
                                 {shared && (
-                                  <Chip size="sm" variant="flat">
+                                  <Chip
+                                    className="shrink-0"
+                                    size="sm"
+                                    variant="flat"
+                                  >
                                     共用入口
                                   </Chip>
                                 )}
                                 {stale && (
                                   <Chip
+                                    className="shrink-0"
                                     color="warning"
                                     size="sm"
                                     variant="flat"
@@ -782,6 +787,7 @@ export default function SmartEntryPage() {
                                   </Chip>
                                 )}
                                 <Chip
+                                  className="shrink-0"
                                   color={activityMeta.color}
                                   size="sm"
                                   variant="flat"
@@ -793,7 +799,7 @@ export default function SmartEntryPage() {
                                 {activity.nodeName} · {activity.entryAddress}
                               </p>
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <p className="text-default-500">TCP 当前连接</p>
                               <p className="mt-1 font-medium">
                                 {telemetryReady
@@ -809,7 +815,7 @@ export default function SmartEntryPage() {
                                     : "等待 Agent 上报连接遥测")}
                               </p>
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <p className="text-default-500">累计新增</p>
                               <p className="mt-1 font-medium">
                                 {telemetryReady
@@ -817,7 +823,7 @@ export default function SmartEntryPage() {
                                   : "-"}
                               </p>
                             </div>
-                            <div className="sm:text-right">
+                            <div className="min-w-0 2xl:text-right">
                               <p className="text-default-500">累计流量</p>
                               <p className="mt-1 font-medium">
                                 {formatBytes(

@@ -518,10 +518,25 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         final String domain;
         final String pathPrefix;
         final String backendPath;
+        final Long resolvedZoneId;
         try {
-            domain = "managed_https".equals(ingressMode)
-                    ? dnsProviderService.normalizeDomain(dto.getDnsZoneId(), dto.getDomain())
-                    : SniDomainUtil.normalizeDomain(dto.getDomain());
+            if ("managed_https".equals(ingressMode)) {
+                // Auto-detect and import Cloudflare Zone if not specified
+                Long zoneId = dto.getDnsZoneId();
+                if (zoneId == null) {
+                    // Try to auto-detect zone for this domain
+                    DnsProviderService.ZoneAccess detectedZone = dnsProviderService.findOrImportZoneForDomain(dto.getDomain());
+                    if (detectedZone == null) {
+                        return R.err("无法在已配置的 Cloudflare 账号中找到或导入该域名的 Zone，请先在 DNS 与域名中添加 Cloudflare 账号并确保域名已指向 Cloudflare");
+                    }
+                    zoneId = detectedZone.id();
+                }
+                resolvedZoneId = zoneId;
+                domain = dnsProviderService.normalizeDomain(zoneId, dto.getDomain());
+            } else {
+                resolvedZoneId = null;
+                domain = SniDomainUtil.normalizeDomain(dto.getDomain());
+            }
             pathPrefix = "managed_https".equals(ingressMode)
                     ? SniDomainUtil.normalizePathPrefix(dto.getPathPrefix()) : "/";
             backendPath = "managed_https".equals(ingressMode)
@@ -551,7 +566,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
                 .filter(item -> domain.equalsIgnoreCase(item.getDomain()) && !"delete_pending".equals(item.getState()))
                 .findFirst().orElse(null);
         if (sameDomainRoute != null && "managed_https".equals(ingressMode)
-                && !Objects.equals(sameDomainRoute.getDnsZoneId(), dto.getDnsZoneId())) {
+                && !Objects.equals(sameDomainRoute.getDnsZoneId(), resolvedZoneId)) {
             return R.err("同一域名的路径规则必须使用相同 DNS Zone");
         }
         Long entryNodeId = existingEntry == null ? requestedNode.getId() : existingEntry.getNodeId();
@@ -598,7 +613,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         route.setListenPort(dto.getListenPort());
         route.setServiceName(existingEntry == null ? domainIngressName(entryNodeId, dto.getListenPort()) : existingEntry.getServiceName());
         route.setIngressMode(ingressMode);
-        route.setDnsZoneId("managed_https".equals(ingressMode) ? dto.getDnsZoneId() : null);
+        route.setDnsZoneId(resolvedZoneId);
         route.setState("managed_https".equals(ingressMode) ? "certificate_pending" : "provisioning");
         route.setHealthState("pending");
         route.setCreatedTime(now);
@@ -613,12 +628,12 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if ("managed_https".equals(ingressMode)) {
             try {
                 String address = StringUtils.defaultIfBlank(entryNode.getServerIp(), entryNode.getIp());
-                long certificateId = managedCertificateService.ensureCertificate(dto.getDnsZoneId(), domain);
+                long certificateId = managedCertificateService.ensureCertificate(resolvedZoneId, domain);
                 String recordId;
                 if (sameDomainRoute == null) {
-                    recordId = dnsProviderService.ensureDomainRouteRecord(dto.getDnsZoneId(), null, domain, address, route.getId());
+                    recordId = dnsProviderService.ensureDomainRouteRecord(resolvedZoneId, null, domain, address, route.getId());
                 } else if (StringUtils.isBlank(sameDomainRoute.getDnsRecordId())) {
-                    recordId = dnsProviderService.ensureDomainRouteRecord(dto.getDnsZoneId(), null, domain, address, sameDomainRoute.getId());
+                    recordId = dnsProviderService.ensureDomainRouteRecord(resolvedZoneId, null, domain, address, sameDomainRoute.getId());
                     sameDomainRoute.setDnsRecordId(recordId);
                     sameDomainRoute.setUpdatedTime(System.currentTimeMillis());
                     domainRouteMapper.updateById(sameDomainRoute);

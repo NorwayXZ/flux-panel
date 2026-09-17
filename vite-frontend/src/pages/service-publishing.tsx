@@ -942,8 +942,22 @@ export default function ServicePublishingPage() {
         !domainForm.backendPort)
     )
       return toast.error("请填写完整的节点本机服务");
-    if (domainForm.ingressMode === "managed_https" && !domainForm.dnsZoneId)
-      return toast.error("请选择证书和 DNS 使用的域名配置");
+    const domainForZoneCheck = domainForm.domain
+      .trim()
+      .toLowerCase()
+      .replace(/\.+$/, "");
+    const hasKnownZone = dnsZones.some((zone) => {
+      const zoneName = zone.zoneName.trim().toLowerCase().replace(/\.+$/, "");
+
+      return (
+        domainForZoneCheck === zoneName ||
+        domainForZoneCheck.endsWith("." + zoneName)
+      );
+    });
+    if (domainForm.ingressMode === "managed_https" && !domainForm.dnsZoneId && !hasKnownZone)
+      return toast.error(
+        "未选择 DNS 域名配置。若该域名已在 Cloudflare，可留空由面板自动检测导入。",
+      );
     const listenPort = Number(domainForm.listenPort);
 
     if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535)
@@ -1198,11 +1212,11 @@ export default function ServicePublishingPage() {
       >
         <Tab key="services" title={`映射列表 ${services.length}`}>
           {loading ? (
-            <div className="flex min-h-64 items-center justify-center">
+            <div className="flex min-h-40 items-center justify-center">
               <Spinner />
             </div>
           ) : services.length === 0 ? (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
               <RadioTower size={30} />
               <span>暂无内网映射</span>
             </div>
@@ -1373,11 +1387,11 @@ export default function ServicePublishingPage() {
         </Tab>
         <Tab key="domains" title={`域名直达 ${domainRoutes.length}`}>
           {domainRoutesLoading ? (
-            <div className="flex min-h-64 items-center justify-center">
+            <div className="flex min-h-40 items-center justify-center">
               <Spinner />
             </div>
           ) : domainRoutes.length === 0 ? (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
               <Globe2 size={30} />
               <span>暂无域名直达规则</span>
             </div>
@@ -1803,11 +1817,11 @@ export default function ServicePublishingPage() {
         {isAdmin ? (
           <Tab key="certificates" title={`HTTPS 证书 ${certificates.length}`}>
             {certificatesLoading ? (
-              <div className="flex min-h-64 items-center justify-center">
+              <div className="flex min-h-40 items-center justify-center">
                 <Spinner />
               </div>
             ) : certificates.length === 0 ? (
-              <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+              <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
                 <FileKey2 size={30} />
                 <span>暂无托管证书</span>
               </div>
@@ -1914,7 +1928,7 @@ export default function ServicePublishingPage() {
         ) : null}
         <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
           {connectorsLoading ? (
-            <div className="flex min-h-64 items-center justify-center">
+            <div className="flex min-h-40 items-center justify-center">
               <Spinner />
             </div>
           ) : (

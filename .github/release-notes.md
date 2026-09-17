@@ -1,3 +1,10 @@
+## 2.51.68 Cloudflare zone auto-detection
+
+- Allows managed HTTPS domain publishing to find and import the matching Cloudflare Zone from an enabled account when the operator leaves the Zone selector empty.
+- Fixes the SQL column aliases used by the auto-detection path, preserves actionable Cloudflare errors, skips only accounts whose stored Token cannot be decrypted, and adds a regression test for matching an existing Zone on a subdomain.
+- Includes the responsive service-publishing and smart-entry layout changes that were previously left uncommitted.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.67 Flux Panel layout system
 
 - Unifies the main business-page container width, padding, spacing, and responsive alignment across the dashboard, resource, authorization, routing, and management views.
