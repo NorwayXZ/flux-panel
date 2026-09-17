@@ -1,3 +1,9 @@
+## 2.51.73 Uniform recent-switch cards
+
+- Makes the latest Cross-entry Failover event use the same compact two-column card size as every other recent event.
+- Keeps the latest event highlighted with a label and accent border without making it span the full content width.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.72 Recent switch overview
 
 - Highlights the latest Cross-entry Failover event with a focused summary instead of spreading every event across a sparse full-width row.
