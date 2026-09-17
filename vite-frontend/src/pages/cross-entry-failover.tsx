@@ -1578,9 +1578,12 @@ export default function CrossEntryFailoverPage() {
         .map((group) => ({
           group,
           event: group.lastSwitchEvent as CrossEntryEvent,
-        })),
+        }))
+        .sort((left, right) => right.event.createdTime - left.event.createdTime),
     [groups],
   );
+  const latestSwitch = recentSwitches[0];
+  const otherRecentSwitches = recentSwitches.slice(1);
   const formStrategy = useMemo(() => explainFormStrategy(form), [form]);
 
   const openCreate = () => {
@@ -2274,62 +2277,165 @@ export default function CrossEntryFailoverPage() {
       </section>
 
       {recentSwitches.length > 0 && (
-        <section
-          aria-label="最近入口切换"
-          className="border-y border-divider py-4"
-        >
+        <section aria-label="最近入口切换" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="text-sm font-semibold">最近切换</h2>
               <p className="mt-1 text-xs text-default-500">
-                累计切换 {summary.switches}{" "}
-                次，下面显示每个容灾组最近一次的具体线路和触发原因。
+                累计切换 {summary.switches} 次 · 每个容灾组保留最近一次事件
               </p>
             </div>
             <span className="text-xs text-default-500">
-              完整记录可打开每张卡片右上角的历史按钮
+              完整记录可打开对应容灾组的历史
             </span>
           </div>
-          <div className="mt-3 grid gap-2 xl:grid-cols-2">
-            {recentSwitches.map(({ group, event }) => (
-              <div
-                key={group.id}
-                className="grid gap-2 border-l-2 border-secondary px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-              >
+
+          {latestSwitch && (
+            <article
+              className={`rounded-md border bg-content1 p-4 ${latestSwitch.event.status === "failed" ? "border-danger/40" : "border-secondary/40"}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium">{group.name}</span>
-                    <span className="text-xs text-default-500">
-                      {timeText(event.createdTime)}
+                    <span className="text-xs font-medium uppercase tracking-wide text-secondary">
+                      最新事件
                     </span>
+                    <h3 className="truncate text-base font-semibold">
+                      {latestSwitch.group.name}
+                    </h3>
+                    <Chip
+                      color={
+                        latestSwitch.event.status === "failed"
+                          ? "danger"
+                          : "success"
+                      }
+                      size="sm"
+                      variant="flat"
+                    >
+                      {eventActionText(latestSwitch.event)}
+                    </Chip>
                   </div>
-                  <p className="mt-1 flex items-center gap-1 text-sm">
-                    <span className="truncate">{eventRouteText(event)}</span>
-                    <ArrowRight
-                      className="flex-none text-default-400"
-                      size={13}
-                    />
-                    <span className="truncate text-default-500">
-                      {event.reason}
-                    </span>
-                  </p>
-                  <p className="mt-1 truncate text-xs text-default-500">
-                    {eventEndpointText(event) ||
-                      event.detail ||
-                      "无线路地址记录"}
+                  <p className="mt-1 text-xs text-default-500">
+                    {timeText(latestSwitch.event.createdTime)}
                   </p>
                 </div>
                 <Button
+                  isIconOnly
+                  aria-label={`查看 ${latestSwitch.group.name} 的切换历史`}
                   size="sm"
-                  startContent={<History size={15} />}
+                  title="查看历史"
                   variant="flat"
-                  onPress={() => showHistory(group)}
+                  onPress={() => showHistory(latestSwitch.group)}
                 >
-                  查看历史
+                  <History size={16} />
                 </Button>
               </div>
-            ))}
-          </div>
+              <div className="mt-4 grid gap-3 border-y border-divider py-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                <div className="min-w-0">
+                  <p className="text-xs text-default-500">线路变化</p>
+                  <p className="mt-1 flex min-w-0 items-center gap-1 font-medium">
+                    <span className="truncate">
+                      {eventRouteText(latestSwitch.event)}
+                    </span>
+                    <ArrowRight className="flex-none text-default-400" size={13} />
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-default-500">当前线路</p>
+                  <p className="mt-1 truncate font-medium">
+                    {latestSwitch.group.members.find(
+                      (member) => member.id === latestSwitch.group.activeMemberId,
+                    )?.nodeName ||
+                      latestSwitch.event.toNodeName ||
+                      "未确定"}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-default-500">触发原因</p>
+                  <p className="mt-1 line-clamp-2 text-default-600">
+                    {eventReasonText(latestSwitch.event)}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs text-default-500">入口地址</p>
+                  <p className="mt-1 truncate font-mono text-xs text-default-600">
+                    {eventEndpointText(latestSwitch.event) || "无地址记录"}
+                  </p>
+                </div>
+              </div>
+              {latestSwitch.event.detail && (
+                <p className="mt-3 line-clamp-2 text-xs leading-5 text-default-500">
+                  {latestSwitch.event.detail}
+                </p>
+              )}
+            </article>
+          )}
+
+          {otherRecentSwitches.length > 0 && (
+            <div className="grid gap-3 md:grid-cols-2">
+              {otherRecentSwitches.map(({ group, event }) => {
+                const currentMember = group.members.find(
+                  (member) => member.id === group.activeMemberId,
+                );
+
+                return (
+                  <article
+                    key={group.id}
+                    className={`rounded-md border border-divider bg-content1 p-4 ${event.status === "failed" ? "border-l-2 border-l-danger" : "border-l-2 border-l-secondary"}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="truncate text-sm font-semibold">
+                            {group.name}
+                          </h3>
+                          <Chip
+                            color={event.status === "failed" ? "danger" : "success"}
+                            size="sm"
+                            variant="flat"
+                          >
+                            {eventActionText(event)}
+                          </Chip>
+                        </div>
+                        <p className="mt-1 text-xs text-default-500">
+                          {timeText(event.createdTime)}
+                        </p>
+                      </div>
+                      <Button
+                        isIconOnly
+                        aria-label={`查看 ${group.name} 的切换历史`}
+                        size="sm"
+                        title="查看历史"
+                        variant="light"
+                        onPress={() => showHistory(group)}
+                      >
+                        <History size={16} />
+                      </Button>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <p className="flex min-w-0 items-center gap-1">
+                        <span className="truncate font-medium">
+                          {eventRouteText(event)}
+                        </span>
+                        <ArrowRight className="flex-none text-default-400" size={13} />
+                      </p>
+                      <p className="line-clamp-2 text-xs text-default-500">
+                        {eventReasonText(event)}
+                      </p>
+                      <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-default-500">
+                        <span className="truncate">
+                          当前：{currentMember?.nodeName || event.toNodeName || "未确定"}
+                        </span>
+                        <span className="truncate font-mono">
+                          {eventEndpointText(event) || "无地址记录"}
+                        </span>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 

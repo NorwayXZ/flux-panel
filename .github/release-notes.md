@@ -1,3 +1,10 @@
+## 2.51.72 Recent switch overview
+
+- Highlights the latest Cross-entry Failover event with a focused summary instead of spreading every event across a sparse full-width row.
+- Presents other groups in compact responsive event cards with the route change, current route, reason, timestamp, and endpoint address visible without opening history.
+- Keeps full event details and the existing history action available without changing failover behavior.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.71 Cross-entry active route summary
 
 - Adds the active route name, entry address and port, forwarding target, and bearer state directly to the collapsed Cross-entry Failover card summary.
