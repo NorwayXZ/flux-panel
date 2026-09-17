@@ -336,11 +336,11 @@ export default function DnsSettingsPage() {
             <span className="text-sm">尚未添加 Cloudflare 配置</span>
           </div>
         ) : (
-          <div className="divide-y divide-divider border-y border-divider">
+          <div className="grid gap-3 md:grid-cols-2">
             {accounts.map((account) => (
-              <div
+              <article
                 key={account.id}
-                className="grid gap-4 py-4 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.6fr)_auto] lg:items-center"
+                className="grid gap-4 rounded-md border border-divider bg-content1 p-4 lg:grid-cols-[minmax(180px,0.7fr)_minmax(0,1.4fr)_auto] lg:items-center"
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -413,11 +413,11 @@ export default function DnsSettingsPage() {
                   </Button>
                 </div>
                 {account.lastError && (
-                  <p className="lg:col-span-3 bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">
+                  <p className="border-t border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger dark:border-danger-500/20 dark:bg-danger-500/10 lg:col-span-3">
                     {account.lastError}
                   </p>
                 )}
-              </div>
+              </article>
             ))}
           </div>
         )}
@@ -453,11 +453,11 @@ export default function DnsSettingsPage() {
             </Button>
           </div>
         ) : (
-          <div className="divide-y divide-divider border-y border-divider">
+          <div className="grid gap-3 md:grid-cols-2">
             {carrierProviders.map((provider) => (
-              <div
+              <article
                 key={provider.id}
-                className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
+                className="flex min-w-0 flex-col gap-3 rounded-md border border-divider bg-content1 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -505,7 +505,7 @@ export default function DnsSettingsPage() {
                     <Trash2 size={17} />
                   </Button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}

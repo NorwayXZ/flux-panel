@@ -1,3 +1,10 @@
+## 2.51.69 Compact resource cards
+
+- Converts multi-line aggregation groups, DNS provider configurations, dynamic DNS rules, server assets, port pools, user port grants, and Docker nodes/apps into compact responsive resource cards.
+- Keeps dense port-ledger comparisons, diagnostic output, event history, and other high-column detail views in their existing table or output layouts.
+- Preserves existing actions and data fields while using stable card boundaries, compact spacing, and responsive grids for scanning.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.68 Cloudflare zone auto-detection
 
 - Allows managed HTTPS domain publishing to find and import the matching Cloudflare Zone from an enabled account when the operator leaves the Zone selector empty.

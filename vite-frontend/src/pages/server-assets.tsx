@@ -231,15 +231,7 @@ export default function ServerAssetsPage() {
           </div>
         ))}
       </section>
-      <section className="overflow-hidden rounded-md border border-divider bg-content1">
-        <div className="hidden grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_150px_130px_150px_96px] gap-4 border-b border-divider px-4 py-3 text-xs font-semibold text-default-500 lg:grid">
-          <span>服务器</span>
-          <span>配置与线路</span>
-          <span>费用</span>
-          <span>到期</span>
-          <span>标签</span>
-          <span className="text-right">操作</span>
-        </div>
+      <section className="space-y-3">
         {loading ? (
           <div className="flex min-h-48 items-center justify-center text-default-500">
             正在读取资产资料
@@ -250,18 +242,20 @@ export default function ServerAssetsPage() {
             <span>尚未登记服务器资产</span>
           </div>
         ) : (
-          data.items.map((item, index) => {
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {data.items.map((item) => {
             const urgent =
               item.remainingDays !== undefined &&
               item.remainingDays !== null &&
               item.remainingDays <= 30;
 
             return (
-              <div
+              <article
                 key={item.id}
-                className={`grid gap-3 px-4 py-4 lg:grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_150px_130px_150px_96px] lg:items-center ${index ? "border-t border-divider" : ""}`}
+                className="rounded-md border border-divider bg-content1 p-4"
               >
-                <div className="min-w-0">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <strong className="truncate">{item.name}</strong>
                     {item.nodeId && (
@@ -281,27 +275,9 @@ export default function ServerAssetsPage() {
                   <p className="mt-1 font-mono text-xs text-default-400">
                     {item.ipv4 || item.ipv6 || "未登记 IP"}
                   </p>
-                </div>
-                <div className="text-sm">
-                  <p>
-                    {item.cpuSpec || "配置未填写"}
-                    {item.memoryMb ? ` · ${item.memoryMb} MB` : ""}
-                    {item.diskGb ? ` · ${item.diskGb} GB` : ""}
-                  </p>
-                  <p className="mt-1 text-default-500">
-                    {item.networkLine ||
-                      item.trafficPlan ||
-                      "线路与流量套餐未填写"}
-                  </p>
-                </div>
-                <div>
-                  <p className="font-medium">
-                    {item.currency} {Number(item.monthlyCost).toFixed(2)}
-                  </p>
-                  <p className="mt-1 text-xs text-default-500">每月</p>
-                </div>
-                <div>
+                  </div>
                   <Chip
+                    className="shrink-0"
                     color={
                       item.remainingDays !== undefined && item.remainingDays < 0
                         ? "danger"
@@ -318,22 +294,55 @@ export default function ServerAssetsPage() {
                         : `剩余 ${item.remainingDays} 天`
                       : "长期 / 未设置"}
                   </Chip>
-                  <p className="mt-1 text-xs text-default-500">
-                    {displayDate(item.expiryDate)}
-                    {item.autoRenew ? " · 自动续费" : ""}
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
+                  <div>
+                    <dt className="text-xs text-default-500">配置</dt>
+                    <dd className="mt-1 truncate">
+                      {item.cpuSpec || "配置未填写"}
+                      {item.memoryMb ? ` · ${item.memoryMb} MB` : ""}
+                      {item.diskGb ? ` · ${item.diskGb} GB` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-default-500">月费</dt>
+                    <dd className="mt-1 font-medium">
+                      {item.currency} {Number(item.monthlyCost).toFixed(2)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-default-500">线路套餐</dt>
+                    <dd className="mt-1 truncate">
+                      {item.networkLine || item.trafficPlan || "未填写"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-default-500">到期日期</dt>
+                    <dd className="mt-1 truncate">
+                      {displayDate(item.expiryDate)}
+                      {item.autoRenew ? " · 自动续费" : ""}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-default-500">
+                  <span className="truncate" title={item.tags || ""}>
+                    标签：{item.tags || "无"}
+                  </span>
+                  <span className="shrink-0">
+                    {item.bandwidthMbps ? `${item.bandwidthMbps} Mbps` : "带宽未填"}
+                  </span>
+                </div>
+                {item.notes && (
+                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-default-500">
+                    {item.notes}
                   </p>
-                </div>
-                <div
-                  className="truncate text-sm text-default-500"
-                  title={item.tags || ""}
-                >
-                  {item.tags || "无标签"}
-                </div>
-                <div className="flex justify-end gap-1">
+                )}
+                <div className="mt-4 flex justify-end gap-1 border-t border-divider pt-3">
                   <Button
                     isIconOnly
-                    aria-label="编辑"
+                    aria-label="编辑服务器资产"
                     size="sm"
+                    title="编辑"
                     variant="light"
                     onPress={() => edit(item)}
                   >
@@ -341,18 +350,20 @@ export default function ServerAssetsPage() {
                   </Button>
                   <Button
                     isIconOnly
-                    aria-label="删除"
+                    aria-label="删除服务器资产"
                     color="danger"
                     size="sm"
+                    title="删除"
                     variant="light"
                     onPress={() => remove(item)}
                   >
                     <Trash2 size={16} />
                   </Button>
                 </div>
-              </div>
+              </article>
             );
-          })
+            })}
+          </div>
         )}
       </section>
       <Modal

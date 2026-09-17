@@ -317,7 +317,7 @@ export default function DockerAppsPage() {
           {data.nodes.map((node) => (
             <div
               key={node.id}
-              className="border border-divider bg-content1 p-4"
+              className="rounded-md border border-divider bg-content1 p-4"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -377,7 +377,7 @@ export default function DockerAppsPage() {
                 return (
                   <article
                     key={app.id}
-                    className="border border-divider bg-content1 p-4"
+                    className="rounded-md border border-divider bg-content1 p-4"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">

@@ -260,7 +260,7 @@ export default function PortResourcesPage() {
           return (
             <button
               key={item.path}
-              className={`min-h-28 border p-4 text-left transition-colors ${active ? "border-primary bg-primary-50/70 dark:bg-primary-500/10" : "border-divider bg-content1 hover:bg-default-50 dark:hover:bg-default-100/5"}`}
+              className={`min-h-28 rounded-md border p-4 text-left transition-colors ${active ? "border-primary bg-primary-50/70 dark:bg-primary-500/10" : "border-divider bg-content1 hover:bg-default-50 dark:hover:bg-default-100/5"}`}
               type="button"
               onClick={() => navigate(item.path)}
             >
@@ -297,32 +297,45 @@ export default function PortResourcesPage() {
           <span>暂无端口池</span>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-divider">
-          <div className="hidden grid-cols-[1.2fr_1fr_1fr_1.4fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
-            <span>端口池</span>
-            <span>公网节点</span>
-            <span>范围</span>
-            <span>端口状态</span>
-            <span>释放规则</span>
-            <span>操作</span>
-          </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {pools.map((pool) => (
-            <div
+            <article
               key={pool.id}
-              className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1fr_1.4fr_1fr_auto] lg:items-center"
+              className="rounded-md border border-divider bg-content1 p-4"
             >
-              <div>
-                <div className="font-medium">{pool.name}</div>
-                <div className="text-xs text-default-500">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold">{pool.name}</div>
+                  <div className="mt-1 truncate font-mono text-xs text-default-500">
                   {pool.publicHost}
+                  </div>
                 </div>
+                <Button
+                  isIconOnly
+                  aria-label="删除端口池"
+                  color="danger"
+                  size="sm"
+                  title="删除端口池"
+                  variant="light"
+                  onPress={() => remove(pool.id)}
+                >
+                  <Trash2 size={17} />
+                </Button>
               </div>
-              <div className="text-sm">{pool.nodeName}</div>
-              <div className="font-mono text-sm">
-                {pool.startPort}-{pool.endPort}
-              </div>
-              <div>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
+                <div>
+                  <dt className="text-xs text-default-500">公网节点</dt>
+                  <dd className="mt-1 truncate">{pool.nodeName}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-default-500">端口范围</dt>
+                  <dd className="mt-1 font-mono">
+                    {pool.startPort}-{pool.endPort}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="mb-2 text-xs text-default-500">端口状态</dt>
+                  <dd className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   <span>
                     管理员占用{" "}
                     <strong className="text-foreground">
@@ -341,33 +354,21 @@ export default function PortResourcesPage() {
                       {pool.availablePorts}
                     </strong>
                   </span>
-                </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-default-200">
+                  </dd>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-default-200">
                   <div
                     className="h-full bg-primary"
                     style={{
                       width: `${pool.totalPorts ? Math.min(100, (((pool.usedPorts || 0) + (pool.sharedPorts || 0)) / pool.totalPorts) * 100) : 0}%`,
                     }}
                   />
+                  </div>
                 </div>
-              </div>
-              <div className="text-sm">
-                <div>停止后冷却 {pool.cooldownSeconds} 秒</div>
-                <div className="text-xs text-default-500">
-                  服务自行选择定时或永久
-                </div>
-              </div>
-              <Button
-                isIconOnly
-                aria-label="删除端口池"
-                color="danger"
-                size="sm"
-                variant="light"
-                onPress={() => remove(pool.id)}
-              >
-                <Trash2 size={17} />
-              </Button>
-            </div>
+              </dl>
+              <p className="mt-3 text-xs text-default-500">
+                停止后冷却 {pool.cooldownSeconds} 秒 · 服务自行选择定时或永久
+              </p>
+            </article>
           ))}
         </div>
       )}
@@ -390,35 +391,44 @@ export default function PortResourcesPage() {
             尚未向用户分享端口资源
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-divider">
-            <div className="hidden grid-cols-[1fr_1.2fr_1fr_1fr] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
-              <span>用户</span>
-              <span>端口池 / 节点</span>
-              <span>授权范围</span>
-              <span>使用情况</span>
-            </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {grants.map((grant) => (
-              <div
+              <article
                 key={grant.id}
-                className="grid gap-2 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1fr_1.2fr_1fr_1fr] md:items-center"
+                className="rounded-md border border-divider bg-content1 p-4"
               >
-                <div className="font-medium">{grant.ownerUserName}</div>
-                <div>
-                  <div className="text-sm">{grant.poolName}</div>
-                  <div className="text-xs text-default-500">
-                    {grant.nodeName}
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold">{grant.ownerUserName}</div>
+                  <Chip color="secondary" size="sm" variant="flat">
+                    已授权
+                  </Chip>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
+                  <div>
+                    <dt className="text-xs text-default-500">端口池</dt>
+                    <dd className="mt-1 truncate">{grant.poolName}</dd>
                   </div>
-                </div>
-                <div className="font-mono text-sm">
-                  {grant.startPort}-{grant.endPort}
-                </div>
-                <div className="text-sm">
-                  已用 {grant.usedPorts} / {grant.totalPorts}
-                  <div className="mt-1 text-xs text-default-500">
-                    剩余 {grant.availablePorts}
+                  <div>
+                    <dt className="text-xs text-default-500">公网节点</dt>
+                    <dd className="mt-1 truncate">{grant.nodeName}</dd>
                   </div>
+                  <div>
+                    <dt className="text-xs text-default-500">授权范围</dt>
+                    <dd className="mt-1 font-mono">
+                      {grant.startPort}-{grant.endPort}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-default-500">使用情况</dt>
+                    <dd className="mt-1">
+                      已用 {grant.usedPorts} / {grant.totalPorts}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="mt-3 text-xs text-default-500">
+                  剩余可用端口：{grant.availablePorts}
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}

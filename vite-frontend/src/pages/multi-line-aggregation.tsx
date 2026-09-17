@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Checkbox } from "@heroui/checkbox";
 import { Input } from "@heroui/input";
@@ -397,10 +398,13 @@ export default function MultiLineAggregationPage() {
       ) : (
         <div className="space-y-5">
           {data.groups.map((group) => (
-            <section
+            <Card
               key={group.id}
-              className="border-y border-divider bg-content1"
+              className="border border-divider bg-content1"
+              radius="sm"
+              shadow="none"
             >
+              <CardBody className="p-0">
               <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -647,7 +651,8 @@ export default function MultiLineAggregationPage() {
                   {timeText(group.last_calculated_at)}
                 </span>
               </div>
-            </section>
+              </CardBody>
+            </Card>
           ))}
         </div>
       )}

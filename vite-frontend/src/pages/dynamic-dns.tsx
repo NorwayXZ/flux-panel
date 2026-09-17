@@ -356,15 +356,7 @@ export default function DynamicDnsPage() {
         <Tab key="providers" title={`DNS 配置 ${dynamicProviders.length}`} />
       </Tabs>
       {tab === "rules" ? (
-        <section className="overflow-hidden rounded-md border border-divider bg-content1">
-          <div className="hidden grid-cols-[minmax(190px,1.3fr)_minmax(180px,1fr)_160px_150px_140px_136px] gap-4 border-b border-divider px-4 py-3 text-xs font-semibold text-default-500 lg:grid">
-            <span>域名记录</span>
-            <span>检测来源</span>
-            <span>DNS 提供商</span>
-            <span>当前地址</span>
-            <span>状态</span>
-            <span className="text-right">操作</span>
-          </div>
+        <section className="space-y-3">
           {loading ? (
             <div className="flex min-h-48 items-center justify-center text-default-500">
               正在读取规则
@@ -375,10 +367,11 @@ export default function DynamicDnsPage() {
               <span>尚未创建动态 DNS 规则</span>
             </div>
           ) : (
-            data.rules.map((rule, index) => (
-              <div
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {data.rules.map((rule) => (
+              <article
                 key={rule.id}
-                className={`grid gap-3 px-4 py-4 lg:grid-cols-[minmax(190px,1.3fr)_minmax(180px,1fr)_160px_150px_140px_136px] lg:items-center ${index ? "border-t border-divider" : ""}`}
+                className="rounded-md border border-divider bg-content1 p-4"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -510,12 +503,13 @@ export default function DynamicDnsPage() {
                     <Trash2 size={16} />
                   </Button>
                 </div>
-              </div>
-            ))
+              </article>
+              ))}
+            </div>
           )}
         </section>
       ) : (
-        <section className="overflow-hidden rounded-md border border-divider bg-content1">
+        <section className="space-y-3">
           <div className="flex flex-col gap-3 border-b border-divider px-4 py-3 text-sm text-default-500 sm:flex-row sm:items-center sm:justify-between">
             <span>
               DNS 凭据统一入口是域名管理。这里仅显示历史兼容的独立 DDNS
@@ -542,10 +536,11 @@ export default function DynamicDnsPage() {
               </Button>
             </div>
           ) : (
-            dynamicProviders.map((provider, index) => (
-              <div
+            <div className="grid gap-3 md:grid-cols-2">
+              {dynamicProviders.map((provider) => (
+              <article
                 key={provider.id}
-                className={`flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between ${index ? "border-t border-divider" : ""}`}
+                className="flex min-w-0 flex-col gap-3 rounded-md border border-divider bg-content1 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div>
                   <div className="flex items-center gap-2">
@@ -591,8 +586,9 @@ export default function DynamicDnsPage() {
                     <Trash2 size={16} />
                   </Button>
                 </div>
-              </div>
-            ))
+              </article>
+              ))}
+            </div>
           )}
         </section>
       )}
