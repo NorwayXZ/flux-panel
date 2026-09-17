@@ -22,6 +22,7 @@ import {
   ArrowUp,
   Calendar,
   CheckCircle2,
+  ChevronDown,
   History,
   Pencil,
   Plus,
@@ -1415,12 +1416,25 @@ export default function CrossEntryFailoverPage() {
   const [checkingId, setCheckingId] = useState<number>();
   const [togglingGroupId, setTogglingGroupId] = useState<number>();
   const [togglingMemberId, setTogglingMemberId] = useState<number>();
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [form, setForm] = useState(emptyForm);
   const [saveError, setSaveError] = useState<CrossEntrySaveFailure>();
   const expiresAtInputRef = useRef<HTMLInputElement>(null);
 
   const saveFieldError = (field: string) =>
     saveError?.fieldErrors?.[field] || undefined;
+  const toggleGroupDetails = (groupId: number) => {
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+
+      return next;
+    });
+  };
   const openExpiryPicker = () => {
     const input = expiresAtInputRef.current;
 
@@ -2408,6 +2422,7 @@ export default function CrossEntryFailoverPage() {
                             {expiryText(group.expiresAt)}
                           </Chip>
                         )}
+                        <span className="hidden">
                         {group.creationMode === "managed_forward" && (
                           <Chip color="primary" size="sm" variant="flat">
                             托管落地
@@ -2504,6 +2519,7 @@ export default function CrossEntryFailoverPage() {
                                 : ""}
                             </Chip>
                           )}
+                        </span>
                       </div>
                       <p className="mt-1 truncate text-sm text-default-500">
                         {group.domain}:{group.members[0]?.entryPort || "-"}
@@ -2587,8 +2603,56 @@ export default function CrossEntryFailoverPage() {
                       >
                         <Trash2 size={17} />
                       </Button>
+                      <Button
+                        isIconOnly
+                        aria-label={
+                          expandedGroupIds.has(group.id) ? "收起详情" : "展开详情"
+                        }
+                        className="border-l border-divider pl-2"
+                        size="sm"
+                        title={
+                          expandedGroupIds.has(group.id) ? "收起详情" : "展开详情"
+                        }
+                        variant="light"
+                        onPress={() => toggleGroupDetails(group.id)}
+                      >
+                        <ChevronDown
+                          className={`transition-transform ${expandedGroupIds.has(group.id) ? "rotate-180" : ""}`}
+                          size={17}
+                        />
+                      </Button>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-2 border-y border-divider py-3 text-sm sm:grid-cols-4">
+                    <div className="min-w-0">
+                      <p className="text-xs text-default-500">当前承载</p>
+                      <p className="mt-1 truncate font-medium">
+                        {active?.nodeName || "未确定"}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-default-500">健康线路</p>
+                      <p className="mt-1 font-medium">
+                        {statusCounts.healthy}/{group.members.length} 条
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-default-500">本月流量</p>
+                      <p className="mt-1 truncate font-medium">
+                        {truthy(group.trafficQuotaEnabled ?? false)
+                          ? `${formatBytes(group.trafficQuotaUsedBytes)} / ${formatBytes(group.trafficQuotaLimitBytes)}`
+                          : "未设置额度"}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-default-500">最后检测</p>
+                      <p className="mt-1 truncate font-medium">
+                        {timeText(group.lastCheckedAt)}
+                      </p>
+                    </div>
+                  </div>
+                  {expandedGroupIds.has(group.id) && (
+                    <div className="space-y-4 border-t border-divider pt-4">
                   <div className="flex flex-wrap gap-2">
                     <Chip size="sm" variant="flat">
                       健康 {statusCounts.healthy}
@@ -2993,6 +3057,8 @@ export default function CrossEntryFailoverPage() {
                     <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">
                       当前容灾组异常：{explainProbeError(group.lastError)}
                     </p>
+                  )}
+                    </div>
                   )}
                 </CardBody>
               </Card>

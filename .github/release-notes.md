@@ -1,3 +1,10 @@
+## 2.51.70 Cross-entry summary cards
+
+- Simplifies each Cross-entry Failover card to a compact summary with the group name, overall state, current bearer, healthy route count, monthly traffic, and last check time.
+- Moves per-route telemetry, quality policy details, fault history, schedules, and probe diagnostics behind an explicit expand/collapse control on each card.
+- Keeps all failover controls and business behavior unchanged; the detail state is presentation-only.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.69 Compact resource cards
 
 - Converts multi-line aggregation groups, DNS provider configurations, dynamic DNS rules, server assets, port pools, user port grants, and Docker nodes/apps into compact responsive resource cards.
