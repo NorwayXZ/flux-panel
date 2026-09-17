@@ -2532,6 +2532,30 @@ export default function CrossEntryFailoverPage() {
                       >
                         {expiryText(group.expiresAt)}
                       </p>
+                      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-divider pt-3 text-sm">
+                        <span className="flex items-center gap-1.5 text-xs text-default-500">
+                          <span
+                            className={`h-2 w-2 rounded-full ${active ? "bg-success" : "bg-default-300"}`}
+                          />
+                          当前使用线路
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {active?.nodeName || "未确定"}
+                        </span>
+                        {active && (
+                          <span className="truncate font-mono text-xs text-default-500">
+                            {active.entryAddress}:{active.entryPort}
+                            {active.forwardName ? ` · ${active.forwardName}` : ""}
+                          </span>
+                        )}
+                        <Chip
+                          color={active ? "success" : "default"}
+                          size="sm"
+                          variant="flat"
+                        >
+                          {active ? "新连接走此线路" : "等待线路"}
+                        </Chip>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -2625,9 +2649,14 @@ export default function CrossEntryFailoverPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-2 border-y border-divider py-3 text-sm sm:grid-cols-4">
                     <div className="min-w-0">
-                      <p className="text-xs text-default-500">当前承载</p>
+                      <p className="text-xs text-default-500">当前线路</p>
                       <p className="mt-1 truncate font-medium">
                         {active?.nodeName || "未确定"}
+                      </p>
+                      <p className="mt-1 truncate font-mono text-xs text-default-500">
+                        {active
+                          ? `${active.entryAddress}:${active.entryPort}`
+                          : "等待线路"}
                       </p>
                     </div>
                     <div className="min-w-0">

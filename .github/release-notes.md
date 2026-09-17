@@ -1,3 +1,9 @@
+## 2.51.71 Cross-entry active route summary
+
+- Adds the active route name, entry address and port, forwarding target, and bearer state directly to the collapsed Cross-entry Failover card summary.
+- Removes the empty visual area left between the expiry line and summary metrics while keeping detailed telemetry behind the expand control.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.70 Cross-entry summary cards
 
 - Simplifies each Cross-entry Failover card to a compact summary with the group name, overall state, current bearer, healthy route count, monthly traffic, and last check time.
