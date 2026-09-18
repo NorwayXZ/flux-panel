@@ -311,73 +311,97 @@ export default function DockerAppsPage() {
         ))}
       </section>
 
-      <section className="grid items-start gap-4 xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)]">
-        <div className="min-w-0 space-y-3">
-          <h2 className="text-base font-semibold">Docker 节点</h2>
-          {data.nodes.map((node) => (
-            <div
-              key={node.id}
-              className="rounded-md border border-divider bg-content1 p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate font-medium">{node.name}</h3>
-                    <Chip
-                      color={node.online ? "success" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {node.online ? "在线" : "离线"}
-                    </Chip>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-default-400">
-                    Agent {node.version || "-"} · 要求{" "}
-                    {data.minimumAgentVersion}+
-                  </p>
-                </div>
-                <Button
-                  isIconOnly
-                  isDisabled={!node.online}
-                  isLoading={busy === `inspect-${node.id}`}
-                  size="sm"
-                  title="识别 Docker"
-                  variant="light"
-                  onPress={() => void inspect(node.id)}
-                >
-                  <Search size={16} />
-                </Button>
-              </div>
-              {!node.compatible && (
-                <p className="mt-3 border-t border-divider pt-3 text-xs text-warning-600">
-                  需要升级 Agent 后才能直接执行 Docker
-                  应用动作；页面仍会提供手动命令。
+      <section className="space-y-5">
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Search className="text-primary" size={18} />
+              <div>
+                <h2 className="text-base font-semibold">Docker 节点</h2>
+                <p className="mt-1 text-xs text-default-500">
+                  识别状态、Agent 版本和可执行能力
                 </p>
-              )}
+              </div>
             </div>
-          ))}
-        </div>
+            <Chip size="sm" variant="flat">
+              {data.nodes.length} 个节点
+            </Chip>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {data.nodes.map((node) => (
+              <div
+                key={node.id}
+                className="border border-divider bg-content1 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate font-medium">{node.name}</h3>
+                      <Chip
+                        color={node.online ? "success" : "default"}
+                        size="sm"
+                        variant="flat"
+                      >
+                        {node.online ? "在线" : "离线"}
+                      </Chip>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-default-400">
+                      Agent {node.version || "-"} · 要求{" "}
+                      {data.minimumAgentVersion}+
+                    </p>
+                  </div>
+                  <Button
+                    isIconOnly
+                    isDisabled={!node.online}
+                    isLoading={busy === `inspect-${node.id}`}
+                    size="sm"
+                    title="识别 Docker"
+                    variant="light"
+                    onPress={() => void inspect(node.id)}
+                  >
+                    <Search size={16} />
+                  </Button>
+                </div>
+                {!node.compatible && (
+                  <p className="mt-3 border-t border-divider pt-3 text-xs text-warning-600">
+                    需要升级 Agent 后才能直接执行 Docker
+                    应用动作；页面仍会提供手动命令。
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
 
-        <div className="min-w-0 space-y-3">
-          <h2 className="text-base font-semibold">已部署应用</h2>
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Boxes className="text-secondary" size={18} />
+              <div>
+                <h2 className="text-base font-semibold">已部署应用</h2>
+                <p className="mt-1 text-xs text-default-500">
+                  集中查看访问信息、备份状态和应用操作
+                </p>
+              </div>
+            </div>
+            <Chip size="sm" variant="flat">
+              {data.apps.length} 个应用
+            </Chip>
+          </div>
           {data.apps.length === 0 ? (
-            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border border-dashed border-divider text-default-400">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border border-dashed border-divider bg-content1 text-default-400">
               <Boxes size={32} />
               <p>还没有 Docker 应用</p>
             </div>
           ) : (
-            <div
-              className={`grid gap-4 ${
-                data.apps.length > 1 ? "lg:grid-cols-2" : "grid-cols-1"
-              }`}
-            >
+            <div className="grid gap-3 lg:grid-cols-2">
               {data.apps.map((app) => {
                 const meta = stateMeta(app.state);
 
                 return (
                   <article
                     key={app.id}
-                    className="rounded-md border border-divider bg-content1 p-4"
+                    className="border border-divider bg-content1 p-4"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -513,7 +537,7 @@ export default function DockerAppsPage() {
               })}
             </div>
           )}
-        </div>
+        </section>
       </section>
 
       <Modal isOpen={createOpen} size="2xl" onOpenChange={setCreateOpen}>

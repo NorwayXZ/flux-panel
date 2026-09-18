@@ -1,3 +1,9 @@
+## 2.51.77 Docker application center card layout
+
+- Reorganizes Docker nodes and deployed applications into balanced, full-width card sections instead of an uneven fixed sidebar and oversized application column.
+- Adds clear section counts and separates node capability, application status, access details, and management actions without changing Docker operations.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.76 Routing overview and aggregation card layouts
 
 - Reorganizes the Routing Center into module summary cards, boundary cards, capability cards, and static finding cards so it reads as an overview rather than a flat table.
