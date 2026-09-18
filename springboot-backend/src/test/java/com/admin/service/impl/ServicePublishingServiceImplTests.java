@@ -63,7 +63,7 @@ class ServicePublishingServiceImplTests {
         when(publishedServiceMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(java.util.List.of());
         when(leaseMapper.delete(org.mockito.ArgumentMatchers.any())).thenReturn(0);
         when(grantService.deleteForPool(9L)).thenReturn(0);
-        when(poolMapper.updateById(pool)).thenReturn(true);
+        when(poolMapper.updateById(pool)).thenReturn(1);
         ReflectionTestUtils.setField(service, "poolMapper", poolMapper);
         ReflectionTestUtils.setField(service, "nodeMapper", nodeMapper);
         ReflectionTestUtils.setField(service, "leaseMapper", leaseMapper);
