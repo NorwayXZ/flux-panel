@@ -17,7 +17,9 @@ import { Switch } from "@heroui/switch";
 import {
   Activity,
   CheckCircle2,
+  ChevronDown,
   History,
+  Info,
   Pencil,
   Plus,
   RefreshCw,
@@ -116,6 +118,38 @@ const timeText = (value?: number) =>
     : "尚未检测";
 const carrierLabel = (value?: string) =>
   carriers.find((item) => item.key === value)?.label || "线路";
+const carrierTone = (value?: string) =>
+  ({
+    default: {
+      dot: "bg-default-400",
+      border: "border-default-200 dark:border-default-700",
+      background: "bg-default-50/70 dark:bg-default-900/20",
+      text: "text-default-700 dark:text-default-200",
+    },
+    telecom: {
+      dot: "bg-primary",
+      border: "border-primary-200 dark:border-primary-500/30",
+      background: "bg-primary-50/50 dark:bg-primary-500/10",
+      text: "text-primary-700 dark:text-primary-300",
+    },
+    unicom: {
+      dot: "bg-secondary",
+      border: "border-secondary-200 dark:border-secondary-500/30",
+      background: "bg-secondary-50/50 dark:bg-secondary-500/10",
+      text: "text-secondary-700 dark:text-secondary-300",
+    },
+    mobile: {
+      dot: "bg-success",
+      border: "border-success-200 dark:border-success-500/30",
+      background: "bg-success-50/50 dark:bg-success-500/10",
+      text: "text-success-700 dark:text-success-300",
+    },
+  })[value as Carrier] || {
+    dot: "bg-default-400",
+    border: "border-default-200 dark:border-default-700",
+    background: "bg-default-50/70 dark:bg-default-900/20",
+    text: "text-default-700 dark:text-default-200",
+  };
 const activityCarriers = (value: string) =>
   value.split(",").filter(Boolean).map(carrierLabel).join(" / ");
 const formatBytes = (value = 0) => {
@@ -463,405 +497,500 @@ export default function SmartEntryPage() {
         </Button>
       </header>
 
-      <section
-        aria-label="三网优化概况"
-        className="grid grid-cols-2 border-y border-divider sm:grid-cols-4"
-      >
-        {[
-          [
-            "运行策略",
-            summary.enabled,
-            <Waypoints key="enabled" className="h-5 w-5 text-primary" />,
-          ],
-          [
-            "线路正常",
-            summary.healthy,
-            <CheckCircle2 key="healthy" className="h-5 w-5 text-success" />,
-          ],
-          [
-            "需要处理",
-            summary.degraded,
-            <TriangleAlert
-              key="degraded"
-              className={`h-5 w-5 ${summary.degraded ? "text-warning" : "text-default-400"}`}
-            />,
-          ],
-          [
-            "线路记录",
-            summary.lineRecords,
-            <Route key="records" className="h-5 w-5 text-secondary" />,
-          ],
-        ].map(([label, value, icon], index) => (
-          <div
-            key={String(label)}
-            className={`flex min-h-24 items-center justify-between px-4 py-4 sm:px-6 ${index % 2 ? "" : "border-r border-divider"} ${index === 1 ? "sm:border-r" : ""}`}
-          >
-            <div>
-              <p className="text-xs text-default-500">{label}</p>
-              <p className="mt-1 text-2xl font-semibold">{value}</p>
+      <section aria-label="三网优化概况" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <Waypoints className="text-primary" size={17} />
+              <h2 className="text-sm font-semibold">运行概况</h2>
             </div>
-            {icon}
+            <p className="mt-1 text-xs text-default-500">
+              按运营商把访问者分配到最合适的公网入口
+            </p>
           </div>
-        ))}
-      </section>
-
-      <div className="border-y border-divider px-1 py-3 text-xs leading-5 text-default-500">
-        同一域名按访问者 DNS 线路返回对应入口。切换只影响新连接，已建立的 TCP
-        连接不会被强制中断。该能力依赖 DNSPod 或阿里云 DNS
-        的运营商线路解析，Cloudflare 域名不支持此模式。
-      </div>
-
-      <section
-        aria-label="三网优化运行规则"
-        className="border-y border-divider"
-      >
-        <div className="border-b border-divider px-1 py-3">
-          <h2 className="text-sm font-semibold">实际调度规则</h2>
-          <p className="mt-1 text-xs text-default-500">
-            运营商选路与故障回退是两套独立规则。
-          </p>
+          <span className="text-xs text-default-500">
+            {summary.total} 个策略 · {summary.lineRecords} 条线路
+          </span>
         </div>
-        <div className="grid sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {[
             [
-              "何时走移动/电信/联通",
-              "用户重新解析业务域名时，权威 DNS 按递归 DNS 来源返回对应运营商入口；不统计用户流量，也没有 100MB/200MB 门槛。",
+              "运行策略",
+              summary.enabled,
+              <Waypoints key="enabled" className="h-4 w-4 text-primary" />,
+              "text-primary",
             ],
             [
-              "更换宽带后",
-              "当前连接继续使用原入口；应用重新连接并且 DNS 缓存过期后，才会获取新运营商入口。不同运营商用户可同时走不同入口。",
+              "线路正常",
+              summary.healthy,
+              <CheckCircle2 key="healthy" className="h-4 w-4 text-success" />,
+              "text-success",
             ],
             [
-              "入口故障时",
-              "面板同时检查 Agent 在线与公网 TCP 端口。默认每 5 秒检查，连续失败 2 次，通常约 10–14 秒后修改该运营商 DNS 记录。",
+              "需要处理",
+              summary.degraded,
+              <TriangleAlert
+                key="degraded"
+                className={`h-4 w-4 ${summary.degraded ? "text-warning" : "text-default-400"}`}
+              />,
+              summary.degraded ? "text-warning" : "text-default-500",
             ],
             [
-              "入口恢复时",
-              "默认连续成功 3 次，通常约 15–17 秒后恢复原运营商记录。DNS 修改后仍需等待 TTL、运营商和客户端缓存刷新。",
+              "线路记录",
+              summary.lineRecords,
+              <Route key="records" className="h-4 w-4 text-secondary" />,
+              "text-secondary",
             ],
-          ].map(([title, detail], index) => (
+          ].map(([label, value, icon, valueClass]) => (
             <div
-              key={title}
-              className={`min-h-36 px-4 py-4 ${index % 2 === 0 ? "sm:border-r" : ""} ${index < 3 ? "border-b xl:border-b-0" : ""} ${index > 0 ? "xl:border-l" : ""} border-divider`}
+              key={String(label)}
+              className="border border-divider bg-content1 px-3 py-3 sm:px-4"
             >
-              <h3 className="text-sm font-medium">{title}</h3>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-default-500">{label}</p>
+                {icon}
+              </div>
+              <p className={`mt-2 text-xl font-semibold ${valueClass}`}>
+                {value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section
+        aria-label="三网优化工作方式"
+        className="border border-primary-200 bg-primary-50/50 px-4 py-4 dark:border-primary-500/20 dark:bg-primary-500/5 sm:px-5"
+      >
+        <div className="flex items-start gap-3">
+          <Info className="mt-0.5 shrink-0 text-primary" size={18} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">工作方式</h2>
+              <Chip color="primary" size="sm" variant="flat">
+                DNS 选路
+              </Chip>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-default-600 dark:text-default-300">
+              同一域名按访问者的运营商返回对应入口，切换只影响新连接，已建立的
+              TCP 连接不会被强制中断。
+            </p>
+            <div className="mt-3 grid gap-2 text-xs text-default-500 sm:grid-cols-3">
+              <span>支持 DNSPod、阿里云 DNS</span>
+              <span>不读取或保存客户 IP</span>
+              <span>Cloudflare 不支持运营商线路解析</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section aria-label="三网优化运行规则" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <Route className="text-secondary" size={17} />
+              <h2 className="text-sm font-semibold">调度流程</h2>
+            </div>
+            <p className="mt-1 text-xs text-default-500">
+              运营商选路与故障回退是两套独立规则
+            </p>
+          </div>
+          <span className="text-xs text-default-500">自动检测 · 自动回退</span>
+        </div>
+        <div className="grid border-y border-divider sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            [
+              "01",
+              "解析时选路",
+              "用户重新解析域名时，权威 DNS 按递归 DNS 来源返回运营商入口。",
+            ],
+            [
+              "02",
+              "连接保持",
+              "更换宽带后，已有连接继续使用原入口；缓存过期后新连接才会更新。",
+            ],
+            [
+              "03",
+              "故障回退",
+              "Agent 与公网端口连续检测失败后，自动修改对应运营商 DNS 记录。",
+            ],
+            [
+              "04",
+              "恢复切回",
+              "入口连续恢复后回到原运营商线路，DNS 仍需等待 TTL 和缓存刷新。",
+            ],
+          ].map(([step, title, detail], index) => (
+            <div
+              key={step}
+              className={`relative border-divider px-4 py-4 ${index < 3 ? "border-b xl:border-b-0" : ""} ${index % 2 === 0 ? "sm:border-r" : ""} ${index > 0 ? "xl:border-l" : ""}`}
+            >
+              <span className="text-xs font-semibold text-primary">{step}</span>
+              <h3 className="mt-2 text-sm font-medium">{title}</h3>
               <p className="mt-2 text-xs leading-5 text-default-500">
                 {detail}
               </p>
             </div>
           ))}
         </div>
-        <div className="border-t border-divider px-4 py-3 text-xs leading-5 text-warning">
-          健康检测只判断入口是否在线和端口能否建立 TCP 连接，不根据
-          P95、抖动、丢包或单个用户的实际访问质量自动切换。
+        <div className="flex items-start gap-2 text-xs leading-5 text-warning">
+          <TriangleAlert className="mt-0.5 shrink-0" size={15} />
+          <span>
+            健康检测只判断入口在线和 TCP 建连，不根据
+            P95、抖动、丢包或单个用户的实际访问质量自动切换。
+          </span>
         </div>
       </section>
 
-      {groups.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
-          <Waypoints className="h-9 w-9" />
-          <p>暂无三网优化策略</p>
+      <section aria-label="三网优化策略" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2">
+              <Waypoints className="text-primary" size={17} />
+              <h2 className="text-sm font-semibold">优化策略</h2>
+            </div>
+            <p className="mt-1 text-xs text-default-500">
+              每个策略对应一个业务域名和一组运营商入口
+            </p>
+          </div>
+          <Chip size="sm" variant="flat">
+            {groups.length} 个策略
+          </Chip>
         </div>
-      ) : (
-        <section className="grid gap-4 xl:grid-cols-2">
-          {groups.map((group) => {
-            const meta = truthy(group.enabled)
-              ? stateMeta(group.state)
-              : { label: "已停用", color: "default" as const };
 
-            return (
-              <Card
-                key={group.id}
-                className="border border-divider bg-content1"
-                radius="sm"
-                shadow="none"
-              >
-                <CardBody className="gap-4 p-4 sm:p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="truncate text-base font-semibold">
-                          {group.name}
-                        </h2>
-                        <Chip color={meta.color} size="sm" variant="flat">
-                          {meta.label}
-                        </Chip>
-                        <Chip size="sm" variant="flat">
-                          {providerLabel(group.provider)}
-                        </Chip>
-                      </div>
-                      <p className="mt-1 truncate text-sm text-default-500">
-                        {group.domain}:{group.publicPort}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        isIconOnly
-                        aria-label="立即检测"
-                        isLoading={checkingId === group.id}
-                        size="sm"
-                        title="立即检测"
-                        variant="light"
-                        onPress={() => checkNow(group.id)}
-                      >
-                        <RefreshCw size={17} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="DNS 线路诊断"
-                        isLoading={diagnosingId === group.id}
-                        size="sm"
-                        title="DNS 线路诊断"
-                        variant="light"
-                        onPress={() => void showDiagnosis(group)}
-                      >
-                        <ScanSearch size={17} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="入口活动记录"
-                        size="sm"
-                        title="入口活动记录"
-                        variant="light"
-                        onPress={() => showHistory(group)}
-                      >
-                        <History size={17} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="编辑"
-                        size="sm"
-                        title="编辑"
-                        variant="light"
-                        onPress={() => openEdit(group)}
-                      >
-                        <Pencil size={17} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="删除"
-                        color="danger"
-                        size="sm"
-                        title="删除"
-                        variant="light"
-                        onPress={() => remove(group)}
-                      >
-                        <Trash2 size={17} />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {group.routes.map((route) => {
-                      const activeOnOwnEntry =
-                        route.currentForwardId === route.forwardId;
+        {groups.length === 0 ? (
+          <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
+            <Waypoints className="h-9 w-9" />
+            <p>暂无三网优化策略</p>
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {groups.map((group) => {
+              const meta = truthy(group.enabled)
+                ? stateMeta(group.state)
+                : { label: "已停用", color: "default" as const };
 
-                      return (
-                        <div
-                          key={route.id}
-                          className={`min-h-24 border-l-2 px-3 py-2 ${route.status === "unhealthy" ? "border-warning bg-warning-50/60 dark:bg-warning-500/5" : "border-divider"}`}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-sm font-medium">
-                              {carrierLabel(route.carrier)}
-                            </span>
-                            <div className="flex flex-wrap justify-end gap-1">
-                              <Chip
-                                color={
-                                  route.status === "healthy"
-                                    ? "success"
-                                    : route.status === "unhealthy"
-                                      ? "warning"
-                                      : "default"
-                                }
-                                size="sm"
-                                variant="flat"
-                              >
-                                {route.status === "healthy"
-                                  ? "可用"
-                                  : route.status === "unhealthy"
-                                    ? "已回退"
-                                    : "确认中"}
-                              </Chip>
-                              <Chip
-                                color={
-                                  route.dnsState === "healthy"
-                                    ? "success"
-                                    : route.dnsState === "error"
-                                      ? "danger"
-                                      : "warning"
-                                }
-                                size="sm"
-                                variant="flat"
-                              >
-                                {route.dnsState === "healthy"
-                                  ? `DNS 已核验 · ${route.appliedTtl || group.ttl}s`
-                                  : route.dnsState === "error"
-                                    ? "DNS 待处理"
-                                    : "DNS 同步中"}
-                              </Chip>
-                            </div>
-                          </div>
-                          <p className="mt-2 truncate text-xs text-default-500">
-                            配置：{route.nodeName} · {route.entryAddress}
-                          </p>
-                          <div className="mt-1 flex items-center justify-between gap-2 text-xs">
-                            <span
-                              className={
-                                activeOnOwnEntry
-                                  ? "text-default-500"
-                                  : "text-warning"
-                              }
-                            >
-                              {activeOnOwnEntry
-                                ? "当前使用本线路"
-                                : `当前回退到 ${route.currentAddress}`}
-                            </span>
-                            <span>
-                              {route.latencyMs ? `${route.latencyMs} ms` : "-"}
-                            </span>
-                          </div>
-                          {route.dnsError && (
-                            <p className="mt-2 text-xs text-danger">
-                              {route.dnsError}
-                            </p>
-                          )}
+              return (
+                <Card
+                  key={group.id}
+                  className="border border-divider bg-content1"
+                  radius="sm"
+                  shadow="none"
+                >
+                  <CardBody className="gap-4 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="truncate text-base font-semibold">
+                            {group.name}
+                          </h2>
+                          <Chip color={meta.color} size="sm" variant="flat">
+                            {meta.label}
+                          </Chip>
+                          <Chip size="sm" variant="flat">
+                            {providerLabel(group.provider)}
+                          </Chip>
                         </div>
-                      );
-                    })}
-                  </div>
-                  <section
-                    aria-label="实时入口状态"
-                    className="border-t border-divider pt-3"
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Activity className="text-primary" size={16} />
-                        <h3 className="text-sm font-semibold">实时入口状态</h3>
+                        <p className="mt-1 truncate text-sm text-default-500">
+                          {group.domain}:{group.publicPort}
+                        </p>
                       </div>
-                      <span className="text-xs text-default-500">
-                        每 5 秒更新
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          isIconOnly
+                          aria-label="立即检测"
+                          isLoading={checkingId === group.id}
+                          size="sm"
+                          title="立即检测"
+                          variant="light"
+                          onPress={() => checkNow(group.id)}
+                        >
+                          <RefreshCw size={17} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="DNS 线路诊断"
+                          isLoading={diagnosingId === group.id}
+                          size="sm"
+                          title="DNS 线路诊断"
+                          variant="light"
+                          onPress={() => void showDiagnosis(group)}
+                        >
+                          <ScanSearch size={17} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="入口活动记录"
+                          size="sm"
+                          title="入口活动记录"
+                          variant="light"
+                          onPress={() => showHistory(group)}
+                        >
+                          <History size={17} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="编辑"
+                          size="sm"
+                          title="编辑"
+                          variant="light"
+                          onPress={() => openEdit(group)}
+                        >
+                          <Pencil size={17} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label="删除"
+                          color="danger"
+                          size="sm"
+                          title="删除"
+                          variant="light"
+                          onPress={() => remove(group)}
+                        >
+                          <Trash2 size={17} />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="divide-y divide-divider border-y border-divider">
-                      {(group.activities || []).map((activity) => {
-                        const telemetryReady = truthy(activity.telemetryReady);
-                        const agentReady = supportsConnectionTelemetry(
-                          activity.agentVersion,
-                        );
-                        const stale = Boolean(
-                          activity.lastTelemetryAt &&
-                          Date.now() - activity.lastTelemetryAt > 30_000,
-                        );
-                        const shared = activity.carriers.includes(",");
-                        const activityMeta = activityChipMeta(
-                          activity.activityState,
-                        );
+                    <div className="flex items-center justify-between gap-3 border-t border-divider pt-3">
+                      <div>
+                        <h3 className="text-sm font-semibold">运营商入口</h3>
+                        <p className="mt-1 text-xs text-default-500">
+                          DNS 按运营商把新连接分配到对应线路
+                        </p>
+                      </div>
+                      <Chip size="sm" variant="flat">
+                        {group.routes.length}/4 条线路
+                      </Chip>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {group.routes.map((route) => {
+                        const activeOnOwnEntry =
+                          route.currentForwardId === route.forwardId;
+                        const tone = carrierTone(route.carrier);
 
                         return (
                           <div
-                            key={`${activity.forwardId}-${activity.entryNodeId}`}
-                            className="grid min-w-0 gap-3 px-1 py-3 text-xs sm:grid-cols-2 2xl:grid-cols-[minmax(220px,1.3fr)_minmax(140px,0.9fr)_minmax(120px,0.75fr)_minmax(200px,1fr)] 2xl:items-center"
+                            key={route.id}
+                            className={`min-h-24 rounded-md border px-3 py-3 ${route.status === "unhealthy" ? "border-warning-300 bg-warning-50/60 dark:border-warning-500/40 dark:bg-warning-500/5" : `${tone.border} ${tone.background}`}`}
                           >
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="shrink-0 whitespace-nowrap font-medium text-foreground">
-                                  {activityCarriers(activity.carriers)}
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`h-2 w-2 rounded-full ${tone.dot}`}
+                                />
+                                <span
+                                  className={`text-sm font-medium ${tone.text}`}
+                                >
+                                  {carrierLabel(route.carrier)}
                                 </span>
-                                {shared && (
-                                  <Chip
-                                    className="shrink-0"
-                                    size="sm"
-                                    variant="flat"
-                                  >
-                                    共用入口
-                                  </Chip>
-                                )}
-                                {stale && (
-                                  <Chip
-                                    className="shrink-0"
-                                    color="warning"
-                                    size="sm"
-                                    variant="flat"
-                                  >
-                                    上报中断
-                                  </Chip>
-                                )}
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-1">
                                 <Chip
-                                  className="shrink-0"
-                                  color={activityMeta.color}
+                                  color={
+                                    route.status === "healthy"
+                                      ? "success"
+                                      : route.status === "unhealthy"
+                                        ? "warning"
+                                        : "default"
+                                  }
                                   size="sm"
                                   variant="flat"
                                 >
-                                  {activityMeta.label}
+                                  {route.status === "healthy"
+                                    ? "可用"
+                                    : route.status === "unhealthy"
+                                      ? "已回退"
+                                      : "确认中"}
+                                </Chip>
+                                <Chip
+                                  color={
+                                    route.dnsState === "healthy"
+                                      ? "success"
+                                      : route.dnsState === "error"
+                                        ? "danger"
+                                        : "warning"
+                                  }
+                                  size="sm"
+                                  variant="flat"
+                                >
+                                  {route.dnsState === "healthy"
+                                    ? `DNS 已核验 · ${route.appliedTtl || group.ttl}s`
+                                    : route.dnsState === "error"
+                                      ? "DNS 待处理"
+                                      : "DNS 同步中"}
                                 </Chip>
                               </div>
-                              <p className="mt-1 truncate text-default-500">
-                                {activity.nodeName} · {activity.entryAddress}
-                              </p>
                             </div>
-                            <div className="min-w-0">
-                              <p className="text-default-500">TCP 当前连接</p>
-                              <p className="mt-1 font-medium">
-                                {telemetryReady
-                                  ? `${activity.currentConnections || 0} 个`
-                                  : agentReady
-                                    ? "等待业务"
-                                    : "等待新版 Agent"}
-                              </p>
-                              <p className="mt-1 line-clamp-2 text-default-400">
-                                {activity.activityHint ||
-                                  (telemetryReady
-                                    ? "实时连接采样正常"
-                                    : "等待 Agent 上报连接遥测")}
-                              </p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-default-500">累计新增</p>
-                              <p className="mt-1 font-medium">
-                                {telemetryReady
-                                  ? `${activity.totalConnections || 0} 个`
+                            <p className="mt-3 truncate text-xs text-default-500">
+                              {route.nodeName} · {route.entryAddress}
+                            </p>
+                            <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                              <span
+                                className={
+                                  activeOnOwnEntry
+                                    ? "font-medium text-foreground"
+                                    : "font-medium text-warning-700 dark:text-warning-300"
+                                }
+                              >
+                                {activeOnOwnEntry
+                                  ? "当前使用此线路"
+                                  : `当前回退至 ${route.currentAddress}`}
+                              </span>
+                              <span className="shrink-0 text-default-500">
+                                {route.latencyMs
+                                  ? `${route.latencyMs} ms`
                                   : "-"}
-                              </p>
+                              </span>
                             </div>
-                            <div className="min-w-0 2xl:text-right">
-                              <p className="text-default-500">累计流量</p>
-                              <p className="mt-1 font-medium">
-                                {formatBytes(
-                                  (activity.inFlow || 0) +
-                                    (activity.outFlow || 0),
-                                )}
+                            {route.dnsError && (
+                              <p className="mt-2 text-xs text-danger">
+                                {route.dnsError}
                               </p>
-                              <p className="mt-1 text-default-400">
-                                {activity.lastActivityAt
-                                  ? timeText(activity.lastActivityAt)
-                                  : `Agent ${activity.agentVersion || "未知"} · 等待业务`}
-                              </p>
-                              {activity.lastTelemetryAt && (
-                                <p className="mt-1 text-default-400">
-                                  上报：{timeText(activity.lastTelemetryAt)}
-                                </p>
-                              )}
-                            </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
-                  </section>
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3 text-xs text-default-500">
-                    <span>主域名：{group.zoneName}</span>
-                    <span>最近检测：{timeText(group.lastCheckedAt)}</span>
-                  </div>
-                  {group.lastError && (
-                    <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">
-                      {group.lastError}
-                    </p>
-                  )}
-                </CardBody>
-              </Card>
-            );
-          })}
-        </section>
-      )}
+                    <details className="group border-t border-divider pt-3">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+                        <div className="flex items-center gap-2">
+                          <Activity className="text-primary" size={16} />
+                          <h3 className="text-sm font-semibold">
+                            实时入口状态
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-default-500">
+                            每 5 秒更新
+                          </span>
+                          <ChevronDown
+                            className="text-default-500 transition-transform group-open:rotate-180"
+                            size={16}
+                          />
+                        </div>
+                      </summary>
+                      <div className="mt-3 divide-y divide-divider border-y border-divider">
+                        {(group.activities || []).map((activity) => {
+                          const telemetryReady = truthy(
+                            activity.telemetryReady,
+                          );
+                          const agentReady = supportsConnectionTelemetry(
+                            activity.agentVersion,
+                          );
+                          const stale = Boolean(
+                            activity.lastTelemetryAt &&
+                            Date.now() - activity.lastTelemetryAt > 30_000,
+                          );
+                          const shared = activity.carriers.includes(",");
+                          const activityMeta = activityChipMeta(
+                            activity.activityState,
+                          );
+
+                          return (
+                            <div
+                              key={`${activity.forwardId}-${activity.entryNodeId}`}
+                              className="grid min-w-0 gap-3 px-1 py-3 text-xs sm:grid-cols-2 2xl:grid-cols-[minmax(220px,1.3fr)_minmax(140px,0.9fr)_minmax(120px,0.75fr)_minmax(200px,1fr)] 2xl:items-center"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="shrink-0 whitespace-nowrap font-medium text-foreground">
+                                    {activityCarriers(activity.carriers)}
+                                  </span>
+                                  {shared && (
+                                    <Chip
+                                      className="shrink-0"
+                                      size="sm"
+                                      variant="flat"
+                                    >
+                                      共用入口
+                                    </Chip>
+                                  )}
+                                  {stale && (
+                                    <Chip
+                                      className="shrink-0"
+                                      color="warning"
+                                      size="sm"
+                                      variant="flat"
+                                    >
+                                      上报中断
+                                    </Chip>
+                                  )}
+                                  <Chip
+                                    className="shrink-0"
+                                    color={activityMeta.color}
+                                    size="sm"
+                                    variant="flat"
+                                  >
+                                    {activityMeta.label}
+                                  </Chip>
+                                </div>
+                                <p className="mt-1 truncate text-default-500">
+                                  {activity.nodeName} · {activity.entryAddress}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-default-500">TCP 当前连接</p>
+                                <p className="mt-1 font-medium">
+                                  {telemetryReady
+                                    ? `${activity.currentConnections || 0} 个`
+                                    : agentReady
+                                      ? "等待业务"
+                                      : "等待新版 Agent"}
+                                </p>
+                                <p className="mt-1 line-clamp-2 text-default-400">
+                                  {activity.activityHint ||
+                                    (telemetryReady
+                                      ? "实时连接采样正常"
+                                      : "等待 Agent 上报连接遥测")}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-default-500">累计新增</p>
+                                <p className="mt-1 font-medium">
+                                  {telemetryReady
+                                    ? `${activity.totalConnections || 0} 个`
+                                    : "-"}
+                                </p>
+                              </div>
+                              <div className="min-w-0 2xl:text-right">
+                                <p className="text-default-500">累计流量</p>
+                                <p className="mt-1 font-medium">
+                                  {formatBytes(
+                                    (activity.inFlow || 0) +
+                                      (activity.outFlow || 0),
+                                  )}
+                                </p>
+                                <p className="mt-1 text-default-400">
+                                  {activity.lastActivityAt
+                                    ? timeText(activity.lastActivityAt)
+                                    : `Agent ${activity.agentVersion || "未知"} · 等待业务`}
+                                </p>
+                                {activity.lastTelemetryAt && (
+                                  <p className="mt-1 text-default-400">
+                                    上报：{timeText(activity.lastTelemetryAt)}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3 text-xs text-default-500">
+                      <span>主域名：{group.zoneName}</span>
+                      <span>最近检测：{timeText(group.lastCheckedAt)}</span>
+                    </div>
+                    {group.lastError && (
+                      <p className="rounded-md bg-danger-50 px-3 py-2 text-xs text-danger dark:bg-danger-500/10">
+                        {group.lastError}
+                      </p>
+                    )}
+                  </CardBody>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <Modal
         isOpen={formOpen}

@@ -158,6 +158,12 @@ public class PortPoolGrantService {
         return grantedPorts(poolId).size();
     }
 
+    @Transactional(rollbackFor = Exception.class)
+    public int deleteForPool(Long poolId) {
+        if (poolId == null) return 0;
+        return grantMapper.delete(new QueryWrapper<PortPoolGrant>().eq("pool_id", poolId));
+    }
+
     private void enrich(PortPoolGrant grant) {
         PortPool pool = poolMapper.selectById(grant.getPoolId());
         User user = userMapper.selectById(grant.getUserId());

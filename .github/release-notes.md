@@ -1,3 +1,10 @@
+## 2.51.75 Source-IP layout and orphan port cleanup
+
+- Reorganizes the Source IP routing page into clear cards for the operating model, rule capabilities, runtime summary, debug tool, IP databases, and routing groups.
+- Reorganizes the Smart Entry page into compact overview, workflow, database, and strategy card sections while keeping existing routing controls and diagnostics.
+- Cleans orphaned port pools after their server node record has been deleted, including stale leases, grants, and unusable published mappings, while preserving active domain and home-network dependencies.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.74 Separate switch events from failover resources
 
 - Gives the recent-switch event stream a lighter visual treatment with compact event cards, status accents, and an event-stream label.

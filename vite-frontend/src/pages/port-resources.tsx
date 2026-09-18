@@ -219,9 +219,13 @@ export default function PortResourcesPage() {
     void loadData();
   };
 
-  const remove = async (id: number) => {
-    if (!window.confirm("确认删除该端口池吗？")) return;
-    const res = await deletePublishingPortPool(id);
+  const remove = async (pool: PublishingPortPool) => {
+    const orphaned = !nodes.some((node) => node.id === pool.nodeId);
+    const message = orphaned
+      ? `该端口池所属节点已删除。确认清理“${pool.name}”及其遗留租约吗？`
+      : `确认删除端口池“${pool.name}”吗？`;
+    if (!window.confirm(message)) return;
+    const res = await deletePublishingPortPool(pool.id);
 
     if (res.code !== 0) return toast.error(res.msg || "删除失败");
     toast.success("端口池已删除");
@@ -298,78 +302,89 @@ export default function PortResourcesPage() {
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {pools.map((pool) => (
-            <article
-              key={pool.id}
-              className="rounded-md border border-divider bg-content1 p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate font-semibold">{pool.name}</div>
-                  <div className="mt-1 truncate font-mono text-xs text-default-500">
-                  {pool.publicHost}
+          {pools.map((pool) => {
+            const orphaned = !nodes.some((node) => node.id === pool.nodeId);
+
+            return (
+              <article
+                key={pool.id}
+                className={`rounded-md border bg-content1 p-4 ${orphaned ? "border-warning-300 dark:border-warning-500/40" : "border-divider"}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="truncate font-semibold">{pool.name}</div>
+                      {orphaned && (
+                        <Chip color="warning" size="sm" variant="flat">
+                          节点已删除
+                        </Chip>
+                      )}
+                    </div>
+                    <div className="mt-1 truncate font-mono text-xs text-default-500">
+                      {pool.publicHost}
+                    </div>
                   </div>
+                  <Button
+                    isIconOnly
+                    aria-label={orphaned ? "清理孤儿端口池" : "删除端口池"}
+                    color="danger"
+                    size="sm"
+                    title={orphaned ? "清理孤儿端口池" : "删除端口池"}
+                    variant="light"
+                    onPress={() => remove(pool)}
+                  >
+                    <Trash2 size={17} />
+                  </Button>
                 </div>
-                <Button
-                  isIconOnly
-                  aria-label="删除端口池"
-                  color="danger"
-                  size="sm"
-                  title="删除端口池"
-                  variant="light"
-                  onPress={() => remove(pool.id)}
-                >
-                  <Trash2 size={17} />
-                </Button>
-              </div>
-              <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
-                <div>
-                  <dt className="text-xs text-default-500">公网节点</dt>
-                  <dd className="mt-1 truncate">{pool.nodeName}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-default-500">端口范围</dt>
-                  <dd className="mt-1 font-mono">
-                    {pool.startPort}-{pool.endPort}
-                  </dd>
-                </div>
-                <div className="col-span-2">
-                  <dt className="mb-2 text-xs text-default-500">端口状态</dt>
-                  <dd className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                  <span>
-                    管理员占用{" "}
-                    <strong className="text-foreground">
-                      {pool.usedPorts}
-                    </strong>
-                  </span>
-                  <span>
-                    用户保留{" "}
-                    <strong className="text-secondary">
-                      {pool.sharedPorts || 0}
-                    </strong>
-                  </span>
-                  <span>
-                    管理员可用{" "}
-                    <strong className="text-success">
-                      {pool.availablePorts}
-                    </strong>
-                  </span>
-                  </dd>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-default-200">
-                  <div
-                    className="h-full bg-primary"
-                    style={{
-                      width: `${pool.totalPorts ? Math.min(100, (((pool.usedPorts || 0) + (pool.sharedPorts || 0)) / pool.totalPorts) * 100) : 0}%`,
-                    }}
-                  />
+                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
+                  <div>
+                    <dt className="text-xs text-default-500">公网节点</dt>
+                    <dd className="mt-1 truncate">{pool.nodeName}</dd>
                   </div>
-                </div>
-              </dl>
-              <p className="mt-3 text-xs text-default-500">
-                停止后冷却 {pool.cooldownSeconds} 秒 · 服务自行选择定时或永久
-              </p>
-            </article>
-          ))}
+                  <div>
+                    <dt className="text-xs text-default-500">端口范围</dt>
+                    <dd className="mt-1 font-mono">
+                      {pool.startPort}-{pool.endPort}
+                    </dd>
+                  </div>
+                  <div className="col-span-2">
+                    <dt className="mb-2 text-xs text-default-500">端口状态</dt>
+                    <dd className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <span>
+                        管理员占用{" "}
+                        <strong className="text-foreground">
+                          {pool.usedPorts}
+                        </strong>
+                      </span>
+                      <span>
+                        用户保留{" "}
+                        <strong className="text-secondary">
+                          {pool.sharedPorts || 0}
+                        </strong>
+                      </span>
+                      <span>
+                        管理员可用{" "}
+                        <strong className="text-success">
+                          {pool.availablePorts}
+                        </strong>
+                      </span>
+                    </dd>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-default-200">
+                      <div
+                        className="h-full bg-primary"
+                        style={{
+                          width: `${pool.totalPorts ? Math.min(100, (((pool.usedPorts || 0) + (pool.sharedPorts || 0)) / pool.totalPorts) * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </dl>
+                <p className="mt-3 text-xs text-default-500">
+                  停止后冷却 {pool.cooldownSeconds} 秒 · 服务自行选择定时或永久
+                </p>
+              </article>
+            );
+          })}
         </div>
       )}
 

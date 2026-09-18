@@ -307,6 +307,9 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R deletePortPool(Long id) {
         PortPool pool = poolMapper.selectById(id);
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在");
+        if (nodeMapper.selectById(pool.getNodeId()) == null) {
+            return deleteOrphanedPortPool(pool);
+        }
         Integer leases = leaseMapper.selectCount(new QueryWrapper<PortLease>().eq("pool_id", id));
         if (leases != null && leases > 0) return R.err("端口池仍有租约，不能删除");
         boolean granted = portPoolGrantService.listGrants(null).stream().anyMatch(item -> Objects.equals(item.getPoolId(), id));
@@ -317,6 +320,74 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         pool.setUpdatedTime(System.currentTimeMillis());
         poolMapper.updateById(pool);
         return R.ok();
+    }
+
+    /**
+     * 节点记录已经被删除时，公网入口不可能再恢复运行；清理它遗留的端口池账本，
+     * 但仍保留域名入口和家庭网络中转的依赖保护，避免产生无法解释的孤儿业务记录。
+     */
+    private R deleteOrphanedPortPool(PortPool pool) {
+        Long poolId = pool.getId();
+        int homeProxyCount = blockingHomeProxyPoolCount(poolId);
+        if (homeProxyCount > 0) {
+            return R.err("端口池仍被 " + homeProxyCount + " 个家庭网络中转使用，请先删除相关中转");
+        }
+
+        List<PublishedService> services = publishedServiceMapper.selectList(new QueryWrapper<PublishedService>()
+                .eq("pool_id", poolId)
+                .notIn("state", "released", "deleted"));
+        for (PublishedService service : services) {
+            Integer domainCount = domainRouteMapper.selectCount(new QueryWrapper<DomainRoute>()
+                    .eq("published_service_id", service.getId()).ne("state", "deleted"));
+            if (domainCount != null && domainCount > 0) {
+                return R.err("端口池仍被 " + domainCount + " 个域名入口使用，请先删除相关域名入口");
+            }
+            InternalConnector connector = connectorMapper.selectById(service.getConnectorId());
+            if (connector != null && !WebSocketServer.isConnectorOnline(connector.getId())) {
+                return R.err("端口池仍有内网映射，但接入端离线，暂时无法安全清理");
+            }
+        }
+
+        for (PublishedService service : services) {
+            InternalConnector connector = connectorMapper.selectById(service.getConnectorId());
+            if (connector == null) {
+                service.setState("deleted");
+                service.setLastError("关联接入端已删除，端口池所属节点已删除，记录已清理");
+                service.setUpdatedTime(System.currentTimeMillis());
+                publishedServiceMapper.updateById(service);
+                continue;
+            }
+            if (!cleanupService(service, true)) {
+                return R.err("端口池关联的内网映射清理失败，请稍后重试");
+            }
+        }
+
+        int leaseCount = leaseMapper.delete(new QueryWrapper<PortLease>().eq("pool_id", poolId));
+        int grantCount = portPoolGrantService.deleteForPool(poolId);
+        pool.setStatus(0);
+        pool.setUpdatedTime(System.currentTimeMillis());
+        poolMapper.updateById(pool);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("releasedLeaseCount", leaseCount);
+        result.put("removedGrantCount", grantCount);
+        result.put("orphanedNode", true);
+        return R.ok(result);
+    }
+
+    private int blockingHomeProxyPoolCount(Long poolId) {
+        if (jdbcTemplate == null || poolId == null) return 0;
+        try {
+            Integer routes = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM home_proxy_route WHERE (ingress_pool_id=? OR egress_pool_id=?) AND state<>'deleted'",
+                    Integer.class, poolId, poolId);
+            Integer gateways = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM home_proxy_gateway WHERE pool_id=?",
+                    Integer.class, poolId);
+            return (routes == null ? 0 : routes) + (gateways == null ? 0 : gateways);
+        } catch (DataAccessException ignored) {
+            return 0;
+        }
     }
 
     @Override
