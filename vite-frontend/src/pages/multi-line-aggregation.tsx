@@ -373,288 +373,339 @@ export default function MultiLineAggregationPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-px overflow-hidden border border-divider bg-divider sm:grid-cols-5">
-        {[
-          ["调度组", data?.summary.groups || 0],
-          ["运行中", data?.summary.active || 0],
-          ["健康线路", data?.summary.healthyPaths || 0],
-          ["预估并发容量", speed(data?.summary.estimatedCapacityMbps)],
-          ["降级组", data?.summary.degraded || 0],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-content1 px-4 py-4">
-            <div className="text-xs text-default-500">{label}</div>
-            <div className="mt-1 text-xl font-semibold">{value}</div>
+      <section className="border border-primary-200 bg-primary-50/50 p-4 dark:border-primary-500/20 dark:bg-primary-500/5 sm:p-5">
+        <div className="flex items-start gap-3">
+          <Activity className="mt-0.5 shrink-0 text-primary" size={18} />
+          <div>
+            <h2 className="text-sm font-semibold">多连接分配</h2>
+            <p className="mt-1 text-xs leading-5 text-default-600 dark:text-default-300">
+              同一个入口同时承载多条完整线路，按连接分配权重；单个 TCP
+              连接不会被拆分，单连接速度仍受实际线路限制。
+            </p>
           </div>
-        ))}
-      </div>
+        </div>
+      </section>
+
+      <section aria-label="多线路并发调度概况" className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">运行概况</h2>
+            <p className="mt-1 text-xs text-default-500">
+              调度组、健康线路和预计并发能力
+            </p>
+          </div>
+          <Chip size="sm" variant="flat">
+            实时状态
+          </Chip>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {[
+            ["调度组", data?.summary.groups || 0],
+            ["运行中", data?.summary.active || 0],
+            ["健康线路", data?.summary.healthyPaths || 0],
+            ["预估并发容量", speed(data?.summary.estimatedCapacityMbps)],
+            ["降级组", data?.summary.degraded || 0],
+          ].map(([label, value]) => (
+            <article
+              key={String(label)}
+              className="border border-divider bg-content1 p-4"
+            >
+              <div className="text-xs text-default-500">{label}</div>
+              <div className="mt-2 text-xl font-semibold">{value}</div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       {!data ? (
         <div className="py-24 text-center text-default-400">正在加载...</div>
       ) : data.groups.length === 0 ? (
-        <div className="border-y border-divider py-20 text-center">
+        <div className="border border-divider bg-content1 py-20 text-center">
           <Gauge className="mx-auto h-9 w-9 text-default-300" />
           <div className="mt-3 font-medium">尚未创建并发调度入口</div>
         </div>
       ) : (
-        <div className="space-y-5">
-          {data.groups.map((group) => (
-            <Card
-              key={group.id}
-              className="border border-divider bg-content1"
-              radius="sm"
-              shadow="none"
-            >
-              <CardBody className="p-0">
-              <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-semibold">{group.name}</h2>
-                    <Chip
-                      color={
-                        group.state === "active"
-                          ? "success"
-                          : group.state === "paused"
-                            ? "default"
-                            : group.state === "degraded"
-                              ? "warning"
-                              : "danger"
-                      }
-                      size="sm"
-                      variant="flat"
-                    >
-                      {statusLabel[group.state] || group.state}
-                    </Chip>
-                    <Chip size="sm" variant="bordered">
-                      并发会话聚合
-                    </Chip>
-                    <Chip size="sm" variant="flat">
-                      {modeLabel[group.mode]}
-                    </Chip>
+        <section aria-label="并发调度组" className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <Route className="text-primary" size={17} />
+                <h2 className="text-sm font-semibold">并发调度组</h2>
+              </div>
+              <p className="mt-1 text-xs text-default-500">
+                每个调度组对应一个公网入口和多个可分配线路
+              </p>
+            </div>
+            <Chip size="sm" variant="flat">
+              {data.groups.length} 个调度组
+            </Chip>
+          </div>
+          <div className="space-y-5">
+            {data.groups.map((group) => (
+              <Card
+                key={group.id}
+                className="border border-divider bg-content1"
+                radius="sm"
+                shadow="none"
+              >
+                <CardBody className="p-0">
+                  <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-semibold">{group.name}</h2>
+                        <Chip
+                          color={
+                            group.state === "active"
+                              ? "success"
+                              : group.state === "paused"
+                                ? "default"
+                                : group.state === "degraded"
+                                  ? "warning"
+                                  : "danger"
+                          }
+                          size="sm"
+                          variant="flat"
+                        >
+                          {statusLabel[group.state] || group.state}
+                        </Chip>
+                        <Chip size="sm" variant="bordered">
+                          并发会话聚合
+                        </Chip>
+                        <Chip size="sm" variant="flat">
+                          {modeLabel[group.mode]}
+                        </Chip>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-default-500">
+                        <span>
+                          入口{" "}
+                          {group.entry_server_ip ||
+                            group.entry_ip ||
+                            group.entry_node_name}
+                          :{group.listen_port}
+                        </span>
+                        <span>目标 {group.remote_addr}</span>
+                        <span>
+                          {group.protocol_mode === "tcp_udp"
+                            ? "TCP + UDP"
+                            : group.protocol_mode.toUpperCase()}
+                        </span>
+                        <span>
+                          流量{" "}
+                          {bytes(
+                            number(group.in_flow) + number(group.out_flow),
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {!group.forward_id && (
+                        <Button
+                          color="primary"
+                          isLoading={busy === `deploy-${group.id}`}
+                          size="sm"
+                          variant="flat"
+                          onPress={() =>
+                            void action(`deploy-${group.id}`, () =>
+                              deployAggregation(group.id),
+                            )
+                          }
+                        >
+                          部署
+                        </Button>
+                      )}
+                      <Button
+                        isIconOnly
+                        isLoading={busy === `calc-${group.id}`}
+                        size="sm"
+                        title="重新计算权重"
+                        variant="flat"
+                        onPress={() =>
+                          void action(`calc-${group.id}`, () =>
+                            recalculateAggregation(group.id),
+                          )
+                        }
+                      >
+                        <Calculator className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        aria-label="修复底层线路"
+                        isDisabled={!group.forward_id}
+                        isLoading={busy === `repair-${group.id}`}
+                        size="sm"
+                        startContent={<Wrench className="h-4 w-4" />}
+                        title="修复底层线路"
+                        variant="flat"
+                        onPress={() =>
+                          void action(`repair-${group.id}`, () =>
+                            repairAggregation(group.id),
+                          )
+                        }
+                      >
+                        修复底层线路
+                      </Button>
+                      <Button
+                        isIconOnly
+                        isLoading={busy === `test-${group.id}`}
+                        size="sm"
+                        title="验证线路"
+                        variant="flat"
+                        onPress={() => void validate(group)}
+                      >
+                        <FlaskConical className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        title="历史记录"
+                        variant="flat"
+                        onPress={() => void openEvents(group)}
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        isIconOnly
+                        isDisabled={!group.forward_id}
+                        isLoading={busy === `toggle-${group.id}`}
+                        size="sm"
+                        title={group.enabled ? "暂停" : "恢复"}
+                        variant="flat"
+                        onPress={() =>
+                          void action(`toggle-${group.id}`, () =>
+                            toggleAggregation(group.id, !group.enabled),
+                          )
+                        }
+                      >
+                        {group.enabled ? (
+                          <CirclePause className="h-4 w-4" />
+                        ) : (
+                          <CirclePlay className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => openEdit(group)}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        isIconOnly
+                        color="danger"
+                        isLoading={busy === `delete-${group.id}`}
+                        size="sm"
+                        title="删除"
+                        variant="light"
+                        onPress={() => void remove(group)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-default-500">
-                    <span>
-                      入口{" "}
-                      {group.entry_server_ip ||
-                        group.entry_ip ||
-                        group.entry_node_name}
-                      :{group.listen_port}
-                    </span>
-                    <span>目标 {group.remote_addr}</span>
-                    <span>
-                      {group.protocol_mode === "tcp_udp"
-                        ? "TCP + UDP"
-                        : group.protocol_mode.toUpperCase()}
-                    </span>
-                    <span>
-                      流量{" "}
-                      {bytes(number(group.in_flow) + number(group.out_flow))}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {!group.forward_id && (
-                    <Button
-                      color="primary"
-                      isLoading={busy === `deploy-${group.id}`}
-                      size="sm"
-                      variant="flat"
-                      onPress={() =>
-                        void action(`deploy-${group.id}`, () =>
-                          deployAggregation(group.id),
-                        )
-                      }
-                    >
-                      部署
-                    </Button>
+                  {group.last_error && (
+                    <div className="border-t border-warning-200 bg-warning-50 px-4 py-2 text-xs text-warning-700 dark:bg-warning-950/20">
+                      {group.last_error}
+                    </div>
                   )}
-                  <Button
-                    isIconOnly
-                    isLoading={busy === `calc-${group.id}`}
-                    size="sm"
-                    title="重新计算权重"
-                    variant="flat"
-                    onPress={() =>
-                      void action(`calc-${group.id}`, () =>
-                        recalculateAggregation(group.id),
-                      )
-                    }
-                  >
-                    <Calculator className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    aria-label="修复底层线路"
-                    isDisabled={!group.forward_id}
-                    isLoading={busy === `repair-${group.id}`}
-                    size="sm"
-                    startContent={<Wrench className="h-4 w-4" />}
-                    title="修复底层线路"
-                    variant="flat"
-                    onPress={() =>
-                      void action(`repair-${group.id}`, () =>
-                        repairAggregation(group.id),
-                      )
-                    }
-                  >
-                    修复底层线路
-                  </Button>
-                  <Button
-                    isIconOnly
-                    isLoading={busy === `test-${group.id}`}
-                    size="sm"
-                    title="验证线路"
-                    variant="flat"
-                    onPress={() => void validate(group)}
-                  >
-                    <FlaskConical className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    title="历史记录"
-                    variant="flat"
-                    onPress={() => void openEvents(group)}
-                  >
-                    <History className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    isDisabled={!group.forward_id}
-                    isLoading={busy === `toggle-${group.id}`}
-                    size="sm"
-                    title={group.enabled ? "暂停" : "恢复"}
-                    variant="flat"
-                    onPress={() =>
-                      void action(`toggle-${group.id}`, () =>
-                        toggleAggregation(group.id, !group.enabled),
-                      )
-                    }
-                  >
-                    {group.enabled ? (
-                      <CirclePause className="h-4 w-4" />
-                    ) : (
-                      <CirclePlay className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="flat"
-                    onPress={() => openEdit(group)}
-                  >
-                    编辑
-                  </Button>
-                  <Button
-                    isIconOnly
-                    color="danger"
-                    isLoading={busy === `delete-${group.id}`}
-                    size="sm"
-                    title="删除"
-                    variant="light"
-                    onPress={() => void remove(group)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              {group.last_error && (
-                <div className="border-t border-warning-200 bg-warning-50 px-4 py-2 text-xs text-warning-700 dark:bg-warning-950/20">
-                  {group.last_error}
-                </div>
-              )}
-              <div className="overflow-x-auto border-t border-divider">
-                <Table
-                  removeWrapper
-                  aria-label={`${group.name} 线路`}
-                  classNames={{ table: "min-w-[1000px]" }}
-                >
-                  <TableHeader>
-                    <TableColumn>线路</TableColumn>
-                    <TableColumn>状态</TableColumn>
-                    <TableColumn>有效权重</TableColumn>
-                    <TableColumn>实测带宽</TableColumn>
-                    <TableColumn>RTT</TableColumn>
-                    <TableColumn>丢包</TableColumn>
-                    <TableColumn>抖动</TableColumn>
-                    <TableColumn>指标时间</TableColumn>
-                  </TableHeader>
-                  <TableBody items={group.members}>
-                    {(member) => (
-                      <TableRow key={member.id}>
-                        <TableCell>
-                          <div className="font-medium">
-                            {member.tunnel_name}
-                          </div>
-                          <div className="text-xs text-default-400">
-                            {member.in_node_name} → {member.out_node_name}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <Chip
-                              color={
-                                member.health_status === "healthy"
-                                  ? "success"
-                                  : member.health_status === "unhealthy"
-                                    ? "danger"
-                                    : "warning"
-                              }
-                              size="sm"
-                              variant="dot"
-                            >
-                              {member.health_status === "healthy"
-                                ? "健康"
-                                : member.health_status === "unhealthy"
-                                  ? "异常"
-                                  : "待确认"}
-                            </Chip>
-                            {member.health_status === "unhealthy" && (
-                              <div className="max-w-[300px] text-xs leading-5 text-danger-600">
-                                <div>
-                                  {member.failure_segment || "线路探测失败"}
-                                </div>
-                                <div className="font-mono">
-                                  {member.failure_address || "-"}
-                                </div>
-                                <div
-                                  className="truncate"
-                                  title={
-                                    member.failure_message || member.last_error
-                                  }
-                                >
-                                  {member.failure_message || member.last_error}
-                                </div>
+                  <div className="overflow-x-auto border-t border-divider">
+                    <Table
+                      removeWrapper
+                      aria-label={`${group.name} 线路`}
+                      classNames={{ table: "min-w-[1000px]" }}
+                    >
+                      <TableHeader>
+                        <TableColumn>线路</TableColumn>
+                        <TableColumn>状态</TableColumn>
+                        <TableColumn>有效权重</TableColumn>
+                        <TableColumn>实测带宽</TableColumn>
+                        <TableColumn>RTT</TableColumn>
+                        <TableColumn>丢包</TableColumn>
+                        <TableColumn>抖动</TableColumn>
+                        <TableColumn>指标时间</TableColumn>
+                      </TableHeader>
+                      <TableBody items={group.members}>
+                        {(member) => (
+                          <TableRow key={member.id}>
+                            <TableCell>
+                              <div className="font-medium">
+                                {member.tunnel_name}
                               </div>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{member.effective_weight}</TableCell>
-                        <TableCell>{speed(member.bandwidth_mbps)}</TableCell>
-                        <TableCell>{latency(member.latency_ms)}</TableCell>
-                        <TableCell>
-                          {percent(member.packet_loss_percent)}
-                        </TableCell>
-                        <TableCell>{latency(member.jitter_ms)}</TableCell>
-                        <TableCell>
-                          {timeText(member.metric_measured_at)}
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 border-t border-divider px-4 py-3 text-xs text-default-500">
-                <span>
-                  {group.healthyPaths}/{group.members.length} 条健康线路 ·
-                  预估容量 {speed(group.estimatedCapacityMbps)}
-                </span>
-                <span>
-                  自动权重 {group.auto_weight ? "已开启" : "手动"} · 最近计算{" "}
-                  {timeText(group.last_calculated_at)}
-                </span>
-              </div>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
+                              <div className="text-xs text-default-400">
+                                {member.in_node_name} → {member.out_node_name}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="space-y-1">
+                                <Chip
+                                  color={
+                                    member.health_status === "healthy"
+                                      ? "success"
+                                      : member.health_status === "unhealthy"
+                                        ? "danger"
+                                        : "warning"
+                                  }
+                                  size="sm"
+                                  variant="dot"
+                                >
+                                  {member.health_status === "healthy"
+                                    ? "健康"
+                                    : member.health_status === "unhealthy"
+                                      ? "异常"
+                                      : "待确认"}
+                                </Chip>
+                                {member.health_status === "unhealthy" && (
+                                  <div className="max-w-[300px] text-xs leading-5 text-danger-600">
+                                    <div>
+                                      {member.failure_segment || "线路探测失败"}
+                                    </div>
+                                    <div className="font-mono">
+                                      {member.failure_address || "-"}
+                                    </div>
+                                    <div
+                                      className="truncate"
+                                      title={
+                                        member.failure_message ||
+                                        member.last_error
+                                      }
+                                    >
+                                      {member.failure_message ||
+                                        member.last_error}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>{member.effective_weight}</TableCell>
+                            <TableCell>
+                              {speed(member.bandwidth_mbps)}
+                            </TableCell>
+                            <TableCell>{latency(member.latency_ms)}</TableCell>
+                            <TableCell>
+                              {percent(member.packet_loss_percent)}
+                            </TableCell>
+                            <TableCell>{latency(member.jitter_ms)}</TableCell>
+                            <TableCell>
+                              {timeText(member.metric_measured_at)}
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 border-t border-divider px-4 py-3 text-xs text-default-500">
+                    <span>
+                      {group.healthyPaths}/{group.members.length} 条健康线路 ·
+                      预估容量 {speed(group.estimatedCapacityMbps)}
+                    </span>
+                    <span>
+                      自动权重 {group.auto_weight ? "已开启" : "手动"} ·
+                      最近计算 {timeText(group.last_calculated_at)}
+                    </span>
+                  </div>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+        </section>
       )}
 
       <Modal

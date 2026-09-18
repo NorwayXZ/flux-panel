@@ -1,3 +1,9 @@
+## 2.51.76 Routing overview and aggregation card layouts
+
+- Reorganizes the Routing Center into module summary cards, boundary cards, capability cards, and static finding cards so it reads as an overview rather than a flat table.
+- Adds a focused multi-connection explanation and card-based runtime summary to Multi-line Aggregation while keeping dense path metrics available for comparison.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.75 Source-IP layout and orphan port cleanup
 
 - Reorganizes the Source IP routing page into clear cards for the operating model, rule capabilities, runtime summary, debug tool, IP databases, and routing groups.

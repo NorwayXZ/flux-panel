@@ -625,29 +625,39 @@ export default function RoutingOverviewPage() {
         </section>
       )}
 
-      <section
-        aria-label="线路调度配置数量"
-        className="grid grid-cols-2 border-y border-divider sm:grid-cols-5"
-      >
-        {counts.map(([label, value, path], index) => (
-          <button
-            key={label}
-            className={`flex min-h-24 items-center justify-between px-4 py-4 text-left transition-colors hover:bg-default-50 dark:hover:bg-default-100/5 sm:px-6 ${index < counts.length - 1 ? "border-r border-divider" : ""}`}
-            type="button"
-            onClick={() => navigate(path)}
-          >
-            <div>
-              <p className="text-xs text-default-500">{label}</p>
-              <p className="mt-1 text-2xl font-semibold">
+      <section aria-label="线路调度配置数量" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">调度模块概况</h2>
+            <p className="mt-1 text-xs text-default-500">
+              点击卡片进入对应模块配置
+            </p>
+          </div>
+          <Chip size="sm" variant="flat">
+            只读总览
+          </Chip>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {counts.map(([label, value, path]) => (
+            <button
+              key={label}
+              className="border border-divider bg-content1 p-4 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/5"
+              type="button"
+              onClick={() => navigate(path)}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-default-500">{label}</p>
+                <ExternalLink className="text-default-400" size={15} />
+              </div>
+              <p className="mt-2 text-2xl font-semibold">
                 {blockingLoading ? "-" : value}
               </p>
-            </div>
-            <ExternalLink className="h-4 w-4 text-default-400" />
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </section>
 
-      <section>
+      <section className="space-y-3">
         <div className="mb-3 flex items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">模块边界</h2>
@@ -694,7 +704,7 @@ export default function RoutingOverviewPage() {
         </div>
       </section>
 
-      <section>
+      <section className="space-y-3">
         <div className="mb-3 flex items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">功能能力矩阵</h2>
@@ -707,38 +717,54 @@ export default function RoutingOverviewPage() {
             调度关系
           </Chip>
         </div>
-        <div className="overflow-x-auto border border-divider bg-content1">
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="border-b border-divider bg-default-100 text-xs text-default-500">
-              <tr>
-                <th className="px-4 py-3 font-medium">功能</th>
-                <th className="px-4 py-3 font-medium">Agent 版本要求</th>
-                <th className="px-4 py-3 font-medium">是否产生中转流量</th>
-                <th className="px-4 py-3 font-medium">是否依赖 DNS</th>
-                <th className="px-4 py-3 font-medium">UDP 支持</th>
-                <th className="px-4 py-3 font-medium">普通用户授权</th>
-              </tr>
-            </thead>
-            <tbody>
-              {capabilityRows.map((row) => (
-                <tr
-                  key={row.feature}
-                  className="border-b border-divider/70 last:border-0"
-                >
-                  <td className="px-4 py-3 font-medium">{row.feature}</td>
-                  <td className="px-4 py-3 text-default-600">{row.agent}</td>
-                  <td className="px-4 py-3 text-default-600">{row.traffic}</td>
-                  <td className="px-4 py-3 text-default-600">{row.dns}</td>
-                  <td className="px-4 py-3 text-default-600">{row.udp}</td>
-                  <td className="px-4 py-3 text-default-600">{row.userAuth}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {capabilityRows.map((row) => (
+            <article
+              key={row.feature}
+              className="border border-divider bg-content1 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="font-semibold">{row.feature}</h3>
+                <Route className="shrink-0 text-primary" size={17} />
+              </div>
+              <dl className="mt-4 space-y-2 border-t border-divider pt-3 text-xs">
+                <div className="flex items-start justify-between gap-3">
+                  <dt className="text-default-500">Agent</dt>
+                  <dd className="max-w-[68%] text-right text-default-700">
+                    {row.agent}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <dt className="text-default-500">中转流量</dt>
+                  <dd className="max-w-[68%] text-right text-default-700">
+                    {row.traffic}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <dt className="text-default-500">DNS</dt>
+                  <dd className="max-w-[68%] text-right text-default-700">
+                    {row.dns}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <dt className="text-default-500">UDP</dt>
+                  <dd className="max-w-[68%] text-right text-default-700">
+                    {row.udp}
+                  </dd>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <dt className="text-default-500">用户授权</dt>
+                  <dd className="max-w-[68%] text-right text-default-700">
+                    {row.userAuth}
+                  </dd>
+                </div>
+              </dl>
+            </article>
+          ))}
         </div>
       </section>
 
-      <section>
+      <section className="space-y-3">
         <div className="mb-3 flex items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold">静态检查结果</h2>
