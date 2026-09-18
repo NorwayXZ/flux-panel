@@ -1,3 +1,9 @@
+## 2.51.74 Separate switch events from failover resources
+
+- Gives the recent-switch event stream a lighter visual treatment with compact event cards, status accents, and an event-stream label.
+- Adds a separate Cross-entry resource section heading so operational failover cards are clearly distinct from historical switch events.
+- Panel-only release; Agent and Connector remain `2.51.37`.
+
 ## 2.51.73 Uniform recent-switch cards
 
 - Makes the latest Cross-entry Failover event use the same compact two-column card size as every other recent event.

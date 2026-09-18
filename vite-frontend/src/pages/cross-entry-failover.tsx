@@ -2277,11 +2277,19 @@ export default function CrossEntryFailoverPage() {
       {recentSwitches.length > 0 && (
         <section aria-label="最近入口切换" className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold">最近切换</h2>
+            <div className="flex items-start gap-2">
+              <Activity className="mt-0.5 text-secondary" size={17} />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-semibold">最近切换事件</h2>
+                  <Chip color="secondary" size="sm" variant="flat">
+                    事件流
+                  </Chip>
+                </div>
               <p className="mt-1 text-xs text-default-500">
                 累计切换 {summary.switches} 次 · 每个容灾组保留最近一次事件
               </p>
+              </div>
             </div>
             <span className="text-xs text-default-500">
               完整记录可打开对应容灾组的历史
@@ -2298,7 +2306,7 @@ export default function CrossEntryFailoverPage() {
               return (
                 <article
                   key={group.id}
-                  className={`flex h-full min-h-[220px] flex-col rounded-md border bg-content1 p-4 ${event.status === "failed" ? "border-danger/40 border-l-2" : latest ? "border-secondary/50 border-l-2" : "border-divider border-l-2"}`}
+                  className={`flex h-full flex-col rounded-md border bg-default-50/70 p-3 dark:bg-content1/60 sm:p-4 ${event.status === "failed" ? "border-danger/40 border-l-2" : latest ? "border-secondary/50 border-l-2" : "border-divider border-l-2"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -2371,6 +2379,21 @@ export default function CrossEntryFailoverPage() {
           </div>
         </section>
       )}
+
+      <div className="flex flex-wrap items-end justify-between gap-2 border-t border-divider pt-5">
+        <div className="flex items-start gap-2">
+          <ShieldCheck className="mt-0.5 text-primary" size={17} />
+          <div>
+            <h2 className="text-sm font-semibold">容灾组资源</h2>
+            <p className="mt-1 text-xs text-default-500">
+              正在运行的入口容灾配置、线路状态和控制操作
+            </p>
+          </div>
+        </div>
+        <Chip size="sm" variant="flat">
+          {groups.length} 组
+        </Chip>
+      </div>
 
       {groups.length === 0 ? (
         <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
