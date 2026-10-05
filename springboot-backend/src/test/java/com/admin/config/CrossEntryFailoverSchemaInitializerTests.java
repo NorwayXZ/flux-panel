@@ -43,6 +43,11 @@ class CrossEntryFailoverSchemaInitializerTests {
         assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_member_daily_usage")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `traffic_active_millis`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `expires_at`")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `traffic_quota_resume_enabled`")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_quota_pause")));
+        for (String column : List.of("from_forward_name", "to_forward_name", "from_entry_address", "to_entry_address", "from_entry_port", "to_entry_port")) {
+            assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `" + column + "`")), column);
+        }
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD INDEX `idx_cross_entry_activity`")));
     }
 }

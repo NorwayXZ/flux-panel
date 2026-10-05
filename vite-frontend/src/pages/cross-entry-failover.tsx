@@ -2011,7 +2011,7 @@ export default function CrossEntryFailoverPage() {
       ),
       dnsVerifyEnabled: form.dnsVerifyEnabled,
       manualControlMode:
-        form.routingMode === "failover" && !tcpMode
+        form.routingMode === "failover"
           ? form.manualControlMode
           : "auto",
       lockedMemberId:

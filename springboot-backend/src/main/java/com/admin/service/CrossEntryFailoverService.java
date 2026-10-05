@@ -18,6 +18,7 @@ import com.admin.common.utils.CrossEntryQualityEvaluator;
 import com.admin.common.utils.CrossEntryTopology;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
+import com.admin.common.utils.IpLiteralUtil;
 import com.admin.common.utils.WebSocketServer;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
@@ -246,6 +247,20 @@ public class CrossEntryFailoverService {
         };
     }
 
+    /** Byte accounting is independent of TCP connection telemetry (including UDP reports). */
+    public void recordTraffic(Long forwardId, Long reportingNodeId, long inbound, long outbound) {
+        if (forwardId == null || reportingNodeId == null) return;
+        List<Long> groups = jdbcTemplate.queryForList(
+                "SELECT DISTINCT group_id FROM cross_entry_failover_member WHERE forward_id=? AND entry_node_id=?",
+                Long.class, forwardId, reportingNodeId);
+        for (Long groupId : groups) {
+            synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
+                long now = System.currentTimeMillis();
+                enforceTrafficQuota(groupId, prepareTrafficQuotaPeriod(groupId, now), inbound, outbound, now);
+            }
+        }
+    }
+
     private void enforceTrafficQuota(long groupId, Map<String, Object> state,
                                      long inbound, long outbound, long now) {
         if (state == null || !bool(state.get("trafficQuotaEnabled")) || bool(state.get("trafficQuotaExhausted"))) return;
@@ -257,9 +272,9 @@ public class CrossEntryFailoverService {
         long next = used >= limit || delta >= limit - used ? limit : used + delta;
         boolean exhausted = next >= limit;
         int updated = jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=?,"
-                        + "traffic_quota_exhausted=?,traffic_quota_paused=?,traffic_quota_exhausted_at=CASE WHEN ? THEN ? ELSE traffic_quota_exhausted_at END,"
+                        + "traffic_quota_exhausted=?,traffic_quota_exhausted_at=CASE WHEN ? THEN ? ELSE traffic_quota_exhausted_at END,"
                         + "updated_time=? WHERE id=? AND traffic_quota_enabled=1 AND traffic_quota_exhausted=0",
-                next, exhausted, exhausted, exhausted, now, now, groupId);
+                next, exhausted, exhausted, now, now, groupId);
         if (updated != 1 || !exhausted) return;
 
         String pauseError = pauseGroupForTrafficQuota(groupId, now);
@@ -277,22 +292,37 @@ public class CrossEntryFailoverService {
         if (state == null || !bool(state.get("trafficQuotaEnabled"))) return state;
         long periodStart = trafficQuotaPeriodStartAt(number(state.get("trafficQuotaResetDay")).intValue(), now);
         Long storedPeriod = nullableLong(state.get("trafficQuotaPeriodStartAt"));
-        if (storedPeriod != null && storedPeriod == periodStart) return state;
-
-        boolean quotaPaused = bool(state.get("trafficQuotaPaused"));
-        if (quotaPaused) {
-            String resumeError = resumeQuotaPausedForwards(groupId);
-            if (resumeError != null) {
-                jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_last_error=?,updated_time=? WHERE id=?",
-                        shorten("新周期已到，但恢复转发失败：" + resumeError, 500), now, groupId);
-                return state;
-            }
+        if (storedPeriod == null || storedPeriod != periodStart) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=0,traffic_quota_exhausted=0,"
+                            + "traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,updated_time=? WHERE id=?",
+                    periodStart, now, groupId);
+            state = loadQuotaGroup(groupId);
         }
-        jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=0,traffic_quota_exhausted=0,"
-                        + "traffic_quota_paused=0,traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,"
-                        + "traffic_quota_last_error=NULL,enabled=CASE WHEN ? THEN 1 ELSE enabled END,updated_time=? WHERE id=?",
-                periodStart, quotaPaused, now, groupId);
+        if (bool(state.get("trafficQuotaPaused")) && !bool(state.get("trafficQuotaExhausted"))
+                && quotaMayResume(state, now)) {
+            restoreQuotaPausedGroup(groupId, now);
+        }
         return loadQuotaGroup(groupId);
+    }
+
+    static boolean quotaMayResume(Map<String, Object> group, long now) {
+        Object expires = group.get("expiresAt");
+        Object resume = group.get("trafficQuotaResumeEnabled");
+        return !Objects.equals(resume, false) && (!(resume instanceof Number) || ((Number) resume).intValue() != 0)
+                && (expires == null || ((Number) expires).longValue() > now);
+    }
+
+    private String restoreQuotaPausedGroup(long groupId, long now) {
+        Map<String, Object> state = loadQuotaGroup(groupId);
+        if (state == null || !quotaMayResume(state, now)) return "链接已到期或被管理员停用";
+        String error = resumeQuotaPausedForwards(groupId);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_last_error=?,updated_time=? WHERE id=?",
+                error == null ? null : shorten("恢复转发失败，将自动重试：" + error, 500), now, groupId);
+        if (error == null) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_paused=0,enabled=1,updated_time=? WHERE id=?",
+                    now, groupId);
+        }
+        return error;
     }
 
     static long trafficQuotaPeriodStartAt(int resetDay, long now) {
@@ -304,15 +334,24 @@ public class CrossEntryFailoverService {
     }
 
     private String pauseGroupForTrafficQuota(long groupId, long now) {
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_resume_enabled=enabled WHERE id=? AND traffic_quota_paused=0",
+                groupId);
+        // Only forwards that were running belong to this quota pause/resume operation.
+        jdbcTemplate.update("INSERT IGNORE INTO cross_entry_quota_pause(group_id,forward_id) "
+                + "SELECT m.group_id,m.forward_id FROM cross_entry_failover_member m JOIN forward f ON f.id=m.forward_id "
+                + "WHERE m.group_id=? AND f.status=1", groupId);
+        jdbcTemplate.update("UPDATE cross_entry_quota_pause p JOIN forward f ON f.id=p.forward_id "
+                + "SET p.paused=0 WHERE p.group_id=? AND f.status=1", groupId);
         jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=0,traffic_quota_paused=1,updated_time=? WHERE id=?",
                 now, groupId);
         List<Long> forwardIds = jdbcTemplate.queryForList(
-                "SELECT forward_id FROM cross_entry_failover_member WHERE group_id=?", Long.class, groupId);
+                "SELECT forward_id FROM cross_entry_quota_pause WHERE group_id=? AND paused=0", Long.class, groupId);
         List<String> errors = new ArrayList<>();
         for (Long forwardId : forwardIds) {
             try {
                 R result = forwardService.pauseManagedForward(forwardId);
                 if (result.getCode() != 0) errors.add(result.getMsg());
+                else jdbcTemplate.update("UPDATE cross_entry_quota_pause SET paused=1 WHERE group_id=? AND forward_id=?", groupId, forwardId);
             } catch (RuntimeException e) {
                 errors.add(e.getMessage());
             }
@@ -321,13 +360,23 @@ public class CrossEntryFailoverService {
     }
 
     private String resumeQuotaPausedForwards(long groupId) {
+        jdbcTemplate.update("DELETE p FROM cross_entry_quota_pause p LEFT JOIN forward f ON f.id=p.forward_id "
+                + "WHERE p.group_id=? AND f.id IS NULL", groupId);
         List<Long> forwardIds = jdbcTemplate.queryForList(
-                "SELECT forward_id FROM cross_entry_failover_member WHERE group_id=?", Long.class, groupId);
+                "SELECT forward_id FROM cross_entry_quota_pause WHERE group_id=?", Long.class, groupId);
+        if (forwardIds.isEmpty()) {
+            Integer paused = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_member m "
+                    + "JOIN forward f ON f.id=m.forward_id WHERE m.group_id=? AND f.status=0", Integer.class, groupId);
+            if (paused != null && paused > 0) {
+                return "没有可确认的额度暂停快照；请在转发管理中确认原有停用状态并恢复需要启用的线路";
+            }
+        }
         List<String> errors = new ArrayList<>();
         for (Long forwardId : forwardIds) {
             try {
                 R result = forwardService.resumeManagedForward(forwardId);
                 if (result.getCode() != 0) errors.add(result.getMsg());
+                else jdbcTemplate.update("DELETE FROM cross_entry_quota_pause WHERE group_id=? AND forward_id=?", groupId, forwardId);
             } catch (RuntimeException e) {
                 errors.add(e.getMessage());
             }
@@ -337,7 +386,8 @@ public class CrossEntryFailoverService {
 
     private Map<String, Object> loadQuotaGroup(long groupId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT id,traffic_quota_enabled AS trafficQuotaEnabled,traffic_quota_limit_bytes AS trafficQuotaLimitBytes,"
+                "SELECT id,enabled,expires_at AS expiresAt,traffic_quota_resume_enabled AS trafficQuotaResumeEnabled,"
+                        + "traffic_quota_enabled AS trafficQuotaEnabled,traffic_quota_limit_bytes AS trafficQuotaLimitBytes,"
                         + "traffic_quota_direction AS trafficQuotaDirection,traffic_quota_reset_day AS trafficQuotaResetDay,"
                         + "traffic_quota_used_bytes AS trafficQuotaUsedBytes,traffic_quota_period_start_at AS trafficQuotaPeriodStartAt,"
                         + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused "
@@ -441,8 +491,8 @@ public class CrossEntryFailoverService {
                     "SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
                             + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,"
                             + "COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
-                            + "fm.forward_name AS fromForwardName,fm.entry_address AS fromEntryAddress,fm.entry_port AS fromEntryPort,"
-                            + "tm.forward_name AS toForwardName,tm.entry_address AS toEntryAddress,tm.entry_port AS toEntryPort "
+                            + "COALESCE(e.from_forward_name,fm.forward_name) AS fromForwardName,COALESCE(e.from_entry_address,fm.entry_address) AS fromEntryAddress,COALESCE(e.from_entry_port,fm.entry_port) AS fromEntryPort,"
+                            + "COALESCE(e.to_forward_name,tm.forward_name) AS toForwardName,COALESCE(e.to_entry_address,tm.entry_address) AS toEntryAddress,COALESCE(e.to_entry_port,tm.entry_port) AS toEntryPort "
                             + "FROM cross_entry_failover_event e "
                             + "LEFT JOIN cross_entry_failover_member fm ON fm.id=e.from_member_id "
                             + "LEFT JOIN cross_entry_failover_member tm ON tm.id=e.to_member_id "
@@ -458,6 +508,12 @@ public class CrossEntryFailoverService {
 
     @Transactional(rollbackFor = Exception.class)
     public R save(CrossEntryFailoverSaveDto dto) {
+        synchronized (groupLocks.computeIfAbsent(dto.getId() == null ? 0L : dto.getId(), ignored -> new Object())) {
+            return saveLocked(dto);
+        }
+    }
+
+    private R saveLocked(CrossEntryFailoverSaveDto dto) {
         List<ManagedResourceDraft> createdManagedResources = new ArrayList<>();
         List<ManagedResourceDraft> removedManagedResources = new ArrayList<>();
         Long createdGroupId = null;
@@ -488,6 +544,7 @@ public class CrossEntryFailoverService {
             if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该域名已配置跨入口容灾");
             saveStage = "forward_validation";
             List<Map<String, Object>> forwards = loadAndValidateForwards(dto.getMemberForwardIds(), dto.getRecordType());
+            assertAuthorizedSourceChangeAllowed(dto, forwards);
             validateSchedules(dto, forwards);
             saveStage = "conflict_validation";
             schedulingConflictService.assertDnsRecordAvailable("cross_entry", dto.getId(), dto.getDomain(), dto.getRecordType());
@@ -520,29 +577,7 @@ public class CrossEntryFailoverService {
                         "容灾组不存在", dto, 0);
                 Map<String, Object> old = existing.get(0);
                 jdbcTemplate.queryForList(
-                        "SELECT forward_id AS forwardId,status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,"
-                                + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_healthy_at AS lastHealthyAt,last_failure_at AS lastFailureAt,"
-                                + "quality_latency_ms AS qualityLatencyMs,quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
-                                + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,"
-                                + "quality_state AS qualityState,quality_bad_count AS qualityBadCount,quality_good_count AS qualityGoodCount,"
-                                + "quality_flap_count AS qualityFlapCount,quality_flap_window_started_at AS qualityFlapWindowStartedAt,"
-                                + "quality_suppressed_until AS qualitySuppressedUntil,quality_suppressed_reason AS qualitySuppressedReason,"
-                                + "quality_penalty_level AS qualityPenaltyLevel,quality_penalty_episode_count AS qualityPenaltyEpisodeCount,"
-                                + "quality_penalty_window_started_at AS qualityPenaltyWindowStartedAt,quality_penalty_last_at AS qualityPenaltyLastAt,"
-                                + "quality_recovery_observe_until AS qualityRecoveryObserveUntil,"
-                                + "switch_rejected_until AS switchRejectedUntil,switch_rejected_reason AS switchRejectedReason,switch_reject_count AS switchRejectCount,"
-                                + "quality_last_error AS qualityLastError,quality_checked_at AS qualityCheckedAt,"
-                                + "fault_episode_count AS faultEpisodeCount,connect_fault_count AS connectFaultCount,latency_fault_count AS latencyFaultCount,"
-                                + "loss_fault_count AS lossFaultCount,p95_fault_count AS p95FaultCount,jitter_fault_count AS jitterFaultCount,"
-                                + "flap_fault_count AS flapFaultCount,switch_trigger_count AS switchTriggerCount,last_fault_type AS lastFaultType,"
-                                + "last_fault_reason AS lastFaultReason,last_fault_at AS lastFaultAt,"
-                                + "telemetry_ready AS telemetryReady,total_connections AS totalConnections,current_connections AS currentConnections,"
-                                + "reported_total_connections AS reportedTotalConnections,telemetry_generation AS telemetryGeneration,"
-                                + "pending_probe_connections AS pendingProbeConnections,"
-                                + "last_telemetry_at AS lastTelemetryAt,activity_in_flow AS activityInFlow,"
-                                + "activity_out_flow AS activityOutFlow,last_in_flow_at AS lastInFlowAt,"
-                                + "last_out_flow_at AS lastOutFlowAt,last_activity_at AS lastActivityAt "
-                                + "FROM cross_entry_failover_member WHERE group_id=?", id)
+                        "SELECT id,enabled,forward_id AS forwardId FROM cross_entry_failover_member WHERE group_id=?", id)
                         .forEach(row -> previousMemberFaultStats.put(number(row.get("forwardId")).longValue(), row));
                 previousActiveForwardId = nullableLong(old.get("activeForwardId"));
                 previousActiveMemberId = nullableLong(old.get("activeMemberId"));
@@ -655,7 +690,15 @@ public class CrossEntryFailoverService {
                 if (previousGroupEnabled) {
                     settleActiveUsage(id, previousActiveMemberId, previousActiveSinceAt, now);
                 }
-                jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
+                snapshotEventEndpoints(id);
+                String retained = forwards.stream().map(row -> "?").collect(Collectors.joining(","));
+                List<Object> retainedArgs = new ArrayList<>();
+                retainedArgs.add(id);
+                forwards.forEach(row -> retainedArgs.add(row.get("id")));
+                jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=? AND forward_id NOT IN (" + retained + ")",
+                        retainedArgs.toArray());
+                jdbcTemplate.update("DELETE p FROM cross_entry_quota_pause p LEFT JOIN cross_entry_failover_member m "
+                        + "ON m.group_id=p.group_id AND m.forward_id=p.forward_id WHERE p.group_id=? AND m.id IS NULL", id);
             }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET expires_at=? WHERE id=?", dto.getExpiresAt(), id);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET tcp_primary_preference_tolerance_ms=?,"
@@ -669,57 +712,34 @@ public class CrossEntryFailoverService {
             for (int priority = 0; priority < forwards.size(); priority++) {
                 Map<String, Object> forward = forwards.get(priority);
                 long forwardId = number(forward.get("id")).longValue();
-                jdbcTemplate.update("INSERT INTO cross_entry_failover_member "
+                Map<String, Object> oldFaultStats = previousMemberFaultStats.get(forwardId);
+                Long memberId;
+                if (oldFaultStats != null) {
+                    memberId = nullableLong(oldFaultStats.get("id"));
+                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET priority=?,weight=?,entry_host=?,entry_address=?,"
+                                    + "topology_signature=?,entry_port=?,forward_name=?,node_name=?,updated_time=? WHERE id=? AND group_id=?",
+                            priority, memberWeight(dto, priority), forward.get("entryHost"), forward.get("entryAddress"),
+                            forward.get("topologySignature"), forward.get("inPort"), forward.get("name"), forward.get("nodeName"), now, memberId, id);
+                } else {
+                    jdbcTemplate.update("INSERT INTO cross_entry_failover_member "
                         + "(group_id,forward_id,priority,weight,enabled,entry_node_id,entry_host,entry_address,topology_signature,entry_port,forward_name,node_name,status,created_time,updated_time) "
                                 + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'unknown',?,?)",
                         id, forwardId, priority, memberWeight(dto, priority), true,
                         number(forward.get("inNodeId")).longValue(), forward.get("entryHost"), forward.get("entryAddress"), forward.get("topologySignature"),
                         number(forward.get("inPort")).intValue(),
                         forward.get("name"), forward.get("nodeName"), now, now);
-                Long memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-                Map<String, Object> oldFaultStats = previousMemberFaultStats.get(forwardId);
-                if (oldFaultStats != null) {
-                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET status=?,fail_count=?,success_count=?,latency_ms=?,last_error=?,last_checked_at=?,"
-                                    + "last_healthy_at=?,last_failure_at=?,quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,quality_loss_percent=?,"
-                                    + "quality_baseline_ms=?,quality_preheated=?,quality_state=?,quality_bad_count=?,quality_good_count=?,quality_flap_count=?,"
-                                    + "quality_flap_window_started_at=?,quality_suppressed_until=?,quality_suppressed_reason=?,quality_penalty_level=?,"
-                                    + "quality_penalty_episode_count=?,quality_penalty_window_started_at=?,quality_penalty_last_at=?,quality_recovery_observe_until=?,"
-                                    + "switch_rejected_until=?,switch_rejected_reason=?,switch_reject_count=?,"
-                                    + "quality_last_error=?,quality_checked_at=?,fault_episode_count=?,connect_fault_count=?,latency_fault_count=?,loss_fault_count=?,p95_fault_count=?,jitter_fault_count=?,"
-                                    + "flap_fault_count=?,switch_trigger_count=?,last_fault_type=?,last_fault_reason=?,last_fault_at=?,"
-                                    + "telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,"
-                                    + "telemetry_generation=?,pending_probe_connections=?,last_telemetry_at=?,activity_in_flow=?,activity_out_flow=?,"
-                                    + "last_in_flow_at=?,last_out_flow_at=?,last_activity_at=? WHERE id=?",
-                            oldFaultStats.get("status"), oldFaultStats.get("failCount"), oldFaultStats.get("successCount"),
-                            oldFaultStats.get("latencyMs"), oldFaultStats.get("lastError"), oldFaultStats.get("lastCheckedAt"),
-                            oldFaultStats.get("lastHealthyAt"), oldFaultStats.get("lastFailureAt"), oldFaultStats.get("qualityLatencyMs"),
-                            oldFaultStats.get("qualityP95Ms"), oldFaultStats.get("qualityJitterMs"), oldFaultStats.get("qualityLossPercent"),
-                            oldFaultStats.get("qualityBaselineMs"), oldFaultStats.get("qualityPreheated"), oldFaultStats.get("qualityState"),
-                            oldFaultStats.get("qualityBadCount"), oldFaultStats.get("qualityGoodCount"), oldFaultStats.get("qualityFlapCount"),
-                            oldFaultStats.get("qualityFlapWindowStartedAt"), oldFaultStats.get("qualitySuppressedUntil"),
-                            oldFaultStats.get("qualitySuppressedReason"), oldFaultStats.get("qualityPenaltyLevel"), oldFaultStats.get("qualityPenaltyEpisodeCount"),
-                            oldFaultStats.get("qualityPenaltyWindowStartedAt"), oldFaultStats.get("qualityPenaltyLastAt"),
-                            oldFaultStats.get("qualityRecoveryObserveUntil"), oldFaultStats.get("switchRejectedUntil"),
-                            oldFaultStats.get("switchRejectedReason"), oldFaultStats.get("switchRejectCount"), oldFaultStats.get("qualityLastError"),
-                            oldFaultStats.get("qualityCheckedAt"), oldFaultStats.get("faultEpisodeCount"), oldFaultStats.get("connectFaultCount"),
-                            oldFaultStats.get("latencyFaultCount"), oldFaultStats.get("lossFaultCount"), oldFaultStats.get("p95FaultCount"),
-                            oldFaultStats.get("jitterFaultCount"), oldFaultStats.get("flapFaultCount"), oldFaultStats.get("switchTriggerCount"),
-                            oldFaultStats.get("lastFaultType"), oldFaultStats.get("lastFaultReason"), oldFaultStats.get("lastFaultAt"),
-                            oldFaultStats.get("telemetryReady"), oldFaultStats.get("totalConnections"), oldFaultStats.get("currentConnections"),
-                            oldFaultStats.get("reportedTotalConnections"), oldFaultStats.get("telemetryGeneration"),
-                            oldFaultStats.get("pendingProbeConnections"), oldFaultStats.get("lastTelemetryAt"),
-                            oldFaultStats.get("activityInFlow"), oldFaultStats.get("activityOutFlow"),
-                            oldFaultStats.get("lastInFlowAt"), oldFaultStats.get("lastOutFlowAt"),
-                            oldFaultStats.get("lastActivityAt"), memberId);
+                    memberId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
                 }
-                if (priority == 0) primaryMemberId = memberId;
-                if (previousActiveForwardId != null && previousActiveForwardId == forwardId) {
+                if (primaryMemberId == null && (oldFaultStats == null || bool(oldFaultStats.get("enabled")))) primaryMemberId = memberId;
+                if (previousActiveForwardId != null && previousActiveForwardId == forwardId
+                        && (oldFaultStats == null || bool(oldFaultStats.get("enabled")))) {
                     retainedActiveMemberId = memberId;
                 }
                 if (requestedLockedForwardId != null && requestedLockedForwardId == forwardId) {
                     retainedLockedMemberId = memberId;
                 }
             }
+            if (primaryMemberId == null) throw new IllegalArgumentException("至少保留一条启用入口");
             Long activeMemberId = "active_active".equals(dto.getRoutingMode())
                     ? primaryMemberId
                     : (retainedActiveMemberId == null ? primaryMemberId : retainedActiveMemberId);
@@ -763,9 +783,9 @@ public class CrossEntryFailoverService {
                 persistManagedResources(id, createdManagedResources);
             }
             saveStage = "dns_publish";
-            if ("active_active".equals(dto.getRoutingMode())) {
+            if (dto.getEnabled() && !bool(savedGroup.get("trafficQuotaExhausted")) && "active_active".equals(dto.getRoutingMode())) {
                 syncActiveEntries(savedGroup, loadMembers(id), "已发布全部入口");
-            } else {
+            } else if (dto.getEnabled() && !bool(savedGroup.get("trafficQuotaExhausted"))) {
                 updateCloudflareDns(savedGroup, selectedEntry);
             }
             Map<String, Object> result = new LinkedHashMap<>();
@@ -880,6 +900,7 @@ public class CrossEntryFailoverService {
     @Transactional
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        if (hasAuthorizedSourceDependents(id)) return R.err("该容灾组仍有客户入口授权，请先撤销授权后再删除，避免客户链路中断");
         List<Map<String, Object>> managedResources = jdbcTemplate.queryForList(
                 "SELECT forward_id AS forwardId,tunnel_id AS tunnelId,created_tunnel AS createdTunnel,"
                         + "port_mode AS portMode,protocol_mode AS protocolMode "
@@ -895,6 +916,8 @@ public class CrossEntryFailoverService {
         jdbcTemplate.update("DELETE FROM cross_entry_failover_schedule WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=?", id);
         jdbcTemplate.update("DELETE FROM cross_entry_failover_group WHERE id=?", id);
+        jdbcTemplate.update("DELETE FROM cross_entry_quota_pause WHERE group_id=?", id);
+        jdbcTemplate.update("UPDATE authorized_entry_template SET status=0,updated_time=? WHERE source_group_id=?", System.currentTimeMillis(), id);
         int cleanupFailed = cleanupPersistedManagedResources(id, managedResources);
         activityGroups.clear();
         if (cleanupFailed > 0) {
@@ -944,6 +967,10 @@ public class CrossEntryFailoverService {
             }
             long now = System.currentTimeMillis();
             if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能重新启用容灾组");
+            if (!enabled && bool(group.get("trafficQuotaPaused"))) {
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_resume_enabled=0,enabled=0,updated_time=? WHERE id=?", now, groupId);
+                return listGroups();
+            }
             if (bool(group.get("enabled")) == enabled) return listGroups();
             if (enabled && bool(group.get("trafficQuotaExhausted"))) {
                 return R.err("该容灾链接已达到本周期流量限额，请先重置流量");
@@ -955,6 +982,11 @@ public class CrossEntryFailoverService {
                 addEvent(groupId, nullableLong(group.get("activeMemberId")), null, "管理员关闭容灾组", "success",
                         "已暂停该组全部入口的探测、自动切换和 DNS 调度；既有转发与连接未被删除或强制断开");
             } else {
+                if (bool(group.get("trafficQuotaPaused"))) {
+                    jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_resume_enabled=1 WHERE id=?", groupId);
+                    String resumeError = restoreQuotaPausedGroup(groupId, now);
+                    if (resumeError != null) return R.err(resumeError);
+                }
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET enabled=1,state='unknown',last_error=NULL,active_since_at=?,updated_time=? WHERE id=?",
                         now, now, groupId);
                 addEvent(groupId, null, nullableLong(group.get("activeMemberId")), "管理员开启容灾组", "success",
@@ -1040,16 +1072,15 @@ public class CrossEntryFailoverService {
         synchronized (lock) {
             Map<String, Object> group = loadQuotaGroup(groupId);
             if (group == null) return R.err("容灾组不存在");
-            if (!enabled && bool(group.get("trafficQuotaPaused"))) {
-                String resumeError = resumeQuotaPausedForwards(groupId);
+            if (!enabled && bool(group.get("trafficQuotaPaused")) && quotaMayResume(group, System.currentTimeMillis())) {
+                String resumeError = restoreQuotaPausedGroup(groupId, System.currentTimeMillis());
                 if (resumeError != null) return R.err("恢复流量限额暂停的转发失败：" + resumeError);
             }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_enabled=?,traffic_quota_limit_bytes=?,"
                             + "traffic_quota_direction=?,traffic_quota_reset_day=?,traffic_quota_exhausted=CASE WHEN ? THEN traffic_quota_exhausted ELSE 0 END,"
-                            + "traffic_quota_paused=CASE WHEN ? THEN traffic_quota_paused ELSE 0 END,traffic_quota_last_error=NULL,"
-                            + "enabled=CASE WHEN ? THEN 1 ELSE enabled END,updated_time=? WHERE id=?",
+                            + "traffic_quota_last_error=NULL,updated_time=? WHERE id=?",
                     enabled, Math.max(0L, limitBytes), normalizedDirection, resetDay,
-                    enabled, enabled, !enabled && bool(group.get("trafficQuotaPaused")), System.currentTimeMillis(), groupId);
+                    enabled, System.currentTimeMillis(), groupId);
             return listGroups();
         }
     }
@@ -1060,16 +1091,19 @@ public class CrossEntryFailoverService {
         synchronized (lock) {
             Map<String, Object> group = loadQuotaGroup(groupId);
             if (group == null) return R.err("容灾组不存在");
-            if (bool(group.get("trafficQuotaPaused"))) {
-                String resumeError = resumeQuotaPausedForwards(groupId);
-                if (resumeError != null) return R.err("恢复流量限额暂停的转发失败：" + resumeError);
-            }
             long now = System.currentTimeMillis();
+            if (nullableLong(group.get("expiresAt")) != null && nullableLong(group.get("expiresAt")) <= now) {
+                return R.err("链接已到期，请先续期再重置流量");
+            }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_used_bytes=0,traffic_quota_exhausted=0,"
-                            + "traffic_quota_paused=0,traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,"
-                            + "traffic_quota_last_error=NULL,enabled=1,updated_time=? WHERE id=?",
+                            + "traffic_quota_period_start_at=?,traffic_quota_exhausted_at=NULL,"
+                            + "traffic_quota_last_error=NULL,updated_time=? WHERE id=?",
                     trafficQuotaPeriodStartAt(number(group.get("trafficQuotaResetDay")).intValue(), now), now, groupId);
-            doProbeGroup(groupId, true);
+            if (bool(group.get("trafficQuotaPaused")) && quotaMayResume(group, now)) {
+                String resumeError = restoreQuotaPausedGroup(groupId, now);
+                if (resumeError != null) return R.err("流量已重置，恢复转发失败，将自动重试：" + resumeError);
+            }
+            if (bool(loadGroup(groupId).get("enabled"))) doProbeGroup(groupId, true);
             return listGroups();
         }
     }
@@ -1077,8 +1111,8 @@ public class CrossEntryFailoverService {
     public R listEvents(Long id) {
         return R.ok(jdbcTemplate.queryForList("SELECT e.id,e.reason,e.status,e.detail,e.created_time AS createdTime,"
                 + "COALESCE(e.from_node_name,fm.node_name) AS fromNodeName,COALESCE(e.to_node_name,tm.node_name) AS toNodeName,"
-                + "fm.forward_name AS fromForwardName,fm.entry_address AS fromEntryAddress,fm.entry_port AS fromEntryPort,"
-                + "tm.forward_name AS toForwardName,tm.entry_address AS toEntryAddress,tm.entry_port AS toEntryPort FROM cross_entry_failover_event e "
+                + "COALESCE(e.from_forward_name,fm.forward_name) AS fromForwardName,COALESCE(e.from_entry_address,fm.entry_address) AS fromEntryAddress,COALESCE(e.from_entry_port,fm.entry_port) AS fromEntryPort,"
+                + "COALESCE(e.to_forward_name,tm.forward_name) AS toForwardName,COALESCE(e.to_entry_address,tm.entry_address) AS toEntryAddress,COALESCE(e.to_entry_port,tm.entry_port) AS toEntryPort FROM cross_entry_failover_event e "
                 + "LEFT JOIN cross_entry_failover_member fm ON fm.id=e.from_member_id "
                 + "LEFT JOIN cross_entry_failover_member tm ON tm.id=e.to_member_id "
                 + "WHERE e.group_id=? ORDER BY e.created_time DESC LIMIT 100", id));
@@ -1120,12 +1154,25 @@ public class CrossEntryFailoverService {
         try {
             long now = System.currentTimeMillis();
             List<Long> groupIds = jdbcTemplate.queryForList(
-                    "SELECT id FROM cross_entry_failover_group WHERE traffic_quota_enabled=1",
+                    "SELECT id FROM cross_entry_failover_group WHERE traffic_quota_enabled=1 OR traffic_quota_paused=1",
                     Long.class);
             for (Long groupId : groupIds) {
                 Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
                 synchronized (lock) {
-                    prepareTrafficQuotaPeriod(groupId, now);
+                    try {
+                        Map<String, Object> state = prepareTrafficQuotaPeriod(groupId, now);
+                        if (state == null) continue;
+                        if (bool(state.get("trafficQuotaExhausted"))
+                                || (bool(state.get("trafficQuotaPaused")) && !quotaMayResume(state, now))) {
+                            String error = pauseGroupForTrafficQuota(groupId, now);
+                            jdbcTemplate.update("UPDATE cross_entry_failover_group SET traffic_quota_last_error=? WHERE id=?",
+                                    error == null ? null : shorten(error, 500), groupId);
+                        } else if (!bool(state.get("trafficQuotaEnabled")) && bool(state.get("trafficQuotaPaused")) && quotaMayResume(state, now)) {
+                            restoreQuotaPausedGroup(groupId, now);
+                        }
+                    } catch (RuntimeException e) {
+                        log.warn("Traffic quota reconciliation failed for {}: {}", groupId, e.getMessage());
+                    }
                 }
             }
         } catch (DataAccessException e) {
@@ -1238,6 +1285,7 @@ public class CrossEntryFailoverService {
     private void doProbeGroup(long groupId, boolean manual) {
         Map<String, Object> group = loadGroup(groupId);
         if (expireGroupIfDue(group, System.currentTimeMillis())) return;
+        if (bool(group.get("trafficQuotaExhausted"))) return;
         if (!manual && !bool(group.get("enabled"))) return;
         List<Map<String, Object>> members = loadMembers(groupId);
         int timeout = number(group.get("connectTimeoutMs")).intValue();
@@ -1848,7 +1896,7 @@ public class CrossEntryFailoverService {
         String type = Objects.toString(group.get("recordType"), "A");
         String domain = Objects.toString(group.get("domain"));
         String providerContent = readProviderRecordContent(group);
-        if (!expected.equalsIgnoreCase(providerContent)) {
+        if (!dnsAddressMatches(expected, providerContent)) {
             return new DnsVerification(false, false,
                     "DNS 服务商记录确认失败：期望 " + expected + "，实际 " + StringUtils.defaultIfBlank(providerContent, "空"));
         }
@@ -1895,13 +1943,21 @@ public class CrossEntryFailoverService {
                 headers.setAccept(List.of(MediaType.valueOf("application/dns-json")));
                 ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
                 List<String> answers = parseDnsAnswers(type, response.getBody());
-                if (answers.stream().anyMatch(answer -> answer.equalsIgnoreCase(expected))) matched++;
+                if (answers.stream().anyMatch(answer -> dnsAddressMatches(expected, answer))) matched++;
                 details.add(endpointHost(endpoint) + "=" + (answers.isEmpty() ? "空" : String.join(",", answers)));
             } catch (RuntimeException e) {
                 details.add(endpointHost(endpoint) + "=查询失败");
             }
         }
-        return new PublicDnsVerification(matched > 0, String.join("；", details));
+        return new PublicDnsVerification(matched == 2, String.join("；", details));
+    }
+
+    static boolean dnsAddressMatches(String expected, String actual) {
+        try {
+            return IpLiteralUtil.normalize(expected).equals(IpLiteralUtil.normalize(actual));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private List<String> parseDnsAnswers(String type, String responseBody) {
@@ -2943,7 +2999,8 @@ public class CrossEntryFailoverService {
 
     private Map<String, Object> loadMember(Long id) {
         if (id == null) return null;
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,entry_address AS entryAddress,node_name AS nodeName FROM cross_entry_failover_member WHERE id=?", id);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT id,entry_address AS entryAddress,node_name AS nodeName,"
+                + "forward_name AS forwardName,entry_port AS entryPort FROM cross_entry_failover_member WHERE id=?", id);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -2990,11 +3047,11 @@ public class CrossEntryFailoverService {
         return new CrossEntryFailoverPolicy.Member(
                 number(member.get("id")).longValue(),
                 number(member.get("priority")).intValue(),
-                bool(member.get("enabled")) && "healthy".equals(member.get("status")),
+                bool(member.get("enabled")) && "healthy".equals(member.get("status")) && !isSwitchRejected(member, now),
                 number(member.get("successCount")).intValue(),
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),
-                useQualityDecision && isQualitySuppressed(group, member, now),
+                isSwitchRejected(member, now) || (useQualityDecision && isQualitySuppressed(group, member, now)),
                 useDetailedLatency && qualityLatency != null
                         ? qualityLatency
                         : (bool(group.get("tcpLatencySelectionEnabled")) ? null : regularLatency),
@@ -3023,10 +3080,48 @@ public class CrossEntryFailoverService {
     }
 
     private void addEvent(long groupId, Long from, Long to, String reason, String status, String detail) {
-        String fromName = memberName(from);
-        String toName = memberName(to);
-        jdbcTemplate.update("INSERT INTO cross_entry_failover_event (group_id,from_member_id,to_member_id,from_node_name,to_node_name,reason,status,detail,created_time) VALUES (?,?,?,?,?,?,?,?,?)",
-                groupId, from, to, fromName, toName, shorten(reason, 255), status, shorten(detail, 500), System.currentTimeMillis());
+        Map<String, Object> fromMember = loadMember(from);
+        Map<String, Object> toMember = loadMember(to);
+        jdbcTemplate.update("INSERT INTO cross_entry_failover_event (group_id,from_member_id,to_member_id,from_node_name,to_node_name,"
+                        + "from_forward_name,to_forward_name,from_entry_address,to_entry_address,from_entry_port,to_entry_port,reason,status,detail,created_time) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                groupId, from, to, eventField(fromMember, "nodeName"), eventField(toMember, "nodeName"),
+                eventField(fromMember, "forwardName"), eventField(toMember, "forwardName"),
+                eventField(fromMember, "entryAddress"), eventField(toMember, "entryAddress"),
+                eventField(fromMember, "entryPort"), eventField(toMember, "entryPort"),
+                shorten(reason, 255), status, shorten(detail, 500), System.currentTimeMillis());
+    }
+
+    private Object eventField(Map<String, Object> member, String key) {
+        return member == null ? null : member.get(key);
+    }
+
+    private void snapshotEventEndpoints(long groupId) {
+        jdbcTemplate.update("UPDATE cross_entry_failover_event e "
+                + "LEFT JOIN cross_entry_failover_member fm ON fm.id=e.from_member_id "
+                + "LEFT JOIN cross_entry_failover_member tm ON tm.id=e.to_member_id SET "
+                + "e.from_forward_name=COALESCE(e.from_forward_name,fm.forward_name),e.to_forward_name=COALESCE(e.to_forward_name,tm.forward_name),"
+                + "e.from_entry_address=COALESCE(e.from_entry_address,fm.entry_address),e.to_entry_address=COALESCE(e.to_entry_address,tm.entry_address),"
+                + "e.from_entry_port=COALESCE(e.from_entry_port,fm.entry_port),e.to_entry_port=COALESCE(e.to_entry_port,tm.entry_port) WHERE e.group_id=?", groupId);
+    }
+
+    private boolean hasAuthorizedSourceDependents(long groupId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM authorized_entry_template t "
+                + "JOIN authorized_entry_grant g ON g.template_id=t.id WHERE t.source_group_id=? AND g.state<>'deleted'", Integer.class, groupId);
+        return count != null && count > 0;
+    }
+
+    /** Source topology must remain stable until all dependent customer grants have been revoked. */
+    private void assertAuthorizedSourceChangeAllowed(CrossEntryFailoverSaveDto dto, List<Map<String, Object>> forwards) {
+        if (dto.getId() == null || !hasAuthorizedSourceDependents(dto.getId())) return;
+        Map<String, Object> existing = loadGroup(dto.getId());
+        Set<Long> oldForwards = loadMembers(dto.getId()).stream().map(row -> nullableLong(row.get("forwardId"))).collect(Collectors.toSet());
+        Set<Long> requested = forwards.stream().map(row -> nullableLong(row.get("id"))).collect(Collectors.toSet());
+        if (!oldForwards.equals(requested) || !dto.getDomain().equalsIgnoreCase(Objects.toString(existing.get("domain"), ""))
+                || !dto.getRecordType().equals(existing.get("recordType"))
+                || (dto.getDnsZoneId() != null && !Objects.equals(dto.getDnsZoneId(), nullableLong(existing.get("dnsZoneId"))))) {
+            throw new IllegalArgumentException("该容灾组仍有客户入口授权，不能更换入口成员、域名或 DNS 配置；请先撤销相关授权再调整");
+        }
     }
 
     private String memberName(Long id) {
@@ -3133,6 +3228,11 @@ public class CrossEntryFailoverService {
 
     private boolean isQualitySuppressed(Map<String, Object> member, long now) {
         return isQualitySuppressed(null, member, now);
+    }
+
+    private boolean isSwitchRejected(Map<String, Object> member, long now) {
+        Long until = member == null ? null : nullableLong(member.get("switchRejectedUntil"));
+        return until != null && until > now;
     }
 
     private boolean isQualitySuppressed(Map<String, Object> group, Map<String, Object> member, long now) {

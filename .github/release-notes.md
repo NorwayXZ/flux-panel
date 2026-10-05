@@ -1,3 +1,13 @@
+## 2.51.78 Entry failover lifecycle and quota fixes
+
+- Resets exhausted customer packages at the monthly boundary, retries failed restores, and preserves expired or administrator-paused grants. A failed customer reconciliation no longer blocks other customers.
+- Counts UDP bytes alongside TCP bytes for failover-group quotas, retries failed quota pauses, and restores only forwards recorded as running before the quota pause. Expired or administrator-stopped groups remain stopped after reset.
+- Protects customer links by rejecting source-group entry/domain/DNS changes or deletion while customer grants remain. Revoke the dependent grants before changing these settings; this release does not automatically migrate customer links.
+- Restores source-entry IPv4/IPv6 landing loop prevention, preserves disabled members and their IDs on edit, retains daily usage, and snapshots historical endpoint details.
+- Preserves paused automatic switching in TCP latency mode, honors post-switch rejection in all modes, and requires both public DNS resolvers to confirm propagation.
+- Existing quota-paused groups from older versions have no reliable pause ownership snapshot. If stopped forwards remain, automatic restoration reports this explicitly and requires administrator confirmation in Forward Management instead of enabling manually stopped forwards. Historical details already lost in previous edits cannot be reconstructed.
+- Panel-only release; Agent and Connector remain `2.51.37`. Regression tests and builds do not simulate outages on production nodes or change live DNS.
+
 ## 2.51.77 Docker application center card layout
 
 - Reorganizes Docker nodes and deployed applications into balanced, full-width card sections instead of an uneven fixed sidebar and oversized application column.

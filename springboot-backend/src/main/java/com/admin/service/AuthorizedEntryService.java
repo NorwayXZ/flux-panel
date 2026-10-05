@@ -5,6 +5,7 @@ import com.admin.common.dto.ForwardUpdateDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.AuthorizedEntryTargetValidator;
 import com.admin.common.utils.IpAddressMatcher;
+import com.admin.common.utils.IpLiteralUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.entity.AuthorizedEntryForward;
 import com.admin.entity.AuthorizedEntryGrant;
@@ -447,27 +448,35 @@ public class AuthorizedEntryService {
         long now = System.currentTimeMillis();
         for (AuthorizedEntryGrant grant : grantMapper.selectList(new QueryWrapper<AuthorizedEntryGrant>().ne("state", "deleted"))) {
             synchronized (grantLocks.computeIfAbsent(grant.getId(), ignored -> new Object())) {
-                reconcile(grant, now);
+                try {
+                    reconcile(grantMapper.selectById(grant.getId()), now);
+                } catch (RuntimeException e) {
+                    log.warn("Authorized entry reconciliation failed for {}: {}", grant.getId(), e.getMessage());
+                }
             }
         }
     }
 
     private void reconcile(AuthorizedEntryGrant grant, long now) {
         if (grant == null || "deleted".equals(grant.getState())) return;
-        if (List.of("quota_exhausted", "expired", "admin_paused").contains(grant.getState())) {
-            pauseGrant(grant, grant.getState(), grant.getLastError());
-            return;
-        }
-        if (grant.getExpiresAt() != null && grant.getExpiresAt() <= now) {
-            pauseGrant(grant, "expired", "入口套餐授权已到期");
-            return;
-        }
         long cycle = cycleStart(grant.getFlowResetDay(), now);
         if (grant.getFlowResetDay() != null && grant.getFlowResetDay() > 0
                 && (grant.getLastResetAt() == null || grant.getLastResetAt() < cycle)) {
             grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
                     .set("used_bytes", 0L).set("last_reset_at", cycle).set("updated_time", now));
-            if ("quota_exhausted".equals(grant.getState())) resumeGrant(grant);
+            grant.setUsedBytes(0L);
+            grant.setLastResetAt(cycle);
+        }
+        if (grant.getExpiresAt() != null && grant.getExpiresAt() <= now) {
+            pauseGrant(grant, "expired", "入口套餐授权已到期");
+        } else if ("admin_paused".equals(grant.getState())) {
+            pauseGrant(grant, "admin_paused", grant.getLastError());
+        } else if (grant.getFlowLimitBytes() != null && grant.getFlowLimitBytes() > 0
+                && grant.getUsedBytes() >= grant.getFlowLimitBytes()) {
+            pauseGrant(grant, "quota_exhausted", "入口套餐流量额度已用尽");
+        } else if (List.of("quota_exhausted", "expired", "resume_pending").contains(grant.getState())) {
+            R result = resumeGrant(grant);
+            grant.setState(result.getCode() == 0 ? "active" : "resume_pending");
         }
     }
 
@@ -534,6 +543,8 @@ public class AuthorizedEntryService {
         String detail = failures.isEmpty() ? reason : StringUtils.abbreviate(String.join("；", failures), 500);
         grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
                 .set("state", state).set("last_error", detail).set("updated_time", System.currentTimeMillis()));
+        grant.setState(state);
+        grant.setLastError(detail);
         return failures.isEmpty() ? R.ok() : R.err("部分隐藏入口暂停失败，系统将自动重试：" + detail);
     }
 
@@ -556,11 +567,15 @@ public class AuthorizedEntryService {
         if (!failures.isEmpty()) {
             String detail = StringUtils.abbreviate(String.join("；", failures), 500);
             grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
-                    .set("state", "error").set("last_error", detail).set("updated_time", now));
+                    .set("state", "resume_pending").set("last_error", detail).set("updated_time", now));
+            grant.setState("resume_pending");
+            grant.setLastError(detail);
             return R.err("部分隐藏入口恢复失败：" + detail);
         }
         grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
                 .set("state", "active").set("last_error", null).set("updated_time", now));
+        grant.setState("active");
+        grant.setLastError(null);
         return R.ok();
     }
 
@@ -621,7 +636,7 @@ public class AuthorizedEntryService {
     private String entryNodeAddressName(String target, List<Long> sourceMemberNodeIds) {
         if (sourceMemberNodeIds == null || sourceMemberNodeIds.isEmpty()) return null;
         String host = stripPort(target).replace("[", "").replace("]", "");
-        for (Map<String, Object> node : jdbcTemplate.queryForList("SELECT name,server_ip AS serverIp,ip FROM node")) {
+        for (Map<String, Object> node : jdbcTemplate.queryForList("SELECT id,name,server_ip AS serverIp,ip FROM node")) {
             if (!sourceMemberNodeIds.contains(longValue(node.get("id")))) continue;
             if (nodeMatchesAddress(node, host)) return stringValue(node.get("name"));
         }
@@ -638,13 +653,24 @@ public class AuthorizedEntryService {
     }
 
     private boolean nodeMatchesAddress(Map<String, Object> node, String host) {
-        if (host.equalsIgnoreCase(stringValue(node.get("serverIp")))) return true;
+        if (sameAddress(host, stringValue(node.get("serverIp")))) return true;
         Object ipField = node.get("ip");
         if (ipField == null) return false;
         for (String candidate : ipField.toString().split("[,\\s]+")) {
-            if (host.equalsIgnoreCase(candidate)) return true;
+            if (sameAddress(host, candidate)) return true;
         }
         return false;
+    }
+
+    private boolean sameAddress(String left, String right) {
+        if (left == null || right == null) return false;
+        if (left.equalsIgnoreCase(right)) return true;
+        try {
+            return IpLiteralUtil.normalize(left.replace("[", "").replace("]", ""))
+                    .equals(IpLiteralUtil.normalize(right.replace("[", "").replace("]", "")));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private boolean hasActiveGrant(Long templateId) {

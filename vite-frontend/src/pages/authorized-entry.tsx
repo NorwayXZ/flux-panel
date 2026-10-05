@@ -37,7 +37,7 @@ const formatBytes = (value = 0) => {
   return `${amount >= 100 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
 };
 const stateLabel: Record<string, string> = {
-  active: "可用", provisioning: "部署中", quota_exhausted: "额度用尽", expired: "已到期", admin_paused: "管理员暂停", error: "需要修复",
+  active: "可用", provisioning: "部署中", quota_exhausted: "额度用尽", expired: "已到期", admin_paused: "管理员暂停", resume_pending: "恢复中，等待入口上线", error: "需要修复",
 };
 const grantLabel = (grant: AuthorizedEntryGrant) => grant.state === "active" && grant.ports.length === 0 ? "待配置" : grant.state === "active" ? "使用中" : (stateLabel[grant.state] || grant.state);
 const stateColor = (state: string) => state === "active" ? "success" : state === "provisioning" ? "warning" : "danger";

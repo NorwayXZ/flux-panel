@@ -60,6 +60,10 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_group", "traffic_quota_used_bytes", "bigint NOT NULL DEFAULT 0");
             ensureColumn("cross_entry_failover_group", "traffic_quota_period_start_at", "bigint DEFAULT NULL");
             ensureColumn("cross_entry_failover_group", "traffic_quota_exhausted", "tinyint NOT NULL DEFAULT 0");
+            ensureColumn("cross_entry_failover_group", "traffic_quota_resume_enabled", "tinyint NOT NULL DEFAULT 1");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_quota_pause ("
+                    + "group_id bigint NOT NULL,forward_id bigint NOT NULL,paused tinyint NOT NULL DEFAULT 0,"
+                    + "PRIMARY KEY (group_id,forward_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("cross_entry_failover_group", "traffic_quota_paused", "tinyint NOT NULL DEFAULT 0");
             ensureColumn("cross_entry_failover_group", "traffic_quota_exhausted_at", "bigint DEFAULT NULL");
             ensureColumn("cross_entry_failover_group", "traffic_quota_last_error", "varchar(500) DEFAULT NULL");
@@ -235,6 +239,12 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_managed_resource", "cleanup_last_at",
                     "bigint DEFAULT NULL AFTER cleanup_last_error");
             normalizeFailbackToleranceDefaults();
+            ensureColumn("cross_entry_failover_event", "from_forward_name", "varchar(100) DEFAULT NULL");
+            ensureColumn("cross_entry_failover_event", "to_forward_name", "varchar(100) DEFAULT NULL");
+            ensureColumn("cross_entry_failover_event", "from_entry_address", "varchar(128) DEFAULT NULL");
+            ensureColumn("cross_entry_failover_event", "to_entry_address", "varchar(128) DEFAULT NULL");
+            ensureColumn("cross_entry_failover_event", "from_entry_port", "int DEFAULT NULL");
+            ensureColumn("cross_entry_failover_event", "to_entry_port", "int DEFAULT NULL");
         } catch (DataAccessException e) {
             log.error("Cross-entry failover storage initialization failed", e);
         }

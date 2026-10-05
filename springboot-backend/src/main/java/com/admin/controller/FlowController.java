@@ -302,6 +302,9 @@ public class FlowController extends BaseController {
             crossEntryFailoverService.recordActivity(forward.getId(), reportingNodeId,
                     flowDataList.getT(), flowDataList.getC(), flowDataList.getG(),
                     flowDataList.getD(), flowDataList.getU());
+        } else {
+            crossEntryFailoverService.recordTraffic(forward.getId(), reportingNodeId,
+                    flowDataList.getD(), flowDataList.getU());
         }
         authorizedEntryService.recordTraffic(forward.getId(), reportingNodeId,
                 flowDataList.getD(), flowDataList.getU());
