@@ -58,6 +58,9 @@ import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
 import { isAdmin, isLoggedIn } from "@/utils/auth";
 import { getCachedConfig, siteConfig } from "@/config/site";
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { queryClient } from '@/lib/query-client';
 
 // 检测是否为H5模式
 const useH5Mode = () => {
@@ -262,31 +265,32 @@ function App() {
   }, []);
 
   return (
-    <PageErrorBoundary>
-      <Suspense fallback={<PageLoading />}>
-        <Routes>
-          <Route element={<LoginRoute />} path="/" />
-          <Route
-            element={
-              <ProtectedRoute skipLayout={true}>
-                <ChangePasswordPage />
-              </ProtectedRoute>
-            }
-            path="/change-password"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <DashboardPage />
-              </ProtectedRoute>
-            }
-            path="/dashboard"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <ForwardPage />
-              </ProtectedRoute>
+    <QueryClientProvider client={queryClient}>
+      <PageErrorBoundary>
+        <Suspense fallback={<PageLoading />}>
+          <Routes>
+            <Route element={<LoginRoute />} path="/" />
+            <Route
+              element={
+                <ProtectedRoute skipLayout={true}>
+                  <ChangePasswordPage />
+                </ProtectedRoute>
+              }
+              path="/change-password"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <DashboardPage />
+                </ProtectedRoute>
+              }
+              path="/dashboard"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <ForwardPage />
+                </ProtectedRoute>
             }
             path="/forward"
           />
@@ -606,6 +610,9 @@ function App() {
         </Routes>
       </Suspense>
     </PageErrorBoundary>
+    {/* React Query 开发工具 - 仅在开发环境显示 */}
+    <ReactQueryDevtools initialIsOpen={false} />
+  </QueryClientProvider>
   );
 }
 

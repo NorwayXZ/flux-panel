@@ -1,0 +1,268 @@
+/**
+ * Flux Panel 设计 Token 系统
+ *
+ * 定义统一的设计变量，确保整个应用的视觉一致性
+ */
+
+:root {
+  /* ========== 表面层级 - 深色主题 ========== */
+  --surface-0: #05070C;  /* 最深层 3% - 页面背景 */
+  --surface-1: #0A0D12;  /* 5% - 主容器 */
+  --surface-2: #0F131C;  /* 7% - 卡片 */
+  --surface-3: #161D2B;  /* 10% - 悬浮卡片 */
+  --surface-4: #1E2636;  /* 13% - 模态框 */
+
+  /* ========== 主色调 ========== */
+  --accent-primary: #38BDF8;      /* 明亮青色 - 主要操作 */
+  --accent-primary-hover: #0EA5E9; /* 悬浮状态 */
+  --accent-primary-active: #0284C7; /* 激活状态 */
+  --accent-primary-dim: #075985;   /* 暗青色 - 低对比度场景 */
+  --accent-secondary: #6EE7B7;     /* 辅助绿色 - 次要强调 */
+
+  /* ========== 语义化颜色 ========== */
+  --color-success: #10B981;
+  --color-success-light: #D1FAE5;
+  --color-success-dark: #065F46;
+
+  --color-warning: #F59E0B;
+  --color-warning-light: #FEF3C7;
+  --color-warning-dark: #92400E;
+
+  --color-danger: #EF4444;
+  --color-danger-light: #FEE2E2;
+  --color-danger-dark: #991B1B;
+
+  --color-info: #3B82F6;
+  --color-info-light: #DBEAFE;
+  --color-info-dark: #1E40AF;
+
+  /* ========== 文本层级 ========== */
+  --text-primary: rgba(255, 255, 255, 0.95);   /* 主要文本 */
+  --text-secondary: rgba(255, 255, 255, 0.7);  /* 次要文本 */
+  --text-tertiary: rgba(255, 255, 255, 0.5);   /* 辅助文本 */
+  --text-disabled: rgba(255, 255, 255, 0.3);   /* 禁用文本 */
+  --text-inverse: rgba(0, 0, 0, 0.9);          /* 反色文本（浅色背景上） */
+
+  /* ========== 边框和分割线 ========== */
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-color-strong: rgba(255, 255, 255, 0.2);
+  --divider-color: rgba(255, 255, 255, 0.08);
+
+  /* ========== 字体定义 ========== */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                      'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono',
+                      'Consolas', 'Monaco', monospace;
+
+  /* ========== 流式字体大小 - 响应式缩放 ========== */
+  --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);      /* 12-14px */
+  --font-size-sm: clamp(0.875rem, 0.825rem + 0.25vw, 1rem);       /* 14-16px */
+  --font-size-base: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);      /* 16-18px */
+  --font-size-lg: clamp(1.125rem, 1.05rem + 0.375vw, 1.25rem);    /* 18-20px */
+  --font-size-xl: clamp(1.25rem, 1.15rem + 0.5vw, 1.5rem);        /* 20-24px */
+  --font-size-2xl: clamp(1.5rem, 1.35rem + 0.75vw, 2rem);         /* 24-32px */
+  --font-size-3xl: clamp(2rem, 1.75rem + 1.25vw, 3rem);           /* 32-48px */
+
+  /* ========== 行高 ========== */
+  --line-height-tight: 1.25;     /* 标题 */
+  --line-height-normal: 1.5;     /* 正文 */
+  --line-height-relaxed: 1.75;   /* 长文本 */
+
+  /* ========== 字重 ========== */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ========== 字间距 ========== */
+  --letter-spacing-tight: -0.02em;   /* 大标题 */
+  --letter-spacing-normal: 0;        /* 常规文本 */
+  --letter-spacing-wide: 0.025em;    /* 小号大写 */
+
+  /* ========== 间距系统 ========== */
+  --spacing-unit: 0.25rem; /* 4px 基础单位 */
+
+  --spacing-0: 0;
+  --spacing-1: calc(var(--spacing-unit) * 1);   /* 4px */
+  --spacing-2: calc(var(--spacing-unit) * 2);   /* 8px */
+  --spacing-3: calc(var(--spacing-unit) * 3);   /* 12px */
+  --spacing-4: calc(var(--spacing-unit) * 4);   /* 16px */
+  --spacing-5: calc(var(--spacing-unit) * 5);   /* 20px */
+  --spacing-6: calc(var(--spacing-unit) * 6);   /* 24px */
+  --spacing-8: calc(var(--spacing-unit) * 8);   /* 32px */
+  --spacing-10: calc(var(--spacing-unit) * 10); /* 40px */
+  --spacing-12: calc(var(--spacing-unit) * 12); /* 48px */
+  --spacing-16: calc(var(--spacing-unit) * 16); /* 64px */
+  --spacing-20: calc(var(--spacing-unit) * 20); /* 80px */
+  --spacing-24: calc(var(--spacing-unit) * 24); /* 96px */
+
+  /* ========== 容器间距 ========== */
+  --container-padding-sm: var(--spacing-4);
+  --container-padding-md: var(--spacing-6);
+  --container-padding-lg: var(--spacing-8);
+
+  /* ========== 圆角系统 ========== */
+  --radius-none: 0;
+  --radius-sm: 0.25rem;     /* 4px - 小组件、输入框 */
+  --radius-md: 0.5rem;      /* 8px - 按钮、卡片 */
+  --radius-lg: 0.75rem;     /* 12px - 大卡片 */
+  --radius-xl: 1rem;        /* 16px - 模态框 */
+  --radius-2xl: 1.5rem;     /* 24px - 特大容器 */
+  --radius-full: 9999px;    /* 完全圆角 - 药丸按钮、徽章 */
+  --radius-circle: 50%;     /* 圆形 - 头像、图标容器 */
+
+  /* ========== 阴影系统 ========== */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1),
+               0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+               0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+               0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+               0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+
+  /* 特殊阴影 */
+  --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05);
+  --shadow-focus: 0 0 0 3px rgba(56, 189, 248, 0.5);
+  --shadow-glow: 0 0 20px rgba(56, 189, 248, 0.3);
+
+  /* ========== Z-index 层级 ========== */
+  --z-base: 0;
+  --z-dropdown: 1000;
+  --z-sticky: 1020;
+  --z-fixed: 1030;
+  --z-modal-backdrop: 1040;
+  --z-modal: 1050;
+  --z-popover: 1060;
+  --z-tooltip: 1070;
+  --z-toast: 1080;
+
+  /* ========== 过渡时间 ========== */
+  --transition-fast: 150ms;
+  --transition-base: 250ms;
+  --transition-slow: 350ms;
+  --transition-slower: 500ms;
+
+  /* ========== 缓动函数 ========== */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+  /* ========== 断点（供 JS 使用） ========== */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
+
+/* ========== 亮色主题覆盖 ========== */
+[data-theme="light"],
+.light {
+  /* 表面层级 */
+  --surface-0: #FFFFFF;
+  --surface-1: #F9FAFB;
+  --surface-2: #F3F4F6;
+  --surface-3: #E5E7EB;
+  --surface-4: #D1D5DB;
+
+  /* 文本颜色 */
+  --text-primary: rgba(0, 0, 0, 0.9);
+  --text-secondary: rgba(0, 0, 0, 0.7);
+  --text-tertiary: rgba(0, 0, 0, 0.5);
+  --text-disabled: rgba(0, 0, 0, 0.3);
+  --text-inverse: rgba(255, 255, 255, 0.95);
+
+  /* 边框和分割线 */
+  --border-color: rgba(0, 0, 0, 0.1);
+  --border-color-strong: rgba(0, 0, 0, 0.2);
+  --divider-color: rgba(0, 0, 0, 0.08);
+
+  /* 主色调调整（亮色模式下稍微深一点） */
+  --accent-primary: #0EA5E9;
+  --accent-primary-hover: #0284C7;
+  --accent-primary-active: #075985;
+
+  /* 阴影调整 */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1),
+               0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+               0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+               0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+               0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-focus: 0 0 0 3px rgba(14, 165, 233, 0.3);
+}
+
+/* ========== 工具类 ========== */
+
+/* 平滑过渡 */
+.transition-smooth {
+  transition: all var(--transition-base) var(--ease-in-out);
+}
+
+/* 悬浮效果 */
+.hover-lift {
+  transition: transform var(--transition-base) var(--ease-out);
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* 聚焦环 */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* 玻璃态效果 */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="light"] .glass,
+.light .glass {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* 渐变文本 */
+.text-gradient {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 滚动条样式 */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) var(--surface-1);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--surface-1);
+  border-radius: var(--radius-full);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: var(--radius-full);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-4);
+}
