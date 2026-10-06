@@ -5,10 +5,19 @@
  */
 
 import { Chip } from "@heroui/chip";
-import { Circle, CheckCircle, XCircle, AlertCircle, Clock, Loader2 } from "lucide-react";
+import {
+  Circle,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Clock,
+  Loader2,
+} from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
-export type BadgeStatus = "online" | "offline" | "warning" | "error" | "pending" | "success" | "info";
+export type BadgeStatus =
+  "online" | "offline" | "warning" | "error" | "pending" | "success" | "info";
 
 export interface StatusBadgeProps {
   /** 状态类型 */
@@ -104,14 +113,14 @@ export function StatusBadge({
             <span
               className={cn(
                 "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
-                config.dotColor
+                config.dotColor,
               )}
             />
           )}
           <span
             className={cn(
               "relative inline-flex h-2 w-2 rounded-full",
-              config.dotColor
+              config.dotColor,
             )}
           />
         </span>
@@ -125,11 +134,7 @@ export function StatusBadge({
       color={config.color}
       size={size}
       variant={variant}
-      className={cn(
-        "transition-all",
-        pulse && "animate-pulse",
-        className
-      )}
+      className={cn("transition-all", pulse && "animate-pulse", className)}
       startContent={
         showIcon ? (
           status === "pending" && pulse ? (
@@ -187,7 +192,7 @@ export function CountBadge({
           color === "warning" && "bg-warning",
           color === "danger" && "bg-danger",
           color === "default" && "bg-default-500",
-          className
+          className,
         )}
       />
     );
@@ -212,7 +217,8 @@ export interface LabelBadgeProps {
   /** 标签文本 */
   label: string;
   /** 颜色 */
-  color?: "default" | "primary" | "success" | "warning" | "danger" | "secondary";
+  color?:
+    "default" | "primary" | "success" | "warning" | "danger" | "secondary";
   /** 变体 */
   variant?: "solid" | "flat" | "bordered";
   /** 大小 */
@@ -272,18 +278,14 @@ export function ProgressBadge({
     if (progress >= 80) return "success";
     if (progress >= 50) return "primary";
     if (progress >= 30) return "warning";
+
     return "danger";
   };
 
   const badgeColor = getColor();
 
   return (
-    <Chip
-      color={badgeColor}
-      size="sm"
-      variant="flat"
-      className={className}
-    >
+    <Chip color={badgeColor} size="sm" variant="flat" className={className}>
       {showPercent ? `${Math.round(progress)}%` : Math.round(progress)}
     </Chip>
   );

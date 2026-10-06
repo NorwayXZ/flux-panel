@@ -5,6 +5,7 @@
  */
 
 import { Card, CardBody, CardHeader } from "@heroui/card";
+
 import { cn } from "@/lib/utils";
 
 export interface EnhancedCardProps {
@@ -86,7 +87,7 @@ export function EnhancedCard({
         status === "info" && "border-l-4 border-l-info",
         // 加载状态
         loading && "opacity-60 pointer-events-none",
-        className
+        className,
       )}
       isPressable={interactive}
       onPress={onClick}
@@ -95,20 +96,16 @@ export function EnhancedCard({
         <CardHeader
           className={cn(
             "flex items-start justify-between gap-3",
-            headerClassName
+            headerClassName,
           )}
         >
           <div className="flex items-center gap-3 flex-1 min-w-0">
             {icon && (
-              <div className="flex-shrink-0 text-default-500">
-                {icon}
-              </div>
+              <div className="flex-shrink-0 text-default-500">{icon}</div>
             )}
             <div className="flex-1 min-w-0">
               {title && (
-                <h3 className="text-lg font-semibold truncate">
-                  {title}
-                </h3>
+                <h3 className="text-lg font-semibold truncate">{title}</h3>
               )}
               {subtitle && (
                 <p className="text-sm text-default-500 truncate mt-0.5">
@@ -117,16 +114,10 @@ export function EnhancedCard({
               )}
             </div>
           </div>
-          {action && (
-            <div className="flex-shrink-0">
-              {action}
-            </div>
-          )}
+          {action && <div className="flex-shrink-0">{action}</div>}
         </CardHeader>
       )}
-      <CardBody className={cn(bodyClassName)}>
-        {children}
-      </CardBody>
+      <CardBody className={cn(bodyClassName)}>{children}</CardBody>
     </Card>
   );
 }
@@ -189,7 +180,12 @@ export function StatCard({
               <p className="text-2xl font-bold">{value}</p>
             )}
             {change && !loading && (
-              <div className={cn("flex items-center gap-1 mt-2 text-sm", trendColors[change.trend])}>
+              <div
+                className={cn(
+                  "flex items-center gap-1 mt-2 text-sm",
+                  trendColors[change.trend],
+                )}
+              >
                 <span className="font-medium">
                   {change.trend === "up" && "↑"}
                   {change.trend === "down" && "↓"}
@@ -245,9 +241,7 @@ export function EmptyCard({
             {icon}
           </div>
         )}
-        <h3 className="text-lg font-semibold text-foreground mb-2">
-          {title}
-        </h3>
+        <h3 className="text-lg font-semibold text-foreground mb-2">{title}</h3>
         {description && (
           <p className="text-sm text-default-500 mb-6 max-w-sm">
             {description}

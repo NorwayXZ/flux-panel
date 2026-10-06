@@ -20,11 +20,10 @@ import {
   MoreVertical,
   X,
   CheckCircle,
-  Edit,
-  Copy,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+
+import { cn } from "@/lib/utils";
 
 export interface BatchOperation {
   key: string;
@@ -86,8 +85,8 @@ export function BatchOperationBar({
   const isVisible = selectedCount > 0;
 
   const positionClasses = {
-    top: "top-4 left-1/2 -translate-x-1/2",
-    bottom: "bottom-4 left-1/2 -translate-x-1/2",
+    top: "sticky top-4 z-20",
+    bottom: "sticky bottom-4 z-20",
     fixed: "fixed bottom-6 left-1/2 -translate-x-1/2 z-50",
   };
 
@@ -95,30 +94,40 @@ export function BatchOperationBar({
     <AnimatePresence>
       {isVisible && (
         <motion.div
-          initial={{ opacity: 0, y: position === "bottom" ? 20 : -20, scale: 0.95 }}
+          initial={{
+            opacity: 0,
+            y: position === "bottom" ? 20 : -20,
+            scale: 0.95,
+          }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: position === "bottom" ? 20 : -20, scale: 0.95 }}
+          exit={{
+            opacity: 0,
+            y: position === "bottom" ? 20 : -20,
+            scale: 0.95,
+          }}
           transition={{ duration: 0.2 }}
           className={cn(
             positionClasses[position],
             "bg-content1 shadow-2xl rounded-full px-4 py-3 border-2 border-divider",
             "backdrop-blur-md bg-opacity-95",
-            className
+            className,
           )}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             {/* 选中数量 */}
             <div className="flex items-center gap-2 px-3">
               <CheckCircle className="h-4 w-4 text-primary" />
               <span className="text-sm font-medium">
-                已选择 <span className="text-primary font-bold">{selectedCount}</span> 项
+                已选择{" "}
+                <span className="text-primary font-bold">{selectedCount}</span>{" "}
+                项
               </span>
             </div>
 
             <div className="h-6 w-px bg-divider" />
 
             {/* 快速操作按钮 */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {onEnable && (
                 <Button
                   size="sm"
@@ -257,7 +266,7 @@ export function CompactBatchBar({
           exit={{ opacity: 0, height: 0 }}
           className={cn(
             "bg-primary/10 border-l-4 border-primary px-4 py-3 rounded-lg",
-            className
+            className,
           )}
         >
           <div className="flex items-center justify-between gap-4">
@@ -283,11 +292,7 @@ export function CompactBatchBar({
             <div className="flex items-center gap-2">
               {actions}
               {onClearSelection && (
-                <Button
-                  size="sm"
-                  variant="light"
-                  onPress={onClearSelection}
-                >
+                <Button size="sm" variant="light" onPress={onClearSelection}>
                   取消选择
                 </Button>
               )}
@@ -314,7 +319,7 @@ export interface BatchConfirmData {
  * 生成批量删除确认数据
  */
 export function createBatchDeleteConfirm(
-  items: Array<{ id: number; name: string }>
+  items: Array<{ id: number; name: string }>,
 ): BatchConfirmData {
   return {
     title: "批量删除确认",
@@ -329,7 +334,7 @@ export function createBatchDeleteConfirm(
  * 生成批量启用确认数据
  */
 export function createBatchEnableConfirm(
-  items: Array<{ id: number; name: string }>
+  items: Array<{ id: number; name: string }>,
 ): BatchConfirmData {
   return {
     title: "批量启用确认",
@@ -344,7 +349,7 @@ export function createBatchEnableConfirm(
  * 生成批量禁用确认数据
  */
 export function createBatchDisableConfirm(
-  items: Array<{ id: number; name: string }>
+  items: Array<{ id: number; name: string }>,
 ): BatchConfirmData {
   return {
     title: "批量禁用确认",

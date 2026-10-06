@@ -81,6 +81,7 @@ jobs:
         working-directory: vite-frontend
         run: |
           npm ci
+          npm test
           npm run build
 
       - name: Set up Go

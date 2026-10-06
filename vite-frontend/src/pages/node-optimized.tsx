@@ -15,16 +15,11 @@ import { Input } from "@heroui/input";
 import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import toast from "react-hot-toast";
-import {
-  RefreshCw,
-  ServerCog,
-  Plus,
-  Search,
-} from "lucide-react";
+import { RefreshCw, ServerCog, Plus, Search } from "lucide-react";
 
 import { VirtualList } from "@/components/virtual-list";
 import PageShell from "@/components/page-shell";
-import { useNodeList } from "@/hooks/use-api";
+import { useNodes } from "@/hooks/use-api";
 import { isAdmin } from "@/utils/auth";
 
 interface Node {
@@ -57,11 +52,7 @@ const NodeCard = ({ node }: { node: Node }) => {
           <ServerCog className="h-5 w-5" />
           <h3 className="text-lg font-semibold">{node.name}</h3>
         </div>
-        <Chip
-          color={isOnline ? "success" : "default"}
-          size="sm"
-          variant="flat"
-        >
+        <Chip color={isOnline ? "success" : "default"} size="sm" variant="flat">
           {isOnline ? "在线" : "离线"}
         </Chip>
       </CardHeader>
@@ -73,7 +64,9 @@ const NodeCard = ({ node }: { node: Node }) => {
           </div>
           <div className="flex justify-between">
             <span className="text-default-500">端口范围:</span>
-            <span className="font-mono">{node.portSta}-{node.portEnd}</span>
+            <span className="font-mono">
+              {node.portSta}-{node.portEnd}
+            </span>
           </div>
           {node.version && (
             <div className="flex justify-between">
@@ -104,23 +97,19 @@ export function NodePageOptimized() {
   const admin = isAdmin();
 
   // 使用 React Query hook 获取节点列表
-  const {
-    data: nodes = [],
-    isLoading,
-    isError,
-    error,
-    refetch
-  } = useNodeList();
+  const { data: nodes = [], isLoading, isError, error, refetch } = useNodes();
 
   // 过滤节点列表
   const filteredNodes = useMemo(() => {
     if (!searchTerm) return nodes;
 
     const term = searchTerm.toLowerCase();
-    return nodes.filter(node =>
-      node.name.toLowerCase().includes(term) ||
-      node.ip.toLowerCase().includes(term) ||
-      node.serverIp?.toLowerCase().includes(term)
+
+    return nodes.filter(
+      (node: Node) =>
+        node.name.toLowerCase().includes(term) ||
+        node.ip.toLowerCase().includes(term) ||
+        node.serverIp?.toLowerCase().includes(term),
     );
   }, [nodes, searchTerm]);
 
@@ -131,28 +120,29 @@ export function NodePageOptimized() {
 
   // 刷新数据
   const handleRefresh = useCallback(() => {
-    toast.promise(
-      refetch(),
-      {
-        loading: '正在刷新节点列表...',
-        success: '刷新成功',
-        error: '刷新失败'
-      }
-    );
+    toast.promise(refetch(), {
+      loading: "正在刷新节点列表...",
+      success: "刷新成功",
+      error: "刷新失败",
+    });
   }, [refetch]);
 
   // 渲染单个节点项
-  const renderNodeItem = useCallback((node: Node) => (
-    <div className="px-4 py-2">
-      <NodeCard node={node} />
-    </div>
-  ), []);
+  const renderNodeItem = useCallback(
+    (node: Node) => (
+      <div className="px-4 py-2">
+        <NodeCard node={node} />
+      </div>
+    ),
+    [],
+  );
 
   return (
-    <PageShell
-      title="节点管理"
-      description={admin ? "管理所有GOST节点" : "查看可用节点"}
-    >
+    <PageShell>
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold">节点管理</h1>
+        <p>{admin ? "管理所有GOST节点" : "查看可用节点"}</p>
+      </header>
       {/* 工具栏 */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <Input
@@ -174,10 +164,7 @@ export function NodePageOptimized() {
           </Button>
 
           {admin && (
-            <Button
-              color="primary"
-              startContent={<Plus className="h-4 w-4" />}
-            >
+            <Button color="primary" startContent={<Plus className="h-4 w-4" />}>
               添加节点
             </Button>
           )}
@@ -195,7 +182,7 @@ export function NodePageOptimized() {
         <Card className="border-danger-200 bg-danger-50">
           <CardBody>
             <p className="text-danger">
-              加载失败: {error instanceof Error ? error.message : '未知错误'}
+              加载失败: {error instanceof Error ? error.message : "未知错误"}
             </p>
           </CardBody>
         </Card>
@@ -205,7 +192,7 @@ export function NodePageOptimized() {
         <Card>
           <CardBody>
             <p className="text-center text-default-500">
-              {searchTerm ? '没有找到匹配的节点' : '暂无节点'}
+              {searchTerm ? "没有找到匹配的节点" : "暂无节点"}
             </p>
           </CardBody>
         </Card>
@@ -221,10 +208,10 @@ export function NodePageOptimized() {
           {/* 使用虚拟滚动优化大列表性能 */}
           <VirtualList
             items={filteredNodes}
-            itemHeight={200}
+            estimatedItemHeight={200}
             height={600}
             renderItem={renderNodeItem}
-            keyExtractor={(node) => `node-${node.id}`}
+            getItemKey={(node) => `node-${node.id}`}
           />
         </>
       )}

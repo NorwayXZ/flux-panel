@@ -1,4 +1,19 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient } from "@tanstack/react-query";
+
+let previousToken: string | null | undefined;
+let sessionVersion = 0;
+
+export function sessionQueryKey(key: readonly unknown[]) {
+  const token =
+    typeof window === "undefined" ? null : window.localStorage.getItem("token");
+
+  if (token !== previousToken) {
+    previousToken = token;
+    sessionVersion++;
+  }
+
+  return [...key, { sessionVersion }] as const;
+}
 
 // 创建全局 QueryClient 实例
 export const queryClient = new QueryClient({
@@ -19,12 +34,12 @@ export const queryClient = new QueryClient({
       // 网络重连时不自动刷新
       refetchOnReconnect: false,
 
-      // 挂载时不自动刷新
-      refetchOnMount: false,
+      // 重新打开页面时刷新已过期的数据
+      refetchOnMount: true,
     },
     mutations: {
-      // mutation 失败时重试1次
-      retry: 1,
+      // Writes may already have succeeded when a response is lost; never replay automatically.
+      retry: false,
     },
   },
 });
@@ -33,57 +48,64 @@ export const queryClient = new QueryClient({
 export const queryKeys = {
   // 节点相关
   nodes: {
-    all: ['nodes'] as const,
-    list: () => [...queryKeys.nodes.all, 'list'] as const,
-    detail: (id: number) => [...queryKeys.nodes.all, 'detail', id] as const,
-    terminal: (id: number) => [...queryKeys.nodes.all, 'terminal', id] as const,
+    all: ["nodes"] as const,
+    list: () => [...queryKeys.nodes.all, "list"] as const,
+    detail: (id: number) => [...queryKeys.nodes.all, "detail", id] as const,
+    terminal: (id: number) => [...queryKeys.nodes.all, "terminal", id] as const,
   },
 
   // 转发相关
   forwards: {
-    all: ['forwards'] as const,
-    list: () => [...queryKeys.forwards.all, 'list'] as const,
-    detail: (id: number) => [...queryKeys.forwards.all, 'detail', id] as const,
+    all: ["forwards"] as const,
+    list: () => [...queryKeys.forwards.all, "list"] as const,
+    detail: (id: number) => [...queryKeys.forwards.all, "detail", id] as const,
   },
 
   // 隧道相关
   tunnels: {
-    all: ['tunnels'] as const,
-    list: () => [...queryKeys.tunnels.all, 'list'] as const,
-    detail: (id: number) => [...queryKeys.tunnels.all, 'detail', id] as const,
+    all: ["tunnels"] as const,
+    list: () => [...queryKeys.tunnels.all, "list"] as const,
+    detail: (id: number) => [...queryKeys.tunnels.all, "detail", id] as const,
   },
 
   // 用户相关
   users: {
-    all: ['users'] as const,
-    list: (page?: number) => [...queryKeys.users.all, 'list', page] as const,
-    detail: (id: number) => [...queryKeys.users.all, 'detail', id] as const,
-    package: () => [...queryKeys.users.all, 'package'] as const,
+    all: ["users"] as const,
+    list: (filters?: unknown) =>
+      [...queryKeys.users.all, "list", filters] as const,
+    detail: (id: number) => [...queryKeys.users.all, "detail", id] as const,
+    package: () => [...queryKeys.users.all, "package"] as const,
   },
 
   // 监控相关
   monitoring: {
-    all: ['monitoring'] as const,
-    overview: () => [...queryKeys.monitoring.all, 'overview'] as const,
-    alerts: () => [...queryKeys.monitoring.all, 'alerts'] as const,
+    all: ["monitoring"] as const,
+    overview: () => [...queryKeys.monitoring.all, "overview"] as const,
+    alerts: () => [...queryKeys.monitoring.all, "alerts"] as const,
   },
 
   // 私有代理
   privateProxy: {
-    all: ['privateProxy'] as const,
-    list: () => [...queryKeys.privateProxy.all, 'list'] as const,
+    all: ["privateProxy"] as const,
+    list: () => [...queryKeys.privateProxy.all, "list"] as const,
   },
 
   // Docker 应用
   dockerApps: {
-    all: ['dockerApps'] as const,
-    instances: () => [...queryKeys.dockerApps.all, 'instances'] as const,
-    templates: () => [...queryKeys.dockerApps.all, 'templates'] as const,
+    all: ["dockerApps"] as const,
+    instances: () => [...queryKeys.dockerApps.all, "instances"] as const,
+    templates: () => [...queryKeys.dockerApps.all, "templates"] as const,
   },
 
   // 配置相关
   config: {
-    all: ['config'] as const,
+    all: ["config"] as const,
     get: (key: string) => [...queryKeys.config.all, key] as const,
+  },
+  authorizedEntries: {
+    all: ["authorizedEntries"] as const,
+    grants: (userId?: number) =>
+      ["authorizedEntries", "grants", userId] as const,
+    templates: () => ["authorizedEntries", "templates"] as const,
   },
 };

@@ -6,6 +6,7 @@
 
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Skeleton } from "@heroui/skeleton";
+
 import { cn } from "@/lib/utils";
 
 /**
@@ -38,18 +39,13 @@ export function SkeletonCard({
           <Skeleton className="w-3/5 h-4 rounded" />
           <Skeleton className="w-4/5 h-3 rounded" />
         </div>
-        {showAction && (
-          <Skeleton className="w-8 h-8 rounded" />
-        )}
+        {showAction && <Skeleton className="w-8 h-8 rounded" />}
       </CardHeader>
       <CardBody className="space-y-3">
         {Array.from({ length: lines }).map((_, i) => (
           <Skeleton
             key={i}
-            className={cn(
-              "h-3 rounded",
-              i === lines - 1 ? "w-2/3" : "w-full"
-            )}
+            className={cn("h-3 rounded", i === lines - 1 ? "w-2/3" : "w-full")}
           />
         ))}
       </CardBody>
@@ -100,7 +96,7 @@ export function SkeletonCardGrid({
         cols.sm && `sm:${gridCols[cols.sm as keyof typeof gridCols]}`,
         cols.md && `md:${gridCols[cols.md as keyof typeof gridCols]}`,
         cols.lg && `lg:${gridCols[cols.lg as keyof typeof gridCols]}`,
-        className
+        className,
       )}
     >
       {Array.from({ length: count }).map((_, i) => (
@@ -137,10 +133,7 @@ export function SkeletonTable({
           {Array.from({ length: columns }).map((_, i) => (
             <Skeleton
               key={`header-${i}`}
-              className={cn(
-                "h-4 rounded",
-                i === 0 ? "w-1/4" : "flex-1"
-              )}
+              className={cn("h-4 rounded", i === 0 ? "w-1/4" : "flex-1")}
             />
           ))}
         </div>
@@ -156,7 +149,7 @@ export function SkeletonTable({
                 key={`cell-${rowIndex}-${colIndex}`}
                 className={cn(
                   "h-4 rounded",
-                  colIndex === 0 ? "w-1/4" : "flex-1"
+                  colIndex === 0 ? "w-1/4" : "flex-1",
                 )}
               />
             ))}
@@ -190,15 +183,16 @@ export function SkeletonList({
   return (
     <div className={cn("space-y-3", className)}>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="flex items-center gap-3 p-3 bg-content1 rounded-lg">
+        <div
+          key={i}
+          className="flex items-center gap-3 p-3 bg-content1 rounded-lg"
+        >
           {showAvatar && (
             <Skeleton className="w-10 h-10 rounded-full flex-shrink-0" />
           )}
           <div className="flex-1 space-y-2">
             <Skeleton className="w-3/4 h-4 rounded" />
-            {showSubtitle && (
-              <Skeleton className="w-1/2 h-3 rounded" />
-            )}
+            {showSubtitle && <Skeleton className="w-1/2 h-3 rounded" />}
           </div>
         </div>
       ))}
@@ -225,17 +219,12 @@ export function SkeletonText({
 }: SkeletonTextProps) {
   return (
     <div className={cn("space-y-3", className)}>
-      {showTitle && (
-        <Skeleton className="w-1/3 h-6 rounded" />
-      )}
+      {showTitle && <Skeleton className="w-1/3 h-6 rounded" />}
       <div className="space-y-2">
         {Array.from({ length: lines }).map((_, i) => (
           <Skeleton
             key={i}
-            className={cn(
-              "h-4 rounded",
-              i === lines - 1 ? "w-2/3" : "w-full"
-            )}
+            className={cn("h-4 rounded", i === lines - 1 ? "w-2/3" : "w-full")}
           />
         ))}
       </div>
@@ -302,13 +291,9 @@ export function SkeletonStatCard({
           <div className="flex-1 space-y-3">
             <Skeleton className="w-1/2 h-4 rounded" />
             <Skeleton className="w-2/3 h-8 rounded" />
-            {showTrend && (
-              <Skeleton className="w-1/3 h-4 rounded" />
-            )}
+            {showTrend && <Skeleton className="w-1/3 h-4 rounded" />}
           </div>
-          {showIcon && (
-            <Skeleton className="w-12 h-12 rounded-lg" />
-          )}
+          {showIcon && <Skeleton className="w-12 h-12 rounded-lg" />}
         </div>
       </CardBody>
     </Card>

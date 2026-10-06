@@ -12,9 +12,10 @@ import {
   DropdownItem,
 } from "@heroui/dropdown";
 import { Download, FileSpreadsheet, FileJson, FileText } from "lucide-react";
-import * as XLSX from 'xlsx';
+import { useState } from "react";
+import toast from "react-hot-toast";
 
-export type ExportFormat = 'csv' | 'xlsx' | 'json';
+export type ExportFormat = "csv" | "xlsx" | "json";
 
 export interface ExportColumn<T = any> {
   /** 字段键 */
@@ -45,36 +46,37 @@ export function exportToCSV<T>(options: ExportOptions<T>): void {
   const { data, filename, columns, includeTimestamp = true } = options;
 
   if (data.length === 0) {
-    throw new Error('没有数据可导出');
+    throw new Error("没有数据可导出");
   }
 
   // 确定列
-  const cols = columns || Object.keys(data[0] as object).map(key => ({
-    key,
-    label: key,
-  }));
+  const cols: ExportColumn<T>[] =
+    columns ||
+    Object.keys(data[0] as object).map((key) => ({
+      key,
+      label: key,
+    }));
 
   // 构建 CSV 内容
-  const headers = cols.map(col => col.label).join(',');
-  const rows = data.map(item => {
-    return cols.map(col => {
-      const value = col.format
-        ? col.format((item as any)[col.key], item)
-        : (item as any)[col.key];
-      // CSV 转义：包含逗号、换行或引号的值需要用引号包裹
-      const stringValue = String(value ?? '');
-      if (stringValue.includes(',') || stringValue.includes('\n') || stringValue.includes('"')) {
-        return `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    }).join(',');
+  const headers = cols.map((col) => escapeCsvCell(col.label)).join(",");
+  const rows = data.map((item) => {
+    return cols
+      .map((col) => {
+        const value = col.format
+          ? col.format((item as any)[col.key], item)
+          : (item as any)[col.key];
+
+        // CSV 转义：包含逗号、换行或引号的值需要用引号包裹
+        return escapeCsvCell(value);
+      })
+      .join(",");
   });
 
-  const csv = [headers, ...rows].join('\n');
+  const csv = [headers, ...rows].join("\n");
 
   // 添加 BOM 以支持 Excel 正确显示中文
-  const BOM = '﻿';
-  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+  const BOM = "﻿";
+  const blob = new Blob([BOM + csv], { type: "text/csv;charset=utf-8;" });
 
   const finalFilename = includeTimestamp
     ? `${filename}_${getTimestamp()}.csv`
@@ -86,61 +88,77 @@ export function exportToCSV<T>(options: ExportOptions<T>): void {
 /**
  * 导出为 Excel
  */
-export function exportToExcel<T>(options: ExportOptions<T>): void {
+export async function exportToExcel<T>(
+  options: ExportOptions<T>,
+): Promise<void> {
   const { data, filename, columns, includeTimestamp = true } = options;
 
   if (data.length === 0) {
-    throw new Error('没有数据可导出');
+    throw new Error("没有数据可导出");
   }
 
   // 确定列
-  const cols = columns || Object.keys(data[0] as object).map(key => ({
-    key,
-    label: key,
-  }));
+  const cols: ExportColumn<T>[] =
+    columns ||
+    Object.keys(data[0] as object).map((key) => ({
+      key,
+      label: key,
+    }));
 
   // 构建表格数据
   const worksheetData = [
     // 表头
-    cols.map(col => col.label),
+    cols.map((col) => col.label),
     // 数据行
-    ...data.map(item => {
-      return cols.map(col => {
+    ...data.map((item) => {
+      return cols.map((col) => {
         const value = col.format
           ? col.format((item as any)[col.key], item)
           : (item as any)[col.key];
-        return value ?? '';
+
+        return value ?? "";
       });
     }),
   ];
 
   // 创建工作表
-  const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+  const { default: ExcelJS } = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Data");
+
+  worksheet.addRows(worksheetData);
 
   // 设置列宽
-  const colWidths = cols.map(col => ({
-    wch: Math.max(
-      col.label.length,
-      ...data.map(item => {
+  const colWidths = cols.map((col) => ({
+    width: Math.min(
+      60,
+      data.reduce((width, item) => {
         const value = col.format
           ? col.format((item as any)[col.key], item)
           : (item as any)[col.key];
-        return String(value ?? '').length;
-      })
-    ) + 2,
-  }));
-  worksheet['!cols'] = colWidths;
 
-  // 创建工作簿
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Data');
+        return Math.max(width, String(value ?? "").length);
+      }, col.label.length) + 2,
+    ),
+  }));
+
+  worksheet.columns.forEach((column, index) => {
+    column.width = colWidths[index].width;
+  });
 
   const finalFilename = includeTimestamp
     ? `${filename}_${getTimestamp()}.xlsx`
     : `${filename}.xlsx`;
 
   // 导出
-  XLSX.writeFile(workbook, finalFilename);
+  const buffer = await workbook.xlsx.writeBuffer();
+
+  downloadBlob(
+    new Blob([new Uint8Array(buffer)], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+    finalFilename,
+  );
 }
 
 /**
@@ -150,21 +168,24 @@ export function exportToJSON<T>(options: ExportOptions<T>): void {
   const { data, filename, columns, includeTimestamp = true } = options;
 
   if (data.length === 0) {
-    throw new Error('没有数据可导出');
+    throw new Error("没有数据可导出");
   }
 
   let exportData: any[];
 
   if (columns) {
     // 只导出指定列
-    exportData = data.map(item => {
+    exportData = data.map((item) => {
       const obj: any = {};
-      columns.forEach(col => {
+
+      columns.forEach((col) => {
         const value = col.format
           ? col.format((item as any)[col.key], item)
           : (item as any)[col.key];
+
         obj[col.label] = value;
       });
+
       return obj;
     });
   } else {
@@ -173,7 +194,7 @@ export function exportToJSON<T>(options: ExportOptions<T>): void {
   }
 
   const json = JSON.stringify(exportData, null, 2);
-  const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+  const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
 
   const finalFilename = includeTimestamp
     ? `${filename}_${getTimestamp()}.json`
@@ -185,17 +206,17 @@ export function exportToJSON<T>(options: ExportOptions<T>): void {
 /**
  * 通用导出函数
  */
-export function exportData<T>(options: ExportOptions<T>): void {
+export async function exportData<T>(options: ExportOptions<T>): Promise<void> {
   const { format } = options;
 
   switch (format) {
-    case 'csv':
+    case "csv":
       exportToCSV(options);
       break;
-    case 'xlsx':
-      exportToExcel(options);
+    case "xlsx":
+      await exportToExcel(options);
       break;
-    case 'json':
+    case "json":
       exportToJSON(options);
       break;
     default:
@@ -203,12 +224,22 @@ export function exportData<T>(options: ExportOptions<T>): void {
   }
 }
 
+export function escapeCsvCell(value: unknown): string {
+  let text = String(value ?? "");
+
+  if (typeof value === "string" && /^[\s]*[=+\-@]/.test(text))
+    text = `'${text}`;
+
+  return /[,\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 /**
  * 下载 Blob
  */
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
+
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
@@ -223,11 +254,12 @@ function downloadBlob(blob: Blob, filename: string): void {
 function getTimestamp(): string {
   const now = new Date();
   const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hour = String(now.getHours()).padStart(2, '0');
-  const minute = String(now.getMinutes()).padStart(2, '0');
-  const second = String(now.getSeconds()).padStart(2, '0');
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hour = String(now.getHours()).padStart(2, "0");
+  const minute = String(now.getMinutes()).padStart(2, "0");
+  const second = String(now.getSeconds()).padStart(2, "0");
+
   return `${year}${month}${day}_${hour}${minute}${second}`;
 }
 
@@ -280,7 +312,7 @@ export function ExportMenu<T>({
   data,
   filename,
   columns,
-  formats = ['csv', 'xlsx', 'json'],
+  formats = ["csv", "xlsx", "json"],
   variant = "flat",
   color = "default",
   size = "md",
@@ -289,11 +321,14 @@ export function ExportMenu<T>({
   onBeforeExport,
   onAfterExport,
 }: ExportMenuProps<T>) {
-  const handleExport = (format: ExportFormat) => {
+  const [busy, setBusy] = useState(false);
+  const handleExport = async (format: ExportFormat) => {
+    if (busy) return;
+    setBusy(true);
     try {
       onBeforeExport?.(format);
 
-      exportData({
+      await exportData({
         data,
         filename,
         format,
@@ -302,22 +337,24 @@ export function ExportMenu<T>({
 
       onAfterExport?.(format);
     } catch (error) {
-      console.error('导出失败:', error);
-      throw error;
+      console.error("导出失败:", error);
+      toast.error(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setBusy(false);
     }
   };
 
   const formatConfig = {
     csv: {
-      label: '导出为 CSV',
+      label: "导出为 CSV",
       icon: <FileText className="h-4 w-4" />,
     },
     xlsx: {
-      label: '导出为 Excel',
+      label: "导出为 Excel",
       icon: <FileSpreadsheet className="h-4 w-4" />,
     },
     json: {
-      label: '导出为 JSON',
+      label: "导出为 JSON",
       icon: <FileJson className="h-4 w-4" />,
     },
   };
@@ -329,19 +366,25 @@ export function ExportMenu<T>({
           variant={variant}
           color={color}
           size={size}
-          startContent={!iconOnly ? <Download className="h-4 w-4" /> : undefined}
+          startContent={
+            !iconOnly ? <Download className="h-4 w-4" /> : undefined
+          }
           isIconOnly={iconOnly}
           className={className}
+          isDisabled={busy || data.length === 0}
+          isLoading={busy}
+          aria-label="导出数据"
         >
-          {iconOnly ? <Download className="h-4 w-4" /> : '导出'}
+          {iconOnly ? <Download className="h-4 w-4" /> : "导出"}
         </Button>
       </DropdownTrigger>
       <DropdownMenu aria-label="导出格式">
-        {formats.map(format => (
+        {formats.map((format) => (
           <DropdownItem
             key={format}
             startContent={formatConfig[format].icon}
-            onPress={() => handleExport(format)}
+            onPress={() => void handleExport(format)}
+            textValue={formatConfig[format].label}
           >
             {formatConfig[format].label}
           </DropdownItem>
@@ -377,13 +420,22 @@ export function QuickExportButton<T>({
   className,
   children,
 }: QuickExportButtonProps<T>) {
-  const handleExport = () => {
-    exportData({
-      data,
-      filename,
-      format,
-      columns,
-    });
+  const [busy, setBusy] = useState(false);
+  const handleExport = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await exportData({
+        data,
+        filename,
+        format,
+        columns,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "导出失败");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -392,7 +444,9 @@ export function QuickExportButton<T>({
       color={color}
       size={size}
       startContent={<Download className="h-4 w-4" />}
-      onPress={handleExport}
+      onPress={() => void handleExport()}
+      isDisabled={busy || data.length === 0}
+      isLoading={busy}
       className={className}
     >
       {children || `导出为 ${format.toUpperCase()}`}

@@ -1,5 +1,5 @@
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef, useState, useEffect } from 'react';
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRef, useState, useEffect } from "react";
 
 interface VirtualListProps<T> {
   items: T[];
@@ -9,6 +9,7 @@ interface VirtualListProps<T> {
   className?: string;
   emptyMessage?: string;
   getItemKey?: (item: T, index: number) => string | number;
+  height?: number | string;
 }
 
 /**
@@ -30,9 +31,10 @@ export function VirtualList<T>({
   renderItem,
   estimatedItemHeight = 80,
   overscan = 5,
-  className = '',
-  emptyMessage = '暂无数据',
+  className = "",
+  emptyMessage = "暂无数据",
   getItemKey,
+  height = 600,
 }: VirtualListProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +43,9 @@ export function VirtualList<T>({
     getScrollElement: () => parentRef.current,
     estimateSize: () => estimatedItemHeight,
     overscan, // 预渲染可见区域外的项目数量
+    getItemKey: getItemKey
+      ? (index) => getItemKey(items[index], index)
+      : undefined,
   });
 
   if (items.length === 0) {
@@ -56,14 +61,15 @@ export function VirtualList<T>({
       ref={parentRef}
       className={`h-full overflow-auto ${className}`}
       style={{
-        contain: 'strict',
+        contain: "strict",
+        height,
       }}
     >
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
+          width: "100%",
+          position: "relative",
         }}
       >
         {virtualizer.getVirtualItems().map((virtualItem) => {
@@ -78,10 +84,10 @@ export function VirtualList<T>({
               data-index={virtualItem.index}
               ref={virtualizer.measureElement}
               style={{
-                position: 'absolute',
+                position: "absolute",
                 top: 0,
                 left: 0,
-                width: '100%',
+                width: "100%",
                 transform: `translateY(${virtualItem.start}px)`,
               }}
             >
@@ -107,6 +113,8 @@ interface VirtualGridProps<T> {
   gap?: number;
   className?: string;
   emptyMessage?: string;
+  height?: number | string;
+  getItemKey?: (item: T, index: number) => string | number;
 }
 
 export function VirtualGrid<T>({
@@ -115,8 +123,10 @@ export function VirtualGrid<T>({
   columnCount = 3,
   estimatedItemHeight = 200,
   gap = 16,
-  className = '',
-  emptyMessage = '暂无数据',
+  className = "",
+  emptyMessage = "暂无数据",
+  height = 600,
+  getItemKey,
 }: VirtualGridProps<T>) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -143,14 +153,15 @@ export function VirtualGrid<T>({
       ref={parentRef}
       className={`h-full overflow-auto ${className}`}
       style={{
-        contain: 'strict',
+        contain: "strict",
+        height,
       }}
     >
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
+          width: "100%",
+          position: "relative",
         }}
       >
         {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -163,22 +174,29 @@ export function VirtualGrid<T>({
               data-index={virtualRow.index}
               ref={virtualizer.measureElement}
               style={{
-                position: 'absolute',
+                position: "absolute",
                 top: 0,
                 left: 0,
-                width: '100%',
+                width: "100%",
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
                   gap: `${gap}px`,
+                  paddingBottom: gap,
                 }}
               >
                 {rowItems.map((item, colIndex) => (
-                  <div key={startIndex + colIndex}>
+                  <div
+                    key={
+                      getItemKey
+                        ? getItemKey(item, startIndex + colIndex)
+                        : startIndex + colIndex
+                    }
+                  >
                     {renderItem(item, startIndex + colIndex)}
                   </div>
                 ))}
@@ -195,7 +213,10 @@ export function VirtualGrid<T>({
  * 响应式虚拟网格
  * 自动根据容器宽度调整列数
  */
-interface ResponsiveVirtualGridProps<T> extends Omit<VirtualGridProps<T>, 'columnCount'> {
+interface ResponsiveVirtualGridProps<T> extends Omit<
+  VirtualGridProps<T>,
+  "columnCount"
+> {
   minCardWidth?: number; // 最小卡片宽度
 }
 
@@ -211,14 +232,21 @@ export function ResponsiveVirtualGrid<T>({
     const updateColumnCount = () => {
       if (parentRef.current) {
         const width = parentRef.current.offsetWidth;
-        const cols = Math.max(1, Math.floor((width + gap) / (minCardWidth + gap)));
+        const cols = Math.max(
+          1,
+          Math.floor((width + gap) / (minCardWidth + gap)),
+        );
+
         setColumnCount(cols);
       }
     };
 
     updateColumnCount();
-    window.addEventListener('resize', updateColumnCount);
-    return () => window.removeEventListener('resize', updateColumnCount);
+    const observer = new ResizeObserver(updateColumnCount);
+
+    if (parentRef.current) observer.observe(parentRef.current);
+
+    return () => observer.disconnect();
   }, [minCardWidth, gap]);
 
   return (

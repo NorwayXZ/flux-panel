@@ -1,3 +1,12 @@
+## 2.52.0 Frontend caching, virtual lists and authorized-entry operations
+
+- Completes the frontend scaffolding from `bbd7dea`: installs and locks React Query, TanStack Virtual, development-only query tools, skeleton components and lazy-loaded Excel export dependencies; fixes TypeScript errors and invalid example imports.
+- Integrates the existing authorized-entry backend workflow into `AuthorizedEntriesPage`: search, refresh, loading/error states, current-result selection, batch resume/pause/revoke and CSV/Excel/JSON export with explicit public-facing columns. Failed batch items retain their selection and error details; revocation requires confirmation.
+- Uses a responsive virtual card grid for more than 60 grants. Local browser checks exercised 150 grants, bounded rendering, search, partial batch failure, desktop/mobile layouts and customer permission boundaries using a separate mock API.
+- Scopes cached queries to the login session, synchronizes selection after asynchronous updates, prevents automatic replay of writes, fixes sub-640px breakpoint detection and horizontal overflow in virtual grids.
+- Registers the shared card, badge, skeleton, batch and export entry points and imports the design tokens. Existing node management and backend entry-failover functionality remain available.
+- Synchronizes panel, Agent, Connector, installer URLs and image defaults to `2.52.0`. Frontend regression tests run in the release pipeline. Performance percentage claims in the original scaffolding have not been measured and are not release guarantees.
+
 ## 2.51.78 Entry failover lifecycle and quota fixes
 
 - Resets exhausted customer packages at the monthly boundary, retries failed restores, and preserves expired or administrator-paused grants. A failed customer reconciliation no longer blocks other customers.

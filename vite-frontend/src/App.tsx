@@ -25,7 +25,7 @@ const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
 const CrossEntryFailoverPage = lazy(
   () => import("@/pages/cross-entry-failover"),
 );
-const AuthorizedEntryPage = lazy(() => import("@/pages/authorized-entry"));
+const AuthorizedEntryPage = lazy(() => import("@/pages/AuthorizedEntriesPage"));
 const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
@@ -58,9 +58,11 @@ import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
 import { isAdmin, isLoggedIn } from "@/utils/auth";
 import { getCachedConfig, siteConfig } from "@/config/site";
-import { QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { queryClient } from '@/lib/query-client';
+
+import { QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+
+import { queryClient } from "@/lib/query-client";
 
 // 检测是否为H5模式
 const useH5Mode = () => {
@@ -291,328 +293,328 @@ function App() {
                 <ProtectedRoute>
                   <ForwardPage />
                 </ProtectedRoute>
-            }
-            path="/forward"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <RoutingOverviewPage />
-              </ProtectedRoute>
-            }
-            path="/routing-overview"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <NftForwardPage />
-              </ProtectedRoute>
-            }
-            path="/nft-forward"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <SmartEntryPage />
-              </ProtectedRoute>
-            }
-            path="/smart-entry"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <CrossEntryFailoverPage />
-              </ProtectedRoute>
-            }
-            path="/cross-entry-failover"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <AuthorizedEntryPage />
-              </ProtectedRoute>
-            }
-            path="/authorized-entry"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <SourceIpEntryPage />
-              </ProtectedRoute>
-            }
-            path="/source-ip-entry"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <TopologyPage />
-              </ProtectedRoute>
-            }
-            path="/topology"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <SystemSelfCheckPage />
-              </ProtectedRoute>
-            }
-            path="/system-self-check"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <DnsSettingsPage />
-              </ProtectedRoute>
-            }
-            path="/dns-settings"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <AwsAccessPage />
-              </ProtectedRoute>
-            }
-            path="/aws-access"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <DynamicDnsPage />
-              </ProtectedRoute>
-            }
-            path="/dynamic-dns"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <ServerAssetsPage />
-              </ProtectedRoute>
-            }
-            path="/server-assets"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <TunnelPage />
-              </ProtectedRoute>
-            }
-            path="/tunnel"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <NodePage />
-              </ProtectedRoute>
-            }
-            path="/node"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <NodeTerminalPage />
-              </ProtectedRoute>
-            }
-            path="/node/:nodeId/terminal"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <UserPage />
-              </ProtectedRoute>
-            }
-            path="/user"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <ProfilePage />
-              </ProtectedRoute>
-            }
-            path="/profile"
-          />
-          <Route
-            element={
-              <ProtectedRoute useSimpleLayout={true}>
-                <Navigate replace to="/user" />
-              </ProtectedRoute>
-            }
-            path="/limit"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <ConfigPage />
-              </ProtectedRoute>
-            }
-            path="/config"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <MonitoringPage />
-              </ProtectedRoute>
-            }
-            path="/monitoring"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <UpdatePage />
-              </ProtectedRoute>
-            }
-            path="/update"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <ServicePublishingPage />
-              </ProtectedRoute>
-            }
-            path="/service-publishing"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <DockerAppsPage />
-              </ProtectedRoute>
-            }
-            path="/docker-apps"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <PrivateProxyPage />
-              </ProtectedRoute>
-            }
-            path="/private-proxy"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <Navigate replace to="/dashboard" />
-              </ProtectedRoute>
-            }
-            path="/protocol-probe"
-          />
-          <Route
-            element={
-              <ProtectedRoute>
-                <HomeAccessPage />
-              </ProtectedRoute>
-            }
-            path="/home-access"
-          />
-          <Route
-            element={
-              <ProtectedRoute useSimpleLayout={true}>
-                <HomeDevicesPage />
-              </ProtectedRoute>
-            }
-            path="/home-devices"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <NetworkToolsPage />
-              </ProtectedRoute>
-            }
-            path="/network-tools"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <QualityLabPage />
-              </ProtectedRoute>
-            }
-            path="/quality-lab"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <BandwidthTestPage />
-              </ProtectedRoute>
-            }
-            path="/bandwidth-test"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <ClientSpeedTestPage />
-              </ProtectedRoute>
-            }
-            path="/client-speed-test"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <UdpQuicDiagnosticPage />
-              </ProtectedRoute>
-            }
-            path="/udp-quic-diagnostic"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <MultiLineAggregationPage />
-              </ProtectedRoute>
-            }
-            path="/multi-line-aggregation"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <IpQualityPage />
-              </ProtectedRoute>
-            }
-            path="/ip-quality"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <Navigate replace to="/private-network?section=virtual-lan" />
-              </ProtectedRoute>
-            }
-            path="/virtual-lan"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <PrivateNetworkPage />
-              </ProtectedRoute>
-            }
-            path="/private-network"
-          />
-          <Route
-            element={
-              <ProtectedRoute useSimpleLayout={true}>
-                <GuidePage />
-              </ProtectedRoute>
-            }
-            path="/guide"
-          />
-          <Route
-            element={
-              <ProtectedRoute adminOnly useSimpleLayout={true}>
-                <PortResourcesPage />
-              </ProtectedRoute>
-            }
-            path="/port-resources"
-          />
-          <Route element={<PanelAddressPage />} path="/panel-addresses" />
-          <Route
-            element={
-              <ProtectedRoute adminOnly>
-                <Navigate replace to="/panel-addresses" />
-              </ProtectedRoute>
-            }
-            path="/settings"
-          />
-        </Routes>
-      </Suspense>
-    </PageErrorBoundary>
-    {/* React Query 开发工具 - 仅在开发环境显示 */}
-    <ReactQueryDevtools initialIsOpen={false} />
-  </QueryClientProvider>
+              }
+              path="/forward"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <RoutingOverviewPage />
+                </ProtectedRoute>
+              }
+              path="/routing-overview"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <NftForwardPage />
+                </ProtectedRoute>
+              }
+              path="/nft-forward"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <SmartEntryPage />
+                </ProtectedRoute>
+              }
+              path="/smart-entry"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <CrossEntryFailoverPage />
+                </ProtectedRoute>
+              }
+              path="/cross-entry-failover"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <AuthorizedEntryPage />
+                </ProtectedRoute>
+              }
+              path="/authorized-entry"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <SourceIpEntryPage />
+                </ProtectedRoute>
+              }
+              path="/source-ip-entry"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <TopologyPage />
+                </ProtectedRoute>
+              }
+              path="/topology"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <SystemSelfCheckPage />
+                </ProtectedRoute>
+              }
+              path="/system-self-check"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <DnsSettingsPage />
+                </ProtectedRoute>
+              }
+              path="/dns-settings"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <AwsAccessPage />
+                </ProtectedRoute>
+              }
+              path="/aws-access"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <DynamicDnsPage />
+                </ProtectedRoute>
+              }
+              path="/dynamic-dns"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <ServerAssetsPage />
+                </ProtectedRoute>
+              }
+              path="/server-assets"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <TunnelPage />
+                </ProtectedRoute>
+              }
+              path="/tunnel"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <NodePage />
+                </ProtectedRoute>
+              }
+              path="/node"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <NodeTerminalPage />
+                </ProtectedRoute>
+              }
+              path="/node/:nodeId/terminal"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <UserPage />
+                </ProtectedRoute>
+              }
+              path="/user"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
+                </ProtectedRoute>
+              }
+              path="/profile"
+            />
+            <Route
+              element={
+                <ProtectedRoute useSimpleLayout={true}>
+                  <Navigate replace to="/user" />
+                </ProtectedRoute>
+              }
+              path="/limit"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <ConfigPage />
+                </ProtectedRoute>
+              }
+              path="/config"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <MonitoringPage />
+                </ProtectedRoute>
+              }
+              path="/monitoring"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <UpdatePage />
+                </ProtectedRoute>
+              }
+              path="/update"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <ServicePublishingPage />
+                </ProtectedRoute>
+              }
+              path="/service-publishing"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <DockerAppsPage />
+                </ProtectedRoute>
+              }
+              path="/docker-apps"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <PrivateProxyPage />
+                </ProtectedRoute>
+              }
+              path="/private-proxy"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <Navigate replace to="/dashboard" />
+                </ProtectedRoute>
+              }
+              path="/protocol-probe"
+            />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <HomeAccessPage />
+                </ProtectedRoute>
+              }
+              path="/home-access"
+            />
+            <Route
+              element={
+                <ProtectedRoute useSimpleLayout={true}>
+                  <HomeDevicesPage />
+                </ProtectedRoute>
+              }
+              path="/home-devices"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <NetworkToolsPage />
+                </ProtectedRoute>
+              }
+              path="/network-tools"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <QualityLabPage />
+                </ProtectedRoute>
+              }
+              path="/quality-lab"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <BandwidthTestPage />
+                </ProtectedRoute>
+              }
+              path="/bandwidth-test"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <ClientSpeedTestPage />
+                </ProtectedRoute>
+              }
+              path="/client-speed-test"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <UdpQuicDiagnosticPage />
+                </ProtectedRoute>
+              }
+              path="/udp-quic-diagnostic"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <MultiLineAggregationPage />
+                </ProtectedRoute>
+              }
+              path="/multi-line-aggregation"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <IpQualityPage />
+                </ProtectedRoute>
+              }
+              path="/ip-quality"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <Navigate replace to="/private-network?section=virtual-lan" />
+                </ProtectedRoute>
+              }
+              path="/virtual-lan"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <PrivateNetworkPage />
+                </ProtectedRoute>
+              }
+              path="/private-network"
+            />
+            <Route
+              element={
+                <ProtectedRoute useSimpleLayout={true}>
+                  <GuidePage />
+                </ProtectedRoute>
+              }
+              path="/guide"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly useSimpleLayout={true}>
+                  <PortResourcesPage />
+                </ProtectedRoute>
+              }
+              path="/port-resources"
+            />
+            <Route element={<PanelAddressPage />} path="/panel-addresses" />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <Navigate replace to="/panel-addresses" />
+                </ProtectedRoute>
+              }
+              path="/settings"
+            />
+          </Routes>
+        </Suspense>
+      </PageErrorBoundary>
+      {/* React Query 开发工具 - 仅在开发环境显示 */}
+      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+    </QueryClientProvider>
   );
 }
 

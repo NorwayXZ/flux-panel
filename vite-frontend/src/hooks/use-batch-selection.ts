@@ -6,12 +6,14 @@
 
 import {
   createContext,
+  createElement,
   useContext,
+  useEffect,
   useReducer,
   useCallback,
   useMemo,
   ReactNode,
-} from 'react';
+} from "react";
 
 export interface BatchSelectionState<T = any> {
   /** 已选中的项ID集合 */
@@ -23,23 +25,26 @@ export interface BatchSelectionState<T = any> {
 }
 
 type BatchSelectionAction<T = any> =
-  | { type: 'SELECT'; id: number }
-  | { type: 'DESELECT'; id: number }
-  | { type: 'TOGGLE'; id: number }
-  | { type: 'SELECT_ALL'; items: T[] }
-  | { type: 'DESELECT_ALL' }
-  | { type: 'TOGGLE_ALL'; items: T[] }
-  | { type: 'SET_ITEMS'; items: T[] }
-  | { type: 'RESET' };
+  | { type: "SELECT"; id: number }
+  | { type: "DESELECT"; id: number }
+  | { type: "TOGGLE"; id: number }
+  | { type: "SELECT_ALL"; items: T[] }
+  | { type: "DESELECT_ALL" }
+  | { type: "TOGGLE_ALL"; items: T[] }
+  | { type: "SET_ITEMS"; items: T[] }
+  | { type: "RESET" };
 
 function batchSelectionReducer<T extends { id: number }>(
   state: BatchSelectionState<T>,
-  action: BatchSelectionAction<T>
+  action: BatchSelectionAction<T>,
 ): BatchSelectionState<T> {
   switch (action.type) {
-    case 'SELECT': {
+    case "SELECT": {
+      if (!state.items.some((item) => item.id === action.id)) return state;
       const newSelected = new Set(state.selectedIds);
+
       newSelected.add(action.id);
+
       return {
         ...state,
         selectedIds: newSelected,
@@ -47,9 +52,11 @@ function batchSelectionReducer<T extends { id: number }>(
       };
     }
 
-    case 'DESELECT': {
+    case "DESELECT": {
       const newSelected = new Set(state.selectedIds);
+
       newSelected.delete(action.id);
+
       return {
         ...state,
         selectedIds: newSelected,
@@ -57,13 +64,16 @@ function batchSelectionReducer<T extends { id: number }>(
       };
     }
 
-    case 'TOGGLE': {
+    case "TOGGLE": {
+      if (!state.items.some((item) => item.id === action.id)) return state;
       const newSelected = new Set(state.selectedIds);
+
       if (newSelected.has(action.id)) {
         newSelected.delete(action.id);
       } else {
         newSelected.add(action.id);
       }
+
       return {
         ...state,
         selectedIds: newSelected,
@@ -71,17 +81,18 @@ function batchSelectionReducer<T extends { id: number }>(
       };
     }
 
-    case 'SELECT_ALL': {
+    case "SELECT_ALL": {
       const allIds = new Set(action.items.map((item) => item.id));
+
       return {
         ...state,
         selectedIds: allIds,
-        selectAll: true,
+        selectAll: action.items.length > 0,
         items: action.items,
       };
     }
 
-    case 'DESELECT_ALL': {
+    case "DESELECT_ALL": {
       return {
         ...state,
         selectedIds: new Set(),
@@ -89,7 +100,7 @@ function batchSelectionReducer<T extends { id: number }>(
       };
     }
 
-    case 'TOGGLE_ALL': {
+    case "TOGGLE_ALL": {
       if (state.selectAll) {
         return {
           ...state,
@@ -98,34 +109,44 @@ function batchSelectionReducer<T extends { id: number }>(
         };
       } else {
         const allIds = new Set(action.items.map((item) => item.id));
+
         return {
           ...state,
           selectedIds: allIds,
-          selectAll: true,
+          selectAll: action.items.length > 0,
           items: action.items,
         };
       }
     }
 
-    case 'SET_ITEMS': {
+    case "SET_ITEMS": {
+      if (
+        state.items === action.items ||
+        (state.items.length === 0 &&
+          action.items.length === 0 &&
+          state.selectedIds.size === 0)
+      )
+        return state;
       // 过滤掉不存在的选中项
       const validIds = new Set(action.items.map((item) => item.id));
       const newSelected = new Set(
-        Array.from(state.selectedIds).filter((id) => validIds.has(id))
+        Array.from(state.selectedIds).filter((id) => validIds.has(id)),
       );
+
       return {
         ...state,
         items: action.items,
         selectedIds: newSelected,
-        selectAll: newSelected.size === action.items.length && action.items.length > 0,
+        selectAll:
+          newSelected.size === action.items.length && action.items.length > 0,
       };
     }
 
-    case 'RESET': {
+    case "RESET": {
       return {
         selectedIds: new Set(),
         selectAll: false,
-        items: [],
+        items: state.items,
       };
     }
 
@@ -149,7 +170,10 @@ interface BatchSelectionContextValue<T = any> {
   selectedItems: T[];
 }
 
-const BatchSelectionContext = createContext<BatchSelectionContextValue | null>(null);
+const BatchSelectionContext = createContext<BatchSelectionContextValue | null>(
+  null,
+);
+const EMPTY_ITEMS: never[] = [];
 
 interface BatchSelectionProviderProps<T extends { id: number }> {
   children: ReactNode;
@@ -169,49 +193,53 @@ interface BatchSelectionProviderProps<T extends { id: number }> {
  */
 export function BatchSelectionProvider<T extends { id: number }>({
   children,
-  items = [],
+  items = EMPTY_ITEMS,
 }: BatchSelectionProviderProps<T>) {
   const [state, dispatch] = useReducer(batchSelectionReducer<T>, {
-    selectedIds: new Set(),
+    selectedIds: new Set<number>(),
     selectAll: false,
     items,
   });
 
+  useEffect(() => {
+    dispatch({ type: "SET_ITEMS", items });
+  }, [items]);
+
   const select = useCallback((id: number) => {
-    dispatch({ type: 'SELECT', id });
+    dispatch({ type: "SELECT", id });
   }, []);
 
   const deselect = useCallback((id: number) => {
-    dispatch({ type: 'DESELECT', id });
+    dispatch({ type: "DESELECT", id });
   }, []);
 
   const toggle = useCallback((id: number) => {
-    dispatch({ type: 'TOGGLE', id });
+    dispatch({ type: "TOGGLE", id });
   }, []);
 
   const selectAll = useCallback(() => {
-    dispatch({ type: 'SELECT_ALL', items: state.items });
+    dispatch({ type: "SELECT_ALL", items: state.items });
   }, [state.items]);
 
   const deselectAll = useCallback(() => {
-    dispatch({ type: 'DESELECT_ALL' });
+    dispatch({ type: "DESELECT_ALL" });
   }, []);
 
   const toggleAll = useCallback(() => {
-    dispatch({ type: 'TOGGLE_ALL', items: state.items });
+    dispatch({ type: "TOGGLE_ALL", items: state.items });
   }, [state.items]);
 
   const setItems = useCallback((newItems: T[]) => {
-    dispatch({ type: 'SET_ITEMS', items: newItems });
+    dispatch({ type: "SET_ITEMS", items: newItems });
   }, []);
 
   const reset = useCallback(() => {
-    dispatch({ type: 'RESET' });
+    dispatch({ type: "RESET" });
   }, []);
 
   const isSelected = useCallback(
     (id: number) => state.selectedIds.has(id),
-    [state.selectedIds]
+    [state.selectedIds],
   );
 
   const selectedCount = state.selectedIds.size;
@@ -248,14 +276,10 @@ export function BatchSelectionProvider<T extends { id: number }>({
       isSelected,
       selectedCount,
       selectedItems,
-    ]
+    ],
   );
 
-  return (
-    <BatchSelectionContext.Provider value={value}>
-      {children}
-    </BatchSelectionContext.Provider>
-  );
+  return createElement(BatchSelectionContext.Provider, { value }, children);
 }
 
 /**
@@ -283,9 +307,13 @@ export function BatchSelectionProvider<T extends { id: number }>({
  */
 export function useBatchSelection<T = any>(): BatchSelectionContextValue<T> {
   const context = useContext(BatchSelectionContext);
+
   if (!context) {
-    throw new Error('useBatchSelection must be used within BatchSelectionProvider');
+    throw new Error(
+      "useBatchSelection must be used within BatchSelectionProvider",
+    );
   }
+
   return context as BatchSelectionContextValue<T>;
 }
 
@@ -317,42 +345,42 @@ export function useBatchSelection<T = any>(): BatchSelectionContextValue<T> {
  */
 export function useSimpleBatchSelection<T extends { id: number }>(items: T[]) {
   const [state, dispatch] = useReducer(batchSelectionReducer<T>, {
-    selectedIds: new Set(),
+    selectedIds: new Set<number>(),
     selectAll: false,
     items,
   });
 
   const select = useCallback((id: number) => {
-    dispatch({ type: 'SELECT', id });
+    dispatch({ type: "SELECT", id });
   }, []);
 
   const deselect = useCallback((id: number) => {
-    dispatch({ type: 'DESELECT', id });
+    dispatch({ type: "DESELECT", id });
   }, []);
 
   const toggle = useCallback((id: number) => {
-    dispatch({ type: 'TOGGLE', id });
+    dispatch({ type: "TOGGLE", id });
   }, []);
 
   const selectAll = useCallback(() => {
-    dispatch({ type: 'SELECT_ALL', items });
+    dispatch({ type: "SELECT_ALL", items });
   }, [items]);
 
   const deselectAll = useCallback(() => {
-    dispatch({ type: 'DESELECT_ALL' });
+    dispatch({ type: "DESELECT_ALL" });
   }, []);
 
   const toggleAll = useCallback(() => {
-    dispatch({ type: 'TOGGLE_ALL', items });
+    dispatch({ type: "TOGGLE_ALL", items });
   }, [items]);
 
   const reset = useCallback(() => {
-    dispatch({ type: 'RESET' });
+    dispatch({ type: "RESET" });
   }, []);
 
   const isSelected = useCallback(
     (id: number) => state.selectedIds.has(id),
-    [state.selectedIds]
+    [state.selectedIds],
   );
 
   const selectedCount = state.selectedIds.size;
@@ -362,8 +390,8 @@ export function useSimpleBatchSelection<T extends { id: number }>(items: T[]) {
   }, [items, state.selectedIds]);
 
   // 当 items 变化时更新
-  useMemo(() => {
-    dispatch({ type: 'SET_ITEMS', items });
+  useEffect(() => {
+    dispatch({ type: "SET_ITEMS", items });
   }, [items]);
 
   return {

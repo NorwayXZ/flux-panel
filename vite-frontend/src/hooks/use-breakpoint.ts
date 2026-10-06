@@ -4,21 +4,21 @@
  * 提供响应式断点检测，方便在组件中根据屏幕尺寸调整行为
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
 const breakpoints = {
   sm: 640,
   md: 768,
   lg: 1024,
   xl: 1280,
-  '2xl': 1536,
+  "2xl": 1536,
 } as const;
 
 export type Breakpoint = keyof typeof breakpoints;
 
 export interface UseBreakpointReturn {
   /** 当前断点 */
-  current: Breakpoint;
+  current: Breakpoint | "base";
   /** 检查是否大于等于指定断点 */
   isAbove: (breakpoint: Breakpoint) => boolean;
   /** 检查是否小于指定断点 */
@@ -53,22 +53,27 @@ export interface UseBreakpointReturn {
  */
 export function useBreakpoint(): UseBreakpointReturn {
   const [width, setWidth] = useState(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       return window.innerWidth;
     }
+
     return 1024; // 默认值
   });
 
-  const [currentBreakpoint, setCurrentBreakpoint] = useState<Breakpoint>(() => {
-    if (typeof window !== 'undefined') {
+  const [currentBreakpoint, setCurrentBreakpoint] = useState<
+    Breakpoint | "base"
+  >(() => {
+    if (typeof window !== "undefined") {
       return getBreakpoint(window.innerWidth);
     }
-    return 'lg';
+
+    return "lg";
   });
 
   useEffect(() => {
     const updateBreakpoint = () => {
       const newWidth = window.innerWidth;
+
       setWidth(newWidth);
       setCurrentBreakpoint(getBreakpoint(newWidth));
     };
@@ -82,13 +87,13 @@ export function useBreakpoint(): UseBreakpointReturn {
       rafId = requestAnimationFrame(updateBreakpoint);
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
 
     // 初始化
     updateBreakpoint();
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener("resize", handleResize);
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
@@ -96,16 +101,16 @@ export function useBreakpoint(): UseBreakpointReturn {
   }, []);
 
   const isAbove = (breakpoint: Breakpoint) => {
-    return breakpoints[currentBreakpoint] >= breakpoints[breakpoint];
+    return width >= breakpoints[breakpoint];
   };
 
   const isBelow = (breakpoint: Breakpoint) => {
-    return breakpoints[currentBreakpoint] < breakpoints[breakpoint];
+    return width < breakpoints[breakpoint];
   };
 
-  const isMobile = !isAbove('md');
-  const isTablet = isAbove('md') && isBelow('lg');
-  const isDesktop = isAbove('lg');
+  const isMobile = !isAbove("md");
+  const isTablet = isAbove("md") && isBelow("lg");
+  const isDesktop = isAbove("lg");
 
   return {
     current: currentBreakpoint,
@@ -121,12 +126,13 @@ export function useBreakpoint(): UseBreakpointReturn {
 /**
  * 根据宽度获取对应的断点
  */
-function getBreakpoint(width: number): Breakpoint {
-  if (width >= breakpoints['2xl']) return '2xl';
-  if (width >= breakpoints.xl) return 'xl';
-  if (width >= breakpoints.lg) return 'lg';
-  if (width >= breakpoints.md) return 'md';
-  return 'sm';
+function getBreakpoint(width: number): Breakpoint | "base" {
+  if (width >= breakpoints["2xl"]) return "2xl";
+  if (width >= breakpoints.xl) return "xl";
+  if (width >= breakpoints.lg) return "lg";
+  if (width >= breakpoints.md) return "md";
+
+  return width >= breakpoints.sm ? "sm" : "base";
 }
 
 /**
@@ -144,9 +150,10 @@ function getBreakpoint(width: number): Breakpoint {
  */
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       return window.matchMedia(query).matches;
     }
+
     return false;
   });
 
@@ -159,11 +166,13 @@ export function useMediaQuery(query: string): boolean {
 
     // 现代浏览器使用 addEventListener
     if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
+      mediaQuery.addEventListener("change", handleChange);
+
+      return () => mediaQuery.removeEventListener("change", handleChange);
     } else {
       // 兼容旧浏览器
       mediaQuery.addListener(handleChange);
+
       return () => mediaQuery.removeListener(handleChange);
     }
   }, [query]);
@@ -185,12 +194,13 @@ export function useMediaQuery(query: string): boolean {
  */
 export function useViewport() {
   const [viewport, setViewport] = useState(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       return {
         width: window.innerWidth,
         height: window.innerHeight,
       };
     }
+
     return { width: 1024, height: 768 };
   });
 
@@ -209,10 +219,10 @@ export function useViewport() {
       });
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener("resize", handleResize);
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
@@ -227,8 +237,8 @@ export function useViewport() {
  */
 export function useDevice() {
   const { isMobile, isTablet, isDesktop } = useBreakpoint();
-  const isTouch = useMediaQuery('(hover: none) and (pointer: coarse)');
-  const hasHover = useMediaQuery('(hover: hover)');
+  const isTouch = useMediaQuery("(hover: none) and (pointer: coarse)");
+  const hasHover = useMediaQuery("(hover: hover)");
 
   return {
     isMobile,
