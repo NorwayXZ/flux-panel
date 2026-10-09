@@ -42,13 +42,18 @@ docker run -d \
 
 database_ready=0
 for _ in {1..90}; do
-  if docker exec "${DATABASE}" mysql -h localhost -uroot -ptestroot -Nse 'SELECT 1' >/dev/null 2>&1; then
+  # The entrypoint starts a temporary socket-only server during initialization.
+  # Wait for TCP so that successful readiness cannot race its shutdown.
+  if docker exec "${DATABASE}" mysql --protocol=TCP -h 127.0.0.1 -uroot -ptestroot -Nse 'SELECT 1' >/dev/null 2>&1; then
     database_ready=1
     break
   fi
   sleep 1
 done
-[[ "${database_ready}" -eq 1 ]]
+if [[ "${database_ready}" -ne 1 ]]; then
+  docker logs "${DATABASE}"
+  exit 1
+fi
 
 docker exec "${DATABASE}" mysql -uroot -ptestroot -e \
   "CREATE DATABASE flux_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
