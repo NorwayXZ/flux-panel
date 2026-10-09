@@ -588,6 +588,8 @@ update_panel() {
 }
 
 rollback_panel() {
+  local override="${1:-}"
+  [[ -z "${override}" || "${override}" == "--force" ]] || fail "rollback accepts only --force as an optional argument"
   check_host
   check_disk_capacity
   require_command flock
@@ -604,6 +606,32 @@ rollback_panel() {
   previous_version="$(read_env_value PREVIOUS_PANEL_VERSION)"
   [[ -n "${previous_version}" ]] || fail "no previous release is recorded; update successfully once before using rollback"
   [[ "${previous_version}" != "${current_version}" ]] || fail "previous release is the same as the current release"
+
+  local previous_major previous_minor previous_patch
+  if [[ "${previous_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+    previous_major=$((10#${BASH_REMATCH[1]}))
+    previous_minor=$((10#${BASH_REMATCH[2]}))
+    previous_patch=$((10#${BASH_REMATCH[3]}))
+  else
+    fail "rollback target version is invalid: ${previous_version}"
+  fi
+  if (( previous_major < 2 || (previous_major == 2 && previous_minor < 52) ||
+        (previous_major == 2 && previous_minor == 52 && previous_patch < 1) )); then
+    if [[ "${override}" == "--force" ]]; then
+      log "WARNING: forcing rollback without checking customer entry migrations may interrupt customer connections"
+    else
+      local pending_migrations
+      pending_migrations="$(compose exec -T mysql sh -c '
+        MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse \
+        "SELECT (SELECT COUNT(*) FROM cross_entry_dns_rollback_pending)
+              + (SELECT COUNT(*) FROM authorized_entry_forward WHERE retire_at IS NOT NULL)"
+      ')" || fail "unable to verify customer entry migrations; repair database access or explicitly use rollback --force"
+      [[ "${pending_migrations}" =~ ^[0-9]+$ ]] || fail "unexpected customer migration status before rollback"
+      if [[ "${pending_migrations}" != "0" ]]; then
+        fail "${pending_migrations} customer entry migrations are still active; wait for cleanup or explicitly run rollback --force (this can interrupt customer connections)"
+      fi
+    fi
+  fi
 
   log "rolling back Flux Panel ${current_version} -> ${previous_version}"
   set_env_value PANEL_VERSION "${previous_version}"
@@ -663,7 +691,7 @@ show_status() {
 
 usage() {
   cat <<'EOF'
-Usage: flux-panel.sh <install|update|rollback|uninstall|purge|status>
+Usage: flux-panel.sh <install|update|rollback [--force]|uninstall|purge|status>
 
 Environment variables:
   FLUX_PANEL_FRONTEND_PORT  Public web port, default: 6366
@@ -682,7 +710,7 @@ main() {
   case "${1:-}" in
     install) install_panel ;;
     update) update_panel ;;
-    rollback) rollback_panel ;;
+    rollback) rollback_panel "${2:-}" ;;
     uninstall) uninstall_panel ;;
     purge) purge_panel ;;
     status) show_status ;;

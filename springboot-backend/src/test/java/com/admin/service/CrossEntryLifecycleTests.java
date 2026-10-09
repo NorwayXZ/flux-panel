@@ -167,7 +167,7 @@ class CrossEntryLifecycleTests {
     }
 
     @Test
-    void activeCustomerGrantsProtectSourceMembershipAndDeletion() {
+    void activeCustomerGrantsAllowStagedMembershipButProtectIdentityAndDeletion() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForObject(anyString(), eq(Integer.class), eq(7L))).thenReturn(1);
         when(jdbc.queryForList(contains("FROM cross_entry_failover_group WHERE id="), eq(7L)))
@@ -179,7 +179,7 @@ class CrossEntryLifecycleTests {
         try {
             assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service,
                     "assertAuthorizedSourceChangeAllowed", dto, List.of(Map.of("id", 10L))));
-            assertThrows(IllegalArgumentException.class, () -> ReflectionTestUtils.invokeMethod(service,
+            assertDoesNotThrow(() -> ReflectionTestUtils.invokeMethod(service,
                     "assertAuthorizedSourceChangeAllowed", dto, List.of(Map.of("id", 20L))));
             dto.setDomain("changed.example.com");
             assertThrows(IllegalArgumentException.class, () -> ReflectionTestUtils.invokeMethod(service,
@@ -246,8 +246,217 @@ class CrossEntryLifecycleTests {
         } finally { service.shutdown(); }
     }
 
+    @Test
+    void savingAnAuthorizedSourceDeploysNewReplicasBeforeChangingDns() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        DnsProviderService dns = mock(DnsProviderService.class);
+        AuthorizedEntrySourceMigrationService migration = mock(AuthorizedEntrySourceMigrationService.class);
+        when(dns.normalizeDomain(1L, "a.example.com")).thenReturn("a.example.com");
+        when(dns.loadZoneAccess(1L)).thenReturn(new DnsProviderService.ZoneAccess(1L, "zone", "example.com", "token"));
+        when(dns.ensureManagedRecord(anyLong(), any(), anyString(), anyString(), anyString(), anyInt(), anyLong())).thenReturn("record");
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq(7L)))
+                .thenAnswer(call -> ((String) call.getArgument(0)).contains("authorized_entry_template") ? 1 : 0);
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq("a.example.com"), eq("A"), eq(7L))).thenReturn(0);
+        when(jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class)).thenReturn(300L);
+        Map<String, Object> old = Map.of("activeForwardId", 10L, "activeMemberId", 100L,
+                "groupEnabled", true, "domain", "a.example.com", "record_type", "A", "dns_zone_id", 1L, "record_id", "record");
+        List<Map<String, Object>> options = List.of(option(10L, 1L, "8.8.8.8"), option(30L, 3L, "1.1.1.1"));
+        when(jdbc.queryForList(anyString(), eq(7L))).thenAnswer(call -> {
+            String sql = call.getArgument(0);
+            if (sql.startsWith("SELECT g.api_token")) return List.of(old);
+            if (sql.startsWith("SELECT id,enabled,forward_id")) return List.of(
+                    Map.of("id", 100L, "forwardId", 10L, "enabled", true),
+                    Map.of("id", 200L, "forwardId", 20L, "enabled", true));
+            if (sql.contains("FROM cross_entry_failover_group WHERE id=")) return List.of(Map.of("id", 7L,
+                    "enabled", true, "dnsZoneId", 1L, "recordId", "record", "domain", "a.example.com", "recordType", "A", "ttl", 60));
+            return List.of();
+        });
+        when(jdbc.queryForList(contains("WHERE f.id IN"), eq(10L), eq(30L))).thenReturn(options);
+        when(jdbc.queryForList(contains("SELECT id,entry_address"), eq(100L)))
+                .thenReturn(List.of(Map.of("id", 100L, "entryAddress", "8.8.8.8", "nodeName", "entry")));
+        AuthorizedEntrySourceMigrationService.Stage staged = new AuthorizedEntrySourceMigrationService.Stage(
+                7L, List.of(500L), List.of(600L), Map.of(), System.currentTimeMillis() + 300_000L);
+        when(migration.prepare(eq(7L), anyList(), anyInt())).thenReturn(staged);
+        CrossEntryFailoverService raw = service(jdbc, null, dns);
+        ReflectionTestUtils.setField(raw, "sourceMigrationService", migration);
+        CrossEntryFailoverSaveDto dto = new CrossEntryFailoverSaveDto();
+        dto.setId(7L); dto.setName("source"); dto.setDomain("a.example.com"); dto.setDnsZoneId(1L);
+        dto.setMemberForwardIds(List.of(10L, 30L));
+        org.springframework.transaction.PlatformTransactionManager transactions = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(transactions.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        org.springframework.aop.framework.ProxyFactory proxy = new org.springframework.aop.framework.ProxyFactory(raw);
+        proxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(transactions,
+                new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            R result = ((CrossEntryFailoverService) proxy.getProxy()).save(dto);
+            assertEquals(0, result.getCode(), result.getMsg());
+            assertTrue(((Map<?, ?>) result.getData()).get("message").toString().contains("旧入口将保留"));
+            @SuppressWarnings("unchecked")
+            org.mockito.ArgumentCaptor<List<AuthorizedEntrySourceMigrationService.SourceNode>> nodes =
+                    org.mockito.ArgumentCaptor.forClass(List.class);
+            verify(migration).prepare(eq(7L), nodes.capture(), eq(60));
+            assertEquals(List.of(1L, 3L), nodes.getValue().stream().map(AuthorizedEntrySourceMigrationService.SourceNode::nodeId).toList());
+            verify(migration).complete(staged);
+            int preparedAt = mockingDetails(migration).getInvocations().stream()
+                    .filter(call -> call.getMethod().getName().equals("prepare"))
+                    .findFirst().orElseThrow().getSequenceNumber();
+            int wroteGroupAt = mockingDetails(jdbc).getInvocations().stream()
+                    .filter(call -> call.getMethod().getName().equals("update")
+                            && call.getArgument(0, String.class).startsWith("UPDATE cross_entry_failover_group SET name="))
+                    .findFirst().orElseThrow().getSequenceNumber();
+            int completedAt = mockingDetails(migration).getInvocations().stream()
+                    .filter(call -> call.getMethod().getName().equals("complete"))
+                    .findFirst().orElseThrow().getSequenceNumber();
+            assertTrue(preparedAt < wroteGroupAt && wroteGroupAt < completedAt);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            raw.shutdown();
+        }
+    }
+
+    @Test
+    void failedGroupTransactionCleansUpTheStagedCustomerListeners() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        AuthorizedEntrySourceMigrationService migration = mock(AuthorizedEntrySourceMigrationService.class);
+        CrossEntryFailoverService service = service(jdbc, null, null);
+        ReflectionTestUtils.setField(service, "sourceMigrationService", migration);
+        AuthorizedEntrySourceMigrationService.Stage stage = new AuthorizedEntrySourceMigrationService.Stage(
+                7L, List.of(500L), List.of(600L), Map.of(), System.currentTimeMillis() + 300_000L);
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            ReflectionTestUtils.invokeMethod(service, "registerMigrationRollback", stage,
+                    new java.util.concurrent.atomic.AtomicBoolean(false));
+            org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+            verify(migration).abort(stage);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            service.shutdown();
+        }
+    }
+
+    @Test
+    void failedDnsRollbackPreservesCustomerListenersForRetry() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        DnsProviderService dns = mock(DnsProviderService.class);
+        AuthorizedEntrySourceMigrationService migration = mock(AuthorizedEntrySourceMigrationService.class);
+        when(jdbc.queryForList(contains("FROM cross_entry_failover_group WHERE id="), eq(7L)))
+                .thenReturn(List.of(Map.of("id", 7L, "dnsZoneId", 1L, "recordId", "record",
+                        "domain", "a.example.com", "recordType", "A", "ttl", 60,
+                        "activeMemberId", 100L, "routingMode", "failover")));
+        when(jdbc.queryForList(contains("FROM cross_entry_failover_member WHERE id="), eq(100L)))
+                .thenReturn(List.of(Map.of("id", 100L, "entryAddress", "8.8.8.8")));
+        doThrow(new IllegalStateException("provider offline")).when(dns).updateManagedRecord(
+                anyLong(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyLong());
+        CrossEntryFailoverService service = service(jdbc, null, dns);
+        ReflectionTestUtils.setField(service, "sourceMigrationService", migration);
+        AuthorizedEntrySourceMigrationService.Stage stage = new AuthorizedEntrySourceMigrationService.Stage(
+                7L, List.of(500L), List.of(600L), Map.of(), System.currentTimeMillis() + 300_000L);
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            ReflectionTestUtils.invokeMethod(service, "registerMigrationRollback", stage,
+                    new java.util.concurrent.atomic.AtomicBoolean(true));
+            org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+            verify(migration).preserveCreatedBindings(stage);
+            verify(migration, never()).abort(stage);
+            assertTrue(mockingDetails(jdbc).getInvocations().stream().anyMatch(call ->
+                    call.getMethod().getName().equals("update")
+                            && call.getArgument(0, String.class).startsWith("INSERT INTO cross_entry_dns_rollback_pending")));
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            service.shutdown();
+        }
+    }
+
+    @Test
+    void pendingDnsRollbackRestoresOriginalAddressBeforeRetiringStagedListeners() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        DnsProviderService dns = mock(DnsProviderService.class);
+        AuthorizedEntrySourceMigrationService migration = mock(AuthorizedEntrySourceMigrationService.class);
+        when(jdbc.queryForList(startsWith("SELECT group_id AS groupId")))
+                .thenReturn(List.of(Map.of("groupId", 7L, "bindingIds", "[500]", "drainMillis", 300_000L)));
+        when(jdbc.queryForList(contains("FROM cross_entry_failover_group WHERE id="), eq(7L)))
+                .thenReturn(List.of(Map.of("id", 7L, "dnsZoneId", 1L, "recordId", "record",
+                        "domain", "a.example.com", "recordType", "A", "ttl", 60,
+                        "activeMemberId", 100L, "routingMode", "failover")));
+        when(jdbc.queryForList(contains("FROM cross_entry_failover_member WHERE id="), eq(100L)))
+                .thenReturn(List.of(Map.of("id", 100L, "entryAddress", "8.8.8.8")));
+        CrossEntryFailoverService service = service(jdbc, null, dns);
+        ReflectionTestUtils.setField(service, "sourceMigrationService", migration);
+        ReflectionTestUtils.setField(service, "mutationLocks", new CrossEntryGroupMutationLocks());
+        try {
+            service.retrySourceDnsRollbacks();
+            org.mockito.InOrder order = inOrder(dns, migration);
+            order.verify(dns).updateManagedRecord(eq(1L), eq("record"), eq("a.example.com"), eq("A"),
+                    eq("8.8.8.8"), eq(60), eq(7L));
+            order.verify(migration).retirePreservedBindings(List.of(500L), 300_000L);
+            verify(jdbc).update("DELETE FROM cross_entry_dns_rollback_pending WHERE group_id=?", 7L);
+        } finally { service.shutdown(); }
+    }
+
+    @Test
+    void pendingDnsRollbackBlocksFurtherEntryEdits() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Integer.class), eq(7L))).thenAnswer(call ->
+                ((String) call.getArgument(0)).contains("cross_entry_dns_rollback_pending")
+                        || ((String) call.getArgument(0)).contains("cross_entry_failover_group") ? 1 : 0);
+        CrossEntryFailoverService service = service(jdbc, null, null);
+        try {
+            assertNotEquals(0, service.setMemberEnabled(7L, 100L, true).getCode());
+            assertNotEquals(0, service.delete(7L).getCode());
+        } finally { service.shutdown(); }
+    }
+
+    @Test
+    void committedManagedSourceIsNeverRemovedByAnOldProvisionalCleanupTask() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ForwardService forwards = mock(ForwardService.class);
+        CrossEntryManagedCleanupService cleanup = mock(CrossEntryManagedCleanupService.class);
+        when(jdbc.queryForObject(contains("FROM cross_entry_failover_member"), eq(Integer.class), eq(7L), eq(100L)))
+                .thenReturn(1);
+        CrossEntryFailoverService service = new CrossEntryFailoverService(jdbc, null, null, null, null,
+                forwards, null, null, null, cleanup);
+        try {
+            ReflectionTestUtils.invokeMethod(service, "retryManagedCleanup", Map.of(
+                    "id", 4L, "groupId", 7L, "forwardId", 100L, "entryNodeId", 20L,
+                    "reason", "入口迁移预部署资源"));
+            verify(cleanup).markDone(4L);
+            verifyNoInteractions(forwards);
+        } finally { service.shutdown(); }
+    }
+
+    @Test
+    void parentResourceCleanupWaitsForTheCustomerListenerToRetire() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ForwardService forwards = mock(ForwardService.class);
+        CrossEntryManagedCleanupService cleanup = mock(CrossEntryManagedCleanupService.class);
+        AuthorizedEntrySourceMigrationService migration = mock(AuthorizedEntrySourceMigrationService.class);
+        when(migration.hasBindingsOnNode(7L, 20L)).thenReturn(true);
+        CrossEntryFailoverService service = new CrossEntryFailoverService(jdbc, null, null, null, null,
+                forwards, null, null, null, cleanup);
+        ReflectionTestUtils.setField(service, "sourceMigrationService", migration);
+        try {
+            ReflectionTestUtils.invokeMethod(service, "retryManagedCleanup", Map.of(
+                    "id", 4L, "groupId", 7L, "forwardId", 100L, "entryNodeId", 20L,
+                    "reason", "保存失败后的托管资源清理重试"));
+            verify(cleanup).markAttempt(4L);
+            verify(cleanup, never()).markDone(4L);
+            verifyNoInteractions(forwards);
+        } finally { service.shutdown(); }
+    }
+
     private Map<String,Object> option(long id, long node, String ip) {
         return new HashMap<>(Map.of("id",id,"name","forward","status",1,"inPort",10000,"inNodeId",node,
-                "entryHost",ip,"protocolMode","tcp","nodeName","entry"));
+                "entryHost",ip,"protocolMode","tcp","nodeName","entry","tunnelId",(int) node));
     }
 }

@@ -202,6 +202,11 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "PRIMARY KEY (id),UNIQUE KEY uk_cross_entry_dns_member (group_id,member_id),"
                     + "UNIQUE KEY uk_cross_entry_dns_provider (provider_record_id),KEY idx_cross_entry_dns_group (group_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_dns_rollback_pending ("
+                    + "group_id bigint NOT NULL,binding_ids text NOT NULL,drain_millis bigint NOT NULL,"
+                    + "last_error varchar(500) DEFAULT NULL,attempts int NOT NULL DEFAULT 0,"
+                    + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY (group_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_managed_resource ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,forward_id bigint NOT NULL,"
                     + "tunnel_id bigint NOT NULL,entry_node_id bigint NOT NULL,target_address varchar(255) NOT NULL,"

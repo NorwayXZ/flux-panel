@@ -146,6 +146,7 @@ const Network = {
   post: function <T = any>(
     path: string = "",
     data: any = {},
+    timeoutMs: number = DEFAULT_TIMEOUT_MS,
   ): Promise<ApiResponse<T>> {
     return new Promise(function (resolve) {
       // 如果baseURL是默认值且是WebView环境，说明没有设置面板地址
@@ -157,7 +158,7 @@ const Network = {
 
       axios
         .post(path, data, {
-          timeout: DEFAULT_TIMEOUT_MS,
+          timeout: timeoutMs,
           headers: {
             Authorization: window.localStorage.getItem("token"),
             "Content-Type": "application/json",
@@ -230,8 +231,9 @@ const Network = {
     path: string = "",
     data: any = {},
     cachePaths: string[] = [],
+    timeoutMs?: number,
   ): Promise<ApiResponse<T>> {
-    return Network.post<T>(path, data).then((response) => {
+    return Network.post<T>(path, data, timeoutMs).then((response) => {
       if (response.code === 0)
         cachePaths.forEach((cachePath) => Network.clearCache(cachePath));
 

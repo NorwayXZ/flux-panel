@@ -6,6 +6,7 @@ NETWORK=flux-panel-runtime-test-net
 DATABASE=flux-panel-runtime-test-db
 BACKEND=flux-panel-runtime-test-backend
 IMAGE=flux-panel-runtime-test-backend:local
+MYSQL_TEST_IMAGE="${FLUX_PANEL_TEST_MYSQL_IMAGE:-mysql:8.0}"
 BUILD_CONTEXT=
 
 cleanup() {
@@ -35,8 +36,7 @@ docker run -d \
   --network "${NETWORK}" \
   --tmpfs /var/lib/mysql:rw,size=512m \
   -e MYSQL_ROOT_PASSWORD=testroot \
-  mysql:8.0 \
-  --default-authentication-plugin=mysql_native_password \
+  "${MYSQL_TEST_IMAGE}" \
   --character-set-server=utf8mb4 \
   --collation-server=utf8mb4_unicode_ci >/dev/null
 
@@ -137,6 +137,14 @@ daily_usage_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flu
 traffic_usage_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage' AND column_name='traffic_active_millis'")
 [[ "${traffic_usage_column_exists}" -eq 1 ]]
+for table in authorized_entry_template cross_entry_dns_rollback_pending; do
+  migration_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
+  [[ "${migration_table_exists}" -eq 1 ]]
+done
+retirement_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='authorized_entry_forward' AND column_name='retire_at'")
+[[ "${retirement_column_exists}" -eq 1 ]]
 
 for table in monitoring_current monitoring_history monitoring_alert; do
   width=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \

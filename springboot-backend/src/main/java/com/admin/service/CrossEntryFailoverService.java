@@ -29,6 +29,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.core.Ordered;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -38,7 +39,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -87,6 +93,7 @@ public class CrossEntryFailoverService {
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
     private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
     private static final long TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS = 15_000L;
+    private static final String MIGRATION_PREPARE_CLEANUP_REASON = "入口迁移预部署资源";
     static final String DAILY_USAGE_SELECT_SQL = "SELECT member_id AS memberId,active_millis AS activeMillis,"
             + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
             + "WHERE group_id=? AND usage_date=?";
@@ -106,6 +113,9 @@ public class CrossEntryFailoverService {
     private final AtomicBoolean checking = new AtomicBoolean(false);
     private final AtomicBoolean managedCleanupRunning = new AtomicBoolean(false);
     private final Map<Long, Object> groupLocks = new ConcurrentHashMap<>();
+    @Resource private CrossEntryGroupMutationLocks mutationLocks;
+    @Resource private AuthorizedEntrySourceMigrationService sourceMigrationService;
+    @Resource private PlatformTransactionManager transactionManager;
     private final Set<Long> inFlightGroups = ConcurrentHashMap.newKeySet();
     private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
 
@@ -135,6 +145,8 @@ public class CrossEntryFailoverService {
 
     private static final class ManagedResourceDraft {
         private Long forwardId;
+        private boolean deferCleanup;
+        private boolean provisional;
         private final Long tunnelId;
         private final Long entryNodeId;
         private final boolean createdTunnel;
@@ -472,6 +484,7 @@ public class CrossEntryFailoverService {
                         + "traffic_quota_used_bytes AS trafficQuotaUsedBytes,traffic_quota_period_start_at AS trafficQuotaPeriodStartAt,"
                         + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused,"
                         + "traffic_quota_exhausted_at AS trafficQuotaExhaustedAt,traffic_quota_last_error AS trafficQuotaLastError,"
+                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_dns_rollback_pending p WHERE p.group_id=g.id) THEN 1 ELSE 0 END AS migrationPending,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,g.created_time AS createdTime,"
                         + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active') "
                         + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
@@ -509,7 +522,9 @@ public class CrossEntryFailoverService {
     @Transactional(rollbackFor = Exception.class)
     public R save(CrossEntryFailoverSaveDto dto) {
         synchronized (groupLocks.computeIfAbsent(dto.getId() == null ? 0L : dto.getId(), ignored -> new Object())) {
-            return saveLocked(dto);
+            return dto.getId() == null || mutationLocks == null
+                    ? saveLocked(dto)
+                    : mutationLocks.withLock(dto.getId(), () -> saveLocked(dto));
         }
     }
 
@@ -517,8 +532,13 @@ public class CrossEntryFailoverService {
         List<ManagedResourceDraft> createdManagedResources = new ArrayList<>();
         List<ManagedResourceDraft> removedManagedResources = new ArrayList<>();
         Long createdGroupId = null;
+        AuthorizedEntrySourceMigrationService.Stage sourceStage = null;
+        AtomicBoolean sourceDnsTouched = new AtomicBoolean(false);
         String saveStage = "validation";
         try {
+            if (dto.getId() != null && hasPendingSourceDnsRollback(dto.getId())) {
+                throw new IllegalStateException("该容灾组的 DNS 回退仍在重试，请等待恢复后再调整入口");
+            }
             if (dto.getId() != null && !dto.isExpiresAtProvided()) {
                 List<Long> existingExpiry = jdbcTemplate.queryForList(
                         "SELECT expires_at FROM cross_entry_failover_group WHERE id=?", Long.class, dto.getId());
@@ -611,6 +631,21 @@ public class CrossEntryFailoverService {
                 }
             }
             String recordId = StringUtils.defaultString(requestedRecordId);
+
+            if (id != null && hasAuthorizedSourceDependents(id)) {
+                Set<Long> requestedForwards = forwards.stream().map(row -> number(row.get("id")).longValue()).collect(Collectors.toSet());
+                if (!previousMemberFaultStats.keySet().equals(requestedForwards)) {
+                    saveStage = "authorized_members";
+                    List<AuthorizedEntrySourceMigrationService.SourceNode> desired = forwards.stream()
+                            .filter(row -> previousMemberFaultStats.get(number(row.get("id")).longValue()) == null
+                                    || bool(previousMemberFaultStats.get(number(row.get("id")).longValue()).get("enabled")))
+                            .map(row -> new AuthorizedEntrySourceMigrationService.SourceNode(
+                                    number(row.get("inNodeId")).longValue(), number(row.get("tunnelId")).intValue(),
+                                    Objects.toString(row.get("entryAddress")))).toList();
+                    sourceStage = sourceMigrationService.prepare(id, desired, dto.getTtl());
+                    registerMigrationRollback(sourceStage, sourceDnsTouched);
+                }
+            }
 
             saveStage = "database_write";
             if (id == null) {
@@ -757,6 +792,7 @@ public class CrossEntryFailoverService {
             replaceSchedules(id, dto.getSchedules(), now);
 
             Map<String, Object> selectedEntry = loadMember(activeMemberId);
+            if (sourceStage != null) sourceDnsTouched.set(true);
             if (managedDns) {
                 dnsProviderService.releaseRecord(id);
                 recordId = dnsProviderService.ensureManagedRecord(dto.getDnsZoneId(), requestedRecordId, dto.getDomain(), dto.getRecordType(),
@@ -790,11 +826,21 @@ public class CrossEntryFailoverService {
             }
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("id", id);
+            if (sourceStage != null && !sourceStage.removedBindings().isEmpty()) {
+                result.put("message", "容灾组已更新；旧入口将保留至 DNS 缓存退役窗口结束，随后自动清理客户隐藏转发");
+            }
             if (!removedManagedResources.isEmpty()) {
                 int cleanupFailed = cleanupRemovedManagedResources(id, removedManagedResources);
                 if (cleanupFailed > 0) {
                     result.put("cleanupFailed", cleanupFailed);
                     result.put("message", "容灾组已更新，但有 " + cleanupFailed + " 个已移除入口的托管资源清理失败，节点恢复后请在转发管理中检查");
+                }
+            }
+            if (sourceStage != null) sourceMigrationService.complete(sourceStage);
+            for (ManagedResourceDraft resource : createdManagedResources) {
+                if (resource.provisional) {
+                    jdbcTemplate.update("DELETE FROM cross_entry_managed_cleanup WHERE group_id=? AND forward_id=? AND reason=?",
+                            id, resource.forwardId, MIGRATION_PREPARE_CLEANUP_REASON);
                 }
             }
             activityGroups.clear();
@@ -806,15 +852,91 @@ public class CrossEntryFailoverService {
         }
     }
 
+    private void registerMigrationRollback(AuthorizedEntrySourceMigrationService.Stage stage,
+                                           AtomicBoolean dnsTouched) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            sourceMigrationService.abort(stage);
+            throw new IllegalStateException("客户入口迁移必须在事务中保存");
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public int getOrder() { return Ordered.HIGHEST_PRECEDENCE; }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_COMMITTED) return;
+                try {
+                    if (dnsTouched.get()) {
+                        try { restoreCommittedSourceDns(stage.groupId()); }
+                        catch (RuntimeException dnsError) {
+                            recordPendingSourceDnsRollback(stage, dnsError);
+                            return;
+                        }
+                    }
+                    sourceMigrationService.abort(stage);
+                } catch (RuntimeException e) {
+                    log.error("客户入口迁移回滚清理失败 groupId={}", stage.groupId(), e);
+                }
+            }
+        });
+    }
+
+    private boolean hasPendingSourceDnsRollback(long groupId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_dns_rollback_pending WHERE group_id=?",
+                Integer.class, groupId);
+        return count != null && count > 0;
+    }
+
+    private void restoreCommittedSourceDns(long groupId) {
+        Map<String, Object> group = loadGroup(groupId);
+        Long expiresAt = nullableLong(group.get("expiresAt"));
+        if (expiresAt != null && expiresAt <= System.currentTimeMillis()) {
+            Long zoneId = nullableLong(group.get("dnsZoneId"));
+            dnsProviderService.clearCrossEntryActiveRecords(zoneId, groupId);
+            if (zoneId != null) dnsProviderService.deleteCrossEntryManagedRecords(groupId);
+            else deleteLegacyCloudflareRecord(group);
+            return;
+        }
+        if ("active_active".equals(group.get("routingMode"))) {
+            syncActiveEntries(group, loadMembers(groupId), "客户入口迁移回滚");
+        } else {
+            Map<String, Object> original = loadMember(nullableLong(group.get("activeMemberId")));
+            if (original == null) throw new IllegalStateException("原承载入口不存在，无法恢复 DNS");
+            updateCloudflareDns(group, original);
+        }
+    }
+
+    private void recordPendingSourceDnsRollback(AuthorizedEntrySourceMigrationService.Stage stage, RuntimeException error) {
+        long now = System.currentTimeMillis();
+        String detail = shorten("客户入口 DNS 回退失败：" + error.getMessage(), 500);
+        jdbcTemplate.update("INSERT INTO cross_entry_dns_rollback_pending "
+                        + "(group_id,binding_ids,drain_millis,last_error,created_time,updated_time) VALUES (?,?,?,?,?,?) "
+                        + "ON DUPLICATE KEY UPDATE binding_ids=VALUES(binding_ids),drain_millis=VALUES(drain_millis),"
+                        + "last_error=VALUES(last_error),updated_time=VALUES(updated_time)",
+                stage.groupId(), JSON.toJSONString(stage.createdBindings()),
+                Math.max(300_000L, stage.drainUntil() - now), detail, now, now);
+        sourceMigrationService.preserveCreatedBindings(stage);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='degraded',last_error=?,updated_time=? WHERE id=?",
+                detail, now, stage.groupId());
+        log.error("客户入口 DNS 回退失败，保留新入口并继续重试 groupId={}", stage.groupId(), error);
+    }
+
     private R handleSaveFailure(CrossEntryFailoverSaveDto dto,
                                 List<ManagedResourceDraft> createdManagedResources,
                                 Long createdGroupId,
                                 String stage,
                                 RuntimeException error) {
+        if (dto.getId() != null && sourceMigrationService != null) {
+            for (ManagedResourceDraft resource : createdManagedResources) {
+                resource.deferCleanup = resource.provisional
+                        || sourceMigrationService.hasBindingsOnNode(dto.getId(), resource.entryNodeId);
+            }
+        }
         int cleanupFailed = cleanupManagedResources(createdManagedResources);
         if (cleanupFailed > 0) {
             try {
                 managedCleanupService.enqueue(createdManagedResources.stream()
+                                .filter(resource -> !resource.provisional)
                                 .map(resource -> new CrossEntryManagedCleanupService.Item(
                                         dto.getId(), resource.forwardId, resource.tunnelId, resource.entryNodeId,
                                         resource.targetAddress, resource.publicPort, resource.portMode,
@@ -889,6 +1011,7 @@ public class CrossEntryFailoverService {
             case "managed_members" -> "准备入口节点与托管转发";
             case "database_validation" -> "检查容灾组与数据库记录";
             case "forward_validation" -> "检查候选转发";
+            case "authorized_members" -> "部署客户隐藏入口";
             case "conflict_validation" -> "检查调度冲突";
             case "dns_configuration" -> "读取 DNS 配置";
             case "database_write" -> "写入容灾配置";
@@ -900,6 +1023,7 @@ public class CrossEntryFailoverService {
     @Transactional
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        if (hasPendingSourceDnsRollback(id)) return R.err("客户入口 DNS 回退仍在重试，请恢复后再删除容灾组");
         if (hasAuthorizedSourceDependents(id)) return R.err("该容灾组仍有客户入口授权，请先撤销授权后再删除，避免客户链路中断");
         List<Map<String, Object>> managedResources = jdbcTemplate.queryForList(
                 "SELECT forward_id AS forwardId,tunnel_id AS tunnelId,created_tunnel AS createdTunnel,"
@@ -947,6 +1071,7 @@ public class CrossEntryFailoverService {
 
     public R checkNow(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
+        if (hasPendingSourceDnsRollback(id)) return R.err("客户入口 DNS 回退仍在重试，暂不能手动切换线路");
         try {
             probeGroup(id, true);
             return listGroups();
@@ -957,6 +1082,7 @@ public class CrossEntryFailoverService {
 
     public R setGroupEnabled(Long groupId, boolean enabled) {
         if (groupId == null) return R.err("请指定容灾组");
+        if (enabled && hasPendingSourceDnsRollback(groupId)) return R.err("客户入口 DNS 回退仍在重试，暂不能开启自动调度");
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
         synchronized (lock) {
             Map<String, Object> group;
@@ -1001,64 +1127,96 @@ public class CrossEntryFailoverService {
         if (groupId == null || memberId == null) return R.err("请指定容灾组和入口线路");
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
         synchronized (lock) {
-            Map<String, Object> group;
-            try {
-                group = loadGroup(groupId);
-            } catch (IllegalArgumentException e) {
-                return R.err("容灾组不存在");
-            }
-            long now = System.currentTimeMillis();
-            if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能调整入口线路");
-            List<Map<String, Object>> members = loadMembers(groupId);
-            Map<String, Object> member = memberById(members, memberId);
-            if (member == null) return R.err("入口线路不属于该容灾组");
-            boolean currentlyEnabled = bool(member.get("enabled"));
-            if (currentlyEnabled == enabled) return listGroups();
-            boolean active = Objects.equals(memberId, nullableLong(group.get("activeMemberId")));
-            boolean activeActive = "active_active".equals(Objects.toString(group.get("routingMode"), "failover"));
-            boolean groupEnabled = bool(group.get("enabled"));
-            if (!enabled) {
-                long remaining = members.stream()
-                        .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
-                        .filter(candidate -> bool(candidate.get("enabled")))
-                        .count();
-                if (remaining == 0) return R.err("至少保留一条启用入口，不能停用最后一条线路");
-                if (active && "lock".equals(Objects.toString(group.get("manualControlMode"), "auto"))
-                        && Objects.equals(memberId, nullableLong(group.get("lockedMemberId")))) {
-                    return R.err("当前线路正被手动锁定，请先解除锁定后再停用");
-                }
-                if (active && !activeActive) {
-                    boolean healthyBackup = members.stream()
-                            .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
-                            .anyMatch(candidate -> bool(candidate.get("enabled")) && "healthy".equals(candidate.get("status")));
-                    if (!healthyBackup) {
-                        return R.err("当前承载入口没有健康备用线路，不能停用，避免链接立即断网");
-                    }
-                }
-                jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=0,updated_time=? WHERE id=? AND group_id=?",
-                        now, memberId, groupId);
-                addEvent(groupId, memberId, active ? null : nullableLong(group.get("activeMemberId")), "管理员停用入口", "success",
-                        "该线路已从探测、自动切换和 DNS 调度中摘除");
-                if (groupEnabled && (active || activeActive)) {
-                    doProbeGroup(groupId, true);
-                    Map<String, Object> refreshed = loadGroup(groupId);
-                    if (!activeActive && Objects.equals(memberId, nullableLong(refreshed.get("activeMemberId")))) {
-                        jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,updated_time=? WHERE id=? AND group_id=?",
-                                System.currentTimeMillis(), memberId, groupId);
-                        return R.err("停用当前入口后未能切换到备用线路，已自动恢复该入口启用状态："
-                                + StringUtils.defaultIfBlank(Objects.toString(refreshed.get("lastError"), ""), "请检查备用线路"));
-                    }
-                }
-            } else {
-                jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,status='unknown',fail_count=0,success_count=0,"
-                                + "last_error=NULL,last_checked_at=NULL,updated_time=? WHERE id=? AND group_id=?",
-                        now, memberId, groupId);
-                addEvent(groupId, nullableLong(group.get("activeMemberId")), memberId, "管理员启用入口", "success",
-                        "该线路将重新探测，健康后参与自动切换和 DNS 调度");
-                if (groupEnabled) doProbeGroup(groupId, true);
-            }
-            return listGroups();
+            return mutationLocks == null
+                    ? setMemberEnabledLocked(groupId, memberId, enabled)
+                    : mutationLocks.withLock(groupId, () -> setMemberEnabledLocked(groupId, memberId, enabled));
         }
+    }
+
+    private R setMemberEnabledLocked(Long groupId, Long memberId, boolean enabled) {
+        if (hasPendingSourceDnsRollback(groupId)) return R.err("客户入口 DNS 回退仍在重试，请恢复后再调整入口线路");
+        Map<String, Object> group;
+        try {
+            group = loadGroup(groupId);
+        } catch (IllegalArgumentException e) {
+            return R.err("容灾组不存在");
+        }
+        long now = System.currentTimeMillis();
+        if (expireGroupIfDue(group, now)) return R.err("链接已到期，续期后才能调整入口线路");
+        List<Map<String, Object>> members = loadMembers(groupId);
+        Map<String, Object> member = memberById(members, memberId);
+        if (member == null) return R.err("入口线路不属于该容灾组");
+        boolean currentlyEnabled = bool(member.get("enabled"));
+        if (currentlyEnabled == enabled) return listGroups();
+        boolean active = Objects.equals(memberId, nullableLong(group.get("activeMemberId")));
+        boolean activeActive = "active_active".equals(Objects.toString(group.get("routingMode"), "failover"));
+        boolean groupEnabled = bool(group.get("enabled"));
+        if (!enabled) {
+            long remaining = members.stream()
+                    .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
+                    .filter(candidate -> bool(candidate.get("enabled")))
+                    .count();
+            if (remaining == 0) return R.err("至少保留一条启用入口，不能停用最后一条线路");
+            if (active && "lock".equals(Objects.toString(group.get("manualControlMode"), "auto"))
+                    && Objects.equals(memberId, nullableLong(group.get("lockedMemberId")))) {
+                return R.err("当前线路正被手动锁定，请先解除锁定后再停用");
+            }
+            if (active && !activeActive) {
+                boolean healthyBackup = members.stream()
+                        .filter(candidate -> !Objects.equals(memberId, nullableLong(candidate.get("id"))))
+                        .anyMatch(candidate -> bool(candidate.get("enabled")) && "healthy".equals(candidate.get("status")));
+                if (!healthyBackup) {
+                    return R.err("当前承载入口没有健康备用线路，不能停用，避免链接立即断网");
+                }
+            }
+            AuthorizedEntrySourceMigrationService.Stage stage;
+            try { stage = prepareMemberMigration(groupId, memberId, false, number(group.get("ttl")).intValue()); }
+            catch (RuntimeException e) { return R.err("客户隐藏入口同步失败：" + e.getMessage()); }
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=0,updated_time=? WHERE id=? AND group_id=?",
+                    now, memberId, groupId);
+            if (stage != null) {
+                try { sourceMigrationService.completeInNewTransaction(stage); }
+                catch (RuntimeException e) {
+                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,updated_time=? WHERE id=? AND group_id=?",
+                            System.currentTimeMillis(), memberId, groupId);
+                    sourceMigrationService.abort(stage);
+                    return R.err("客户旧入口退役配置失败，已恢复原线路：" + e.getMessage());
+                }
+            }
+            addEvent(groupId, memberId, active ? null : nullableLong(group.get("activeMemberId")), "管理员停用入口", "success",
+                    "该线路已从探测、自动切换和 DNS 调度中摘除");
+            if (groupEnabled && (active || activeActive)) {
+                doProbeGroup(groupId, true);
+                Map<String, Object> refreshed = loadGroup(groupId);
+                if (!activeActive && Objects.equals(memberId, nullableLong(refreshed.get("activeMemberId")))) {
+                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,updated_time=? WHERE id=? AND group_id=?",
+                            System.currentTimeMillis(), memberId, groupId);
+                    if (stage != null) sourceMigrationService.abort(stage);
+                    return R.err("停用当前入口后未能切换到备用线路，已自动恢复该入口启用状态："
+                            + StringUtils.defaultIfBlank(Objects.toString(refreshed.get("lastError"), ""), "请检查备用线路"));
+                }
+            }
+        } else {
+            AuthorizedEntrySourceMigrationService.Stage stage;
+            try { stage = prepareMemberMigration(groupId, memberId, true, number(group.get("ttl")).intValue()); }
+            catch (RuntimeException e) { return R.err("客户隐藏入口预部署失败：" + e.getMessage()); }
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,status='unknown',fail_count=0,success_count=0,"
+                            + "last_error=NULL,last_checked_at=NULL,updated_time=? WHERE id=? AND group_id=?",
+                    now, memberId, groupId);
+            if (stage != null) {
+                try { sourceMigrationService.completeInNewTransaction(stage); }
+                catch (RuntimeException e) {
+                    jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=0,updated_time=? WHERE id=? AND group_id=?",
+                            System.currentTimeMillis(), memberId, groupId);
+                    sourceMigrationService.abort(stage);
+                    return R.err("客户新入口激活失败，已恢复原线路：" + e.getMessage());
+                }
+            }
+            addEvent(groupId, nullableLong(group.get("activeMemberId")), memberId, "管理员启用入口", "success",
+                    "该线路将重新探测，健康后参与自动切换和 DNS 调度");
+            if (groupEnabled) doProbeGroup(groupId, true);
+        }
+        return listGroups();
     }
 
     public R setTrafficQuota(Long groupId, boolean enabled, String direction,
@@ -1103,7 +1261,7 @@ public class CrossEntryFailoverService {
                 String resumeError = restoreQuotaPausedGroup(groupId, now);
                 if (resumeError != null) return R.err("流量已重置，恢复转发失败，将自动重试：" + resumeError);
             }
-            if (bool(loadGroup(groupId).get("enabled"))) doProbeGroup(groupId, true);
+            if (!hasPendingSourceDnsRollback(groupId) && bool(loadGroup(groupId).get("enabled"))) doProbeGroup(groupId, true);
             return listGroups();
         }
     }
@@ -1126,8 +1284,9 @@ public class CrossEntryFailoverService {
             expireDueGroups(now);
             List<Map<String, Object>> dueGroups = jdbcTemplate.queryForList(
                     "SELECT id FROM cross_entry_failover_group WHERE enabled=1 "
-                            + "AND (expires_at IS NULL OR expires_at > ?) "
-                            + "AND (last_checked_at IS NULL OR last_checked_at + probe_interval_ms <= ?) "
+                        + "AND (expires_at IS NULL OR expires_at > ?) "
+                        + "AND NOT EXISTS (SELECT 1 FROM cross_entry_dns_rollback_pending p WHERE p.group_id=cross_entry_failover_group.id) "
+                        + "AND (last_checked_at IS NULL OR last_checked_at + probe_interval_ms <= ?) "
                             + "ORDER BY COALESCE(last_checked_at,0) ASC LIMIT " + MAX_GROUPS_PER_TICK, now, now);
             for (Map<String, Object> row : dueGroups) {
                 long groupId = number(row.get("id")).longValue();
@@ -1146,6 +1305,42 @@ public class CrossEntryFailoverService {
             log.debug("Cross-entry failover scheduler waiting for schema: {}", e.getMessage());
         } finally {
             checking.set(false);
+        }
+    }
+
+    @Scheduled(initialDelay = 30_000, fixedDelay = 30_000)
+    public void retrySourceDnsRollbacks() {
+        try {
+            List<Map<String, Object>> pending = jdbcTemplate.queryForList(
+                    "SELECT group_id AS groupId,binding_ids AS bindingIds,drain_millis AS drainMillis "
+                            + "FROM cross_entry_dns_rollback_pending ORDER BY updated_time,group_id LIMIT 20");
+            for (Map<String, Object> row : pending) {
+                long groupId = number(row.get("groupId")).longValue();
+                synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
+                    mutationLocks.withLock(groupId, () -> {
+                        try {
+                            restoreCommittedSourceDns(groupId);
+                            List<Long> bindingIds = JSON.parseArray(Objects.toString(row.get("bindingIds"), "[]"), Long.class);
+                            sourceMigrationService.retirePreservedBindings(bindingIds == null ? List.of() : bindingIds,
+                                    Math.max(300_000L, number(row.get("drainMillis")).longValue()));
+                            jdbcTemplate.update("DELETE FROM cross_entry_dns_rollback_pending WHERE group_id=?", groupId);
+                            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='unknown',last_error=NULL,updated_time=? "
+                                            + "WHERE id=? AND last_error LIKE '客户入口 DNS 回退失败：%'",
+                                    System.currentTimeMillis(), groupId);
+                            activityGroups.clear();
+                        } catch (RuntimeException e) {
+                            String detail = shorten("客户入口 DNS 回退失败：" + e.getMessage(), 500);
+                            jdbcTemplate.update("UPDATE cross_entry_dns_rollback_pending SET attempts=attempts+1,"
+                                            + "last_error=?,updated_time=? WHERE group_id=?",
+                                    detail, System.currentTimeMillis(), groupId);
+                            log.warn("客户入口 DNS 回退重试失败 groupId={}: {}", groupId, e.getMessage());
+                        }
+                        return null;
+                    });
+                }
+            }
+        } catch (DataAccessException e) {
+            log.debug("客户入口 DNS 回退等待数据库：{}", e.getMessage());
         }
     }
 
@@ -1203,14 +1398,15 @@ public class CrossEntryFailoverService {
             }
 
             for (Map<String, Object> row : managedCleanupService.listPending(20)) {
-                long cleanupId = number(row.get("id")).longValue();
-                managedCleanupService.markAttempt(cleanupId);
-                ManagedResourceDraft resource = managedResourceDraft(row);
-                int failures = cleanupManagedResources(List.of(resource));
-                if (failures == 0) {
-                    managedCleanupService.markDone(cleanupId);
+                Long groupId = nullableLong(row.get("groupId"));
+                if (groupId != null && mutationLocks != null) {
+                    Boolean handled = mutationLocks.tryWithLock(groupId, () -> {
+                        retryManagedCleanup(row);
+                        return true;
+                    });
+                    if (handled == null) managedCleanupService.markAttempt(number(row.get("id")).longValue());
                 } else {
-                    managedCleanupService.markFailed(cleanupId, "托管转发或隧道仍未清理成功");
+                    retryManagedCleanup(row);
                 }
             }
         } catch (DataAccessException e) {
@@ -1220,6 +1416,30 @@ public class CrossEntryFailoverService {
         } finally {
             managedCleanupRunning.set(false);
         }
+    }
+
+    private void retryManagedCleanup(Map<String, Object> row) {
+        long cleanupId = number(row.get("id")).longValue();
+        Long groupId = nullableLong(row.get("groupId"));
+        Long forwardId = nullableLong(row.get("forwardId"));
+        if (MIGRATION_PREPARE_CLEANUP_REASON.equals(row.get("reason")) && groupId != null && forwardId != null) {
+            Integer active = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_member "
+                    + "WHERE group_id=? AND forward_id=?", Integer.class, groupId, forwardId);
+            if (active != null && active > 0) {
+                managedCleanupService.markDone(cleanupId);
+                return;
+            }
+        }
+        if (sourceMigrationService != null && groupId != null && row.get("entryNodeId") != null
+                && !Objects.toString(row.get("reason"), "").startsWith("客户隐藏入口")
+                && sourceMigrationService.hasBindingsOnNode(groupId, number(row.get("entryNodeId")).longValue())) {
+            managedCleanupService.markAttempt(cleanupId);
+            return;
+        }
+        managedCleanupService.markAttempt(cleanupId);
+        int failures = cleanupManagedResources(List.of(managedResourceDraft(row)));
+        if (failures == 0) managedCleanupService.markDone(cleanupId);
+        else managedCleanupService.markFailed(cleanupId, "托管转发或隧道仍未清理成功");
     }
 
     /**
@@ -2082,8 +2302,22 @@ public class CrossEntryFailoverService {
         for (Node node : nodes) {
             ManagedResourceState existing = byNode.get(node.getId());
             if (existing == null) {
-                forwardIds.add(createManagedResource(node, dto.getName().trim(), spec.targetAddress(), spec.publicPort(),
-                        spec.portMode(), spec.protocolMode(), createdResources));
+                if (hasAuthorizedSourceDependents(dto.getId())) {
+                    TransactionTemplate independent = new TransactionTemplate(transactionManager);
+                    independent.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                    Long forwardId = independent.execute(status -> createManagedResource(node, dto.getName().trim(),
+                            spec.targetAddress(), spec.publicPort(), spec.portMode(), spec.protocolMode(), createdResources));
+                    forwardIds.add(forwardId);
+                    ManagedResourceDraft draft = createdResources.get(createdResources.size() - 1);
+                    managedCleanupService.enqueue(List.of(new CrossEntryManagedCleanupService.Item(
+                                    dto.getId(), draft.forwardId, draft.tunnelId, draft.entryNodeId, draft.targetAddress,
+                                    draft.publicPort, draft.portMode, draft.protocolMode, draft.createdTunnel)),
+                            MIGRATION_PREPARE_CLEANUP_REASON);
+                    draft.provisional = true;
+                } else {
+                    forwardIds.add(createManagedResource(node, dto.getName().trim(), spec.targetAddress(), spec.publicPort(),
+                            spec.portMode(), spec.protocolMode(), createdResources));
+                }
             } else {
                 forwardIds.add(existing.forwardId());
             }
@@ -2432,6 +2666,7 @@ public class CrossEntryFailoverService {
         List<ManagedResourceDraft> reverse = new ArrayList<>(resources);
         Collections.reverse(reverse);
         for (ManagedResourceDraft resource : reverse) {
+            if (resource.deferCleanup) { failures++; continue; }
             boolean forwardRemoved = resource.forwardId == null;
             if (resource.forwardId != null) {
                 jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE forward_id=?", resource.forwardId);
@@ -2487,6 +2722,10 @@ public class CrossEntryFailoverService {
 
     private int cleanupManagedResourceRow(Long groupId, ManagedResourceDraft resource, String reason) {
         if (resource.forwardId == null && !resource.createdTunnel) return 0;
+        if (sourceMigrationService != null && sourceMigrationService.hasBindingsOnNode(groupId, resource.entryNodeId)) {
+            markManagedResourcePending(groupId, resource, "等待客户旧入口完成退役");
+            return 0;
+        }
         markManagedResourcePending(groupId, resource, reason);
         int failures = cleanupManagedResources(List.of(resource));
         if (failures == 0) {
@@ -2525,12 +2764,12 @@ public class CrossEntryFailoverService {
         if (distinctIds.size() < 2) throw new IllegalArgumentException("跨入口容灾至少需要两个入口转发");
         if (distinctIds.size() > 10) throw new IllegalArgumentException("单个容灾组最多配置10个入口");
         String placeholders = distinctIds.stream().map(id -> "?").collect(Collectors.joining(","));
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT f.id,f.name,f.in_port AS inPort,f.status,"
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT f.id,f.name,f.tunnel_id AS tunnelId,f.in_port AS inPort,f.status,"
                         + "COALESCE(f.protocol_mode,'tcp') AS protocolMode,t.in_node_id AS inNodeId,"
                         + "COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost,COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName,"
                         + "a.provider AS assetProvider,a.asn AS assetAsn "
                         + "FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id "
-                        + "LEFT JOIN server_asset a ON a.node_id=t.in_node_id WHERE f.id IN (" + placeholders + ")",
+                        + "LEFT JOIN server_asset a ON a.node_id=t.in_node_id WHERE f.id IN (" + placeholders + ") FOR UPDATE",
                 distinctIds.toArray());
         Map<Long, Map<String, Object>> byId = rows.stream().collect(Collectors.toMap(row -> number(row.get("id")).longValue(), row -> row));
         List<Map<String, Object>> ordered = new ArrayList<>();
@@ -3111,16 +3350,28 @@ public class CrossEntryFailoverService {
         return count != null && count > 0;
     }
 
-    /** Source topology must remain stable until all dependent customer grants have been revoked. */
+    private AuthorizedEntrySourceMigrationService.Stage prepareMemberMigration(long groupId, long memberId,
+                                                                                 boolean enabled, int ttlSeconds) {
+        if (!hasAuthorizedSourceDependents(groupId)) return null;
+        String sql = "SELECT m.entry_node_id AS nodeId,f.tunnel_id AS tunnelId,m.entry_address AS address "
+                + "FROM cross_entry_failover_member m JOIN forward f ON f.id=m.forward_id WHERE m.group_id=? AND "
+                + (enabled ? "(m.enabled=1 OR m.id=?)" : "m.enabled=1 AND m.id<>?")
+                + " ORDER BY m.priority";
+        List<AuthorizedEntrySourceMigrationService.SourceNode> desired = jdbcTemplate.queryForList(sql, groupId, memberId)
+                .stream().map(row -> new AuthorizedEntrySourceMigrationService.SourceNode(
+                        number(row.get("nodeId")).longValue(), number(row.get("tunnelId")).intValue(),
+                        Objects.toString(row.get("address"), ""))).toList();
+        return sourceMigrationService.prepare(groupId, desired, ttlSeconds);
+    }
+
+    /** A customer-facing hostname cannot be silently changed by editing its source group. */
     private void assertAuthorizedSourceChangeAllowed(CrossEntryFailoverSaveDto dto, List<Map<String, Object>> forwards) {
         if (dto.getId() == null || !hasAuthorizedSourceDependents(dto.getId())) return;
         Map<String, Object> existing = loadGroup(dto.getId());
-        Set<Long> oldForwards = loadMembers(dto.getId()).stream().map(row -> nullableLong(row.get("forwardId"))).collect(Collectors.toSet());
-        Set<Long> requested = forwards.stream().map(row -> nullableLong(row.get("id"))).collect(Collectors.toSet());
-        if (!oldForwards.equals(requested) || !dto.getDomain().equalsIgnoreCase(Objects.toString(existing.get("domain"), ""))
+        if (!dto.getDomain().equalsIgnoreCase(Objects.toString(existing.get("domain"), ""))
                 || !dto.getRecordType().equals(existing.get("recordType"))
-                || (dto.getDnsZoneId() != null && !Objects.equals(dto.getDnsZoneId(), nullableLong(existing.get("dnsZoneId"))))) {
-            throw new IllegalArgumentException("该容灾组仍有客户入口授权，不能更换入口成员、域名或 DNS 配置；请先撤销相关授权再调整");
+                || !Objects.equals(dto.getDnsZoneId(), nullableLong(existing.get("dnsZoneId")))) {
+            throw new IllegalArgumentException("该容灾组仍有客户入口授权，不能更换客户访问域名或 DNS 配置；请先迁移客户地址再调整");
         }
     }
 

@@ -2473,6 +2473,11 @@ export default function CrossEntryFailoverPage() {
                         >
                           {activeActive ? "多入口同时运行" : "主备容灾"}
                         </Chip>
+                        {truthy(group.migrationPending ?? false) && (
+                          <Chip color="danger" size="sm" variant="flat">
+                            客户入口 DNS 回退中
+                          </Chip>
+                        )}
                         {group.expiresAt && (
                           <Chip
                             color={

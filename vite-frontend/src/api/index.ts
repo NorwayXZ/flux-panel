@@ -1718,6 +1718,7 @@ export interface CrossEntryGroup {
   trafficQuotaPaused?: boolean | number;
   trafficQuotaExhaustedAt?: number;
   trafficQuotaLastError?: string;
+  migrationPending?: boolean | number;
   enabled: boolean | number;
   state:
     | "unknown"
@@ -1813,10 +1814,12 @@ export const getCrossEntryProbeSources = () =>
     15000,
   );
 export const saveCrossEntryGroup = (data: any) =>
-  Network.mutate<{ id: number }>("/cross-entry-failover/save", data, [
-    "/cross-entry-failover/list",
-    "/cross-entry-failover/eligible-forwards",
-  ]);
+  Network.mutate<{ id: number }>(
+    "/cross-entry-failover/save",
+    data,
+    ["/cross-entry-failover/list", "/cross-entry-failover/eligible-forwards"],
+    170_000,
+  );
 export const deleteCrossEntryGroup = (id: number) =>
   Network.mutate("/cross-entry-failover/delete", { id }, [
     "/cross-entry-failover/list",
@@ -1843,6 +1846,7 @@ export const setCrossEntryMemberEnabled = (
     "/cross-entry-failover/member-enabled",
     { groupId, memberId, enabled },
     ["/cross-entry-failover/list"],
+    170_000,
   );
 export const setCrossEntryTrafficQuota = (data: {
   groupId: number;

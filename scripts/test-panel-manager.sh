@@ -85,6 +85,11 @@ case "${1:-}" in
       printf 'Docker Compose version v2.30.0\n'
       exit 0
     fi
+    if [[ " $* " == *" exec "* ]]; then
+      [[ "${PANEL_TEST_MIGRATION_QUERY_FAIL:-0}" != "1" ]] || exit 1
+      printf '%s\n' "${PANEL_TEST_PENDING_MIGRATIONS:-0}"
+      exit 0
+    fi
     if [[ " $* " == *" up "* && -n "${PANEL_TEST_FAIL_ONCE_FILE:-}" \
           && ! -e "${PANEL_TEST_FAIL_ONCE_FILE}" ]]; then
       : > "${PANEL_TEST_FAIL_ONCE_FILE}"
@@ -170,5 +175,23 @@ grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "PREVIOUS_PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
+
+# The old release cannot finish entry migration jobs, so guard that rollback.
+awk '
+  /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.52.0"; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.pending"
+mv "${CONFIG_DIR}/flux-panel.env.pending" "${CONFIG_DIR}/flux-panel.env"
+if PANEL_TEST_PENDING_MIGRATIONS=2 run_manager rollback >/dev/null 2>&1; then
+  printf 'rollback unexpectedly proceeded with pending customer migrations\n' >&2
+  exit 1
+fi
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+if PANEL_TEST_MIGRATION_QUERY_FAIL=1 run_manager rollback >/dev/null 2>&1; then
+  printf 'rollback unexpectedly proceeded without being able to inspect migration state\n' >&2
+  exit 1
+fi
+PANEL_TEST_PENDING_MIGRATIONS=2 PANEL_TEST_MIGRATION_QUERY_FAIL=1 run_manager rollback --force >/dev/null
+grep -Fq 'PANEL_VERSION=2.52.0' "${CONFIG_DIR}/flux-panel.env"
 
 printf 'Panel manager tests passed\n'

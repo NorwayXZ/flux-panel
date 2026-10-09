@@ -68,7 +68,9 @@ jobs:
         run: mvn --batch-mode clean package
 
       - name: Smoke test backend runtime
-        run: bash scripts/test-backend-runtime.sh
+        run: |
+          bash scripts/test-backend-runtime.sh
+          FLUX_PANEL_TEST_MYSQL_IMAGE=mysql:5.7 bash scripts/test-backend-runtime.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

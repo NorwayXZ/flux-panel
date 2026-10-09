@@ -1,3 +1,14 @@
+## 2.52.1 Authorized entry source migration
+
+- An administrator can add or remove failover entry nodes with customer grants in place. The panel stages every active customer's hidden forward on a new node before saving the group, and refuses the change if deployment fails. Customer ports, destinations, usage and quotas remain intact.
+- Old customer listeners and managed source resources drain for at least five minutes or twice the DNS TTL (up to one day), then a background worker retires them. Failed cleanup is retried; staged resources are registered for cleanup before the group switches.
+- If a failed database save has already touched DNS, the panel restores the committed DNS configuration before cleaning up the staged listeners. A failed DNS rollback is persisted and retried every 30 seconds while the staged listeners remain available; the administrator card displays a pending rollback badge.
+- Paused, expired and quota-exhausted grants do not open new listeners during source edits. A valid resume provisions missing replicas and respects each port's state before restoring the grant. Newly introduced entry IPs are checked against every existing customer landing to prevent forwarding loops.
+- Member enable/disable uses the same synchronization. Hostname, DNS identity and same-node tunnel changes still require a separate address or port migration, because the same listener cannot be staged twice on one node. Existing TCP sessions cannot be moved transparently and may end when the drain window closes.
+- Fixes a duplicated table engine option in the authorized-entry schema initializer, and adds the retirement column to existing installations. Extends only failover save/member-toggle request timeouts to 170 seconds; large deployments may still need an operator-maintenance window or a future background migration job.
+- Panel-only release. Agent and Connector remain `2.52.0`; no live customer nodes or DNS records were modified by regression tests.
+- `2.52.0` remains available as a rollback baseline. The panel manager checks for outstanding DNS rollback and listener-drain jobs before returning to a version without the cleanup worker. Wait for migration cleanup, then run `sudo /usr/local/sbin/flux-panel-manager rollback`. For an emergency only, `rollback --force` bypasses this guard and can interrupt customers. The new database table and column are additive and are left in place by rollback.
+
 ## 2.52.0 Frontend caching, virtual lists and authorized-entry operations
 
 - Completes the frontend scaffolding from `bbd7dea`: installs and locks React Query, TanStack Virtual, development-only query tools, skeleton components and lazy-loaded Excel export dependencies; fixes TypeScript errors and invalid example imports.

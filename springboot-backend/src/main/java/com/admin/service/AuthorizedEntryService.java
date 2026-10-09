@@ -38,7 +38,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tenant-facing entry grants. The source failover group remains an administrator-owned
@@ -56,8 +55,10 @@ public class AuthorizedEntryService {
     @Resource(name = "authorizedEntryForwardMapper") private AuthorizedEntryForwardMapper forwardMapper;
     @Resource private ForwardService forwardService;
     @Resource private JdbcTemplate jdbcTemplate;
+    @Resource private CrossEntryGroupMutationLocks migrationLocks;
+    @Resource private AuthorizedEntryGrantLocks grantLocks;
+    @Resource private AuthorizedEntrySourceMigrationService sourceMigrationService;
 
-    private final Map<Long, Object> grantLocks = new ConcurrentHashMap<>();
     private final Object allocationLock = new Object();
 
     public R listTemplates() {
@@ -229,7 +230,15 @@ public class AuthorizedEntryService {
         if (grantId == null || userId == null) return R.err("缺少入口授权");
         AuthorizedEntryGrant grant = grantMapper.selectById(grantId);
         if (grant == null || !Objects.equals(grant.getUserId(), userId)) return R.err("入口授权不存在");
-        Object lock = grantLocks.computeIfAbsent(grantId, ignored -> new Object());
+        AuthorizedEntryTemplate sourceTemplate = templateMapper.selectById(grant.getTemplateId());
+        if (sourceTemplate == null) return R.err("入口模板已停用");
+        return migrationLocks.withLock(sourceTemplate.getSourceGroupId(), () -> createPortLocked(input, grantId, userId));
+    }
+
+    private R createPortLocked(Map<String, Object> input, Long grantId, Integer userId) {
+        AuthorizedEntryGrant grant = grantMapper.selectById(grantId);
+        if (grant == null || !Objects.equals(grant.getUserId(), userId)) return R.err("入口授权不存在");
+        Object lock = grantLocks.forGrant(grantId);
         synchronized (lock) {
             reconcile(grant, System.currentTimeMillis());
             grant = grantMapper.selectById(grantId);
@@ -243,6 +252,8 @@ public class AuthorizedEntryService {
             }
             AuthorizedEntryTemplate template = templateMapper.selectById(grant.getTemplateId());
             if (template == null || !Objects.equals(template.getStatus(), 1)) return R.err("入口模板已停用");
+            jdbcTemplate.queryForObject("SELECT id FROM cross_entry_failover_group WHERE id=? FOR UPDATE",
+                    Long.class, template.getSourceGroupId());
             SourceTemplate source;
             try {
                 source = loadSourceTemplate(template.getSourceGroupId());
@@ -298,6 +309,15 @@ public class AuthorizedEntryService {
     public R deletePort(Long portId) {
         AuthorizedEntryPort port = portMapper.selectById(portId);
         if (port == null || (!isAdmin() && !Objects.equals(port.getUserId(), currentUserId()))) return R.err("授权端口不存在");
+        AuthorizedEntryGrant grant = grantMapper.selectById(port.getGrantId());
+        AuthorizedEntryTemplate template = grant == null ? null : templateMapper.selectById(grant.getTemplateId());
+        if (template == null) return R.err("入口模板不存在");
+        return migrationLocks.withLock(template.getSourceGroupId(), () -> deletePortLocked(portId));
+    }
+
+    private R deletePortLocked(Long portId) {
+        AuthorizedEntryPort port = portMapper.selectById(portId);
+        if (port == null || (!isAdmin() && !Objects.equals(port.getUserId(), currentUserId()))) return R.err("授权端口不存在");
         R cleanup = cleanupPort(port);
         if (cleanup.getCode() != 0) {
             portMapper.update(null, new UpdateWrapper<AuthorizedEntryPort>().eq("id", port.getId())
@@ -312,6 +332,16 @@ public class AuthorizedEntryService {
 
     @Transactional(rollbackFor = Exception.class)
     public R updatePort(Long portId, Map<String, Object> input) {
+        AuthorizedEntryPort port = portMapper.selectById(portId);
+        if (port == null || (!isAdmin() && !Objects.equals(port.getUserId(), currentUserId()))) return R.err("授权端口不存在");
+        AuthorizedEntryGrant grant = grantMapper.selectById(port.getGrantId());
+        if (grant == null || !"active".equals(grant.getState())) return R.err("所属入口授权当前不可用");
+        AuthorizedEntryTemplate template = templateMapper.selectById(grant.getTemplateId());
+        if (template == null) return R.err("入口模板不存在");
+        return migrationLocks.withLock(template.getSourceGroupId(), () -> updatePortLocked(portId, input));
+    }
+
+    private R updatePortLocked(Long portId, Map<String, Object> input) {
         AuthorizedEntryPort port = portMapper.selectById(portId);
         if (port == null || (!isAdmin() && !Objects.equals(port.getUserId(), currentUserId()))) return R.err("授权端口不存在");
         AuthorizedEntryGrant grant = grantMapper.selectById(port.getGrantId());
@@ -362,7 +392,7 @@ public class AuthorizedEntryService {
     public R setGrantState(Long grantId, boolean active) {
         AuthorizedEntryGrant grant = grantMapper.selectById(grantId);
         if (grant == null) return R.err("入口授权不存在");
-        Object lock = grantLocks.computeIfAbsent(grantId, ignored -> new Object());
+        Object lock = grantLocks.forGrant(grantId);
         synchronized (lock) {
             long now = System.currentTimeMillis();
             if (!active) {
@@ -377,7 +407,7 @@ public class AuthorizedEntryService {
     public R revokeGrant(Long grantId) {
         AuthorizedEntryGrant grant = grantMapper.selectById(grantId);
         if (grant == null || "deleted".equals(grant.getState())) return R.err("入口授权不存在");
-        synchronized (grantLocks.computeIfAbsent(grantId, ignored -> new Object())) {
+        synchronized (grantLocks.forGrant(grantId)) {
             List<String> failures = new ArrayList<>();
             for (AuthorizedEntryPort port : portMapper.selectList(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grantId).ne("state", "deleted"))) {
                 R cleanup = cleanupPort(port);
@@ -424,7 +454,7 @@ public class AuthorizedEntryService {
         for (Map<String, Object> row : rows) {
             Long grantId = longValue(row.get("grantId"));
             if (grantId == null) continue;
-            synchronized (grantLocks.computeIfAbsent(grantId, ignored -> new Object())) {
+            synchronized (grantLocks.forGrant(grantId)) {
                 AuthorizedEntryGrant grant = grantMapper.selectById(grantId);
                 if (grant == null) continue;
                 reconcile(grant, System.currentTimeMillis());
@@ -447,7 +477,7 @@ public class AuthorizedEntryService {
     public void reconcileGrants() {
         long now = System.currentTimeMillis();
         for (AuthorizedEntryGrant grant : grantMapper.selectList(new QueryWrapper<AuthorizedEntryGrant>().ne("state", "deleted"))) {
-            synchronized (grantLocks.computeIfAbsent(grant.getId(), ignored -> new Object())) {
+            synchronized (grantLocks.forGrant(grant.getId())) {
                 try {
                     reconcile(grantMapper.selectById(grant.getId()), now);
                 } catch (RuntimeException e) {
@@ -550,11 +580,27 @@ public class AuthorizedEntryService {
 
     private R resumeGrant(AuthorizedEntryGrant grant) {
         long now = System.currentTimeMillis();
+        AuthorizedEntryTemplate template = templateMapper.selectById(grant.getTemplateId());
+        if (template == null) return markResumePending(grant, "所属入口模板不存在");
+        R prepared = migrationLocks.tryWithLock(template.getSourceGroupId(), () -> {
+            try {
+                AuthorizedEntrySourceMigrationService.Stage stage = sourceMigrationService.prepareGrantResume(grant.getId());
+                sourceMigrationService.completeInNewTransaction(stage);
+                return R.ok();
+            } catch (RuntimeException e) {
+                return R.err("恢复客户隐藏入口失败：" + rootMessage(e));
+            }
+        });
+        if (prepared == null) return markResumePending(grant, "母容灾组正在调整入口，将在保存后自动重试");
+        if (prepared.getCode() != 0) return markResumePending(grant, prepared.getMsg());
         List<String> failures = new ArrayList<>();
         for (AuthorizedEntryPort port : portMapper.selectList(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grant.getId())
-                .in("state", "quota_exhausted", "admin_paused", "expired", "error"))) {
+                .in("state", "quota_exhausted", "admin_paused", "expired", "error", "active"))) {
             boolean resumed = true;
             for (AuthorizedEntryForward binding : forwardMapper.selectList(new QueryWrapper<AuthorizedEntryForward>().eq("port_id", port.getId()))) {
+                if (binding.getRetireAt() != null && binding.getRetireAt() <= now) continue;
+                com.admin.entity.Forward current = forwardService.getById(binding.getForwardId());
+                if (current != null && Objects.equals(current.getStatus(), 1)) continue;
                 R result = forwardService.resumeManagedForward(binding.getForwardId());
                 if (result.getCode() != 0) {
                     resumed = false;
@@ -566,17 +612,22 @@ public class AuthorizedEntryService {
         }
         if (!failures.isEmpty()) {
             String detail = StringUtils.abbreviate(String.join("；", failures), 500);
-            grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
-                    .set("state", "resume_pending").set("last_error", detail).set("updated_time", now));
-            grant.setState("resume_pending");
-            grant.setLastError(detail);
-            return R.err("部分隐藏入口恢复失败：" + detail);
+            return markResumePending(grant, "部分隐藏入口恢复失败：" + detail);
         }
         grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
                 .set("state", "active").set("last_error", null).set("updated_time", now));
         grant.setState("active");
         grant.setLastError(null);
         return R.ok();
+    }
+
+    private R markResumePending(AuthorizedEntryGrant grant, String reason) {
+        String detail = StringUtils.abbreviate(reason, 500);
+        grantMapper.update(null, new UpdateWrapper<AuthorizedEntryGrant>().eq("id", grant.getId())
+                .set("state", "resume_pending").set("last_error", detail).set("updated_time", System.currentTimeMillis()));
+        grant.setState("resume_pending");
+        grant.setLastError(detail);
+        return R.err(detail);
     }
 
     private int allocatePort(AuthorizedEntryTemplate template, SourceTemplate source, Integer requested) {

@@ -11,6 +11,7 @@ public class AuthorizedEntryForward {
     private Long portId;
     private Long forwardId;
     private Long nodeId;
+    private Long retireAt;
     private Long createdTime;
     private Long updatedTime;
 }

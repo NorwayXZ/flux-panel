@@ -4,9 +4,11 @@ import com.admin.common.lang.R;
 import com.admin.entity.AuthorizedEntryForward;
 import com.admin.entity.AuthorizedEntryGrant;
 import com.admin.entity.AuthorizedEntryPort;
+import com.admin.entity.AuthorizedEntryTemplate;
 import com.admin.mapper.AuthorizedEntryForwardMapper;
 import com.admin.mapper.AuthorizedEntryGrantMapper;
 import com.admin.mapper.AuthorizedEntryPortMapper;
+import com.admin.mapper.AuthorizedEntryTemplateMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,6 +25,7 @@ class AuthorizedEntryLifecycleTests {
     private final AuthorizedEntryService service = new AuthorizedEntryService();
     private final AuthorizedEntryGrantMapper grants = mock(AuthorizedEntryGrantMapper.class);
     private final AuthorizedEntryPortMapper ports = mock(AuthorizedEntryPortMapper.class);
+    private final AuthorizedEntryTemplateMapper templates = mock(AuthorizedEntryTemplateMapper.class);
     private final AuthorizedEntryForwardMapper bindings = mock(AuthorizedEntryForwardMapper.class);
     private final ForwardService forwards = mock(ForwardService.class);
     private final long now = Instant.parse("2026-10-08T00:00:00Z").toEpochMilli();
@@ -31,14 +34,22 @@ class AuthorizedEntryLifecycleTests {
     void setup() {
         ReflectionTestUtils.setField(service, "grantMapper", grants);
         ReflectionTestUtils.setField(service, "portMapper", ports);
+        ReflectionTestUtils.setField(service, "templateMapper", templates);
         ReflectionTestUtils.setField(service, "forwardMapper", bindings);
         ReflectionTestUtils.setField(service, "forwardService", forwards);
+        ReflectionTestUtils.setField(service, "grantLocks", new AuthorizedEntryGrantLocks());
+        ReflectionTestUtils.setField(service, "migrationLocks", new CrossEntryGroupMutationLocks());
+        ReflectionTestUtils.setField(service, "sourceMigrationService", mock(AuthorizedEntrySourceMigrationService.class));
+        AuthorizedEntryTemplate template = new AuthorizedEntryTemplate();
+        template.setId(1L); template.setSourceGroupId(7L);
+        when(templates.selectById(any())).thenReturn(template);
         when(ports.selectList(any())).thenReturn(List.of());
     }
 
     private AuthorizedEntryGrant grant(String state) {
         AuthorizedEntryGrant grant = new AuthorizedEntryGrant();
         grant.setId(1L);
+        grant.setTemplateId(1L);
         grant.setState(state);
         grant.setFlowResetDay(8);
         grant.setUsedBytes(200L);
