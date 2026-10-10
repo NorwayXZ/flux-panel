@@ -224,8 +224,10 @@ public class DynamicDnsService {
                     name, provider, encrypt(credentialA), credentialB == null ? null : encrypt(credentialB),
                     !Boolean.FALSE.equals(dto.getEnabled()), now, now);
         } else {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT credential_a,credential_b FROM dynamic_dns_provider WHERE id=?", dto.getId());
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT credential_a,credential_b,provider FROM dynamic_dns_provider WHERE id=?", dto.getId());
             if (rows.isEmpty()) return R.err("DNS 提供商配置不存在");
+            if ((Boolean.FALSE.equals(dto.getEnabled()) || !provider.equals(rows.get(0).get("provider"))) && pendingSmartCleanup(dto.getId()) > 0)
+                return R.err("该配置仍用于旧三网 DNS 清理，请等待完成后再停用或更换服务商");
             String encryptedA = credentialA == null ? Objects.toString(rows.get(0).get("credential_a")) : encrypt(credentialA);
             String encryptedB = credentialB == null ? Objects.toString(rows.get(0).get("credential_b"), null) : encrypt(credentialB);
             jdbcTemplate.update("UPDATE dynamic_dns_provider SET name=?,provider=?,credential_a=?,credential_b=?,enabled=?,last_error=NULL,updated_time=? WHERE id=?",
@@ -242,7 +244,14 @@ public class DynamicDnsService {
         Integer smartEntryUsed = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=?", Integer.class, id);
         if (smartEntryUsed != null && smartEntryUsed > 0) return R.err("该配置仍被三网优化使用");
+        if (pendingSmartCleanup(id) > 0) return R.err("该配置仍用于旧三网 DNS 清理，请等待清理完成");
         return jdbcTemplate.update("DELETE FROM dynamic_dns_provider WHERE id=?", id) > 0 ? R.ok() : R.err("DNS 提供商配置不存在");
+    }
+
+    private int pendingSmartCleanup(Long providerId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_dns_cleanup "
+                + "WHERE CAST(JSON_UNQUOTE(JSON_EXTRACT(payload,'$.group.provider_ref_id')) AS UNSIGNED)=?", Integer.class, providerId);
+        return count == null ? 0 : count;
     }
 
     public R saveRule(DynamicDnsRuleSaveDto dto) {

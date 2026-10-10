@@ -58,21 +58,29 @@ def dns_answer():
 route=subprocess.check_output(["ip","-4","route","get","1.1.1.1"],text=True).split()
 iface=route[route.index("dev")+1]
 sql("""
-INSERT INTO smart_entry_group (id,user_id,name,provider_ref_id,provider,zone_name,domain,record_type,ttl,public_port,enabled,state,last_checked_at,created_time,updated_time)
-VALUES (910001,1,'isolated-dns-policy',900001,'dnspod','example.test','runtime.example.test','A',60,10000,1,'healthy',4102444800000,1,1);
-INSERT INTO smart_entry_route (group_id,carrier,forward_id,entry_node_id,entry_host,entry_address,entry_port,forward_name,node_name,status,created_time,updated_time)
-VALUES (910001,'default',900001,900001,'192.0.2.1','192.0.2.1',10000,'default','default','healthy',1,1),
-       (910001,'mobile',900002,900002,'192.0.2.2','192.0.2.2',10000,'mobile','mobile','healthy',1,1),
-       (910001,'unicom',900003,900003,'192.0.2.3','192.0.2.3',10000,'unicom','unicom','healthy',1,1);
+UPDATE node SET server_ip='192.0.2.1' WHERE id=900001;
+UPDATE node SET server_ip='192.0.2.2' WHERE id=900002;
+UPDATE node SET server_ip='192.0.2.3' WHERE id=900003;
 """)
 created=api("service-publishing/connector/create",{"name":"isolated-openwrt","platform":"openwrt","connectorRole":"openwrt_dns"})
 connector_id=int(created["connector"]["id"])
+strategy={"name":"Cloudflare-compatible-local-policy","dnsMode":"local","domain":"runtime.example.test",
+          "recordType":"A","dnsAgentIds":[connector_id],"routes":[
+              {"carrier":"default","forwardId":900001}, {"carrier":"mobile","forwardId":900002},
+              {"carrier":"unicom","forwardId":900003}]}
+group_id=int(api("smart-entry/save",strategy)["id"])
+strategy["id"]=group_id
+assert sql(f"SELECT CONCAT(dns_mode,':',provider_ref_id,':',ttl) FROM smart_entry_group WHERE id={group_id}")=="local:0:5"
+assert api("openwrt-dns/list",{})[0]["smartEntryGroupIds"]==[group_id]
+assert api("openwrt-dns/list",{})[0]["interfaceCarriers"]=={}
+sql(f"UPDATE smart_entry_group SET state='healthy',last_checked_at=4102444800000,sync_requested=0 WHERE id={group_id}; "
+    f"UPDATE smart_entry_route SET status='healthy' WHERE group_id={group_id}")
 for endpoint in ["cross-entry-failover/probe-sources","virtual-lan/overview","system-self-check/overview"]:
     choices=api(endpoint,{})["connectors"]
     assert all(int(choice["id"])!=connector_id for choice in choices), "DNS-only Agent leaked into ordinary resource choices"
 assert all(int(choice["id"])!=connector_id for choice in api("service-publishing/connector/list",{}))
 secret=sql(f"SELECT secret FROM internal_connector WHERE id={connector_id}")
-config={"connectorId":connector_id,"interfaceCarriers":{iface:"mobile"},"smartEntryGroupIds":[910001]}
+config={"connectorId":connector_id,"interfaceCarriers":{iface:"mobile"},"smartEntryGroupIds":[group_id]}
 api("openwrt-dns/configure",config)
 process=None
 with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
@@ -82,20 +90,30 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
     os.chmod(connection,0o600)
     try:
         process=subprocess.Popen([binary,"-agent-config",str(connection)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        wait_until(lambda: state.exists() and sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="1")
+        revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
+        wait_until(lambda: state.exists() and int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         wait_until(lambda: sql(f"SELECT active_carrier FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="mobile")
         assert dns_answer()=="192.0.2.2"
         config["interfaceCarriers"]={iface:"unicom"}
         api("openwrt-dns/configure",config)
-        wait_until(lambda: sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="2")
+        revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
+        wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         wait_until(lambda: sql(f"SELECT active_carrier FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="unicom")
         assert dns_answer()=="192.0.2.3"
         process.terminate();process.wait(timeout=15)
         process=subprocess.Popen([binary,"-agent-config",str(connection)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         wait_until(lambda: api("openwrt-dns/list",{})[0]["online"])
         wait_until(lambda: dns_answer()=="192.0.2.3")
-        api("openwrt-dns/remove",{"connectorId":connector_id})
-        wait_until(lambda: sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="3")
+        # A strategy edit automatically switches the existing router to automatic detection.
+        api("smart-entry/save",strategy)
+        sql(f"UPDATE smart_entry_group SET last_checked_at=4102444800000,sync_requested=0 WHERE id={group_id}")
+        assert api("openwrt-dns/list",{})[0]["interfaceCarriers"]=={}
+        revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
+        wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
+        assert json.loads(state.read_text())["interfaceCarriers"]=={}
+        api("smart-entry/delete",{"id":group_id})
+        revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
+        wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         assert json.loads(state.read_text())["groups"]==[]
         assert (Path(str(state)+".d")/"flux-panel-smart-entry.conf").read_text()=="\n"
     finally:
@@ -104,5 +122,6 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
 wait_until(lambda: not api("openwrt-dns/list",{})[0]["online"])
 api("service-publishing/connector/delete",{"id":connector_id})
 assert api("openwrt-dns/list",{})==[]
-sql("DELETE FROM smart_entry_route WHERE group_id=910001; DELETE FROM smart_entry_group WHERE id=910001;")
-print("OpenWrt DNS encrypted policy, carrier selection, reconnect and cleanup integration tests passed")
+wait_until(lambda: sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={group_id}")=="0")
+assert sql(f"SELECT COUNT(*) FROM smart_entry_route WHERE group_id={group_id}")=="0"
+print("OpenWrt DNS local strategy creation, automatic binding, encrypted policy, carrier selection, reconnect and cleanup integration tests passed")

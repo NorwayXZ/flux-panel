@@ -410,6 +410,7 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 	defer watch.Stop()
 	defer report.Stop()
 	lastLookup := time.Time{}
+	lastLookupError := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -437,12 +438,16 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 						publicIP, lookupErr := fetchOpenWrtPublicIP(ctx)
 						if lookupErr == nil {
 							sourceIP = publicIP
+							lastLookupError = ""
 						} else {
-							errorsFound = append(errorsFound, "公网 IPv4 查询失败")
+							lastLookupError = "公网 IPv4 查询失败"
 							sourceIP = ""
 						}
 					} else {
 						sourceIP = previousIP
+					}
+					if lastLookupError != "" {
+						errorsFound = append(errorsFound, lastLookupError)
 					}
 				}
 				m.mu.Lock()
@@ -452,6 +457,13 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 					detection = "public-ip-database"
 				}
 				if carrier == "" {
+					if sourceIP != "" {
+						if len(m.carrierNetworks) == 0 {
+							errorsFound = append(errorsFound, "运营商地址库暂不可用，面板将自动更新")
+						} else {
+							errorsFound = append(errorsFound, "IPv"+family+" 出口未命中运营商地址库")
+						}
+					}
 					carrier = m.policy.DefaultCarrier
 					detection = "default"
 				}

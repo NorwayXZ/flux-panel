@@ -10,6 +10,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DynamicDnsServiceTests {
     @Test
+    void pendingPublicRecordCleanupKeepsOriginalProviderAvailableAfterLocalConversion() {
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        var service = new DynamicDnsService(jdbc, org.mockito.Mockito.mock(org.springframework.web.client.RestTemplate.class),
+                org.mockito.Mockito.mock(TelegramNotificationService.class));
+        org.mockito.Mockito.when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("JSON_EXTRACT"),
+                org.mockito.ArgumentMatchers.eq(Integer.class), org.mockito.ArgumentMatchers.eq(5L))).thenReturn(1);
+        org.junit.jupiter.api.Assertions.assertNotEquals(0, service.deleteProvider(5L).getCode());
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.startsWith("DELETE FROM dynamic_dns_provider"), org.mockito.ArgumentMatchers.anyLong());
+    }
+    @Test
     void formatsAliyunApiErrorsWithoutDroppingTheProviderCode() {
         assertEquals(
                 "阿里云 DNS：Forbidden.RAM - User not authorized to operate on the specified resource",

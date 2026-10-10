@@ -2187,7 +2187,9 @@ export interface SmartEntryGroup {
   id: number;
   name: string;
   providerRefId: number;
-  provider: "dnspod" | "aliyun";
+  provider: "dnspod" | "aliyun" | "local";
+  dnsMode?: "public" | "local";
+  dnsAgentIds?: number[];
   providerName: string;
   zoneName: string;
   domain: string;
@@ -2313,6 +2315,7 @@ export const getSmartEntryOptions = () =>
   Network.post<{
     providers: SmartEntryProviderOption[];
     forwards: SmartEntryForwardOption[];
+    dnsAgents: { id: number; name: string; online: boolean }[];
   }>("/smart-entry/options");
 export const getSmartEntryDomains = (providerRefId: number) =>
   Network.post<{

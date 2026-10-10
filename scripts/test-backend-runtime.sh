@@ -157,7 +157,7 @@ for table in smart_entry_dns_cleanup smart_entry_activity_archive openwrt_dns_re
   [[ "${smart_entry_table_exists}" -eq 1 ]]
 done
 for table_column in 'smart_entry_group:recovery_stable_ms' 'smart_entry_group:switch_cooldown_ms' \
-  'smart_entry_group:probe_mode' 'smart_entry_group:probe_path' 'smart_entry_group:sync_requested' \
+  'smart_entry_group:probe_mode' 'smart_entry_group:probe_path' 'smart_entry_group:sync_requested' 'smart_entry_group:dns_mode' \
   'smart_entry_route:fallback_carriers' 'smart_entry_route:healthy_since' 'smart_entry_route:last_switched_at' \
   'smart_entry_route:ownership_ready' 'smart_entry_route:dns_target_address' 'smart_entry_route:dns_attempted_at' \
   'internal_connector:connector_role' 'openwrt_dns_resolver:applied_revision' 'openwrt_dns_resolver:status_json' 'openwrt_dns_resolver:policy_hash' 'openwrt_dns_resolver:sync_error'; do

@@ -1,3 +1,14 @@
+## 2.54.0 OpenWrt-first Smart Entry
+
+- New Smart Entry strategies default to local OpenWrt DNS decisions. Choose or create a router directly in the strategy form; saving atomically saves the strategy and router bindings, without a second configuration step.
+- Local mode accepts a complete business domain hosted with Cloudflare, Aliyun, DNSPod, or any other provider. It does not require provider API credentials and does not create or modify public DNS records. The existing public DNS mode remains available for Aliyun and DNSPod.
+- Removes WAN mapping forms and detailed runtime counters from router management. Router cards retain connection, carrier, configuration application and error information. Saving strategy bindings clears previous explicit WAN mappings and uses automatic public egress identification; the panel continues updating carrier databases automatically.
+- Reuses health checks, ordered backups and switch cooldown for local routes. Unknown/unhealthy routes are not returned; explicit no-backup choices stop local answers when the preferred entry fails. IPv4 and IPv6 use their own default egress, local DNS TTL is five seconds, and business traffic bypasses the DNS Agent.
+- Existing public strategies keep their behavior. Converting one to local mode queues durable cleanup using its original provider identity, preserves forwarding and activity state, and switches local decisions without further public record writes. Router reassignment/deletion preserves other strategies and remains pending until an offline router reconnects.
+- Adds transactional binding and conversion regression tests, and extends the isolated encrypted Agent/backend integration flow to create local strategies through HTTP without DNS credentials, verify automatic bindings and mapping removal, and clean up deleted strategies on MySQL 5.7 and 8.0.
+- Panel, regular Agent, Connector and DNS Agent report `2.54.0`. Release `2.53.0` remains the rollback baseline. Before downgrading below 2.54.0, delete local strategies and wait for public DNS cleanup and router removal acknowledgments; the manager guards incompatible rollback.
+- Clients must use the enrolled router's DNS and normally share its default egress. Remote clients, application DoH/VPN, transparent proxies and per-client/per-destination multi-WAN rules are not automatically classified by this router. Existing application DNS caches and established sessions still require refresh/reconnection. Actual target-router installation must be verified separately; release tests do not operate production routers or customer traffic.
+
 ## 2.53.0 OpenWrt DNS decision Agent
 
 - Adds an administrator page for OpenWrt DNS Agents, with installer/uninstaller commands, explicit WAN device-to-carrier mappings, carrier database refresh, selected Smart Entry strategies, IPv4/IPv6 egress status, applied configuration revisions, and policy removal.

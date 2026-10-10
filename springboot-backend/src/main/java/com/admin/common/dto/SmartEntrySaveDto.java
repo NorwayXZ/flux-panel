@@ -17,7 +17,10 @@ public class SmartEntrySaveDto {
 
     private Long providerRefId;
 
-    @NotBlank(message = "请输入主域名")
+    /** Omitted by legacy clients: retain the existing mode (public for new legacy requests). */
+    private String dnsMode;
+    private List<Long> dnsAgentIds;
+
     private String zoneName;
 
     @NotBlank(message = "请输入业务域名")

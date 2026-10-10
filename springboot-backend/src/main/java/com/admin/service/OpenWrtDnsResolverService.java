@@ -158,23 +158,23 @@ public class OpenWrtDnsResolverService {
         List<Long> ids=parseLongs(Objects.toString(config.get("groupIds"),"[]"));
         List<Map<String,Object>> groups=new ArrayList<>();
         for(Long id:ids){
-            Map<String,Object> group=jdbc.query("SELECT id,domain,record_type AS recordType,ttl FROM smart_entry_group WHERE id=? AND enabled=1",rs->{
-                if(!rs.next())return null;Map<String,Object> value=new LinkedHashMap<>();value.put("id",rs.getLong("id"));value.put("domain",rs.getString("domain"));value.put("recordType",rs.getString("recordType"));value.put("ttl",5);return value;
+            Map<String,Object> group=jdbc.query("SELECT id,domain,record_type AS recordType,ttl,switch_cooldown_ms FROM smart_entry_group WHERE id=? AND enabled=1",rs->{
+                if(!rs.next())return null;Map<String,Object> value=new LinkedHashMap<>();value.put("id",rs.getLong("id"));value.put("domain",rs.getString("domain"));value.put("recordType",rs.getString("recordType"));value.put("ttl",5);value.put("cooldown",rs.getInt("switch_cooldown_ms"));return value;
             },id);
             if(group==null)continue;
             List<Map<String,Object>> routes=jdbc.queryForList("SELECT carrier,status,forward_id AS forwardId,entry_address AS entryAddress,"
-                    + "current_forward_id AS currentForwardId,current_address AS currentAddress,fallback_carriers AS fallbackCarriers "
+                    + "current_forward_id AS currentForwardId,current_address AS currentAddress,fallback_carriers AS fallbackCarriers,last_switched_at AS lastSwitchedAt "
                     + "FROM smart_entry_route WHERE group_id=?",id);
             Map<String,String> addresses=new LinkedHashMap<>();String defaultAddress=null;
             for(Map<String,Object> route:routes){
-                Map<String,Object> selected=SmartEntryService.chooseRoute(route,routes,true,0,System.currentTimeMillis());
+                Map<String,Object> selected=SmartEntryService.chooseRoute(route,routes,true,((Number)group.getOrDefault("cooldown",0)).intValue(),System.currentTimeMillis());
                 String address=selected==null?null:Objects.toString(selected.get("entryAddress"),null);
                 String carrier=Objects.toString(route.get("carrier"));
                 addresses.put(carrier,StringUtils.defaultString(address));
                 if("default".equals(carrier))defaultAddress=address;
             }
             if(defaultAddress==null)defaultAddress="";
-            group.put("defaultAddress",defaultAddress);group.put("addresses",addresses);groups.add(group);
+            group.remove("cooldown");group.put("defaultAddress",defaultAddress);group.put("addresses",addresses);groups.add(group);
         }
         Map<String,Object> result=new LinkedHashMap<>();result.put("revision",config.get("revision"));result.put("defaultCarrier","default");
         result.put("interfaceCarriers",interfaces);result.put("groups",groups);

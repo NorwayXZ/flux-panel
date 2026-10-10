@@ -21,6 +21,7 @@ class SmartEntryLifecycleTests {
     private boolean failSave;
     private JdbcTemplate jdbc;
     private SmartEntryService service;
+    private final SmartEntryDnsBindingsService bindings = mock(SmartEntryDnsBindingsService.class);
 
     @BeforeEach void setup() {
         when(dns.normalizeLineRoutingDomain(anyString(), anyString())).thenAnswer(call -> call.getArgument(1));
@@ -52,7 +53,7 @@ class SmartEntryLifecycleTests {
             }
             return RETURNS_DEFAULTS.answer(call);
         });
-        service = new SmartEntryService(jdbc, dns, mock(SchedulingConflictService.class), new SmartEntryMutationLocks(), transactions);
+        service = new SmartEntryService(jdbc, dns, mock(SchedulingConflictService.class), new SmartEntryMutationLocks(), transactions, bindings);
     }
 
     private Map<String, Object> route(String carrier, long id) {
@@ -134,6 +135,72 @@ class SmartEntryLifecycleTests {
     private void assertNoDnsWrites() {
         verify(dns, never()).ensureLineRoutingRecord(anyLong(), anyString(), anyString(), anyString(), anyString(), anyString(), anyInt(), nullable(String.class));
         verify(dns, never()).deleteLineRoutingRecord(anyLong(), anyString(), anyString());
+    }
+
+    @Test void localModeDoesNotRequireProviderCredentialsAndConvertsPublicRecordsToCleanupTasks() {
+        var config = dto(); config.setDnsMode("local"); config.setProviderRefId(null); config.setZoneName(null); config.setDnsAgentIds(List.of(11L));
+        assertEquals(0, service.save(config).getCode());
+        assertEquals(2, writes.stream().filter(sql -> sql.startsWith("INSERT INTO smart_entry_dns_cleanup")).count());
+        verify(bindings).setBindings(7L, List.of(11L));
+        verify(jdbc, never()).queryForList(startsWith("SELECT id,provider"), anyLong());
+        assertNoDnsWrites();
+        verify(transactions).commit(any());
+    }
+
+    @Test void localModeRequiresAnAgentAndCannotSilentlyTurnIntoPublicDns() {
+        var config = dto(); config.setDnsMode("local"); config.setDnsAgentIds(List.of());
+        assertNotEquals(0, service.save(config).getCode());
+        assertTrue(writes.isEmpty());
+        group.put("dns_mode", "local");
+        config.setDnsMode("public");
+        assertNotEquals(0, service.save(config).getCode());
+        assertTrue(writes.isEmpty());
+    }
+
+    @Test void bindingFailureRollsBackTheEntireStrategySave() {
+        var config = dto(); config.setDnsMode("local"); config.setDnsAgentIds(List.of(11L));
+        doThrow(new IllegalArgumentException("Agent deleted")).when(bindings).setBindings(7L, List.of(11L));
+        assertNotEquals(0, service.save(config).getCode());
+        verify(transactions).rollback(any());
+        verify(transactions, never()).commit(any());
+        assertNoDnsWrites();
+    }
+
+    @Test void legacyEditKeepsLocalModeAndExistingRouterBindings() {
+        group.put("dns_mode", "local"); group.put("provider_ref_id", 0L);
+        routes.forEach(route -> { route.remove("recordId"); route.put("ownershipReady", 0); });
+        when(bindings.bindings()).thenReturn(Map.of(7L, List.of(11L)));
+        var config = dto(); config.setProviderRefId(null);
+        assertEquals(0, service.save(config).getCode());
+        assertEquals("local", config.getDnsMode());
+        verify(bindings).setBindings(7L, List.of(11L));
+        assertFalse(writes.stream().anyMatch(sql -> sql.startsWith("INSERT INTO smart_entry_dns_cleanup")));
+        assertNoDnsWrites();
+    }
+
+    @Test void deletingStrategyRemovesRouterBindingWithinTheSameTransaction() {
+        assertEquals(0, service.delete(7L).getCode());
+        verify(bindings).setBindings(7L, List.of());
+        verify(transactions).commit(any());
+    }
+
+    @Test void localHealthSynchronizationNeverContactsDnsProvider() throws Exception {
+        group.put("dns_mode", "local"); group.put("enabled", 1);
+        var sync = SmartEntryService.class.getDeclaredMethod("syncRecords", Long.class, String.class, boolean.class);
+        sync.setAccessible(true); sync.invoke(service, 7L, "test", true);
+        verify(dns, never()).inspectLineRoutingRecords(anyLong(), anyString(), anyString(), anyString());
+        assertNoDnsWrites();
+        verify(jdbc).update(startsWith("UPDATE smart_entry_route SET current_forward_id"), eq(1L), eq("192.0.2.1"), eq("healthy"), anyBoolean(), anyLong(), anyLong(), eq(2L));
+    }
+
+    @Test void localHealthSynchronizationClearsDeadAddressesRatherThanKeepingOldDns() throws Exception {
+        group.put("dns_mode", "local"); group.put("enabled", 1);
+        routes.forEach(route -> route.put("status", "unhealthy"));
+        var sync = SmartEntryService.class.getDeclaredMethod("syncRecords", Long.class, String.class, boolean.class);
+        sync.setAccessible(true); sync.invoke(service, 7L, "test", true);
+        verify(jdbc).update(startsWith("UPDATE smart_entry_route SET current_forward_id"), isNull(), isNull(), eq("pending"), anyBoolean(), anyLong(), anyLong(), eq(2L));
+        verify(dns, never()).inspectLineRoutingRecords(anyLong(), anyString(), anyString(), anyString());
+        assertNoDnsWrites();
     }
 
     @Test void failedDnsCleanupKeepsTheDurableTaskAndDeletingGroupForRetry() {

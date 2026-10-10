@@ -70,6 +70,7 @@ public class SmartEntrySchemaInitializer {
             addColumn("smart_entry_group", "probe_mode", "varchar(16) NOT NULL DEFAULT 'tcp'");
             addColumn("smart_entry_group", "probe_path", "varchar(255) NOT NULL DEFAULT '/'");
             addColumn("smart_entry_group", "sync_requested", "tinyint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_group", "dns_mode", "varchar(16) NOT NULL DEFAULT 'public'");
             addColumn("smart_entry_route", "fallback_carriers", "varchar(128) DEFAULT NULL");
             addColumn("smart_entry_route", "healthy_since", "bigint DEFAULT NULL");
             addColumn("smart_entry_route", "last_switched_at", "bigint DEFAULT NULL");

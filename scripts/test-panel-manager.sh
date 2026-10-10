@@ -178,6 +178,17 @@ grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
 # Router policies must be removed before downgrading to a panel without the worker.
 awk '
+  /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.53.0"; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.local-pending"
+mv "${CONFIG_DIR}/flux-panel.env.local-pending" "${CONFIG_DIR}/flux-panel.env"
+if PANEL_TEST_PENDING_MIGRATIONS=1 run_manager rollback >/dev/null 2>&1; then
+  printf 'rollback unexpectedly proceeded with local Smart Entry strategies\n' >&2
+  exit 1
+fi
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+
+awk '
   /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.52.2"; next }
   { print }
 ' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.router-pending"

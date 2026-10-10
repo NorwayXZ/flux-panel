@@ -666,6 +666,22 @@ rollback_panel() {
       [[ "${pending_router_dns}" == "0" ]] || fail "remove all OpenWrt DNS policies and wait for router acknowledgment, or uninstall the router Agent before rolling back"
     fi
   fi
+  if (( previous_major < 2 || (previous_major == 2 && previous_minor < 54) )); then
+    if [[ "${override}" == "--force" ]]; then
+      log "WARNING: forcing rollback skips local Smart Entry compatibility checks"
+    elif [[ "${current_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] &&
+         (( 10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 54) )); then
+      local local_smart_groups
+      local_smart_groups="$(compose exec -T mysql sh -c '
+        MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse \
+        "SELECT (SELECT COUNT(*) FROM smart_entry_group WHERE dns_mode=\"local\")
+              + (SELECT COUNT(*) FROM smart_entry_dns_cleanup)
+              + (SELECT COUNT(*) FROM openwrt_dns_resolver WHERE applied_revision<policy_revision)"
+      ')" || fail "unable to verify local Smart Entry cleanup before rollback"
+      [[ "${local_smart_groups}" =~ ^[0-9]+$ ]] || fail "unexpected local Smart Entry cleanup state"
+      [[ "${local_smart_groups}" == "0" ]] || fail "delete local Smart Entry strategies and wait for DNS cleanup and router acknowledgment before rollback"
+    fi
+  fi
   set_env_value PANEL_VERSION "${previous_version}"
   set_env_value PREVIOUS_PANEL_VERSION "${current_version}"
   if ! deploy_release; then
