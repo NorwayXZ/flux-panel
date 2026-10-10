@@ -56,7 +56,7 @@ public class SystemSelfCheckService {
                 "SELECT id,name,server_ip AS serverIp,ip,status,version FROM node ORDER BY status DESC,id DESC"));
         List<Map<String, Object>> connectors = jdbcTemplate.queryForList(
                 "SELECT id,name,platform,status,version,remote_ip AS remoteIp,last_seen AS lastSeen "
-                        + "FROM internal_connector WHERE status=1 ORDER BY last_seen DESC,id DESC");
+                        + "FROM internal_connector WHERE status=1 AND connector_role='service' ORDER BY last_seen DESC,id DESC");
         for (Map<String, Object> connector : connectors) {
             connector.put("online", WebSocketServer.isConnectorOnline(((Number) connector.get("id")).longValue()));
         }
@@ -134,7 +134,7 @@ public class SystemSelfCheckService {
 
     private boolean connectorExists(Long connectorId) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1", Integer.class, connectorId);
+                "SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1 AND connector_role='service'", Integer.class, connectorId);
         return count != null && count > 0;
     }
 
@@ -232,7 +232,7 @@ public class SystemSelfCheckService {
 
     private void collectConnectorFindings(List<Finding> findings, Long scopeConnectorId, List<String> domains,
                                          Map<Long, List<ExpectedPort>> expectedPorts) {
-        String sql = "SELECT id,name,secret,platform,version,remote_ip AS remoteIp FROM internal_connector WHERE status=1 "
+        String sql = "SELECT id,name,secret,platform,version,remote_ip AS remoteIp FROM internal_connector WHERE status=1 AND connector_role='service' "
                 + (scopeConnectorId == null ? "" : "AND id=? ") + "ORDER BY id";
         List<Map<String, Object>> connectors = scopeConnectorId == null
                 ? jdbcTemplate.queryForList(sql)

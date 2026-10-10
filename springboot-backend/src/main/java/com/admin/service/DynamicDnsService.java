@@ -262,7 +262,7 @@ public class DynamicDnsService {
         String type = StringUtils.defaultIfBlank(dto.getRecordType(), "A").toUpperCase(Locale.ROOT);
         if (!List.of("A", "AAAA").contains(type)) return R.err("动态 DNS 仅支持 A 和 AAAA 记录");
         if ("connector".equals(sourceType)) {
-            List<Map<String, Object>> connectors = jdbcTemplate.queryForList("SELECT id,version,status FROM internal_connector WHERE id=?", dto.getConnectorId());
+            List<Map<String, Object>> connectors = jdbcTemplate.queryForList("SELECT id,version,status FROM internal_connector WHERE id=? AND connector_role='service'", dto.getConnectorId());
             if (connectors.isEmpty() || !truth(connectors.get(0).get("status"))) return R.err("家庭接入端不存在或已停用");
             if (!WebSocketServer.isConnectorOnline(dto.getConnectorId())) return R.err("家庭接入端离线，无法作为动态 DNS 检测来源");
             String version = Objects.toString(connectors.get(0).get("version"), null);
@@ -375,7 +375,7 @@ public class DynamicDnsService {
         if ("connector".equals(sourceType)) {
             long connectorId = number(rule.get("connector_id"));
             if (!WebSocketServer.isConnectorOnline(connectorId)) throw new IllegalStateException("家庭接入端离线");
-            String version = jdbcTemplate.queryForObject("SELECT version FROM internal_connector WHERE id=?", String.class, connectorId);
+            String version = jdbcTemplate.queryForObject("SELECT version FROM internal_connector WHERE id=? AND connector_role='service'", String.class, connectorId);
             if (!AgentVersionUtil.isAtLeast(version, MIN_AGENT_VERSION)) {
                 throw new IllegalStateException("家庭接入端 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
             }

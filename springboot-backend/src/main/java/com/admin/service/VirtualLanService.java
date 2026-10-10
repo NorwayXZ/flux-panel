@@ -48,7 +48,7 @@ public class VirtualLanService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("minimumAgentVersion", MIN_AGENT_VERSION);
         result.put("nodes", jdbcTemplate.queryForList("SELECT id,name,ip,server_ip AS serverIp,status,version FROM node ORDER BY status DESC,id DESC"));
-        result.put("connectors", jdbcTemplate.queryForList("SELECT id,name,platform,version,status,remote_ip AS remoteIp,last_seen AS lastSeen FROM internal_connector ORDER BY status DESC,id DESC"));
+        result.put("connectors", jdbcTemplate.queryForList("SELECT id,name,platform,version,status,remote_ip AS remoteIp,last_seen AS lastSeen FROM internal_connector WHERE connector_role='service' ORDER BY status DESC,id DESC"));
         List<Map<String, Object>> networks = jdbcTemplate.queryForList("SELECT v.id,v.name,v.cidr,v.hub_node_id AS hubNodeId,v.listen_port AS listenPort,v.state,v.last_error AS lastError,"
                 + "v.created_time AS createdTime,v.updated_time AS updatedTime,COALESCE(n.name,'已删除节点') AS hubNodeName,n.server_ip AS hubServerIp,n.ip AS hubIp,"
                 + "(SELECT COUNT(*) FROM virtual_lan_member m WHERE m.network_id=v.id) AS memberCount,"

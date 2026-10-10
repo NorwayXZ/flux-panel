@@ -193,6 +193,7 @@ public class LanDiscoveryService {
     private InternalConnector ownedConnector(Long id) {
         InternalConnector connector = connectorMapper.selectById(id);
         if (connector == null || connector.getStatus() == 0) return null;
+        if("openwrt_dns".equals(connector.getConnectorRole()))return null;
         if (!isAdmin() && !Objects.equals(connector.getUserId(), JwtUtil.getUserIdFromToken())) return null;
         return connector;
     }

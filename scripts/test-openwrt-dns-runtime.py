@@ -67,6 +67,10 @@ VALUES (910001,'default',900001,900001,'192.0.2.1','192.0.2.1',10000,'default','
 """)
 created=api("service-publishing/connector/create",{"name":"isolated-openwrt","platform":"openwrt","connectorRole":"openwrt_dns"})
 connector_id=int(created["connector"]["id"])
+for endpoint in ["cross-entry-failover/probe-sources","virtual-lan/overview","system-self-check/overview"]:
+    choices=api(endpoint,{})["connectors"]
+    assert all(int(choice["id"])!=connector_id for choice in choices), "DNS-only Agent leaked into ordinary resource choices"
+assert all(int(choice["id"])!=connector_id for choice in api("service-publishing/connector/list",{}))
 secret=sql(f"SELECT secret FROM internal_connector WHERE id={connector_id}")
 config={"connectorId":connector_id,"interfaceCarriers":{iface:"mobile"},"smartEntryGroupIds":[910001]}
 api("openwrt-dns/configure",config)

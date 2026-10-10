@@ -99,6 +99,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
             return R.err("家庭接入端不存在或无权使用");
         }
         if (!WebSocketServer.isConnectorOnline(connector.getId())) return R.err("家庭接入端离线，请先启动 Agent");
+        if("openwrt_dns".equals(connector.getConnectorRole()))return R.err("DNS 决策 Agent 不用于家庭业务中转");
         if (!AgentVersionUtil.isAtLeast(connector.getVersion(), MIN_AGENT_VERSION)) {
             return R.err("家庭接入端 Agent 需要升级到 " + MIN_AGENT_VERSION + " 或更高版本");
         }
@@ -1423,6 +1424,7 @@ public class HomeProxyServiceImpl implements HomeProxyService {
         if (source == null || source.getStatus() == null || source.getStatus() == 0
                 || (!isAdmin() && !Objects.equals(source.getUserId(), userId))) return "请选择有权使用的公司接入设备";
         if (Objects.equals(source.getId(), home.getId())) return "公司接入设备不能与家庭设备相同";
+        if("openwrt_dns".equals(source.getConnectorRole()))return "DNS 决策 Agent 不用于业务中转";
         if (!WebSocketServer.isConnectorOnline(source.getId())) return "公司接入设备离线，请先启动 Agent";
         if (!AgentVersionUtil.isAtLeast(source.getVersion(), MIN_NAT_AGENT_VERSION)) {
             return "公司接入设备 Agent 需要升级到 " + MIN_NAT_AGENT_VERSION + " 或更高版本";

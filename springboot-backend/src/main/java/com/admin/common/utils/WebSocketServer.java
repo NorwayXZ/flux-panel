@@ -682,6 +682,9 @@ public class WebSocketServer extends TextWebSocketHandler {
     private static GostDto sendCommand(ConcurrentHashMap<Long, WebSocketSession> sessions,
                                        Long targetId, Object msg, String type, String targetLabel, long timeoutSeconds) {
         WebSocketSession nodeSession = sessions.get(targetId);
+        if(nodeSession!=null && "openwrt_dns".equals(nodeSession.getAttributes().get("connectorRole")) && !"OpenWrtDnsPolicy".equals(type)){
+            GostDto result=new GostDto();result.setMsg("DNS 决策 Agent 仅接受 DNS 配置，不能执行业务或探测命令");return result;
+        }
 
         if (nodeSession == null) {
             log.info("发送消息失败：{} {} 不在线或会话不存在", targetLabel, targetId);

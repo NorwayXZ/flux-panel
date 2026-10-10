@@ -184,7 +184,7 @@ public class CrossEntryFailoverService {
                         + "FROM node ORDER BY status DESC,name,id"));
         result.put("connectors", jdbcTemplate.queryForList(
                 "SELECT id,name,platform,version,remote_ip AS remoteIp,last_seen AS lastSeen,status "
-                        + "FROM internal_connector WHERE status=1 ORDER BY last_seen DESC,name,id"));
+                        + "FROM internal_connector WHERE status=1 AND connector_role='service' ORDER BY last_seen DESC,name,id"));
         result.put("minimumRemoteVersion", MIN_REMOTE_QUALITY_VERSION);
         return R.ok(result);
     }
@@ -1873,7 +1873,7 @@ public class CrossEntryFailoverService {
             return null;
         }
         if ("connector".equals(sourceType)) {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT name,version FROM internal_connector WHERE id=? AND status=1", sourceId);
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT name,version FROM internal_connector WHERE id=? AND status=1 AND connector_role='service'", sourceId);
             if (rows.isEmpty()) return "质量探测 Connector 不存在";
             if (!WebSocketServer.isConnectorOnline(sourceId)) return "质量探测 Connector 离线";
             String version = Objects.toString(rows.get(0).get("version"), "");
@@ -2892,7 +2892,7 @@ public class CrossEntryFailoverService {
             if (count == null || count == 0) throw new IllegalArgumentException("质量探测节点不存在");
         }
         if (detailedProbeEnabled && "connector".equals(dto.getQualityProbeSourceType())) {
-            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1", Integer.class, dto.getQualityProbeSourceId());
+            Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM internal_connector WHERE id=? AND status=1 AND connector_role='service'", Integer.class, dto.getQualityProbeSourceId());
             if (count == null || count == 0) throw new IllegalArgumentException("质量探测 Connector 不存在");
         }
         if (!detailedProbeEnabled || "panel".equals(dto.getQualityProbeSourceType())) dto.setQualityProbeSourceId(null);

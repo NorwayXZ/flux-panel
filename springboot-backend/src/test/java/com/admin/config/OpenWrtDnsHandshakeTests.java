@@ -15,6 +15,18 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 
 class OpenWrtDnsHandshakeTests {
+    @Test void panelCannotSendForwardingCommandsToADnsOnlySession(){
+        var session=mock(org.springframework.web.socket.WebSocketSession.class);
+        when(session.getAttributes()).thenReturn(java.util.Map.of("connectorRole","openwrt_dns"));
+        var sessions=(java.util.concurrent.ConcurrentHashMap<Long,org.springframework.web.socket.WebSocketSession>)ReflectionTestUtils.getField(com.admin.common.utils.WebSocketServer.class,"connectorSessions");
+        sessions.put(9000007L,session);
+        try{
+            var response=com.admin.common.utils.WebSocketServer.sendConnectorMsg(9000007L,java.util.Map.of(),"AddService",1);
+            assertTrue(response.getMsg().contains("仅接受 DNS 配置"));
+            verify(session,never()).sendMessage(any());
+        }catch(java.io.IOException e){throw new RuntimeException(e);}
+        finally{sessions.remove(9000007L,session);}
+    }
     private boolean handshake(String storedRole,String requestedRole,String version)throws Exception{
         var mapper=mock(InternalConnectorMapper.class);var connector=new InternalConnector();
         connector.setId(7L);connector.setConnectorRole(storedRole);
