@@ -178,7 +178,7 @@ func (m *OpenWrtDNSManager) ApplyPolicy(policy OpenWrtDNSPolicy) error {
 	}
 	force := policy.ForceRepair
 	policy.ForceRepair = false
-	policy.Groups = append([]OpenWrtDNSDomainPolicy(nil), policy.Groups...)
+	policy.Groups = append([]OpenWrtDNSDomainPolicy{}, policy.Groups...)
 	m.mu.RLock()
 	oldRevision := m.policy.Revision
 	oldPolicy := m.policy
@@ -198,7 +198,9 @@ func (m *OpenWrtDNSManager) ApplyPolicy(policy OpenWrtDNSPolicy) error {
 		return err
 	}
 	m.mu.RLock()
-	previous, _ := json.MarshalIndent(m.policy, "", "  ")
+	previousPolicy := m.policy
+	previousPolicy.Groups = append([]OpenWrtDNSDomainPolicy{}, previousPolicy.Groups...)
+	previous, _ := json.MarshalIndent(previousPolicy, "", "  ")
 	m.mu.RUnlock()
 	if oldRevision > 0 && policy.Revision == oldRevision && string(previous) != string(serialized) {
 		return errors.New("相同版本的策略内容不一致")

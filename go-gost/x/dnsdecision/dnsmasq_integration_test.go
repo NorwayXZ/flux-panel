@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -153,9 +154,17 @@ func TestRealDNSMasqReproducesReloadFailureAndVerifiesRepair(t *testing.T) {
 	if restarts != 3 || m.snapshot().DNSStatus != "idle" {
 		t.Fatal(m.snapshot(), restarts)
 	}
+	cache, _ := os.ReadFile(state)
+	if !strings.Contains(string(cache), "\"groups\": []") {
+		t.Fatal("removed policies must be serialized as an empty list")
+	}
 }
 
 func TestEffectiveConfDirRejectsDnsDisabledProxyInstanceAndAnonymousNameFallback(t *testing.T) {
+	sections := enabledDNSMasqSections("dhcp.cfgOld=dnsmasq\ndhcp.cfgOld.disabled='1'\ndhcp.cfgProxy=dnsmasq\ndhcp.cfgProxy.port='15353'\ndhcp.cfg01411c=dnsmasq\ndhcp.cfg01411c.port='53'\n")
+	if len(sections) != 1 || sections[0] != "cfg01411c" {
+		t.Fatal("inactive or proxy instance selected", sections)
+	}
 	if got := confDirFromConfig("port=53\nconf-dir=/tmp/dnsmasq.cfg01411c.d\n"); got != "/tmp/dnsmasq.cfg01411c.d" {
 		t.Fatal(got)
 	}

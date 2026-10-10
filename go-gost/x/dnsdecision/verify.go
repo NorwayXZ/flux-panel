@@ -35,7 +35,7 @@ func (m *OpenWrtDNSManager) snapshotPolicy() OpenWrtDNSPolicy {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	policy := m.policy
-	policy.Groups = append([]OpenWrtDNSDomainPolicy(nil), policy.Groups...)
+	policy.Groups = append([]OpenWrtDNSDomainPolicy{}, policy.Groups...)
 	return policy
 }
 
@@ -107,14 +107,7 @@ func openWrtDNSMasqDirectory(statePath string) (string, error) {
 	if err != nil {
 		return "", errors.New("无法读取 dnsmasq 实际实例，请检查 uci")
 	}
-	for _, line := range strings.Split(string(sections), "\n") {
-		if !strings.HasPrefix(line, "dhcp.") || !strings.HasSuffix(line, "=dnsmasq") {
-			continue
-		}
-		section := strings.TrimSuffix(strings.TrimPrefix(line, "dhcp."), "=dnsmasq")
-		if !regexpSafeSection(section) {
-			continue
-		}
+	for _, section := range enabledDNSMasqSections(string(sections)) {
 		data, err := os.ReadFile("/var/etc/dnsmasq.conf." + section)
 		if err == nil {
 			if actual := confDirFromConfig(string(data)); actual != "" {
@@ -123,6 +116,39 @@ func openWrtDNSMasqDirectory(statePath string) (string, error) {
 		}
 	}
 	return "", errors.New("没有找到监听 53 端口的 dnsmasq 实际配置，不能确认域名规则生效")
+}
+
+func enabledDNSMasqSections(output string) []string {
+	values := map[string]string{}
+	var sections []string
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+		values[key] = value
+		if strings.HasPrefix(key, "dhcp.") && value == "dnsmasq" {
+			section := strings.TrimPrefix(key, "dhcp.")
+			if regexpSafeSection(section) {
+				sections = append(sections, section)
+			}
+		}
+	}
+	result := []string{}
+	for _, section := range sections {
+		prefix := "dhcp." + section + "."
+		disabled := strings.ToLower(values[prefix+"disabled"])
+		if disabled == "1" || disabled == "true" || disabled == "yes" || disabled == "on" || disabled == "enabled" {
+			continue
+		}
+		if port := values[prefix+"port"]; port != "" && port != "53" {
+			continue
+		}
+		result = append(result, section)
+	}
+	return result
 }
 
 func regexpSafeSection(section string) bool {
