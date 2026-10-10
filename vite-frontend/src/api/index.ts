@@ -1914,23 +1914,45 @@ export interface AuthorizedEntryTemplate {
 }
 
 export const getAuthorizedEntryGrants = (userId?: number) =>
-  Network.mutate<AuthorizedEntryGrant[]>("/authorized-entry/grants", userId ? { userId } : {}, ["/authorized-entry/grants"]);
+  Network.mutate<AuthorizedEntryGrant[]>(
+    "/authorized-entry/grants",
+    userId ? { userId } : {},
+    ["/authorized-entry/grants"],
+  );
 export const getAuthorizedEntryTemplates = () =>
-  Network.mutate<AuthorizedEntryTemplate[]>("/authorized-entry/template/list", {}, ["/authorized-entry/template/list"]);
+  Network.mutate<AuthorizedEntryTemplate[]>(
+    "/authorized-entry/template/list",
+    {},
+    ["/authorized-entry/template/list"],
+  );
 export const saveAuthorizedEntryTemplate = (data: Record<string, unknown>) =>
-  Network.mutate<{ id: number }>("/authorized-entry/template/save", data, ["/authorized-entry/template/list"]);
+  Network.mutate<{ id: number }>("/authorized-entry/template/save", data, [
+    "/authorized-entry/template/list",
+  ]);
 export const saveAuthorizedEntryGrant = (data: Record<string, unknown>) =>
-  Network.mutate<{ id: number }>("/authorized-entry/grant/save", data, ["/authorized-entry/grants"]);
+  Network.mutate<{ id: number }>("/authorized-entry/grant/save", data, [
+    "/authorized-entry/grants",
+  ]);
 export const createAuthorizedEntryPort = (data: Record<string, unknown>) =>
-  Network.mutate<AuthorizedEntryPort>("/authorized-entry/port/create", data, ["/authorized-entry/grants"]);
+  Network.mutate<AuthorizedEntryPort>("/authorized-entry/port/create", data, [
+    "/authorized-entry/grants",
+  ]);
 export const deleteAuthorizedEntryPort = (id: number) =>
-  Network.mutate("/authorized-entry/port/delete", { id }, ["/authorized-entry/grants"]);
+  Network.mutate("/authorized-entry/port/delete", { id }, [
+    "/authorized-entry/grants",
+  ]);
 export const updateAuthorizedEntryPort = (data: Record<string, unknown>) =>
-  Network.mutate("/authorized-entry/port/update", data, ["/authorized-entry/grants"]);
+  Network.mutate("/authorized-entry/port/update", data, [
+    "/authorized-entry/grants",
+  ]);
 export const setAuthorizedEntryGrantState = (id: number, active: boolean) =>
-  Network.mutate("/authorized-entry/grant/state", { id, active }, ["/authorized-entry/grants"]);
+  Network.mutate("/authorized-entry/grant/state", { id, active }, [
+    "/authorized-entry/grants",
+  ]);
 export const revokeAuthorizedEntryGrant = (id: number) =>
-  Network.mutate("/authorized-entry/grant/revoke", { id }, ["/authorized-entry/grants"]);
+  Network.mutate("/authorized-entry/grant/revoke", { id }, [
+    "/authorized-entry/grants",
+  ]);
 
 export interface SourceIpEntryRoute {
   id?: number;
@@ -2103,7 +2125,7 @@ export const checkSourceIpEntry = (id: number) =>
 export const deleteSourceIpEntry = (id: number) =>
   Network.post("/source-ip-entry/delete", { id });
 export const refreshSourceIpCarriers = () =>
-  Network.post("/source-ip-entry/carriers/refresh");
+  Network.post("/source-ip-entry/carriers/refresh", {}, 170000);
 export const refreshSourceIpAsns = () =>
   Network.post("/source-ip-entry/asn/refresh");
 export const debugSourceIpEntry = (data: {
@@ -2186,7 +2208,14 @@ export interface SmartEntryGroup {
   probeMode?: string;
   probePath?: string;
   latestEvent?: { detail: string; createdTime: number; eventType: string };
-  archivedActivities?: {nodeName: string; entryAddress: string; totalConnections: number; inFlow: number; outFlow: number; archivedAt: number}[];
+  archivedActivities?: {
+    nodeName: string;
+    entryAddress: string;
+    totalConnections: number;
+    inFlow: number;
+    outFlow: number;
+    archivedAt: number;
+  }[];
   lastError?: string;
   lastCheckedAt?: number;
   routes: SmartEntryRoute[];
@@ -2291,11 +2320,18 @@ export const getSmartEntryDomains = (providerRefId: number) =>
     domains: string[];
   }>("/smart-entry/domains", { providerRefId });
 export const saveSmartEntry = (data: any) =>
-  Network.post<{ id: number; state: string; message: string }>("/smart-entry/save", data);
+  Network.post<{ id: number; state: string; message: string }>(
+    "/smart-entry/save",
+    data,
+  );
 export const checkSmartEntry = (id: number) =>
   Network.post("/smart-entry/check", { id }, 170000);
 export const diagnoseSmartEntryDns = (id: number) =>
-  Network.post<SmartEntryDnsDiagnosis>("/smart-entry/diagnose-dns", { id }, 170000);
+  Network.post<SmartEntryDnsDiagnosis>(
+    "/smart-entry/diagnose-dns",
+    { id },
+    170000,
+  );
 export const getSmartEntryEvents = (id: number) =>
   Network.post<SmartEntryEvent[]>("/smart-entry/events", { id });
 export const deleteSmartEntry = (id: number) =>
@@ -2693,6 +2729,7 @@ export interface InternalConnector {
   ownerUserName: string;
   allowedCidrs: string;
   platform: ConnectorPlatform;
+  connectorRole?: "service" | "openwrt_dns";
   version?: string;
   remoteIp?: string;
   lastSeen?: number;
@@ -2705,7 +2742,7 @@ export interface InternalConnector {
   discoveredServiceCount?: number;
 }
 
-export type ConnectorPlatform = "linux" | "windows" | "macos";
+export type ConnectorPlatform = "linux" | "windows" | "macos" | "openwrt";
 
 export interface PublishingPortPool {
   id: number;
@@ -2931,6 +2968,7 @@ export const createInternalConnector = (data: {
   name: string;
   allowedCidrs?: string;
   platform: ConnectorPlatform;
+  connectorRole?: "service" | "openwrt_dns";
 }) =>
   Network.mutate<{ connector: InternalConnector; installCommand: string }>(
     "/service-publishing/connector/create",
@@ -2943,6 +2981,59 @@ export const getInternalConnectors = () =>
     {},
     8000,
   );
+
+export interface OpenWrtDnsResolver {
+  connectorId: number;
+  name: string;
+  platform: "openwrt";
+  connectorRole: "openwrt_dns";
+  version?: string;
+  remoteIp?: string;
+  online: boolean;
+  interfaceCarriers?: Record<string, string>;
+  smartEntryGroupIds?: number[];
+  activeInterface?: string;
+  activeCarrier?: string;
+  policyRevision?: number;
+  appliedRevision?: number;
+  activeInterface6?: string;
+  activeCarrier6?: string;
+  publicIp?: string;
+  publicIp6?: string;
+  detectionSource?: string;
+  detectionSource6?: string;
+  detectionError?: string;
+  resolvedQueries?: number;
+  dnsmasqReloaded?: boolean | number;
+  lastError?: string;
+  reportedAt?: number;
+}
+export const getOpenWrtDnsResolvers = () =>
+  Network.post<OpenWrtDnsResolver[]>("/openwrt-dns/list");
+export const getOpenWrtDnsOptions = () =>
+  Network.post<{
+    groups: {
+      id: number;
+      name: string;
+      domain: string;
+      recordType: string;
+      state: string;
+      routeCount: number;
+    }[];
+    carrierDatabase: {
+      carrier: string;
+      state: string;
+      cidrCount: number;
+      updatedAt: number;
+    }[];
+  }>("/openwrt-dns/options");
+export const configureOpenWrtDns = (data: {
+  connectorId: number;
+  interfaceCarriers: Record<string, string>;
+  smartEntryGroupIds: number[];
+}) => Network.post("/openwrt-dns/configure", data, 170000);
+export const removeOpenWrtDns = (connectorId: number) =>
+  Network.post("/openwrt-dns/remove", { connectorId });
 export const getInternalConnectorInstall = (
   id: number,
   platform: ConnectorPlatform,

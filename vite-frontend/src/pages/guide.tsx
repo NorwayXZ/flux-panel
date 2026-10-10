@@ -264,6 +264,39 @@ const entries: GuideEntry[] = [
     keywords: "移动 联通 电信 运营商 DNS 线路解析",
   },
   {
+    id: "openwrt-dns",
+    category: "core",
+    title: "OpenWrt DNS 决策",
+    path: "/openwrt-dns",
+    icon: RadioTower,
+    adminOnly: true,
+    summary:
+      "由路由器按当前 WAN 出口在本地返回三网入口，客户端直达业务服务器。",
+    purpose:
+      "减少公共 DNS 缓存对宽带切换的影响。只有使用此 OpenWrt DNS 的设备受它控制，业务数据不经 DNS Agent 中转。",
+    prerequisites: [
+      "支持架构的 OpenWrt/procd 路由器，具备 ip、uci、下载和 SHA256 工具及 CA 证书。",
+      "已配置三网优化策略。",
+      "客户端使用该路由器 DNS；运营商映射或 IP 地址库至少有一种可用。",
+    ],
+    steps: [
+      "创建 OpenWrt 记录并复制安装命令到路由器执行。",
+      "选择要处理的三网策略，A 和 AAAA 可分别绑定。",
+      "填写实际 WAN 设备与运营商的映射；没有映射时刷新地址库用于自动识别。",
+      "保存后查看配置应用状态、IPv4/IPv6 出口及识别来源。",
+      "切换 WAN 后重建客户端连接并检查新解析；移除策略时等待 Agent 确认，卸载后再删除记录。",
+    ],
+    result:
+      "新 DNS 查询按照当前默认出口获得入口地址，采用五秒本地 TTL。面板离线时保留缓存策略。",
+    notes: [
+      "应用 DoH、VPN 或其他路由器的 DNS 可能绕过它。",
+      "多 WAN 按客户端或目标分流时，默认出口不一定代表每个连接。",
+      "已建立的 TCP 连接仍需重连，客户端自己的缓存可能忽略 TTL。",
+      "回退面板前先清理本地策略或卸载并删除 Agent 记录。",
+    ],
+    keywords: "OpenWrt dnsmasq WAN DNS 本地解析 移动 联通 电信",
+  },
+  {
     id: "source-ip-entry",
     category: "core",
     title: "来源 IP 分流",

@@ -104,6 +104,14 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         connector.setSecret(randomHex(24));
         connector.setAllowedCidrs(StringUtils.defaultIfBlank(dto.getAllowedCidrs(), DEFAULT_ALLOWED_CIDRS));
         connector.setPlatform(ConnectorInstallCommandUtil.normalizePlatform(dto.getPlatform()));
+        String connectorRole = StringUtils.defaultIfBlank(dto.getConnectorRole(), "service").trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("service", "openwrt_dns").contains(connectorRole)
+                || ("openwrt_dns".equals(connectorRole) && !"openwrt".equals(connector.getPlatform()))) {
+            return R.err("OpenWrt DNS 决策接入端必须选择 OpenWrt 平台；普通接入端不能指定此用途");
+        }
+        connector.setConnectorRole(connectorRole);
+        if ("openwrt_dns".equals(connectorRole) && !isAdmin()) return R.err("仅管理员可以添加 OpenWrt DNS 决策 Agent");
+        if ("openwrt".equals(connector.getPlatform()) && !"openwrt_dns".equals(connectorRole)) return R.err("OpenWrt 平台用于 DNS 决策，请选择对应用途");
         if (!validCidrList(connector.getAllowedCidrs())) {
             return R.err("允许访问的网段格式不正确");
         }
@@ -121,7 +129,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
 
     @Override
     public R listConnectors() {
-        QueryWrapper<InternalConnector> query = new QueryWrapper<InternalConnector>().eq("status", 1).orderByDesc("created_time");
+        QueryWrapper<InternalConnector> query = new QueryWrapper<InternalConnector>().eq("status", 1).eq("connector_role","service").orderByDesc("created_time");
         if (!isAdmin()) {
             query.eq("user_id", currentUserId());
         }
@@ -153,6 +161,8 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     public R connectorInstallCommand(Long id, String platform, boolean uninstall) {
         InternalConnector connector = ownedConnector(id);
         if (connector == null) return R.err("内网接入端不存在或无权访问");
+        if ("openwrt_dns".equals(connector.getConnectorRole())) platform="openwrt";
+        else if ("openwrt".equalsIgnoreCase(platform)) return R.err("普通接入端不能使用 DNS 决策安装器");
         return R.ok(buildInstallCommand(connector, platform, uninstall));
     }
 
@@ -173,6 +183,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         connector.setStatus(0);
         connector.setUpdatedTime(System.currentTimeMillis());
         connectorMapper.updateById(connector);
+        jdbcTemplate.update("DELETE FROM openwrt_dns_resolver WHERE connector_id=?", id);
         jdbcTemplate.update("DELETE FROM lan_discovered_service WHERE connector_id=?", id);
         return R.ok();
     }
@@ -399,6 +410,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         if (connector == null || connector.getStatus() == 0 || (!isAdmin() && !Objects.equals(connector.getUserId(), userId))) {
             return R.err("内网接入端不存在或无权使用");
         }
+        if ("openwrt_dns".equals(connector.getConnectorRole())) return R.err("DNS 决策 Agent 不能用于业务中转或内网映射");
         if (!WebSocketServer.isConnectorOnline(connector.getId())) return R.err("内网接入端离线，暂时不能创建映射");
         PortPool pool = poolMapper.selectById(dto.getPoolId());
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在或已停用");

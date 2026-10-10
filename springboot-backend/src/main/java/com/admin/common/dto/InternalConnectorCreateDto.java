@@ -12,6 +12,8 @@ public class InternalConnectorCreateDto {
     @Size(max = 80, message = "接入端名称不能超过80个字符")
     private String name;
     private String allowedCidrs;
-    @Pattern(regexp = "(?i)linux|windows|macos", message = "不支持的接入端系统")
+    @Pattern(regexp = "(?i)linux|windows|macos|openwrt", message = "不支持的接入端系统")
     private String platform;
+    @Pattern(regexp = "(?i)service|openwrt_dns", message = "不支持的接入端用途")
+    private String connectorRole;
 }

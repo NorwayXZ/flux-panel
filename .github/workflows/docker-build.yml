@@ -67,10 +67,18 @@ jobs:
           DB_PASSWORD: test
         run: mvn --batch-mode clean package
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go-gost/go.mod
+          cache-dependency-path: go-gost/go.sum
+
       - name: Smoke test backend runtime
         run: |
-          bash scripts/test-backend-runtime.sh
-          FLUX_PANEL_TEST_MYSQL_IMAGE=mysql:5.7 bash scripts/test-backend-runtime.sh
+          sh -n install-openwrt-dns-agent.sh
+          (cd go-gost/x && CGO_ENABLED=0 go build -trimpath -o /tmp/flux-openwrt-dns-runtime ./cmd/openwrt-dns-agent)
+          FLUX_PANEL_RUNTIME_DNS_BINARY=/tmp/flux-openwrt-dns-runtime bash scripts/test-backend-runtime.sh
+          FLUX_PANEL_RUNTIME_DNS_BINARY=/tmp/flux-openwrt-dns-runtime FLUX_PANEL_TEST_MYSQL_IMAGE=mysql:5.7 bash scripts/test-backend-runtime.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -86,18 +94,13 @@ jobs:
           npm test
           npm run build
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go-gost/go.mod
-          cache-dependency-path: go-gost/go.sum
-
       - name: Test and build Agent
         working-directory: go-gost
         run: |
           set -euo pipefail
           go test ./...
           (cd x && go test ./...)
+          (cd x && go test -race ./dnsdecision)
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-arm64 .
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-windows-amd64.exe .
@@ -111,7 +114,13 @@ jobs:
             echo "Agent binary reports $actual_agent_version, expected $expected_agent_version" >&2
             exit 1
           fi
-          sha256sum gost-amd64 gost-arm64 gost-windows-amd64.exe gost-windows-arm64.exe gost-darwin-amd64 gost-darwin-arm64 > SHA256SUMS
+          (cd go-gost/x && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../../flux-openwrt-dns-amd64 ./cmd/openwrt-dns-agent)
+          (cd go-gost/x && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../../flux-openwrt-dns-arm64 ./cmd/openwrt-dns-agent)
+          (cd go-gost/x && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-s -w" -o ../../flux-openwrt-dns-armv7 ./cmd/openwrt-dns-agent)
+          (cd go-gost/x && CGO_ENABLED=0 GOOS=linux GOARCH=mips GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o ../../flux-openwrt-dns-mips ./cmd/openwrt-dns-agent)
+          (cd go-gost/x && CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -trimpath -ldflags="-s -w" -o ../../flux-openwrt-dns-mipsle ./cmd/openwrt-dns-agent)
+          [[ "$(./flux-openwrt-dns-amd64 --agent-version)" == "$expected_agent_version" ]]
+          sha256sum gost-amd64 gost-arm64 gost-windows-amd64.exe gost-windows-arm64.exe gost-darwin-amd64 gost-darwin-arm64 flux-openwrt-dns-* > SHA256SUMS
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -187,7 +196,8 @@ jobs:
             gost-amd64 gost-arm64 \
             gost-windows-amd64.exe gost-windows-arm64.exe \
             gost-darwin-amd64 gost-darwin-arm64 \
-            SHA256SUMS install.sh install-connector.ps1 install-connector-macos.sh \
+            flux-openwrt-dns-amd64 flux-openwrt-dns-arm64 flux-openwrt-dns-armv7 flux-openwrt-dns-mips flux-openwrt-dns-mipsle \
+            SHA256SUMS install.sh install-connector.ps1 install-connector-macos.sh install-openwrt-dns-agent.sh \
             --verify-tag \
             --title "Flux Panel ${VERSION}" \
             --notes-file "${release_notes}"

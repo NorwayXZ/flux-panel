@@ -49,6 +49,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
     "/authorized-entry": "授权入口",
     "/monitoring": "告警中心",
     "/guide": "使用教程",
+    "/openwrt-dns": "OpenWrt DNS 决策",
   };
   const currentPageTitle =
     pageTitles[location.pathname] ||
@@ -116,6 +117,12 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   ];
 
   const moreItems: TabItem[] = [
+    {
+      path: "/openwrt-dns",
+      label: "OpenWrt DNS 决策",
+      icon: <Network className="h-4 w-4" />,
+      adminOnly: true,
+    },
     {
       path: "/service-publishing",
       label: "内网映射",

@@ -20,6 +20,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   "/cross-entry-failover": () => import("@/pages/cross-entry-failover"),
   "/source-ip-entry": () => import("@/pages/source-ip-entry"),
   "/smart-entry": () => import("@/pages/smart-entry"),
+  "/openwrt-dns": () => import("@/pages/openwrt-dns"),
   "/dns-settings": () => import("@/pages/dns-settings"),
   "/aws-access": () => import("@/pages/aws-access"),
   "/private-proxy": () => import("@/pages/private-proxy"),

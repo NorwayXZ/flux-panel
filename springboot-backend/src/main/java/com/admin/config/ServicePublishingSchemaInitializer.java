@@ -173,6 +173,7 @@ public class ServicePublishingSchemaInitializer {
             ensureColumn("home_proxy_gateway", "gateway_type", "varchar(24) NOT NULL DEFAULT 'socks5' AFTER gateway_name");
             ensureColumn("home_proxy_gateway", "runtime_name", "varchar(140) DEFAULT NULL AFTER gateway_type");
             ensureColumn("internal_connector", "platform", "varchar(16) NOT NULL DEFAULT 'linux'");
+            ensureColumn("internal_connector", "connector_role", "varchar(24) NOT NULL DEFAULT 'service'");
             ensureColumn("port_lease", "grant_id", "bigint DEFAULT NULL AFTER pool_id");
             ensureIndex("port_lease", "idx_lease_grant", "grant_id, state");
             ensureColumn("domain_route", "ingress_mode", "varchar(24) NOT NULL DEFAULT 'passthrough' AFTER service_name");

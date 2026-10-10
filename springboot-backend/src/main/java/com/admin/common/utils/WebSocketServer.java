@@ -11,6 +11,7 @@ import com.admin.service.NodeService;
 import com.admin.service.TerminalSessionManager;
 import com.admin.service.AgentUpgradeService;
 import com.admin.service.NatTraversalService;
+import com.admin.service.OpenWrtDnsResolverService;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import lombok.SneakyThrows;
@@ -49,6 +50,9 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     @Resource
     NatTraversalService natTraversalService;
+
+    @Resource
+    OpenWrtDnsResolverService openWrtDnsResolverService;
 
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
@@ -108,6 +112,11 @@ public class WebSocketServer extends TextWebSocketHandler {
                 try {
                     JSONObject agentMessage = JSONObject.parseObject(decryptedPayload);
                     String agentMessageType = agentMessage.getString("type");
+                    if (Objects.equals(type, "2") && "OpenWrtDnsStatus".equals(agentMessageType)
+                            && "openwrt_dns".equals(session.getAttributes().get("connectorRole"))) {
+                        openWrtDnsResolverService.handleStatus(Long.valueOf(id), agentMessage.getJSONObject("data"));
+                        return;
+                    }
                     if (Objects.equals(type, "2") && agentMessageType != null
                             && agentMessageType.startsWith("Nat")
                             && StringUtils.isBlank(agentMessage.getString("requestId"))) {
@@ -301,7 +310,9 @@ public class WebSocketServer extends TextWebSocketHandler {
                     connector.setUpdatedTime(now);
                     internalConnectorMapper.updateById(connector);
                 }
-                natTraversalService.connectorOnline(connectorId);
+                if (connector != null && "openwrt_dns".equals(connector.getConnectorRole())) {
+                    openWrtDnsResolverService.connectorOnline(connectorId);
+                } else natTraversalService.connectorOnline(connectorId);
                 log.info("内网接入端 {} 连接建立", connectorId);
             } else if (!Objects.equals(type, "1")) {
                 // 网页管理员连接
@@ -646,6 +657,15 @@ public class WebSocketServer extends TextWebSocketHandler {
 
     public static GostDto sendConnectorMsg(Long connectorId, Object msg, String type, long timeoutSeconds) {
         return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端", timeoutSeconds);
+    }
+
+    public static boolean sendConnectorEvent(Long connectorId, String type, Object msg) {
+        WebSocketSession session = connectorSessions.get(connectorId);
+        if (session == null || !session.isOpen()) return false;
+        JSONObject data = new JSONObject();
+        data.put("type",type); data.put("data",msg);
+        sendToUser(session,data.toJSONString(),(String)session.getAttributes().get("nodeSecret"));
+        return session.isOpen();
     }
 
     public static boolean sendNodeEvent(Long nodeId, String type, Object msg) {

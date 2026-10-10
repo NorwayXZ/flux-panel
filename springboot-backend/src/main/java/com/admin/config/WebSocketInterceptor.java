@@ -43,6 +43,8 @@ public class WebSocketInterceptor extends HttpSessionHandshakeInterceptor {
         ServletServerHttpRequest serverHttpRequest = (ServletServerHttpRequest) request;
         String secret = serverHttpRequest.getServletRequest().getParameter("secret");
         String type = serverHttpRequest.getServletRequest().getParameter("type");
+        if("2".equals(type)&&"openwrt_dns".equals(serverHttpRequest.getServletRequest().getParameter("role"))
+                &&(secret==null||secret.isEmpty()))secret=serverHttpRequest.getServletRequest().getHeader("X-Flux-Dns-Secret");
         String version = serverHttpRequest.getServletRequest().getParameter("version");
         String http = serverHttpRequest.getServletRequest().getParameter("http");
         String tls = serverHttpRequest.getServletRequest().getParameter("tls");
@@ -73,7 +75,11 @@ public class WebSocketInterceptor extends HttpSessionHandshakeInterceptor {
                 log.info("内网接入端验证失败：未找到有效密钥");
                 return false;
             }
+            String requestedRole=serverHttpRequest.getServletRequest().getParameter("role");
+            if ("openwrt_dns".equals(connector.getConnectorRole()) != "openwrt_dns".equals(requestedRole)) return false;
+            if("openwrt_dns".equals(connector.getConnectorRole()) && !com.admin.common.utils.AgentVersionUtil.isAtLeast(version,"2.53.0"))return false;
             attributes.put("id", connector.getId());
+            attributes.put("connectorRole", connector.getConnectorRole());
             attributes.put("nodeSecret", secret);
             attributes.put("nodeVersion", version);
             attributes.put("remoteIp", getClientIp(request));

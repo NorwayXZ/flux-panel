@@ -48,6 +48,7 @@ const platformLabel: Record<ConnectorPlatform, string> = {
   linux: "Linux",
   windows: "Windows",
   macos: "macOS",
+  openwrt: "OpenWrt DNS",
 };
 
 const formatTime = (value?: number) =>

@@ -652,6 +652,20 @@ rollback_panel() {
   fi
 
   log "rolling back Flux Panel ${current_version} -> ${previous_version}"
+  if (( previous_major < 2 || (previous_major == 2 && previous_minor < 53) )); then
+    if [[ "${override}" == "--force" ]]; then
+      log "WARNING: forced rollback skips OpenWrt DNS checks; cached router policies need manual cleanup"
+    elif [[ "${current_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] &&
+         (( 10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 53) )); then
+      local pending_router_dns
+      pending_router_dns="$(compose exec -T mysql sh -c '
+        MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse \
+        "SELECT COUNT(*) FROM openwrt_dns_resolver WHERE smart_entry_group_ids<>\"[]\" OR applied_revision<policy_revision"
+      ')" || fail "unable to verify OpenWrt DNS policy cleanup before rollback"
+      [[ "${pending_router_dns}" =~ ^[0-9]+$ ]] || fail "unexpected OpenWrt DNS cleanup state"
+      [[ "${pending_router_dns}" == "0" ]] || fail "remove all OpenWrt DNS policies and wait for router acknowledgment, or uninstall the router Agent before rolling back"
+    fi
+  fi
   set_env_value PANEL_VERSION "${previous_version}"
   set_env_value PREVIOUS_PANEL_VERSION "${current_version}"
   if ! deploy_release; then

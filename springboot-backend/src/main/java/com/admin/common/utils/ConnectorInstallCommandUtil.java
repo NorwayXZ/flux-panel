@@ -6,9 +6,9 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class ConnectorInstallCommandUtil {
-    public static final String RELEASE = "2.52.2";
+    public static final String RELEASE = "2.53.0";
     private static final String RAW_BASE = "https://raw.githubusercontent.com/NorwayXZ/flux-panel/" + RELEASE;
-    private static final Set<String> SUPPORTED_PLATFORMS = Set.of("linux", "windows", "macos");
+    private static final Set<String> SUPPORTED_PLATFORMS = Set.of("linux", "windows", "macos", "openwrt");
 
     private ConnectorInstallCommandUtil() {
     }
@@ -24,10 +24,18 @@ public final class ConnectorInstallCommandUtil {
 
     public static String build(String platform, String panelAddress, String secret, boolean uninstall) {
         return switch (normalizePlatform(platform)) {
+            case "openwrt" -> buildOpenWrt(panelAddress, secret, uninstall);
             case "windows" -> buildWindows(panelAddress, secret, uninstall);
             case "macos" -> buildMacOs(panelAddress, secret, uninstall);
             default -> buildLinux(panelAddress, secret, uninstall);
         };
+    }
+
+    private static String buildOpenWrt(String panelAddress, String secret, boolean uninstall) {
+        String scriptUrl = RAW_BASE + "/install-openwrt-dns-agent.sh";
+        String prefix = "wget -q '" + scriptUrl + "' -O /tmp/flux-openwrt-dns-agent.sh && chmod 700 /tmp/flux-openwrt-dns-agent.sh";
+        if (uninstall) return prefix + " && /bin/sh /tmp/flux-openwrt-dns-agent.sh uninstall";
+        return prefix + " && /bin/sh /tmp/flux-openwrt-dns-agent.sh install " + shellQuote(panelAddress) + " " + shellQuote(secret);
     }
 
     private static String buildLinux(String panelAddress, String secret, boolean uninstall) {

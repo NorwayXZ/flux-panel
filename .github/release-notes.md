@@ -1,3 +1,14 @@
+## 2.53.0 OpenWrt DNS decision Agent
+
+- Adds an administrator page for OpenWrt DNS Agents, with installer/uninstaller commands, explicit WAN device-to-carrier mappings, carrier database refresh, selected Smart Entry strategies, IPv4/IPv6 egress status, applied configuration revisions, and policy removal.
+- Publishes a separate DNS-only executable for Linux amd64, arm64, ARMv7, MIPS, and MIPS little endian. It listens only on router loopback, receives encrypted policy updates over the existing outbound Connector WebSocket protocol, and never proxies application traffic or enables GOST forwarding commands.
+- Recognizes IPv4 and IPv6 default egress separately. An explicit WAN mapping takes precedence; otherwise it matches the current IPv4 public IP or IPv6 route source against the panel's carrier CIDR database. New DNS answers use a five-second local TTL, and WAN changes reload dnsmasq's cache.
+- Reuses Smart Entry health and fallback policies, preserves explicit "no fallback" choices, suppresses unmanaged AAAA and HTTPS/SVCB hints for managed business names, and forwards other DNS questions to the router's existing upstream resolvers.
+- Saves policies locally so panel outages do not interrupt DNS decision processing. Policy removal remains pending until the Agent acknowledges it; uninstall removes only the Agent's own dnsmasq file and any owned confdir setting. The panel blocks ordinary rollback while local router policies remain active or removal is unacknowledged.
+- Release checks cover DNS behavior, policy persistence, role/version authentication, five architecture builds, and real encrypted Agent/backend lifecycle tests on MySQL 5.7 and 8.0. Actual OpenWrt procd/dnsmasq behavior still requires installation verification on the target router; no production router, customer DNS record, or live customer traffic was modified by these tests.
+- Clients must use the DNS service of the enrolled OpenWrt. A different router, DoH/DoT, VPN, transparent proxy, or per-client/per-destination multi-WAN routing may bypass or invalidate default-WAN identification. Existing application DNS caches and established TCP connections are not migrated.
+- Panel, regular Agent, Connector, and the lightweight DNS Agent report `2.53.0`; `2.52.2` remains available as the rollback baseline. Remove and acknowledge router policies or uninstall the router Agent and delete its record before rolling back.
+
 ## 2.52.2 Smart entry reliability and carrier failover controls
 
 - Preserves an existing carrier route ID, health state, DNS target, and connection counters when an administrator edits the strategy. Replacing the physical entry archives the old activity snapshot and starts a fresh telemetry baseline.

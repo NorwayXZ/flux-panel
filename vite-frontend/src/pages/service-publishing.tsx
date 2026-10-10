@@ -215,6 +215,7 @@ const platformMeta: Record<
   linux: { label: "Linux", commandLabel: "终端命令" },
   windows: { label: "Windows", commandLabel: "管理员 PowerShell" },
   macos: { label: "macOS", commandLabel: "终端命令" },
+  openwrt: { label: "OpenWrt DNS 决策", commandLabel: "OpenWrt 终端" },
 };
 
 type ServiceTemplateId =
@@ -846,6 +847,8 @@ export default function ServicePublishingPage() {
       name: connectorForm.name.trim(),
       allowedCidrs: connectorForm.allowedCidrs.trim() || undefined,
       platform: connectorForm.platform,
+      connectorRole:
+        connectorForm.platform === "openwrt" ? "openwrt_dns" : "service",
     });
 
     setSubmitting(false);
@@ -954,7 +957,11 @@ export default function ServicePublishingPage() {
         domainForZoneCheck.endsWith("." + zoneName)
       );
     });
-    if (domainForm.ingressMode === "managed_https" && !domainForm.dnsZoneId && !hasKnownZone)
+    if (
+      domainForm.ingressMode === "managed_https" &&
+      !domainForm.dnsZoneId &&
+      !hasKnownZone
+    )
       return toast.error(
         "未选择 DNS 域名配置。若该域名已在 Cloudflare，可留空由面板自动检测导入。",
       );
@@ -3089,9 +3096,11 @@ export default function ServicePublishingPage() {
                   })
                 }
               >
-                {Object.entries(platformMeta).map(([key, meta]) => (
-                  <Tab key={key} title={meta.label} />
-                ))}
+                {Object.entries(platformMeta)
+                  .filter(([key]) => key !== "openwrt")
+                  .map(([key, meta]) => (
+                    <Tab key={key} title={meta.label} />
+                  ))}
               </Tabs>
             </div>
             <Input
@@ -3133,9 +3142,11 @@ export default function ServicePublishingPage() {
                 )
               }
             >
-              {Object.entries(platformMeta).map(([key, meta]) => (
-                <Tab key={key} title={meta.label} />
-              ))}
+              {Object.entries(platformMeta)
+                .filter(([key]) => key !== "openwrt")
+                .map(([key, meta]) => (
+                  <Tab key={key} title={meta.label} />
+                ))}
             </Tabs>
             <Tabs
               aria-label="安装或卸载"

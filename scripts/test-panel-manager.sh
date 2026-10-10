@@ -176,6 +176,18 @@ grep -Fq "PREVIOUS_PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
+# Router policies must be removed before downgrading to a panel without the worker.
+awk '
+  /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.52.2"; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.router-pending"
+mv "${CONFIG_DIR}/flux-panel.env.router-pending" "${CONFIG_DIR}/flux-panel.env"
+if PANEL_TEST_PENDING_MIGRATIONS=1 run_manager rollback >/dev/null 2>&1; then
+  printf 'rollback unexpectedly proceeded with active router DNS policies\n' >&2
+  exit 1
+fi
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
+
 # Older releases cannot finish entry migration jobs, so guard that rollback.
 awk '
   /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.52.0"; next }
