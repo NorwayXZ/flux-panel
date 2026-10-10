@@ -176,7 +176,7 @@ grep -Fq "PREVIOUS_PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
 
-# The old release cannot finish entry migration jobs, so guard that rollback.
+# Older releases cannot finish entry migration jobs, so guard that rollback.
 awk '
   /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.52.0"; next }
   { print }

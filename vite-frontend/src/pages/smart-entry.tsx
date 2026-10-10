@@ -102,6 +102,11 @@ const emptyForm = {
   failureThreshold: "2",
   recoveryThreshold: "3",
   enabled: true,
+  recoveryStableMs: "30000",
+  switchCooldownMs: "60000",
+  probeMode: "tcp",
+  probePath: "/",
+  fallbacks: {default: null, telecom: null, unicom: null, mobile: null} as Record<Carrier, string[] | null>,
   routes: blankRoutes(),
 };
 const emptySummary = {
@@ -182,6 +187,11 @@ const eventLabel = (event: SmartEntryEvent) =>
     first_active: "首次活跃",
     resumed: "重新活跃",
     new_connections: "新连接摘要",
+    health: "健康变化",
+    dns_error: "DNS 同步失败",
+    configuration: "配置变更",
+    cleanup: "DNS 清理",
+    delete: "删除策略",
   })[event.eventType] || "入口活动";
 const providerLabel = (value: string) =>
   value === "dnspod" ? "DNSPod" : "阿里云 DNS";
@@ -192,6 +202,7 @@ const stateMeta = (state: SmartEntryGroup["state"]) =>
     offline: { label: "入口中断", color: "danger" as const },
     error: { label: "DNS 异常", color: "danger" as const },
     unknown: { label: "等待检测", color: "default" as const },
+    deleting: { label: "删除清理中", color: "warning" as const },
   })[state] || { label: "等待检测", color: "default" as const };
 const activityChipMeta = (state?: string) =>
   ({
@@ -226,27 +237,39 @@ export default function SmartEntryPage() {
     null,
   );
   const [diagnosingId, setDiagnosingId] = useState<number>();
+  const [search, setSearch] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [lastLoadedAt, setLastLoadedAt] = useState<number>();
+  const loadingRef = useRef(false);
 
   const loadData = useCallback(async (quiet = false) => {
-    const [overview, options] = await Promise.all([
-      getSmartEntryOverview(),
-      getSmartEntryOptions(),
-    ]);
-
-    if (overview.code === 0) {
-      setGroups(overview.data?.groups || []);
-      setSummary(overview.data?.summary || emptySummary);
-    } else if (!quiet) toast.error(overview.msg || "加载三网优化失败");
-    if (options.code === 0) {
-      setProviders(options.data?.providers || []);
-      setForwards(options.data?.forwards || []);
-    } else if (!quiet) toast.error(options.msg || "加载入口选项失败");
-    if (!quiet) setLoading(false);
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    try {
+      const [overview, options] = await Promise.all([
+        getSmartEntryOverview(), quiet ? Promise.resolve(null) : getSmartEntryOptions(),
+      ]);
+      if (overview.code === 0) {
+        setGroups(overview.data?.groups || []);
+        setSummary(overview.data?.summary || emptySummary);
+        setLastLoadedAt(Date.now());
+        setLoadError("");
+      } else setLoadError(overview.msg || "加载三网优化失败");
+      if (options?.code === 0) {
+        setProviders(options.data?.providers || []);
+        setForwards(options.data?.forwards || []);
+      } else if (options) toast.error(options.msg || "加载入口选项失败");
+    } catch {
+      setLoadError("网络异常，当前显示的是上次加载的数据");
+    } finally {
+      loadingRef.current = false;
+      if (!quiet) setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     void loadData();
-    const timer = window.setInterval(() => void loadData(true), 5000);
+    const timer = window.setInterval(() => { if (!document.hidden) void loadData(true); }, 5000);
 
     return () => window.clearInterval(timer);
   }, [loadData]);
@@ -339,9 +362,10 @@ export default function SmartEntryPage() {
   const failureThreshold = Math.max(1, Number(form.failureThreshold) || 2);
   const recoveryThreshold = Math.max(1, Number(form.recoveryThreshold) || 3);
   const failureWindow = `${Math.ceil((probeIntervalMs * failureThreshold) / 1000)}–${Math.ceil((probeIntervalMs * failureThreshold + connectTimeoutMs + 2000) / 1000)} 秒`;
-  const recoveryWindow = `${Math.ceil((probeIntervalMs * recoveryThreshold) / 1000)}–${Math.ceil((probeIntervalMs * recoveryThreshold + 2000) / 1000)} 秒`;
+  const recoveryWindow = `至少 ${Math.ceil(Math.max(probeIntervalMs * recoveryThreshold, Number(form.recoveryStableMs) || 0) / 1000)} 秒，另受调度排队影响`;
 
   const openCreate = () => {
+    void getSmartEntryOptions().then(response => { if (response.code === 0) { setProviders(response.data.providers); setForwards(response.data.forwards); } });
     domainRequest.current++;
     setDomains([]);
     setDomainsError("");
@@ -351,10 +375,13 @@ export default function SmartEntryPage() {
   };
 
   const openEdit = (group: SmartEntryGroup) => {
+    void getSmartEntryOptions().then(response => { if (response.code === 0) { setProviders(response.data.providers); setForwards(response.data.forwards); } });
     const routes = blankRoutes();
+    const fallbacks = {...emptyForm.fallbacks};
 
     group.routes.forEach((route) => {
       routes[route.carrier] = String(route.forwardId);
+      fallbacks[route.carrier] = route.fallbackCarriers ?? null;
     });
     setForm({
       id: group.id,
@@ -369,6 +396,11 @@ export default function SmartEntryPage() {
       failureThreshold: String(group.failureThreshold),
       recoveryThreshold: String(group.recoveryThreshold),
       enabled: truthy(group.enabled),
+      recoveryStableMs: String(group.recoveryStableMs ?? 30000),
+      switchCooldownMs: String(group.switchCooldownMs ?? 60000),
+      probeMode: group.probeMode || "tcp",
+      probePath: group.probePath || "/",
+      fallbacks,
       routes,
     });
     setFormOpen(true);
@@ -410,11 +442,14 @@ export default function SmartEntryPage() {
       connectTimeoutMs: Number(form.connectTimeoutMs),
       failureThreshold: Number(form.failureThreshold),
       recoveryThreshold: Number(form.recoveryThreshold),
+      recoveryStableMs: Number(form.recoveryStableMs),
+      switchCooldownMs: Number(form.switchCooldownMs),
       routes: carriers
         .filter((item) => form.routes[item.key])
         .map((item) => ({
           carrier: item.key,
           forwardId: Number(form.routes[item.key]),
+          fallbackCarriers: form.fallbacks[item.key]?.filter(key => key !== item.key && Boolean(form.routes[key as Carrier])) ?? null,
         })),
     });
 
@@ -422,7 +457,7 @@ export default function SmartEntryPage() {
     if (response.code !== 0)
       return toast.error(response.msg || "保存三网优化失败");
     toast.success(
-      form.id ? "三网优化已更新" : "三网优化已创建，运营商 DNS 已同步",
+      response.data?.message || "配置已保存，等待后台检测及 DNS 同步",
     );
     setFormOpen(false);
     void loadData();
@@ -448,7 +483,7 @@ export default function SmartEntryPage() {
     const response = await deleteSmartEntry(group.id);
 
     if (response.code !== 0) return toast.error(response.msg || "删除失败");
-    toast.success("三网优化已删除");
+    toast.success("已提交删除，DNS 清理完成后策略会自动消失");
     void loadData();
   };
 
@@ -496,6 +531,7 @@ export default function SmartEntryPage() {
           新建三网优化
         </Button>
       </header>
+      {loadError && <div role="alert" className="rounded-lg border border-danger-200 bg-danger-50 p-3 text-sm text-danger">{loadError} · 上次成功更新：{timeText(lastLoadedAt)}</div>}
 
       <section aria-label="三网优化概况" className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-2">
@@ -505,7 +541,7 @@ export default function SmartEntryPage() {
               <h2 className="text-sm font-semibold">运行概况</h2>
             </div>
             <p className="mt-1 text-xs text-default-500">
-              按运营商把访问者分配到最合适的公网入口
+              按运营商 DNS 分配入口，故障时按预设顺序回退
             </p>
           </div>
           <span className="text-xs text-default-500">
@@ -558,6 +594,8 @@ export default function SmartEntryPage() {
         </div>
       </section>
 
+      <details className="rounded-lg border border-divider p-4">
+        <summary className="cursor-pointer text-sm font-medium">使用说明与调度边界</summary>
       <section
         aria-label="三网优化工作方式"
         className="border border-primary-200 bg-primary-50/50 px-4 py-4 dark:border-primary-500/20 dark:bg-primary-500/5 sm:px-5"
@@ -641,6 +679,7 @@ export default function SmartEntryPage() {
         </div>
       </section>
 
+      </details>
       <section aria-label="三网优化策略" className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -657,6 +696,10 @@ export default function SmartEntryPage() {
           </Chip>
         </div>
 
+        <div className="flex items-center gap-3">
+          <Input aria-label="搜索策略" className="max-w-md" placeholder="搜索名称或域名" value={search} onValueChange={setSearch} />
+          <Button variant="flat" onPress={() => void loadData()}>刷新</Button>
+        </div>
         {groups.length === 0 ? (
           <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
             <Waypoints className="h-9 w-9" />
@@ -664,10 +707,10 @@ export default function SmartEntryPage() {
           </div>
         ) : (
           <div className="grid gap-4 xl:grid-cols-2">
-            {groups.map((group) => {
-              const meta = truthy(group.enabled)
+            {groups.filter(group => `${group.name} ${group.domain}`.toLowerCase().includes(search.toLowerCase())).map((group) => {
+              const meta = group.state === "deleting" ? stateMeta("deleting") : truthy(group.enabled)
                 ? stateMeta(group.state)
-                : { label: "已停用", color: "default" as const };
+                : { label: "自动调度已暂停", color: "default" as const };
 
               return (
                 <Card
@@ -689,6 +732,8 @@ export default function SmartEntryPage() {
                           <Chip size="sm" variant="flat">
                             {providerLabel(group.provider)}
                           </Chip>
+                          {truthy(group.syncRequested || false) && <Chip size="sm" color="warning" variant="flat">配置待生效</Chip>}
+                          {Boolean(group.pendingCleanup) && <Chip size="sm" color="warning" variant="flat">待清理 {group.pendingCleanup}</Chip>}
                         </div>
                         <p className="mt-1 truncate text-sm text-default-500">
                           {group.domain}:{group.publicPort}
@@ -698,6 +743,7 @@ export default function SmartEntryPage() {
                         <Button
                           isIconOnly
                           aria-label="立即检测"
+                          isDisabled={group.state === "deleting"}
                           isLoading={checkingId === group.id}
                           size="sm"
                           title="立即检测"
@@ -730,6 +776,7 @@ export default function SmartEntryPage() {
                         <Button
                           isIconOnly
                           aria-label="编辑"
+                          isDisabled={group.state === "deleting" || Boolean(group.pendingCleanup)}
                           size="sm"
                           title="编辑"
                           variant="light"
@@ -740,6 +787,7 @@ export default function SmartEntryPage() {
                         <Button
                           isIconOnly
                           aria-label="删除"
+                          isDisabled={group.state === "deleting"}
                           color="danger"
                           size="sm"
                           title="删除"
@@ -762,14 +810,22 @@ export default function SmartEntryPage() {
                       </Chip>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {group.routes.map((route) => {
+                      {carriers.map((carrier) => {
+                        const own = group.routes.find(route => route.carrier === carrier.key);
+                        const inherited = !own;
+                        const route = own || group.routes.find(route => route.carrier === "default");
+                        if (!route) return null;
                         const activeOnOwnEntry =
                           route.currentForwardId === route.forwardId;
-                        const tone = carrierTone(route.carrier);
+                        const target = group.routes.find(item => item.forwardId === route.currentForwardId && item.entryAddress === route.currentAddress);
+                        const tone = carrierTone(carrier.key);
+                        const fallbackNames = (route.fallbackCarriers ?? ["default", ...carriers.map(item => item.key)])
+                          .filter((key, index, values) => key !== route.carrier && values.indexOf(key) === index && group.routes.some(item => item.carrier === key))
+                          .map(key => group.routes.find(item => item.carrier === key)?.nodeName);
 
                         return (
                           <div
-                            key={route.id}
+                            key={carrier.key}
                             className={`min-h-24 rounded-md border px-3 py-3 ${route.status === "unhealthy" ? "border-warning-300 bg-warning-50/60 dark:border-warning-500/40 dark:bg-warning-500/5" : `${tone.border} ${tone.background}`}`}
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -780,7 +836,7 @@ export default function SmartEntryPage() {
                                 <span
                                   className={`text-sm font-medium ${tone.text}`}
                                 >
-                                  {carrierLabel(route.carrier)}
+                                  {carrier.label}{inherited ? " · 继承默认" : ""}
                                 </span>
                               </div>
                               <div className="flex flex-wrap justify-end gap-1">
@@ -795,11 +851,9 @@ export default function SmartEntryPage() {
                                   size="sm"
                                   variant="flat"
                                 >
-                                  {route.status === "healthy"
-                                    ? "可用"
-                                    : route.status === "unhealthy"
-                                      ? "已回退"
-                                      : "确认中"}
+                                  {!route.currentForwardId ? "等待发布" : target?.status === "healthy"
+                                    ? activeOnOwnEntry ? "可用" : "回退中"
+                                    : target?.status === "unhealthy" ? "当前入口不可用" : "待确认"}
                                 </Chip>
                                 <Chip
                                   color={
@@ -813,7 +867,7 @@ export default function SmartEntryPage() {
                                   variant="flat"
                                 >
                                   {route.dnsState === "healthy"
-                                    ? `DNS 已核验 · ${route.appliedTtl || group.ttl}s`
+                                    ? `服务商已同步 · ${route.appliedTtl || group.ttl}s`
                                     : route.dnsState === "error"
                                       ? "DNS 待处理"
                                       : "DNS 同步中"}
@@ -821,7 +875,7 @@ export default function SmartEntryPage() {
                               </div>
                             </div>
                             <p className="mt-3 truncate text-xs text-default-500">
-                              {route.nodeName} · {route.entryAddress}
+                              当前 DNS：{target?.nodeName || (route.currentAddress ? "旧入口" : "尚未发布")} · {route.currentAddress || "-"}
                             </p>
                             <div className="mt-2 flex items-center justify-between gap-2 text-xs">
                               <span
@@ -831,9 +885,7 @@ export default function SmartEntryPage() {
                                     : "font-medium text-warning-700 dark:text-warning-300"
                                 }
                               >
-                                {activeOnOwnEntry
-                                  ? "当前使用此线路"
-                                  : `当前回退至 ${route.currentAddress}`}
+                                首选：{route.nodeName}
                               </span>
                               <span className="shrink-0 text-default-500">
                                 {route.latencyMs
@@ -841,6 +893,8 @@ export default function SmartEntryPage() {
                                   : "-"}
                               </span>
                             </div>
+                            <p className="mt-2 text-xs text-default-500">备用：{fallbackNames.length ? fallbackNames.join(" → ") : "未配置"}</p>
+                            {route.lastError && <p className="mt-2 text-xs text-warning">{route.lastError}</p>}
                             {route.dnsError && (
                               <p className="mt-2 text-xs text-danger">
                                 {route.dnsError}
@@ -849,6 +903,11 @@ export default function SmartEntryPage() {
                           </div>
                         );
                       })}
+                    </div>
+                    <div className="border-t border-divider pt-3 text-xs text-default-500">
+                      <p>检测：{(group.probeMode || "tcp").toUpperCase()} · 最近检测：{timeText(group.lastCheckedAt)}</p>
+                      {group.latestEvent && <p className="mt-1">{timeText(group.latestEvent.createdTime)} · {group.latestEvent.detail}</p>}
+                      <p className="mt-1">DNS 同步不代表所有客户端已刷新缓存；延迟为面板到入口的探测结果。</p>
                     </div>
                     <details className="group border-t border-divider pt-3">
                       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
@@ -975,6 +1034,12 @@ export default function SmartEntryPage() {
                         })}
                       </div>
                     </details>
+                    {Boolean(group.archivedActivities?.length) && <details className="border-t border-divider pt-3 text-xs">
+                      <summary className="cursor-pointer font-medium">已替换入口的历史统计（最近 100 条）</summary>
+                      <div className="mt-2 space-y-2">{group.archivedActivities?.map((item, index) => <div key={`${item.archivedAt}-${index}`} className="rounded border border-divider p-2">
+                        {item.nodeName} · {item.entryAddress} · {formatBytes(item.inFlow + item.outFlow)} · 新连接 {item.totalConnections} · {timeText(item.archivedAt)}
+                      </div>)}</div>
+                    </details>}
                     <div className="flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3 text-xs text-default-500">
                       <span>主域名：{group.zoneName}</span>
                       <span>最近检测：{timeText(group.lastCheckedAt)}</span>
@@ -984,6 +1049,7 @@ export default function SmartEntryPage() {
                         {group.lastError}
                       </p>
                     )}
+                    {group.cleanupError?.message && <p className="rounded-md bg-warning-50 p-3 text-xs text-warning">清理待重试：{group.cleanupError.message}</p>}
                   </CardBody>
                 </Card>
               );
@@ -1010,6 +1076,7 @@ export default function SmartEntryPage() {
               />
               <Select
                 label="DNS 服务商配置"
+                isDisabled={Boolean(form.id)}
                 placeholder="选择 DNSPod 或阿里云 DNS"
                 selectedKeys={form.providerRefId ? [form.providerRefId] : []}
                 onSelectionChange={(keys) =>
@@ -1030,6 +1097,7 @@ export default function SmartEntryPage() {
                   className="min-w-0 flex-1"
                   errorMessage={domainsError || undefined}
                   isDisabled={
+                    Boolean(form.id) ||
                     !form.providerRefId ||
                     domainsLoading ||
                     Boolean(domainsError)
@@ -1073,12 +1141,14 @@ export default function SmartEntryPage() {
               </div>
               <Input
                 label="业务域名或主机记录"
+                isReadOnly={Boolean(form.id)}
                 placeholder="例如 access 或 access.example.com"
                 value={form.domain}
                 onValueChange={(domain) => setForm({ ...form, domain })}
               />
               <Select
                 label="记录类型"
+                isDisabled={Boolean(form.id)}
                 selectedKeys={[form.recordType]}
                 onSelectionChange={(keys) =>
                   setForm({
@@ -1096,24 +1166,18 @@ export default function SmartEntryPage() {
                   providers.find(
                     (item) => String(item.id) === form.providerRefId,
                   )?.provider === "aliyun"
-                    ? "阿里云线路解析实际最低 600 秒"
-                    : "DNSPod 线路解析最低 60 秒"
+                    ? "建议 600 秒；可按实际套餐填写更低值，服务商拒绝时展示具体原因"
+                    : "建议 60 秒；实际支持范围由 DNS 套餐决定"
                 }
                 label="DNS TTL（秒）"
                 max={86400}
-                min={
-                  form.providerRefId &&
-                  providers.find(
-                    (item) => String(item.id) === form.providerRefId,
-                  )?.provider === "aliyun"
-                    ? 600
-                    : 60
-                }
+                min={1}
                 type="number"
                 value={form.ttl}
                 onValueChange={(ttl) => setForm({ ...form, ttl })}
               />
             </section>
+            {form.id && <p className="text-xs text-default-500">域名、账号与记录类型已锁定。更换访问地址时请新建策略，确认可用后再删除旧策略。</p>}
 
             {providers.length === 0 && (
               <div className="flex flex-col gap-3 border-y border-warning-200 bg-warning-50 px-3 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200 sm:flex-row sm:items-center sm:justify-between">
@@ -1191,6 +1255,25 @@ export default function SmartEntryPage() {
                         </SelectSection>
                       ))}
                     </Select>
+                    {form.routes[carrier.key] && <div className="mt-3 space-y-2">
+                      <Switch size="sm" isSelected={form.fallbacks[carrier.key] !== null}
+                        onValueChange={(custom) => setForm({...form, fallbacks: {...form.fallbacks, [carrier.key]: custom ? [] : null}})}>
+                        自定义备用顺序
+                      </Switch>
+                      {form.fallbacks[carrier.key] === null ? <p className="text-xs text-default-500">默认：默认入口优先，然后使用其他健康入口。</p> :
+                        [0, 1, 2].map(index => <Select key={index} size="sm" label={`备用 ${index + 1}`} placeholder="不使用"
+                          selectedKeys={form.fallbacks[carrier.key]?.[index] ? [form.fallbacks[carrier.key]![index]] : []}
+                          onSelectionChange={keys => {
+                            const values = [...(form.fallbacks[carrier.key] || [])];
+                            values[index] = String(Array.from(keys)[0] || "");
+                            setForm({...form, fallbacks: {...form.fallbacks, [carrier.key]: values.filter(Boolean)}});
+                          }}>
+                          {carriers.filter(item => item.key !== carrier.key && form.routes[item.key]
+                            && (!(form.fallbacks[carrier.key] || []).includes(item.key) || form.fallbacks[carrier.key]?.[index] === item.key))
+                            .map(item => <SelectItem key={item.key} textValue={item.label}>{item.label} · {selected[item.key]?.nodeName}</SelectItem>)}
+                        </Select>)}
+                      {form.fallbacks[carrier.key]?.length === 0 && <p className="text-xs text-warning">没有备用，首选故障时只报警并保留 DNS。</p>}
+                    </div>}
                   </div>
                 ))}
               </div>
@@ -1207,6 +1290,19 @@ export default function SmartEntryPage() {
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Select label="检测方式" selectedKeys={[form.probeMode]}
+                  onSelectionChange={keys => setForm({...form, probeMode: String(Array.from(keys)[0] || "tcp")})}>
+                  <SelectItem key="tcp">TCP 建连</SelectItem>
+                  <SelectItem key="tls">TLS 握手及证书</SelectItem>
+                  <SelectItem key="http">HTTP 返回 2xx</SelectItem>
+                  <SelectItem key="https">HTTPS 返回 2xx</SelectItem>
+                </Select>
+                <Input label="HTTP 检测路径" placeholder="/health" value={form.probePath}
+                  isDisabled={!['http', 'https'].includes(form.probeMode)} onValueChange={probePath => setForm({...form, probePath})} />
+                <Input label="恢复稳定期（毫秒）" type="number" min={0} max={600000} value={form.recoveryStableMs}
+                  onValueChange={recoveryStableMs => setForm({...form, recoveryStableMs})} />
+                <Input label="切换冷却（毫秒）" type="number" min={0} max={600000} value={form.switchCooldownMs}
+                  onValueChange={switchCooldownMs => setForm({...form, switchCooldownMs})} />
                 <Input
                   label="探测间隔（毫秒）"
                   min={2000}
@@ -1246,6 +1342,7 @@ export default function SmartEntryPage() {
                   }
                 />
               </div>
+              <p className="mt-3 text-xs text-default-500">TLS/HTTPS 使用业务域名校验证书；HTTP/HTTPS 检查入口转发后的业务响应，不跟随跳转。以上检测均不能证明 UDP 正常。冷却不阻止从故障入口撤离。</p>
               <div className="mt-3 grid gap-2 border-y border-divider py-3 text-xs sm:grid-cols-2">
                 <div>
                   <span className="text-default-500">预计故障确认：</span>
@@ -1278,7 +1375,7 @@ export default function SmartEntryPage() {
               取消
             </Button>
             <Button color="primary" isLoading={saving} onPress={submit}>
-              保存并同步线路 DNS
+              保存并后台同步
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -1323,7 +1420,7 @@ export default function SmartEntryPage() {
                     <p
                       className={`mt-1 text-sm font-medium ${diagnosis.summary.healthy ? "text-success" : "text-warning"}`}
                     >
-                      {diagnosis.summary.healthy ? "线路一致" : "存在差异"}
+                      {diagnosis.summary.queryFailures > 0 ? "部分解析未能验证" : diagnosis.summary.healthy ? "样本解析一致" : "存在差异"}
                     </p>
                   </div>
                 </div>
@@ -1369,6 +1466,8 @@ export default function SmartEntryPage() {
                         >
                           {line.providerMatch
                             ? "服务商记录一致"
+                            : line.unexpectedOverride
+                              ? "额外线路记录覆盖了默认入口"
                             : line.providerRecords.length > 1
                               ? "服务商存在重复记录"
                               : "服务商记录不一致"}
@@ -1376,7 +1475,7 @@ export default function SmartEntryPage() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs text-default-500">
-                          公共 DNS 实际返回
+                          Google DNS · 运营商 ECS 样本
                         </p>
                         <p className="mt-1 truncate font-mono text-xs">
                           {line.publicProbe.answers.length
@@ -1401,12 +1500,17 @@ export default function SmartEntryPage() {
                         {!line.publicProbe.successful
                           ? "查询失败"
                           : line.publicMatch
-                            ? "公网一致"
+                            ? "样本一致"
                             : "公网待收敛"}
                       </Chip>
                     </div>
                   ))}
                 </div>
+                {diagnosis.referenceProbe && <div className="rounded-lg border border-divider p-3 text-xs">
+                  <p className="font-medium">独立公共 DNS 参考：Cloudflare（不带运营商 ECS）</p>
+                  <p className="mt-1 break-all">{diagnosis.referenceProbe.successful ? diagnosis.referenceProbe.answers.join("、") || "无地址记录" : diagnosis.referenceProbe.error}</p>
+                  <p className="mt-1 text-default-500">此结果不参与运营商线路判定；ECS 样本也不能代表所有地区、递归 DNS 或客户端缓存。</p>
+                </div>}
                 {diagnosis.summary.queryFailures > 0 && (
                   <div className="rounded-md border border-danger-200 bg-danger-50 px-3 py-3 text-xs leading-5 text-danger-800 dark:border-danger-500/20 dark:bg-danger-500/10 dark:text-danger-200">
                     有 {diagnosis.summary.queryFailures} 条公共 DNS

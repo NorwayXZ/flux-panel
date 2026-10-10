@@ -186,6 +186,20 @@ public class DynamicDnsService {
         return "aliyun".equalsIgnoreCase(StringUtils.defaultString(provider)) ? 600 : 60;
     }
 
+    /** An independent resolver reference, without ECS; never used to confirm a carrier-specific route. */
+    public PublicDnsProbe queryPublicDefaultAnswer(String fqdn, String type) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(List.of(MediaType.valueOf("application/dns-json")));
+            ResponseEntity<String> response = restTemplate.exchange(UriComponentsBuilder
+                    .fromHttpUrl("https://cloudflare-dns.com/dns-query").queryParam("name", fqdn).queryParam("type", type)
+                    .build().encode().toUri(), HttpMethod.GET, new HttpEntity<>(headers), String.class);
+            return parsePublicDnsProbe("default", type, response.getBody());
+        } catch (RuntimeException e) {
+            return new PublicDnsProbe("default", List.of(), null, false, "独立公共 DNS 参考查询不可达，不代表业务故障");
+        }
+    }
+
     public void deleteLineRoutingRecord(Long providerRefId, String zone, String recordId) {
         if (providerRefId == null || StringUtils.isBlank(recordId)) return;
         ProviderAccess access = loadProvider("dynamic", providerRefId, null, null);
@@ -531,8 +545,14 @@ public class DynamicDnsService {
         String originalValue = null;
         Integer originalTtl = null;
         if (recordId == null) {
-            JSONObject result = dnsPod(access, "DescribeRecordList",
-                    Map.of("Domain", zone, "Subdomain", sub, "RecordType", type, "Limit", 3000));
+            JSONObject result;
+            try {
+                result = dnsPod(access, "DescribeRecordList",
+                        Map.of("Domain", zone, "Subdomain", sub, "RecordType", type, "Limit", 3000));
+            } catch (IllegalStateException e) {
+                if (!isDnsPodNoRecordError(e.getMessage())) throw e;
+                result = JSON.parseObject("{\"Response\":{\"RecordList\":[]}}");
+            }
             JSONArray records = result.getJSONObject("Response").getJSONArray("RecordList");
             if (records != null) {
                 for (int index = 0; index < records.size(); index++) {
@@ -552,7 +572,7 @@ public class DynamicDnsService {
         payload.put("RecordType", type);
         payload.put("RecordLine", line);
         payload.put("Value", value);
-        payload.put("TTL", Math.max(60, ttl));
+        payload.put("TTL", ttl);
         if (recordId == null) {
             JSONObject created = dnsPod(access, "CreateRecord", payload);
             return new LineRoutingRecord(created.getJSONObject("Response").getString("RecordId"), true, null, null);
@@ -650,7 +670,7 @@ public class DynamicDnsService {
         params.put("RR", rr);
         params.put("Type", type);
         params.put("Value", value);
-        params.put("TTL", Integer.toString(Math.max(600, ttl)));
+        params.put("TTL", Integer.toString(ttl));
         params.put("Line", line);
         if (recordId == null) {
             params.put("DomainName", zone);
@@ -672,7 +692,7 @@ public class DynamicDnsService {
         } catch (IllegalStateException e) {
             if (!StringUtils.contains(e.getMessage(), "DomainRecordDuplicate")) throw e;
             JSONObject existing = findAliyunLineRecord(access, zone, rr, type, line);
-            if (!aliyunLineRecordMatches(existing, value, Math.max(600, ttl))) throw e;
+            if (!aliyunLineRecordMatches(existing, value, ttl)) throw e;
             recordId = existing.getString("RecordId");
         }
         return new LineRoutingRecord(recordId, false, originalValue, originalTtl);

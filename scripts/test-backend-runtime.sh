@@ -92,6 +92,7 @@ docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -e \
 docker run -d \
   --name "${BACKEND}" \
   --network "${NETWORK}" \
+  -p 127.0.0.1::6365 \
   --restart unless-stopped \
   -e DB_HOST="${DATABASE}" \
   -e DB_NAME=flux_test \
@@ -150,6 +151,21 @@ done
 retirement_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='authorized_entry_forward' AND column_name='retire_at'")
 [[ "${retirement_column_exists}" -eq 1 ]]
+for table in smart_entry_dns_cleanup smart_entry_activity_archive; do
+  smart_entry_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
+  [[ "${smart_entry_table_exists}" -eq 1 ]]
+done
+for table_column in 'smart_entry_group:recovery_stable_ms' 'smart_entry_group:switch_cooldown_ms' \
+  'smart_entry_group:probe_mode' 'smart_entry_group:probe_path' 'smart_entry_group:sync_requested' \
+  'smart_entry_route:fallback_carriers' 'smart_entry_route:healthy_since' 'smart_entry_route:last_switched_at' \
+  'smart_entry_route:ownership_ready' 'smart_entry_route:dns_target_address' 'smart_entry_route:dns_attempted_at'; do
+  table=${table_column%%:*}
+  column=${table_column#*:}
+  smart_entry_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='${table}' AND column_name='${column}'")
+  [[ "${smart_entry_column_exists}" -eq 1 ]]
+done
 
 for table in monitoring_current monitoring_history monitoring_alert; do
   width=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
@@ -171,5 +187,8 @@ done
 alert_detail_length=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT CHAR_LENGTH(detail) FROM monitoring_alert WHERE resource_type='node' AND resource_id=900001 AND status='open' ORDER BY id DESC LIMIT 1")
 [[ "${alert_detail_length}" -le 500 ]]
+
+runtime_port=$(docker inspect -f '{{(index (index .NetworkSettings.Ports "6365/tcp") 0).HostPort}}' "${BACKEND}")
+FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-smart-entry-runtime.py" "http://127.0.0.1:${runtime_port}"
 
 printf 'Backend runtime and monitoring integration test passed\n'

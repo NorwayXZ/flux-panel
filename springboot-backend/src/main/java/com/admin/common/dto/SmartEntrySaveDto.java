@@ -30,6 +30,10 @@ public class SmartEntrySaveDto {
     private Integer failureThreshold = 2;
     private Integer recoveryThreshold = 3;
     private Boolean enabled = true;
+    private Integer recoveryStableMs = 30000;
+    private Integer switchCooldownMs = 60000;
+    private String probeMode = "tcp";
+    private String probePath = "/";
 
     @NotEmpty(message = "请配置默认入口和运营商入口")
     private List<Route> routes;
@@ -38,5 +42,7 @@ public class SmartEntrySaveDto {
     public static class Route {
         private String carrier;
         private Long forwardId;
+        /** Ordered carrier keys referring to other entries in this strategy. Null keeps the legacy default order. */
+        private List<String> fallbackCarriers;
     }
 }

@@ -1,6 +1,8 @@
 package com.admin.service;
 
 import com.admin.common.dto.SmartEntrySaveDto;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.admin.common.lang.R;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
@@ -9,6 +11,12 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -44,15 +52,21 @@ public class SmartEntryService {
     private final JdbcTemplate jdbcTemplate;
     private final DynamicDnsService dynamicDnsService;
     private final SchedulingConflictService schedulingConflictService;
+    private final SmartEntryMutationLocks mutationLocks;
+    private final TransactionTemplate transactions;
+    private final Object creationLock = new Object();
     private final AtomicBoolean checking = new AtomicBoolean(false);
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
     private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
 
     public SmartEntryService(JdbcTemplate jdbcTemplate, DynamicDnsService dynamicDnsService,
-                             SchedulingConflictService schedulingConflictService) {
+                             SchedulingConflictService schedulingConflictService, SmartEntryMutationLocks mutationLocks,
+                             PlatformTransactionManager transactionManager) {
         this.jdbcTemplate = jdbcTemplate;
         this.dynamicDnsService = dynamicDnsService;
         this.schedulingConflictService = schedulingConflictService;
+        this.mutationLocks = mutationLocks;
+        this.transactions = new TransactionTemplate(transactionManager);
     }
 
     public R overview() {
@@ -60,12 +74,21 @@ public class SmartEntryService {
                 "SELECT g.id,g.name,g.provider_ref_id AS providerRefId,g.provider,p.name AS providerName,g.zone_name AS zoneName,"
                         + "g.domain,g.record_type AS recordType,g.ttl,g.public_port AS publicPort,g.probe_interval_ms AS probeIntervalMs,"
                         + "g.connect_timeout_ms AS connectTimeoutMs,g.failure_threshold AS failureThreshold,g.recovery_threshold AS recoveryThreshold,"
-                        + "g.enabled,g.state,g.last_error AS lastError,g.last_checked_at AS lastCheckedAt,g.created_time AS createdTime "
+                        + "g.recovery_stable_ms AS recoveryStableMs,g.switch_cooldown_ms AS switchCooldownMs,g.probe_mode AS probeMode,g.probe_path AS probePath,"
+                        + "g.sync_requested AS syncRequested,g.enabled,g.state,g.last_error AS lastError,g.last_checked_at AS lastCheckedAt,g.created_time AS createdTime "
                         + "FROM smart_entry_group g LEFT JOIN dynamic_dns_provider p ON p.id=g.provider_ref_id ORDER BY g.created_time DESC");
         for (Map<String, Object> group : groups) {
             long groupId = number(group.get("id"));
             group.put("routes", routes(groupId));
             group.put("activities", activities(groupId));
+            group.put("pendingCleanup", pendingCleanup(groupId));
+            group.put("cleanupError", one("SELECT last_error AS message FROM smart_entry_dns_cleanup WHERE group_id=? "
+                    + "AND last_error IS NOT NULL ORDER BY attempted_at DESC LIMIT 1", groupId));
+            group.put("archivedActivities", jdbcTemplate.queryForList("SELECT node_name AS nodeName,entry_address AS entryAddress,"
+                    + "total_connections AS totalConnections,in_flow AS inFlow,out_flow AS outFlow,archived_at AS archivedAt "
+                    + "FROM smart_entry_activity_archive WHERE group_id=? ORDER BY id DESC LIMIT 100", groupId));
+            group.put("latestEvent", one("SELECT event_type AS eventType,detail,created_time AS createdTime FROM smart_entry_event "
+                    + "WHERE group_id=? AND event_type NOT IN ('new_connections','first_active','resumed') ORDER BY id DESC LIMIT 1", groupId));
         }
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("total", groups.size());
@@ -83,7 +106,7 @@ public class SmartEntryService {
                 "SELECT f.id,f.name,f.in_port AS inPort,f.protocol_mode AS protocolMode,t.in_node_id AS inNodeId,"
                         + "COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName,COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost,"
                         + "t.name AS tunnelName FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id "
-                        + "WHERE f.status=1 AND COALESCE(f.protocol_mode,'tcp') IN ('tcp','tcp_udp') ORDER BY f.created_time DESC");
+                        + "WHERE (f.status=1 OR f.id IN (SELECT forward_id FROM smart_entry_route)) AND COALESCE(f.protocol_mode,'tcp') IN ('tcp','tcp_udp') ORDER BY f.created_time DESC");
         return R.ok(Map.of("providers", providers, "forwards", forwards));
     }
 
@@ -93,102 +116,138 @@ public class SmartEntryService {
 
     public R save(SmartEntrySaveDto dto) {
         try {
-            Normalized normalized = normalize(dto);
-            Object lock = dto.getId() == null ? new Object() : locks.computeIfAbsent(dto.getId(), ignored -> new Object());
-            synchronized (lock) {
-                return saveLocked(dto, normalized);
-            }
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return R.err(e.getMessage());
+            return mutationLocks.withLock(() -> {
+                Object lock = dto.getId() == null ? creationLock : locks.computeIfAbsent(dto.getId(), ignored -> new Object());
+                synchronized (lock) {
+                    Normalized normalized = normalize(dto);
+                    Long id = transactions.execute(status -> saveConfiguration(dto, normalized));
+                    activityGroups.clear();
+                    return R.ok(Map.of("id", id, "state", "pending",
+                            "message", "配置已保存，后台正在检测入口并同步 DNS"));
+                }
+            });
+        } catch (RuntimeException e) {
+            log.warn("Smart entry save failed: {}", e.getMessage());
+            return R.err(shorten(e.getMessage()));
         }
     }
 
-    private R saveLocked(SmartEntrySaveDto dto, Normalized normalized) {
+    private Long saveConfiguration(SmartEntrySaveDto dto, Normalized normalized) {
         long now = System.currentTimeMillis();
         Long id = dto.getId();
-            List<Map<String, Object>> oldRoutes = id == null ? List.of() : routes(id);
-            Map<String, Object> oldGroup = id == null ? null : one("SELECT * FROM smart_entry_group WHERE id=?", id);
-            if (id != null && oldGroup == null) return R.err("三网优化策略不存在");
-
-            Integer duplicate = id == null
-                    ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=?",
-                    Integer.class, normalized.providerId, normalized.zoneName, normalized.domain, normalized.recordType)
-                    : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_group WHERE provider_ref_id=? AND zone_name=? AND domain=? AND record_type=? AND id<>?",
-                    Integer.class, normalized.providerId, normalized.zoneName, normalized.domain, normalized.recordType, id);
-            if (duplicate != null && duplicate > 0) return R.err("该业务域名已经配置三网优化");
-            schedulingConflictService.assertDnsRecordAvailable("smart_entry", id, normalized.domain, normalized.recordType);
-            schedulingConflictService.assertForwardSetAvailable("smart_entry", id,
-                    normalized.routes.stream().map(route -> route.forwardId).collect(Collectors.toList()));
-            schedulingConflictService.assertForwardBackedTunnelSetAvailable("smart_entry", id,
-                    normalized.routes.stream().map(route -> route.forwardId).collect(Collectors.toList()));
-
-            boolean sameIdentity = oldGroup != null
-                    && normalized.providerId == number(oldGroup.get("provider_ref_id"))
-                    && normalized.zoneName.equalsIgnoreCase(Objects.toString(oldGroup.get("zone_name")))
-                    && normalized.domain.equalsIgnoreCase(Objects.toString(oldGroup.get("domain")))
-                    && normalized.recordType.equalsIgnoreCase(Objects.toString(oldGroup.get("record_type")));
-            Map<String, Map<String, Object>> retainedRecords = new HashMap<>();
-            if (sameIdentity) {
-                Set<String> requestedCarriers = normalized.routes.stream().map(item -> item.carrier).collect(Collectors.toSet());
-                for (Map<String, Object> old : oldRoutes) {
-                    String carrier = Objects.toString(old.get("carrier"));
-                    if (requestedCarriers.contains(carrier)) retainedRecords.put(carrier, old);
-                    else releaseRecord(oldGroup, old);
-                }
-            } else if (oldGroup != null) {
-                for (Map<String, Object> old : oldRoutes) {
-                    releaseRecord(oldGroup, old);
-                }
-            }
-
-            if (id == null) {
-                jdbcTemplate.update("INSERT INTO smart_entry_group (user_id,name,provider_ref_id,provider,zone_name,domain,record_type,ttl,public_port,"
+        List<Map<String, Object>> oldRoutes = id == null ? List.of() : routes(id);
+        Map<String, Object> oldGroup = id == null ? null : one("SELECT * FROM smart_entry_group WHERE id=?", id);
+        if (id != null && oldGroup == null) throw new IllegalArgumentException("三网优化策略不存在");
+        if (oldGroup != null && "deleting".equals(oldGroup.get("state")))
+            throw new IllegalStateException("策略正在删除，请等待 DNS 清理完成");
+        if (id != null && pendingCleanup(id) > 0)
+            throw new IllegalStateException("旧 DNS 记录正在清理，请等待完成后再编辑");
+        if (oldGroup != null && (normalized.providerId != number(oldGroup.get("provider_ref_id"))
+                || !normalized.zoneName.equalsIgnoreCase(Objects.toString(oldGroup.get("zone_name")))
+                || !normalized.domain.equalsIgnoreCase(Objects.toString(oldGroup.get("domain")))
+                || !normalized.recordType.equalsIgnoreCase(Objects.toString(oldGroup.get("record_type"))))) {
+            throw new IllegalArgumentException("已有策略的域名、DNS 账号和记录类型不能直接更换，请新建策略完成地址迁移");
+        }
+        Integer duplicate = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM smart_entry_group WHERE domain=? AND record_type=? AND id<>?",
+                Integer.class, normalized.domain, normalized.recordType, id == null ? 0L : id);
+        if (duplicate != null && duplicate > 0) throw new IllegalArgumentException("该业务域名已经配置三网优化");
+        schedulingConflictService.assertDnsRecordAvailable("smart_entry", id, normalized.domain, normalized.recordType);
+        List<Long> forwardIds = normalized.routes.stream().map(route -> route.forwardId).toList();
+        schedulingConflictService.assertForwardSetAvailable("smart_entry", id, forwardIds);
+        schedulingConflictService.assertForwardBackedTunnelSetAvailable("smart_entry", id, forwardIds);
+        if (id == null) {
+            KeyHolder key = new GeneratedKeyHolder();
+            Object[] args = { JwtUtil.getUserIdFromToken(), normalized.name, normalized.providerId, normalized.provider,
+                    normalized.zoneName, normalized.domain, normalized.recordType, normalized.ttl, normalized.publicPort,
+                    normalized.probeIntervalMs, normalized.connectTimeoutMs, normalized.failureThreshold,
+                    normalized.recoveryThreshold, normalized.enabled, now, now };
+            jdbcTemplate.update(connection -> {
+                PreparedStatement statement = connection.prepareStatement(
+                        "INSERT INTO smart_entry_group (user_id,name,provider_ref_id,provider,zone_name,domain,record_type,ttl,public_port,"
                                 + "probe_interval_ms,connect_timeout_ms,failure_threshold,recovery_threshold,enabled,state,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'unknown',?,?)",
-                        JwtUtil.getUserIdFromToken(), normalized.name, normalized.providerId, normalized.provider,
-                        normalized.zoneName, normalized.domain, normalized.recordType, normalized.ttl, normalized.publicPort,
-                        normalized.probeIntervalMs, normalized.connectTimeoutMs, normalized.failureThreshold,
-                        normalized.recoveryThreshold, normalized.enabled, now, now);
-                id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-            } else {
-                jdbcTemplate.update("UPDATE smart_entry_group SET name=?,provider_ref_id=?,provider=?,zone_name=?,domain=?,record_type=?,ttl=?,public_port=?,"
-                                + "probe_interval_ms=?,connect_timeout_ms=?,failure_threshold=?,recovery_threshold=?,enabled=?,state='unknown',last_error=NULL,updated_time=? WHERE id=?",
-                        normalized.name, normalized.providerId, normalized.provider, normalized.zoneName, normalized.domain,
-                        normalized.recordType, normalized.ttl, normalized.publicPort, normalized.probeIntervalMs,
-                        normalized.connectTimeoutMs, normalized.failureThreshold, normalized.recoveryThreshold,
-                        normalized.enabled, now, id);
-                jdbcTemplate.update("DELETE FROM smart_entry_route WHERE group_id=?", id);
+                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'unknown',?,?)", Statement.RETURN_GENERATED_KEYS);
+                for (int i = 0; i < args.length; i++) statement.setObject(i + 1, args[i]);
+                return statement;
+            }, key);
+            id = Objects.requireNonNull(key.getKey(), "无法读取新策略 ID").longValue();
+        } else {
+            jdbcTemplate.update("UPDATE smart_entry_group SET name=?,ttl=?,public_port=?,probe_interval_ms=?,connect_timeout_ms=?,"
+                            + "failure_threshold=?,recovery_threshold=?,enabled=?,updated_time=? WHERE id=?",
+                    normalized.name, normalized.ttl, normalized.publicPort, normalized.probeIntervalMs,
+                    normalized.connectTimeoutMs, normalized.failureThreshold, normalized.recoveryThreshold,
+                    normalized.enabled, now, id);
+        }
+        jdbcTemplate.update("UPDATE smart_entry_group SET recovery_stable_ms=?,switch_cooldown_ms=?,probe_mode=?,probe_path=?,sync_requested=1 WHERE id=?",
+                normalized.recoveryStableMs, normalized.switchCooldownMs, normalized.probeMode, normalized.probePath, id);
+        Set<String> requested = normalized.routes.stream().map(route -> route.carrier).collect(Collectors.toSet());
+        Set<String> archived = new HashSet<>();
+        for (Map<String, Object> old : oldRoutes) {
+            boolean stillUsed = normalized.routes.stream().anyMatch(route -> samePhysicalRoute(old, route));
+            if (!stillUsed && archived.add(physicalRouteKey(old))) archiveActivity(id, old, now);
+            if (!requested.contains(Objects.toString(old.get("carrier")))) {
+                queueCleanup(id, oldGroup, old, now);
+                jdbcTemplate.update("DELETE FROM smart_entry_route WHERE id=?", old.get("id"));
             }
-
-            for (NormalizedRoute route : normalized.routes) {
-                Map<String, Object> retained = retainedRecords.get(route.carrier);
+        }
+        for (NormalizedRoute route : normalized.routes) {
+            Map<String, Object> old = oldRoutes.stream().filter(item -> route.carrier.equals(item.get("carrier"))).findFirst().orElse(null);
+            Map<String, Object> physical = oldRoutes.stream().filter(item -> samePhysicalRoute(item, route)).findFirst().orElse(null);
+            if (old == null) {
                 jdbcTemplate.update("INSERT INTO smart_entry_route (group_id,carrier,forward_id,entry_node_id,entry_host,entry_address,entry_port,"
-                                + "forward_name,node_name,record_id,managed_created,original_address,original_ttl,current_forward_id,current_address,status,created_time,updated_time) "
-                                + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'unknown',?,?)",
-                        id, route.carrier, route.forwardId, route.nodeId, route.entryHost, route.entryAddress, route.entryPort,
-                        route.forwardName, route.nodeName, retained == null ? null : retained.get("recordId"),
-                        retained == null || truth(retained.get("managedCreated")), retained == null ? null : retained.get("originalAddress"),
-                        retained == null ? null : retained.get("originalTtl"), route.forwardId, route.entryAddress, now, now);
-                if (retained != null) {
-                    jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=?,current_connections=?,"
-                                    + "reported_total_connections=?,pending_connections=?,pending_probe_connections=?,activity_in_flow=?,activity_out_flow=?,"
-                                    + "last_activity_at=?,last_telemetry_at=? WHERE group_id=? AND carrier=?",
-                            retained.get("telemetryReady"), retained.get("totalConnections"), retained.get("currentConnections"),
-                            retained.get("reportedTotalConnections"), retained.get("pendingConnections"), retained.get("pendingProbeConnections"),
-                            retained.get("activityInFlow"), retained.get("activityOutFlow"), retained.get("lastActivityAt"),
-                            retained.get("lastTelemetryAt"), id, route.carrier);
+                                + "forward_name,node_name,status,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?,'unknown',?,?)",
+                        id, route.carrier, route.forwardId, route.nodeId, route.entryHost, route.entryAddress,
+                        route.entryPort, route.forwardName, route.nodeName, now, now);
+            } else {
+                jdbcTemplate.update("UPDATE smart_entry_route SET forward_id=?,entry_node_id=?,entry_host=?,entry_address=?,entry_port=?,"
+                                + "forward_name=?,node_name=?,updated_time=? WHERE id=?",
+                        route.forwardId, route.nodeId, route.entryHost, route.entryAddress, route.entryPort,
+                        route.forwardName, route.nodeName, now, old.get("id"));
+            }
+            jdbcTemplate.update("UPDATE smart_entry_route SET fallback_carriers=? WHERE group_id=? AND carrier=?",
+                    route.fallbackCarriers == null ? null : JSON.toJSONString(route.fallbackCarriers), id, route.carrier);
+            boolean probeChanged = oldGroup != null && (!normalized.probeMode.equals(Objects.toString(oldGroup.get("probe_mode"), "tcp"))
+                    || !normalized.probePath.equals(Objects.toString(oldGroup.get("probe_path"), "/")));
+            if (old == null || !samePhysicalRoute(old, route) || probeChanged) {
+                jdbcTemplate.update("UPDATE smart_entry_route SET status='unknown',fail_count=0,success_count=0,healthy_since=NULL,"
+                                + "latency_ms=NULL,last_error=NULL,last_checked_at=NULL,telemetry_ready=0,total_connections=0,current_connections=0,"
+                                + "reported_total_connections=0,pending_connections=0,pending_probe_connections=0,activity_in_flow=0,activity_out_flow=0,"
+                                + "last_activity_at=NULL,last_telemetry_at=NULL WHERE group_id=? AND carrier=?", id, route.carrier);
+                if (physical != null) {
+                    jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=?,total_connections=?,current_connections=?,reported_total_connections=?,"
+                                    + "pending_connections=?,pending_probe_connections=?,activity_in_flow=?,activity_out_flow=?,last_activity_at=?,last_telemetry_at=? "
+                                    + "WHERE group_id=? AND carrier=?",
+                            physical.get("telemetryReady"), physical.get("totalConnections"), physical.get("currentConnections"),
+                            physical.get("reportedTotalConnections"), physical.get("pendingConnections"), physical.get("pendingProbeConnections"),
+                            physical.get("activityInFlow"), physical.get("activityOutFlow"), physical.get("lastActivityAt"), physical.get("lastTelemetryAt"), id, route.carrier);
                 }
             }
-            activityGroups.clear();
-            try {
-                syncRecords(id, "配置同步");
-                return R.ok(Map.of("id", id));
-            } catch (RuntimeException e) {
-                String message = shorten(e.getMessage());
-                jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?", message, now, id);
-                event(id, null, "dns_error", "failed", message);
-                return R.err("策略已保存，但 DNS 同步失败：" + message);
-            }
+        }
+        event(id, null, "configuration", "pending", "配置已保存，等待入口检测及 DNS 同步");
+        return id;
+    }
+
+    private boolean samePhysicalRoute(Map<String, Object> old, NormalizedRoute route) {
+        return number(old.get("forwardId")) == route.forwardId && number(old.get("entryNodeId")) == route.nodeId
+                && Objects.equals(old.get("entryAddress"), route.entryAddress) && intValue(old.get("entryPort")) == route.entryPort;
+    }
+
+    private void archiveActivity(Long id, Map<String, Object> route, long now) {
+        jdbcTemplate.update("INSERT INTO smart_entry_activity_archive (group_id,forward_id,entry_node_id,node_name,entry_address,total_connections,in_flow,out_flow,last_activity_at,archived_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?)", id, route.get("forwardId"), route.get("entryNodeId"), route.get("nodeName"),
+                route.get("entryAddress"), number(route.get("totalConnections")), number(route.get("activityInFlow")),
+                number(route.get("activityOutFlow")), route.get("lastActivityAt"), now);
+    }
+
+    private int pendingCleanup(Long id) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM smart_entry_dns_cleanup WHERE group_id=?", Integer.class, id);
+        return count == null ? 0 : count;
+    }
+
+    private void queueCleanup(Long id, Map<String, Object> group, Map<String, Object> route, long now) {
+        if (!truth(route.get("ownershipReady")) && route.get("recordId") == null) return;
+        jdbcTemplate.update("INSERT INTO smart_entry_dns_cleanup (group_id,payload,created_time) VALUES (?,?,?)",
+                id, JSON.toJSONString(Map.of("group", group, "route", route)), now);
     }
 
     public R checkNow(Long id) {
@@ -241,18 +300,21 @@ public class SmartEntryService {
                 String expected = Objects.toString(expectedRoute.get("currentAddress"),
                         Objects.toString(expectedRoute.get("entryAddress")));
                 List<DynamicDnsService.LineRoutingRecordState> direct = providerByCarrier.getOrDefault(carrier, List.of());
-                List<DynamicDnsService.LineRoutingRecordState> effective = inherited
+                List<DynamicDnsService.LineRoutingRecordState> effective = inherited && direct.isEmpty()
                         ? providerByCarrier.getOrDefault("default", List.of()) : direct;
                 DynamicDnsService.LineRoutingRecordState providerRecord = effective.size() == 1 ? effective.get(0) : null;
                 DynamicDnsService.PublicDnsProbe publicProbe = probes.get(recordType + ":" + carrier).join();
                 boolean providerMatch = providerRecord != null && providerRecord.enabled()
-                        && expected.equals(providerRecord.value()) && providerRecord.ttl() == intValue(group.get("ttl"));
-                boolean publicMatch = publicProbe.successful() && publicProbe.answers().contains(expected);
+                        && CrossEntryFailoverService.dnsAddressMatches(expected, providerRecord.value())
+                        && providerRecord.ttl() == intValue(group.get("ttl")) && !(inherited && !direct.isEmpty());
+                boolean publicMatch = publicProbe.successful() && !publicProbe.answers().isEmpty()
+                        && publicProbe.answers().stream().allMatch(answer -> CrossEntryFailoverService.dnsAddressMatches(expected, answer));
                 if (providerMatch) providerMatches++;
                 if (publicMatch) publicMatches++;
                 Map<String, Object> line = new LinkedHashMap<>();
                 line.put("carrier", carrier);
                 line.put("inherited", inherited);
+                line.put("unexpectedOverride", inherited && !direct.isEmpty());
                 line.put("expectedAddress", expected);
                 line.put("providerRecord", providerRecord);
                 line.put("providerRecords", effective);
@@ -278,6 +340,7 @@ public class SmartEntryService {
             summary.put("publicMatches", publicMatches);
             summary.put("totalLines", CARRIERS.size());
             summary.put("queryFailures", queryFailures);
+            summary.put("publicState", queryFailures > 0 ? "unknown" : publicMatches == CARRIERS.size() ? "matched" : "mismatch");
             summary.put("siblingConflict", siblingConflict);
             summary.put("healthy", providerMatches == CARRIERS.size() && publicMatches == CARRIERS.size() && !siblingConflict);
             Map<String, Object> sibling = new LinkedHashMap<>();
@@ -289,7 +352,8 @@ public class SmartEntryService {
             sibling.put("conflict", siblingConflict);
             return R.ok(Map.of("groupId", id, "domain", domain, "recordType", recordType,
                     "ttl", group.get("ttl"), "checkedAt", System.currentTimeMillis(), "lines", lines,
-                    "sibling", sibling, "summary", summary));
+                    "sibling", sibling, "summary", summary,
+                    "referenceProbe", dynamicDnsService.queryPublicDefaultAnswer(domain, recordType)));
         } catch (RuntimeException e) {
             return R.err("DNS 线路诊断失败：" + shorten(e.getMessage()));
         }
@@ -298,7 +362,7 @@ public class SmartEntryService {
     public R events(Long id) {
         return R.ok(jdbcTemplate.queryForList(
                 "SELECT id,carrier,event_type AS eventType,status,detail,created_time AS createdTime FROM smart_entry_event "
-                        + "WHERE group_id=? AND event_type IN ('route_switch','first_active','resumed','new_connections') "
+                        + "WHERE group_id=? "
                         + "ORDER BY created_time DESC LIMIT 200", id));
     }
 
@@ -374,22 +438,57 @@ public class SmartEntryService {
     }
 
     public R delete(Long id) {
-        Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
-        if (group == null) return R.err("三网优化策略不存在");
-        List<String> failures = new ArrayList<>();
-        for (Map<String, Object> route : routes(id)) {
-            try {
-                releaseRecord(group, route);
-            } catch (RuntimeException e) {
-                failures.add(carrierLabel(Objects.toString(route.get("carrier"))) + "记录释放失败");
+        return mutationLocks.withLock(() -> {
+            synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
+                return transactions.execute(status -> {
+                    Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
+                    if (group == null) return R.ok();
+                    if (!"deleting".equals(group.get("state"))) {
+                        for (Map<String, Object> route : routes(id)) queueCleanup(id, group, route, System.currentTimeMillis());
+                        jdbcTemplate.update("UPDATE smart_entry_group SET enabled=0,state='deleting',sync_requested=0,last_error=NULL WHERE id=?", id);
+                        event(id, null, "delete", "pending", "正在清理 DNS，完成后自动移除策略；原转发保留");
+                    }
+                    return R.ok(Map.of("state", "deleting", "message", "删除已受理，正在清理 DNS"));
+                });
+            }
+        });
+    }
+
+    @Scheduled(initialDelay = 25_000L, fixedDelay = 10_000L)
+    public void cleanupDns() {
+        List<Long> ids = jdbcTemplate.queryForList("SELECT id FROM smart_entry_group WHERE state='deleting' "
+                + "OR id IN (SELECT group_id FROM smart_entry_dns_cleanup) ORDER BY updated_time LIMIT 30", Long.class);
+        for (Long id : ids) {
+            synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
+                Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
+                if (group == null) continue;
+                boolean deleting = "deleting".equals(group.get("state"));
+                if (!deleting && truth(group.get("sync_requested"))) continue;
+                for (Map<String, Object> task : jdbcTemplate.queryForList("SELECT * FROM smart_entry_dns_cleanup WHERE group_id=? "
+                        + "AND (attempted_at IS NULL OR attempted_at<?)", id, System.currentTimeMillis() - DNS_RETRY_INTERVAL_MS)) {
+                    try {
+                        JSONObject payload = JSON.parseObject(Objects.toString(task.get("payload")));
+                        releaseRecord(payload.getJSONObject("group"), payload.getJSONObject("route"));
+                        jdbcTemplate.update("DELETE FROM smart_entry_dns_cleanup WHERE id=?", task.get("id"));
+                        event(id, null, "cleanup", "success", "旧 DNS 线路已释放");
+                    } catch (RuntimeException e) {
+                        String message = shorten(e.getMessage());
+                        jdbcTemplate.update("UPDATE smart_entry_dns_cleanup SET last_error=?,attempted_at=? WHERE id=?", message, System.currentTimeMillis(), task.get("id"));
+                        jdbcTemplate.update("UPDATE smart_entry_group SET last_error=?,updated_time=? WHERE id=?", "DNS 清理失败，将重试：" + message, System.currentTimeMillis(), id);
+                        event(id, null, "cleanup", "failed", message);
+                    }
+                }
+                if (deleting && pendingCleanup(id) == 0) {
+                    transactions.executeWithoutResult(status -> {
+                        jdbcTemplate.update("DELETE FROM smart_entry_event WHERE group_id=?", id);
+                        jdbcTemplate.update("DELETE FROM smart_entry_activity_archive WHERE group_id=?", id);
+                        jdbcTemplate.update("DELETE FROM smart_entry_route WHERE group_id=?", id);
+                        jdbcTemplate.update("DELETE FROM smart_entry_group WHERE id=?", id);
+                    });
+                    activityGroups.clear();
+                }
             }
         }
-        if (!failures.isEmpty()) return R.err(String.join("；", failures) + "，请先检查 DNS 凭据后重试");
-        jdbcTemplate.update("DELETE FROM smart_entry_event WHERE group_id=?", id);
-        jdbcTemplate.update("DELETE FROM smart_entry_route WHERE group_id=?", id);
-        jdbcTemplate.update("DELETE FROM smart_entry_group WHERE id=?", id);
-        activityGroups.clear();
-        return R.ok();
     }
 
     @Scheduled(initialDelay = 20_000L, fixedDelay = 2_000L)
@@ -398,7 +497,7 @@ public class SmartEntryService {
         try {
             long now = System.currentTimeMillis();
             List<Long> ids = jdbcTemplate.query(
-                    "SELECT id FROM smart_entry_group WHERE enabled=1 AND (last_checked_at IS NULL OR last_checked_at+probe_interval_ms<=?) "
+                    "SELECT id FROM smart_entry_group WHERE state<>'deleting' AND (enabled=1 OR sync_requested=1) AND (last_checked_at IS NULL OR last_checked_at+probe_interval_ms<=?) "
                             + "ORDER BY last_checked_at LIMIT " + MAX_GROUPS_PER_TICK,
                     (rs, rowNum) -> rs.getLong(1), now);
             for (Long id : ids) {
@@ -413,7 +512,7 @@ public class SmartEntryService {
     private void checkGroup(Long id, boolean manual) {
         synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
             Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
-            if (group == null) return;
+            if (group == null || "deleting".equals(group.get("state"))) return;
             List<Map<String, Object>> routes = routes(id);
             int timeout = intValue(group.get("connect_timeout_ms"));
             int failureThreshold = intValue(group.get("failure_threshold"));
@@ -422,7 +521,7 @@ public class SmartEntryService {
             Map<String, CompletableFuture<Probe>> futures = new LinkedHashMap<>();
             for (Map<String, Object> route : routes) {
                 futures.computeIfAbsent(physicalRouteKey(route), ignored ->
-                        CompletableFuture.supplyAsync(() -> probe(id, route, timeout)));
+                        CompletableFuture.supplyAsync(() -> probe(group, route, timeout)));
             }
             for (int index = 0; index < routes.size(); index++) {
                 Map<String, Object> route = routes.get(index);
@@ -431,17 +530,21 @@ public class SmartEntryService {
                 int failures = intValue(route.get("failCount"));
                 int successes = intValue(route.get("successCount"));
                 String newStatus = oldStatus;
+                Long healthySince = nullableLong(route.get("healthySince"));
                 if (probe.healthy) {
                     failures = 0;
                     successes++;
-                    if (!"healthy".equals(oldStatus) && successes >= recoveryThreshold) newStatus = "healthy";
+                    if (healthySince == null) healthySince = now;
+                    if (!"healthy".equals(oldStatus) && successes >= recoveryThreshold
+                            && now - healthySince >= intValue(group.get("recovery_stable_ms"))) newStatus = "healthy";
                 } else {
+                    healthySince = null;
                     successes = 0;
                     failures++;
                     if (failures >= failureThreshold) newStatus = "unhealthy";
                 }
-                jdbcTemplate.update("UPDATE smart_entry_route SET status=?,fail_count=?,success_count=?,latency_ms=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
-                        newStatus, failures, successes, probe.latencyMs, probe.error, now, now, number(route.get("id")));
+                jdbcTemplate.update("UPDATE smart_entry_route SET status=?,fail_count=?,success_count=?,latency_ms=?,last_error=?,last_checked_at=?,updated_time=?,healthy_since=? WHERE id=?",
+                        newStatus, failures, successes, probe.latencyMs, probe.error, now, now, healthySince, number(route.get("id")));
                 if (!oldStatus.equals(newStatus)) {
                     event(id, Objects.toString(route.get("carrier")), "health", "healthy".equals(newStatus) ? "recovered" : "failed",
                             carrierLabel(Objects.toString(route.get("carrier"))) + "入口" + ("healthy".equals(newStatus) ? "恢复" : "不可用")
@@ -453,18 +556,29 @@ public class SmartEntryService {
         }
     }
 
-    private Probe probe(Long groupId, Map<String, Object> route, int timeout) {
+    private Probe probe(Map<String, Object> group, Map<String, Object> route, int timeout) {
+        Long groupId = number(group.get("id"));
         long nodeId = number(route.get("entryNodeId"));
+        Integer active = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM forward f JOIN tunnel t ON t.id=f.tunnel_id "
+                + "WHERE f.id=? AND f.status=1 AND t.in_node_id=? AND f.in_port=?", Integer.class,
+                route.get("forwardId"), nodeId, route.get("entryPort"));
+        if (active == null || active == 0) return new Probe(false, null, "转发已暂停、删除或入口配置已变化");
         if (!WebSocketServer.isNodeOnline(nodeId)) return new Probe(false, null, "入口 Agent 离线");
         long started = System.nanoTime();
+        boolean connected = false;
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(Objects.toString(route.get("entryAddress")), intValue(route.get("entryPort"))), timeout);
-            jdbcTemplate.update("UPDATE smart_entry_route SET pending_probe_connections=pending_probe_connections+1 "
-                            + "WHERE group_id=? AND forward_id=? AND entry_node_id=?",
-                    groupId, number(route.get("forwardId")), nodeId);
+            connected = true;
+            SmartEntryHealthProbe.verify(socket, Objects.toString(group.get("probe_mode"), "tcp"),
+                    Objects.toString(group.get("domain")), Objects.toString(group.get("probe_path"), "/"), timeout);
             return new Probe(true, Math.max(1, (int) ((System.nanoTime() - started) / 1_000_000)), null);
         } catch (Exception e) {
-            return new Probe(false, null, "端口连接失败");
+            return new Probe(false, null, "检测失败：" + shorten(e.getMessage()));
+        } finally {
+            // A successful TCP connection is counted by the Agent even if the application check fails.
+            if (connected) jdbcTemplate.update("UPDATE smart_entry_route SET pending_probe_connections=pending_probe_connections+1 "
+                            + "WHERE group_id=? AND forward_id=? AND entry_node_id=?",
+                    groupId, number(route.get("forwardId")), nodeId);
         }
     }
 
@@ -474,50 +588,54 @@ public class SmartEntryService {
 
     private void syncRecords(Long groupId, String reason, boolean forceVerify) {
         Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", groupId);
-        if (group == null) return;
+        if (group == null || "deleting".equals(group.get("state"))) return;
         List<Map<String, Object>> all = routes(groupId);
         if (all.isEmpty()) return;
-        Map<String, Object> defaultRoute = all.stream().filter(item -> "default".equals(item.get("carrier"))).findFirst().orElse(all.get(0));
-        List<Map<String, Object>> healthy = all.stream().filter(item -> !"unhealthy".equals(item.get("status"))).toList();
         int ttl = intValue(group.get("ttl"));
         long now = System.currentTimeMillis();
         boolean recordsChanged = false;
+        boolean unresolved = false;
+        boolean writeFailed = false;
         Map<String, String> expectedAddresses = new LinkedHashMap<>();
         for (Map<String, Object> line : all) {
-            Map<String, Object> desired = !"unhealthy".equals(line.get("status")) ? line
-                    : (!"unhealthy".equals(defaultRoute.get("status")) ? defaultRoute : (healthy.isEmpty() ? line : healthy.get(0)));
+            Map<String, Object> desired = chooseRoute(line, all, truth(group.get("enabled")), intValue(group.get("switch_cooldown_ms")), now);
+            if (desired == null) { unresolved = true; continue; }
             String desiredAddress = Objects.toString(desired.get("entryAddress"));
             long desiredForward = number(desired.get("forwardId"));
             boolean changed = !Objects.equals(desiredForward, nullableLong(line.get("currentForwardId")))
                     || !desiredAddress.equals(Objects.toString(line.get("currentAddress"), ""));
-            Long lastDnsVerification = nullableLong(line.get("dnsVerifiedAt"));
-            boolean needsWrite = shouldWriteDnsRecord(changed, truth(line.get("dnsDirty")), lastDnsVerification,
+            Long lastDnsAttempt = nullableLong(line.get("dnsAttemptedAt"));
+            boolean needsWrite = shouldWriteDnsRecord(changed, truth(line.get("dnsDirty")), lastDnsAttempt,
                     StringUtils.isBlank(Objects.toString(line.get("recordId"), null)),
                     intValue(line.get("appliedTtl")), ttl, now);
             expectedAddresses.put(Objects.toString(line.get("carrier")), desiredAddress);
             if (needsWrite) {
+                if ("error".equals(line.get("dnsState")) && desiredAddress.equals(line.get("dnsTargetAddress"))
+                        && line.get("dnsAttemptedAt") instanceof Number attempt && now - attempt.longValue() < DNS_RETRY_INTERVAL_MS) {
+                    writeFailed = true;
+                    continue;
+                }
                 DynamicDnsService.LineRoutingRecord record;
                 try {
+                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_target_address=?,dns_attempted_at=? WHERE id=?", desiredAddress, now, line.get("id"));
+                    claimRecordOwnership(group, line);
                     record = dynamicDnsService.ensureLineRoutingRecord(number(group.get("provider_ref_id")),
                             Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")),
                             Objects.toString(group.get("record_type")), Objects.toString(line.get("carrier")), desiredAddress,
                             ttl, Objects.toString(line.get("recordId"), null));
                 } catch (RuntimeException e) {
+                    writeFailed = true;
                     String message = shorten(e.getMessage());
-                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE id=?",
-                            message, now, now, number(line.get("id")));
-                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_verified_at=?,updated_time=? WHERE group_id=? AND dns_dirty=1",
-                            now, now, groupId);
+                    jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,updated_time=? WHERE id=?",
+                            message, now, number(line.get("id")));
                     jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
                             message, now, number(group.get("id")));
-                    throw e;
+                    event(groupId, Objects.toString(line.get("carrier")), "dns_error", "failed", message);
+                    continue;
                 }
-                jdbcTemplate.update("UPDATE smart_entry_route SET managed_created=IF(record_id IS NULL,?,managed_created),"
-                                + "original_address=IF(record_id IS NULL,?,original_address),original_ttl=IF(record_id IS NULL,?,original_ttl),"
-                                + "record_id=?,current_forward_id=?,current_address=?,applied_ttl=?,dns_dirty=1,dns_state='pending',"
-                                + "dns_error=NULL,updated_time=? WHERE id=?",
-                        record.created(), record.originalValue(), record.originalTtl(), record.recordId(), desiredForward,
-                        desiredAddress, ttl, now, number(line.get("id")));
+                jdbcTemplate.update("UPDATE smart_entry_route SET record_id=?,current_forward_id=?,current_address=?,applied_ttl=?,dns_dirty=1,dns_state='pending',"
+                                + "last_switched_at=IF(?, ?,last_switched_at),dns_error=NULL,updated_time=? WHERE id=?",
+                        record.recordId(), desiredForward, desiredAddress, ttl, changed, now, now, number(line.get("id")));
                 recordsChanged = true;
             }
             if (changed) {
@@ -528,13 +646,13 @@ public class SmartEntryService {
 
         long oldestVerification = all.stream().map(item -> nullableLong(item.get("dnsVerifiedAt")))
                 .filter(Objects::nonNull).min(Comparator.naturalOrder()).orElse(0L);
-        if (recordsChanged || forceVerify || oldestVerification == 0L || now - oldestVerification >= DNS_VERIFY_INTERVAL_MS) {
-            verifyProviderRecords(group, all, expectedAddresses, ttl, now);
+        if (!expectedAddresses.isEmpty() && (recordsChanged || forceVerify || oldestVerification == 0L || now - oldestVerification >= DNS_VERIFY_INTERVAL_MS)) {
+                verifyProviderRecords(group, all.stream().filter(line -> expectedAddresses.containsKey(Objects.toString(line.get("carrier")))).toList(), expectedAddresses, ttl, now);
         }
         Integer dnsFailures = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM smart_entry_route WHERE group_id=? AND (dns_dirty=1 OR dns_state='error')",
+                "SELECT COUNT(*) FROM smart_entry_route WHERE group_id=? AND (dns_state='error' OR (ownership_ready=1 AND dns_dirty=1))",
                 Integer.class, groupId);
-        if (dnsFailures != null && dnsFailures > 0) {
+        if (writeFailed || (dnsFailures != null && dnsFailures > 0)) {
             String dnsError = jdbcTemplate.query(
                     "SELECT dns_error FROM smart_entry_route WHERE group_id=? AND dns_error IS NOT NULL ORDER BY updated_time DESC LIMIT 1",
                     rs -> rs.next() ? rs.getString(1) : "DNS 线路等待重新同步", groupId);
@@ -542,9 +660,56 @@ public class SmartEntryService {
                     shorten(dnsError), now, groupId);
             return;
         }
-        long unhealthy = all.stream().filter(item -> "unhealthy".equals(item.get("status"))).count();
-        String state = unhealthy == 0 ? "healthy" : (unhealthy == all.size() ? "offline" : "degraded");
+        long healthy = all.stream().filter(item -> "healthy".equals(item.get("status"))).count();
+        String state = unresolved ? (healthy == 0 && all.stream().allMatch(item -> "unhealthy".equals(item.get("status"))) ? "offline" : "unknown")
+                : healthy == all.size() ? "healthy" : "degraded";
         jdbcTemplate.update("UPDATE smart_entry_group SET state=?,last_error=NULL,updated_time=? WHERE id=?", state, now, groupId);
+        if (!unresolved || all.stream().allMatch(item -> "unhealthy".equals(item.get("status"))))
+            jdbcTemplate.update("UPDATE smart_entry_group SET sync_requested=0 WHERE id=?", groupId);
+    }
+
+    static Map<String, Object> chooseRoute(Map<String, Object> line, List<Map<String, Object>> all,
+                                           boolean enabled, int cooldown, long now) {
+        Map<String, Object> current = all.stream().filter(item -> Objects.equals(item.get("forwardId"), line.get("currentForwardId"))
+                && Objects.equals(item.get("entryAddress"), line.get("currentAddress"))).findFirst().orElse(null);
+        if (!enabled && current != null) return current;
+        List<String> order = new ArrayList<>();
+        order.add(Objects.toString(line.get("carrier")));
+        Object configured = line.get("fallbackCarriers");
+        if (configured instanceof List<?> values) values.forEach(value -> order.add(value.toString()));
+        else if (configured != null) order.addAll(JSON.parseArray(configured.toString(), String.class));
+        else {
+            order.add("default");
+            CARRIERS.forEach(carrier -> { if (!order.contains(carrier)) order.add(carrier); });
+        }
+        Map<String, Object> desired = null;
+        for (String carrier : order) {
+            desired = all.stream().filter(item -> carrier.equals(item.get("carrier")) && "healthy".equals(item.get("status"))).findFirst().orElse(null);
+            if (desired != null) break;
+        }
+        // Cooldown never keeps an unhealthy route in service.
+        if (desired != null && current != null && "healthy".equals(current.get("status"))
+                && line.get("lastSwitchedAt") instanceof Number switched && now - switched.longValue() < cooldown) return current;
+        return desired;
+    }
+
+    private void claimRecordOwnership(Map<String, Object> group, Map<String, Object> line) {
+        List<DynamicDnsService.LineRoutingRecordState> existing = dynamicDnsService.inspectLineRoutingRecords(
+                number(group.get("provider_ref_id")), Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")), Objects.toString(group.get("record_type")))
+                .stream().filter(record -> record.carrier().equals(line.get("carrier"))).toList();
+        if (existing.size() > 1) throw new IllegalStateException("该运营商存在重复 DNS 记录，请先整理");
+        DynamicDnsService.LineRoutingRecordState previous = existing.isEmpty() ? null : existing.get(0);
+        if (truth(line.get("ownershipReady"))) {
+            if (previous != null && line.get("recordId") != null && !previous.recordId().equals(line.get("recordId")))
+                throw new IllegalStateException("服务商线路记录已被替换，请先检查外部修改");
+            line.put("recordId", previous == null ? null : previous.recordId());
+            return;
+        }
+        if (previous != null && !previous.enabled()) throw new IllegalStateException("该运营商 DNS 记录已停用，请先在服务商确认用途");
+        jdbcTemplate.update("UPDATE smart_entry_route SET ownership_ready=1,managed_created=?,record_id=?,original_address=?,original_ttl=? WHERE id=?",
+                previous == null, previous == null ? null : previous.recordId(), previous == null ? null : previous.value(),
+                previous == null ? null : previous.ttl(), line.get("id"));
+        if (previous != null) line.put("recordId", previous.recordId());
     }
 
     private void verifyProviderRecords(Map<String, Object> group, List<Map<String, Object>> routes,
@@ -555,8 +720,8 @@ public class SmartEntryService {
                     Objects.toString(group.get("zone_name")), Objects.toString(group.get("domain")),
                     Objects.toString(group.get("record_type")));
         } catch (RuntimeException e) {
-            jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE group_id=?",
-                    shorten(e.getMessage()), now, now, number(group.get("id")));
+            jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,updated_time=? WHERE group_id=?",
+                    shorten(e.getMessage()), now, number(group.get("id")));
             jdbcTemplate.update("UPDATE smart_entry_group SET state='error',last_error=?,updated_time=? WHERE id=?",
                     shorten(e.getMessage()), now, number(group.get("id")));
             throw e;
@@ -571,7 +736,7 @@ public class SmartEntryService {
             DynamicDnsService.LineRoutingRecordState actual = matches.size() == 1 ? matches.get(0) : null;
             String error = actual == null ? (matches.isEmpty() ? "服务商中缺少该线路记录" : "服务商中存在重复线路记录")
                     : !actual.enabled() ? "服务商线路记录已停用"
-                    : !expected.equals(actual.value()) ? "服务商返回地址与目标入口不一致"
+                    : !CrossEntryFailoverService.dnsAddressMatches(expected, actual.value()) ? "服务商返回地址与目标入口不一致"
                     : actual.ttl() != ttl ? "服务商实际 TTL 与面板不一致"
                     : null;
             if (error == null) {
@@ -579,8 +744,8 @@ public class SmartEntryService {
                         actual.recordId(), now, now, number(route.get("id")));
             } else {
                 failures.add(carrierLabel(carrier) + "：" + error);
-                jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,dns_verified_at=?,updated_time=? WHERE id=?",
-                        error, now, now, number(route.get("id")));
+                jdbcTemplate.update("UPDATE smart_entry_route SET dns_dirty=1,dns_state='error',dns_error=?,updated_time=? WHERE id=?",
+                        error, now, number(route.get("id")));
             }
         }
         if (!failures.isEmpty()) {
@@ -610,15 +775,16 @@ public class SmartEntryService {
             if (assignment.getForwardId() == null) throw new IllegalArgumentException(carrierLabel(carrier) + "入口未选择转发");
             Map<String, Object> forward = one("SELECT f.id,f.name,f.in_port AS inPort,f.protocol_mode AS protocolMode,t.in_node_id AS inNodeId,"
                             + "COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName,COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost "
-                            + "FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id WHERE f.id=? AND f.status=1",
-                    assignment.getForwardId());
+                            + "FROM forward f JOIN tunnel t ON t.id=f.tunnel_id LEFT JOIN node n ON n.id=t.in_node_id WHERE f.id=? "
+                            + "AND (f.status=1 OR f.id IN (SELECT forward_id FROM smart_entry_route WHERE group_id=?))",
+                    assignment.getForwardId(), dto.getId() == null ? 0L : dto.getId());
             if (forward == null || !List.of("tcp", "tcp_udp").contains(Objects.toString(forward.get("protocolMode"), "tcp"))) {
                 throw new IllegalArgumentException(carrierLabel(carrier) + "入口转发不存在、已暂停或不支持 TCP 检测");
             }
             String host = Objects.toString(forward.get("entryHost"), "");
             String address = resolve(host, type);
             routes.add(new NormalizedRoute(carrier, number(forward.get("id")), number(forward.get("inNodeId")), host, address,
-                    intValue(forward.get("inPort")), Objects.toString(forward.get("name")), Objects.toString(forward.get("nodeName"))));
+                    intValue(forward.get("inPort")), Objects.toString(forward.get("name")), Objects.toString(forward.get("nodeName")), assignment.getFallbackCarriers()));
         }
         if (!carriers.contains("default")) throw new IllegalArgumentException("必须配置默认入口");
         if (routes.size() < 2 || routes.stream().map(route -> route.forwardId).distinct().count() < 2) {
@@ -630,12 +796,21 @@ public class SmartEntryService {
         int port = routes.get(0).entryPort;
         if (routes.stream().anyMatch(route -> route.entryPort != port)) throw new IllegalArgumentException("所有入口转发必须使用相同公网端口");
         String providerName = Objects.toString(provider.get("provider"));
-        int minimumTtl = DynamicDnsService.lineRoutingMinimumTtl(providerName);
+        for (NormalizedRoute route : routes) {
+            if (route.fallbackCarriers == null) continue;
+            if (route.fallbackCarriers.size() > 3 || new HashSet<>(route.fallbackCarriers).size() != route.fallbackCarriers.size()
+                    || route.fallbackCarriers.contains(route.carrier) || !carriers.containsAll(route.fallbackCarriers))
+                throw new IllegalArgumentException("备用顺序只能选择本策略中已配置的其他运营商入口，且不能重复");
+        }
+        String probeMode = StringUtils.defaultIfBlank(dto.getProbeMode(), "tcp");
+        String probePath = StringUtils.defaultIfBlank(dto.getProbePath(), "/");
+        SmartEntryHealthProbe.validate(probeMode, probePath);
         return new Normalized(StringUtils.trim(dto.getName()), dto.getProviderRefId(), providerName, zone,
-                domain, type, clamp(dto.getTtl(), minimumTtl, 86400, minimumTtl), port,
+                domain, type, clamp(dto.getTtl(), 1, 86400, DynamicDnsService.lineRoutingMinimumTtl(providerName)), port,
                 clamp(dto.getProbeIntervalMs(), 2000, 60000, 5000), clamp(dto.getConnectTimeoutMs(), 300, 10000, 1500),
                 clamp(dto.getFailureThreshold(), 1, 10, 2), clamp(dto.getRecoveryThreshold(), 1, 10, 3),
-                !Boolean.FALSE.equals(dto.getEnabled()), routes);
+                !Boolean.FALSE.equals(dto.getEnabled()), clamp(dto.getRecoveryStableMs(), 0, 600000, 30000),
+                clamp(dto.getSwitchCooldownMs(), 0, 600000, 60000), probeMode, probePath, routes);
     }
 
     private String resolve(String host, String type) {
@@ -650,10 +825,12 @@ public class SmartEntryService {
     }
 
     private List<Map<String, Object>> routes(Long groupId) {
-        return jdbcTemplate.queryForList(
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT id,group_id AS groupId,carrier,forward_id AS forwardId,entry_node_id AS entryNodeId,entry_host AS entryHost,"
                         + "entry_address AS entryAddress,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,record_id AS recordId,"
-                        + "managed_created AS managedCreated,original_address AS originalAddress,original_ttl AS originalTtl,"
+                        + "managed_created AS managedCreated,ownership_ready AS ownershipReady,original_address AS originalAddress,original_ttl AS originalTtl,"
+                        + "fallback_carriers AS fallbackCarriers,healthy_since AS healthySince,last_switched_at AS lastSwitchedAt,"
+                        + "dns_target_address AS dnsTargetAddress,dns_attempted_at AS dnsAttemptedAt,"
                         + "current_forward_id AS currentForwardId,current_address AS currentAddress,dns_dirty AS dnsDirty,"
                         + "applied_ttl AS appliedTtl,dns_state AS dnsState,dns_error AS dnsError,dns_verified_at AS dnsVerifiedAt,"
                         + "status,fail_count AS failCount,"
@@ -664,6 +841,11 @@ public class SmartEntryService {
                         + "activity_in_flow AS activityInFlow,activity_out_flow AS activityOutFlow,last_activity_at AS lastActivityAt,"
                         + "last_telemetry_at AS lastTelemetryAt "
                         + "FROM smart_entry_route WHERE group_id=? ORDER BY FIELD(carrier,'default','telecom','unicom','mobile')", groupId);
+        for (Map<String, Object> row : rows) {
+            if (row.get("fallbackCarriers") instanceof String value && !"null".equals(value))
+                row.put("fallbackCarriers", JSON.parseArray(value, String.class));
+        }
+        return rows;
     }
 
     private List<Map<String, Object>> activities(Long groupId) {
@@ -755,11 +937,23 @@ public class SmartEntryService {
 
     private void releaseRecord(Map<String, Object> group, Map<String, Object> route) {
         String recordId = Objects.toString(route.get("recordId"), null);
-        if (StringUtils.isBlank(recordId)) return;
         long providerId = number(group.get("provider_ref_id"));
         String zone = Objects.toString(group.get("zone_name"));
+        if (!truth(route.get("ownershipReady")) && StringUtils.isBlank(recordId)) return;
+        List<DynamicDnsService.LineRoutingRecordState> records = dynamicDnsService.inspectLineRoutingRecords(providerId, zone,
+                Objects.toString(group.get("domain")), Objects.toString(group.get("record_type"))).stream()
+                .filter(record -> record.carrier().equals(route.get("carrier"))).toList();
+        if (records.size() > 1) throw new IllegalStateException("清理时发现重复 DNS 线路，需管理员检查");
+        if (!records.isEmpty()) {
+            DynamicDnsService.LineRoutingRecordState existing = records.get(0);
+            if (recordId != null && !recordId.equals(existing.recordId())) throw new IllegalStateException("DNS 记录已被外部替换，暂停自动清理");
+            boolean expected = List.of("currentAddress", "entryAddress", "dnsTargetAddress", "originalAddress").stream()
+                    .anyMatch(key -> route.get(key) != null && CrossEntryFailoverService.dnsAddressMatches(route.get(key).toString(), existing.value()));
+            if (!expected) throw new IllegalStateException("DNS 地址已被外部修改，暂停自动清理");
+            recordId = existing.recordId();
+        } else recordId = null;
         if (truth(route.get("managedCreated"))) {
-            dynamicDnsService.deleteLineRoutingRecord(providerId, zone, recordId);
+            if (recordId != null) dynamicDnsService.deleteLineRoutingRecord(providerId, zone, recordId);
             return;
         }
         String originalAddress = Objects.toString(route.get("originalAddress"), "");
@@ -791,7 +985,8 @@ public class SmartEntryService {
     private record Probe(boolean healthy, Integer latencyMs, String error) { }
     private record Normalized(String name, long providerId, String provider, String zoneName, String domain,
                               String recordType, int ttl, int publicPort, int probeIntervalMs, int connectTimeoutMs,
-                              int failureThreshold, int recoveryThreshold, boolean enabled, List<NormalizedRoute> routes) { }
+                              int failureThreshold, int recoveryThreshold, boolean enabled, int recoveryStableMs,
+                              int switchCooldownMs, String probeMode, String probePath, List<NormalizedRoute> routes) { }
     private record NormalizedRoute(String carrier, long forwardId, long nodeId, String entryHost, String entryAddress,
-                                   int entryPort, String forwardName, String nodeName) { }
+                                   int entryPort, String forwardName, String nodeName, List<String> fallbackCarriers) { }
 }

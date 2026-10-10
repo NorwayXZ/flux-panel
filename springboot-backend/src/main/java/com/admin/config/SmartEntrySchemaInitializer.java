@@ -65,8 +65,28 @@ public class SmartEntrySchemaInitializer {
             addColumn("smart_entry_route", "dns_state", "varchar(24) NOT NULL DEFAULT 'pending'");
             addColumn("smart_entry_route", "dns_error", "varchar(500) DEFAULT NULL");
             addColumn("smart_entry_route", "dns_verified_at", "bigint DEFAULT NULL");
-            jdbcTemplate.update("UPDATE smart_entry_group SET ttl=600,updated_time=? WHERE provider='aliyun' AND ttl<600",
-                    System.currentTimeMillis());
+            addColumn("smart_entry_group", "recovery_stable_ms", "int NOT NULL DEFAULT 30000");
+            addColumn("smart_entry_group", "switch_cooldown_ms", "int NOT NULL DEFAULT 60000");
+            addColumn("smart_entry_group", "probe_mode", "varchar(16) NOT NULL DEFAULT 'tcp'");
+            addColumn("smart_entry_group", "probe_path", "varchar(255) NOT NULL DEFAULT '/'");
+            addColumn("smart_entry_group", "sync_requested", "tinyint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "fallback_carriers", "varchar(128) DEFAULT NULL");
+            addColumn("smart_entry_route", "healthy_since", "bigint DEFAULT NULL");
+            addColumn("smart_entry_route", "last_switched_at", "bigint DEFAULT NULL");
+            addColumn("smart_entry_route", "ownership_ready", "tinyint NOT NULL DEFAULT 0");
+            addColumn("smart_entry_route", "dns_target_address", "varchar(128) DEFAULT NULL");
+            addColumn("smart_entry_route", "dns_attempted_at", "bigint DEFAULT NULL");
+            jdbcTemplate.update("UPDATE smart_entry_route SET ownership_ready=1 WHERE record_id IS NOT NULL AND ownership_ready=0");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS smart_entry_dns_cleanup ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,payload text NOT NULL,"
+                    + "last_error varchar(500) DEFAULT NULL,attempted_at bigint DEFAULT NULL,created_time bigint NOT NULL,"
+                    + "PRIMARY KEY(id),KEY idx_smart_cleanup_group(group_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS smart_entry_activity_archive ("
+                    + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,forward_id bigint NOT NULL,"
+                    + "entry_node_id bigint NOT NULL,node_name varchar(100) NOT NULL,entry_address varchar(128) NOT NULL,"
+                    + "total_connections bigint NOT NULL,in_flow bigint NOT NULL,out_flow bigint NOT NULL,"
+                    + "last_activity_at bigint DEFAULT NULL,archived_at bigint NOT NULL,PRIMARY KEY(id),"
+                    + "KEY idx_smart_archive_group(group_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             boolean probeTrackingAdded = addColumn("smart_entry_route", "pending_probe_connections", "bigint NOT NULL DEFAULT 0");
             if (probeTrackingAdded) {
                 jdbcTemplate.update("UPDATE smart_entry_route SET telemetry_ready=0,total_connections=0,current_connections=0,"

@@ -1,3 +1,15 @@
+## 2.52.2 Smart entry reliability and carrier failover controls
+
+- Preserves an existing carrier route ID, health state, DNS target, and connection counters when an administrator edits the strategy. Replacing the physical entry archives the old activity snapshot and starts a fresh telemetry baseline.
+- Adds an ordered fallback list for every configured carrier. Unknown and unhealthy entries are never published as a fallback; switch cooldown and recovery stability reduce flapping while still evacuating failed entries immediately.
+- Adds TCP, TLS, HTTP, and HTTPS health checks. HTTP checks use a validated relative path, require a 2xx response, do not follow redirects, and never probe an arbitrary host or URL. A successful socket probe is counted even when the application check fails.
+- Makes DNS synchronization transactional at the configuration level, records provider errors for retry, detects external DNS replacement before cleanup, and keeps deletion in a visible cleanup state until managed records are safely released.
+- Blocks editing or deleting a node, tunnel, forward, or user while a live or retired entry reference still exists. DNS identity changes require creating a new strategy so the old record can be retired safely.
+- Shows all four carrier cards, inherited default routes, current DNS target, fallback order, last operation reason, cleanup errors, and archived entry activity. DNS diagnosis distinguishes provider records, ECS samples, and an independent public resolver reference.
+- Adds runtime lifecycle coverage for concurrent strategy creation, edits, entry replacement, dependency guards, history preservation, and asynchronous cleanup. The release smoke test runs this flow only against its isolated MySQL and backend containers.
+- Panel-only release; Agent and Connector remain `2.52.0`. No production nodes, customer DNS records, or live customer connections were used by tests.
+- `2.52.1` remains the rollback baseline. Ordinary rollback checks both entry migration jobs and Smart Entry synchronization/cleanup jobs; `rollback --force` bypasses the guard and may interrupt traffic.
+
 ## 2.52.1 Authorized entry source migration
 
 - An administrator can add or remove failover entry nodes with customer grants in place. The panel stages every active customer's hidden forward on a new node before saving the group, and refuses the change if deployment fails. Customer ports, destinations, usage and quotas remain intact.

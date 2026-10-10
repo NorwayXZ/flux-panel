@@ -633,6 +633,24 @@ rollback_panel() {
     fi
   fi
 
+  if (( previous_major < 2 || (previous_major == 2 && previous_minor < 52) ||
+        (previous_major == 2 && previous_minor == 52 && previous_patch < 2) )); then
+    if [[ "${override}" == "--force" ]]; then
+      log "WARNING: forcing rollback skips smart-entry DNS cleanup checks; finish pending tasks before ordinary rollback"
+    elif [[ "${current_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] &&
+         (( 10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} > 52) ||
+            (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} == 52 && 10#${BASH_REMATCH[3]} >= 2) )); then
+      local pending_smart_tasks
+      pending_smart_tasks="$(compose exec -T mysql sh -c '
+        MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse \
+        "SELECT (SELECT COUNT(*) FROM smart_entry_dns_cleanup)
+              + (SELECT COUNT(*) FROM smart_entry_group WHERE state=\"deleting\" OR sync_requested=1)"
+      ')" || fail "unable to verify smart-entry DNS jobs; repair database access or explicitly use rollback --force"
+      [[ "${pending_smart_tasks}" =~ ^[0-9]+$ ]] || fail "unexpected smart-entry cleanup status before rollback"
+      [[ "${pending_smart_tasks}" == "0" ]] || fail "${pending_smart_tasks} smart-entry DNS jobs are active; wait for synchronization/cleanup before rollback"
+    fi
+  fi
+
   log "rolling back Flux Panel ${current_version} -> ${previous_version}"
   set_env_value PANEL_VERSION "${previous_version}"
   set_env_value PREVIOUS_PANEL_VERSION "${current_version}"
