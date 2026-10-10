@@ -215,7 +215,7 @@ const platformMeta: Record<
   linux: { label: "Linux", commandLabel: "终端命令" },
   windows: { label: "Windows", commandLabel: "管理员 PowerShell" },
   macos: { label: "macOS", commandLabel: "终端命令" },
-  openwrt: { label: "OpenWrt DNS 决策", commandLabel: "OpenWrt 终端" },
+  openwrt: { label: "OpenWrt Agent", commandLabel: "OpenWrt 终端" },
 };
 
 type ServiceTemplateId =

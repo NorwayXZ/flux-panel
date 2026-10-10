@@ -1,3 +1,10 @@
+## 2.55.0 Unified Smart Entry and OpenWrt management
+
+- Merges the OpenWrt DNS Agent management page into Smart Entry. The sidebar and mobile menu now expose one "三网优化" entry with "优化策略" and "OpenWrt 路由器" tabs.
+- The router tab keeps installation, uninstall, cleanup, online status, synchronization errors and carrier detection in the same context as the strategies. Each router card lists its bound strategies and links directly to strategy editing.
+- The old `/openwrt-dns` URL remains compatible and redirects to the unified router tab. The guide no longer presents OpenWrt as a separate product feature.
+- Panel-only release. Panel version is `2.55.0`; Agent and Connector remain `2.54.0`. `2.54.0` remains the rollback baseline.
+
 ## 2.54.0 OpenWrt-first Smart Entry
 
 - New Smart Entry strategies default to local OpenWrt DNS decisions. Choose or create a router directly in the strategy form; saving atomically saves the strategy and router bindings, without a second configuration step.

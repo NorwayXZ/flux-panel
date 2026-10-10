@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
@@ -20,14 +19,22 @@ import {
   removeOpenWrtDns,
   deleteInternalConnector,
   type OpenWrtDnsResolver,
+  type SmartEntryGroup,
 } from "@/api";
 
 const carrierName = (value?: string) =>
   ({ telecom: "电信", unicom: "联通", mobile: "移动" })[value || ""] ||
   "默认入口";
 
-export default function OpenWrtDnsPage() {
-  const navigate = useNavigate();
+export default function SmartEntryRouters({
+  groups,
+  onChanged,
+  onEditStrategy,
+}: {
+  groups: SmartEntryGroup[];
+  onChanged: () => void;
+  onEditStrategy: (group: SmartEntryGroup) => void;
+}) {
   const [resolvers, setResolvers] = useState<OpenWrtDnsResolver[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -55,6 +62,9 @@ export default function OpenWrtDnsPage() {
     }, 10000);
     return () => clearInterval(timer);
   }, [load]);
+  useEffect(() => {
+    void load();
+  }, [groups, load]);
   const create = async () => {
     if (!name.trim()) return toast.error("请输入路由器名称");
     setSaving(true);
@@ -68,8 +78,9 @@ export default function OpenWrtDnsPage() {
       setCreateOpen(false);
       setName("");
       setCommand(result.data.installCommand);
-      toast.success("路由器已添加，安装后到三网优化中选择即可");
+      toast.success("路由器已添加，安装后创建策略并选择即可");
       void load();
+      onChanged();
     } finally {
       setSaving(false);
     }
@@ -90,6 +101,7 @@ export default function OpenWrtDnsPage() {
     if (result.code !== 0) return toast.error(result.msg || "移除失败");
     toast.success("已提交清理，等待路由器确认");
     void load();
+    onChanged();
   };
   const deleteRecord = async (resolver: OpenWrtDnsResolver) => {
     if (
@@ -102,12 +114,13 @@ export default function OpenWrtDnsPage() {
     if (result.code !== 0) return toast.error(result.msg || "删除失败");
     toast.success("路由器记录已删除");
     void load();
+    onChanged();
   };
   return (
-    <div className="mx-auto max-w-[1600px] space-y-5 p-4 sm:p-6">
+    <section aria-label="三网优化路由器" className="space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">OpenWrt DNS 决策</h1>
+          <h2 className="text-base font-semibold">OpenWrt 路由器</h2>
           <p className="mt-1 text-sm text-default-500">
             自动识别出口运营商，无需配置 WAN
           </p>
@@ -130,18 +143,6 @@ export default function OpenWrtDnsPage() {
           </Button>
         </div>
       </header>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-divider bg-content1 p-4">
-        <p className="text-sm text-default-500">
-          策略绑定已合并到三网优化的创建和编辑页面。这里仅用于安装、卸载和处理连接异常。
-        </p>
-        <Button
-          variant="flat"
-          color="primary"
-          onPress={() => navigate("/smart-entry")}
-        >
-          前往三网优化
-        </Button>
-      </div>
       <details className="rounded-lg border border-divider p-4 text-sm">
         <summary className="cursor-pointer font-medium">使用条件</summary>
         <p className="mt-3 text-default-500">
@@ -213,6 +214,34 @@ export default function OpenWrtDnsPage() {
                       : "等待同步"
                     : "尚未绑定"}
                 </p>
+                {Boolean(resolver.smartEntryGroupIds?.length) && (
+                  <div className="flex flex-wrap gap-1 border-t border-divider pt-2">
+                    {resolver.smartEntryGroupIds?.map((id) => {
+                      const group = groups.find((item) => item.id === id);
+                      return group ? (
+                        <Button
+                          key={id}
+                          size="sm"
+                          variant="flat"
+                          isDisabled={
+                            group.state === "deleting" ||
+                            Boolean(group.pendingCleanup)
+                          }
+                          className="max-w-full"
+                          onPress={() => onEditStrategy(group)}
+                        >
+                          <span className="truncate">
+                            {group.name} · {group.domain}
+                          </span>
+                        </Button>
+                      ) : (
+                        <span key={id} className="text-xs text-default-500">
+                          策略 {id}（已停用或正在清理）
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
                 {resolver.lastError && (
                   <p
                     role="alert"
@@ -322,6 +351,6 @@ export default function OpenWrtDnsPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </section>
   );
 }

@@ -136,12 +136,6 @@ export default function AdminLayout({
       adminOnly: true,
     },
     {
-      path: "/openwrt-dns",
-      label: "OpenWrt DNS 决策",
-      icon: <RadioTower className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
       path: "/source-ip-entry",
       label: "来源 IP 分流",
       icon: <RadioTower className="h-5 w-5" />,
@@ -345,7 +339,6 @@ export default function AdminLayout({
       paths: [
         "/routing-overview",
         "/smart-entry",
-        "/openwrt-dns",
         "/source-ip-entry",
         "/cross-entry-failover",
         "/multi-line-aggregation",

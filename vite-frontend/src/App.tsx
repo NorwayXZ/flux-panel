@@ -28,7 +28,6 @@ const CrossEntryFailoverPage = lazy(
 const AuthorizedEntryPage = lazy(() => import("@/pages/AuthorizedEntriesPage"));
 const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
-const OpenWrtDnsPage = lazy(() => import("@/pages/openwrt-dns"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
 const AwsAccessPage = lazy(() => import("@/pages/aws-access"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
@@ -325,7 +324,7 @@ function App() {
               path="/openwrt-dns"
               element={
                 <ProtectedRoute adminOnly>
-                  <OpenWrtDnsPage />
+                  <Navigate to="/smart-entry?view=routers" replace />
                 </ProtectedRoute>
               }
             />
