@@ -14,7 +14,8 @@ import static org.mockito.ArgumentMatchers.*;
 
 class OpenWrtDnsResolverServiceTests {
     private final JdbcTemplate jdbc=mock(JdbcTemplate.class);
-    private final OpenWrtDnsResolverService service=new OpenWrtDnsResolverService(jdbc,mock(InternalConnectorMapper.class));
+    private final InternalConnectorMapper connectors=mock(InternalConnectorMapper.class);
+    private final OpenWrtDnsResolverService service=new OpenWrtDnsResolverService(jdbc,connectors);
     private final Map<String,Object> mobile=new HashMap<>();
 
     @BeforeEach void setup(){
@@ -77,5 +78,24 @@ class OpenWrtDnsResolverServiceTests {
         when(jdbc.queryForList(contains("SELECT policy_hash AS policyHash"),eq(7L))).thenReturn(List.of(Map.of("revision",4L)));
         assertFalse(service.advancePolicyRevision(7L,stale));
         verify(jdbc,never()).update(contains("UPDATE openwrt_dns_resolver SET policy_hash"),anyString(),anyLong(),anyLong(),anyLong());
+    }
+
+    @Test void routerListDoesNotTreatSavedRevisionAsWorkingDns() {
+        var request = new org.springframework.mock.web.MockHttpServletRequest();
+        request.addHeader("Authorization", "e30." + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("{\"sub\":1,\"role_id\":0}".getBytes(java.nio.charset.StandardCharsets.UTF_8)) + ".test");
+        org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(new org.springframework.web.context.request.ServletRequestAttributes(request));
+        try {
+            var row=new HashMap<String,Object>(Map.of("connectorId",7L,"policyRevision",3L,"appliedRevision",3L,"statusJson","{\"dnsReady\":false,\"dnsStatus\":\"integration-error\",\"dnsChecks\":[],\"dnsCheckedAt\":123}"));
+            when(jdbc.queryForList(contains("FROM internal_connector c LEFT JOIN"),eq(0),eq(0))).thenReturn(List.of(row));
+            var data=(List<Map<String,Object>>)service.list().getData();
+            assertEquals(false,data.get(0).get("dnsReady"));
+            assertEquals("integration-error",data.get(0).get("dnsStatus"));
+            assertEquals(3L,data.get(0).get("appliedRevision"));
+        } finally { org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes(); }
+    }
+
+    @Test void dnsRepairEndpointRequiresAdministratorRole() throws Exception {
+        var method=com.admin.controller.OpenWrtDnsController.class.getMethod("repair",Map.class);
+        assertTrue(method.isAnnotationPresent(com.admin.common.annotation.RequireRole.class));
     }
 }

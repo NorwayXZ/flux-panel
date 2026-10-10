@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-var version = "2.54.0"
+var version = "2.56.0"
 
 type configuration struct {
 	Addr      string `json:"addr"`
@@ -36,6 +36,7 @@ type response struct {
 }
 
 func main() {
+	log.SetPrefix("flux-panel-dns: ")
 	configPath := flag.String("agent-config", "/etc/flux-panel-dns/config.json", "Connection configuration")
 	showVersion := flag.Bool("agent-version", false, "Print version")
 	flag.Parse()
@@ -189,6 +190,11 @@ func main() {
 					result.Message = "OK"
 				} else {
 					result.Message = err.Error()
+					log.Println("DNS policy failed:", err)
+				}
+				result.Data = manager.Status()
+				if err == nil {
+					log.Printf("DNS policy revision=%d state=%s", manager.Status().Revision, manager.Status().DNSStatus)
 				}
 			}
 			send(result)

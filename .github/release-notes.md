@@ -1,3 +1,13 @@
+## 2.56.0 Verified OpenWrt DNS rule activation
+
+- Fixes adding/removing business domains after dnsmasq was already running: a plain reload/SIGHUP does not reread conf-dir files. Domain rule changes now restart dnsmasq, while address-only changes flush caches without a restart. Unchanged working policies do not rewrite files or restart DNS.
+- Uses stable UCI dnsmasq instance IDs (`uci -X`) and the actual generated port-53 configuration instead of assuming `@dnsmasq[0]` is a generated filename. Preserves other DNS rules and retains uninstall ownership metadata when repairing an old configuration directory.
+- Verifies the real router resolver using a local nonce TXT probe through port 53 to the Agent, then checks each configured business A/AAAA answer against the selected entry. A saved policy revision or successful init script no longer counts as usable DNS.
+- Router cards show verified DNS state, actual business answers and concrete errors. Strategy cards distinguish healthy server entries from verified local DNS. The administrator's repair action also checks TCP reachability to the configured entry from the router, without sending authentication or proxy traffic; periodic DNS checks do not repeat TCP probes. Automatic repair stops after three unsuccessful attempts. Failed DNS control operations attempt to restore the previous policy.
+- Adds real dnsmasq integration coverage that reproduces the old reload failure, verifies restart repair, checks a second domain and removal, and confirms address changes do not restart DNS. The release workflow runs this test in addition to encrypted backend/Agent tests on MySQL 5.7 and 8.0.
+- Synchronizes panel and Agent to `2.56.0`. Existing router DNS Agents must be updated once using their installation command; upgrading only the panel cannot replace an already installed router binary. No manual WAN or domain edits are required afterward. `2.55.0` remains available for rollback.
+- Verification proves local DNS answers, not a VLESS/REALITY authenticated session or a client's use of router DNS. Proxy DNS interception is reported when it prevents verification; third-party proxy settings are not silently rewritten. Actual installation on a particular router still requires access to that router.
+
 ## 2.55.0 Unified Smart Entry and OpenWrt management
 
 - Merges the OpenWrt DNS Agent management page into Smart Entry. The sidebar and mobile menu now expose one "三网优化" entry with "优化策略" and "OpenWrt 路由器" tabs.

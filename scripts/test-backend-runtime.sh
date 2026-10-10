@@ -156,6 +156,9 @@ for table in smart_entry_dns_cleanup smart_entry_activity_archive openwrt_dns_re
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
   [[ "${smart_entry_table_exists}" -eq 1 ]]
 done
+status_json_type=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='openwrt_dns_resolver' AND column_name='status_json'")
+[[ "${status_json_type}" == "mediumtext" ]]
 for table_column in 'smart_entry_group:recovery_stable_ms' 'smart_entry_group:switch_cooldown_ms' \
   'smart_entry_group:probe_mode' 'smart_entry_group:probe_path' 'smart_entry_group:sync_requested' 'smart_entry_group:dns_mode' \
   'smart_entry_route:fallback_carriers' 'smart_entry_route:healthy_since' 'smart_entry_route:last_switched_at' \

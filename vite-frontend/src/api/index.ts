@@ -3010,6 +3010,22 @@ export interface OpenWrtDnsResolver {
   dnsmasqReloaded?: boolean | number;
   lastError?: string;
   reportedAt?: number;
+  dnsReady?: boolean;
+  dnsStatus?: string;
+  dnsCheckedAt?: number;
+  dnsmasqConfDir?: string;
+  dnsChecks?: {
+    domain: string;
+    recordType: string;
+    expectedAddress: string;
+    answers: string[];
+    state: "ready" | "error" | "unavailable";
+    error?: string;
+    port?: number;
+    tcpState?: "not-checked" | "reachable" | "failed";
+    tcpError?: string;
+    tcpCheckedAt?: number;
+  }[];
 }
 export const getOpenWrtDnsResolvers = () =>
   Network.post<OpenWrtDnsResolver[]>("/openwrt-dns/list");
@@ -3037,6 +3053,12 @@ export const configureOpenWrtDns = (data: {
 }) => Network.post("/openwrt-dns/configure", data, 170000);
 export const removeOpenWrtDns = (connectorId: number) =>
   Network.post("/openwrt-dns/remove", { connectorId });
+export const repairOpenWrtDns = (connectorId: number) =>
+  Network.post<{ verified: boolean; message: string }>(
+    "/openwrt-dns/repair",
+    { connectorId },
+    75000,
+  );
 export const getInternalConnectorInstall = (
   id: number,
   platform: ConnectorPlatform,

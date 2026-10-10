@@ -2,6 +2,8 @@ package dnsdecision
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ const openWrtDNSListen = "127.0.0.1:5354"
 var safeDNSMasqName = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 
 type OpenWrtDNSPolicy struct {
+	ForceRepair       bool                     `json:"forceRepair,omitempty"`
 	Revision          int64                    `json:"revision"`
 	InterfaceCarriers map[string]string        `json:"interfaceCarriers"`
 	DefaultCarrier    string                   `json:"defaultCarrier"`
@@ -32,6 +35,7 @@ type OpenWrtDNSPolicy struct {
 }
 
 type OpenWrtDNSDomainPolicy struct {
+	Port           int               `json:"port,omitempty"`
 	Domain         string            `json:"domain"`
 	RecordType     string            `json:"recordType"`
 	TTL            uint32            `json:"ttl"`
@@ -40,20 +44,25 @@ type OpenWrtDNSDomainPolicy struct {
 }
 
 type OpenWrtDNSStatus struct {
-	Revision         int64  `json:"revision"`
-	ActiveInterface  string `json:"activeInterface,omitempty"`
-	ActiveCarrier    string `json:"activeCarrier"`
-	ResolvedQueries  uint64 `json:"resolvedQueries"`
-	DnsmasqReloaded  bool   `json:"dnsmasqReloaded"`
-	LastError        string `json:"lastError,omitempty"`
-	ReportedAt       int64  `json:"reportedAt"`
-	PublicIP         string `json:"publicIp,omitempty"`
-	DetectionSource  string `json:"detectionSource,omitempty"`
-	ActiveInterface6 string `json:"activeInterface6,omitempty"`
-	ActiveCarrier6   string `json:"activeCarrier6"`
-	PublicIP6        string `json:"publicIp6,omitempty"`
-	DetectionSource6 string `json:"detectionSource6,omitempty"`
-	DetectionError   string `json:"detectionError,omitempty"`
+	DNSReady         bool              `json:"dnsReady"`
+	DNSStatus        string            `json:"dnsStatus"`
+	DNSCheckedAt     int64             `json:"dnsCheckedAt"`
+	DNSChecks        []OpenWrtDNSCheck `json:"dnsChecks"`
+	DNSMasqConfDir   string            `json:"dnsmasqConfDir,omitempty"`
+	Revision         int64             `json:"revision"`
+	ActiveInterface  string            `json:"activeInterface,omitempty"`
+	ActiveCarrier    string            `json:"activeCarrier"`
+	ResolvedQueries  uint64            `json:"resolvedQueries"`
+	DnsmasqReloaded  bool              `json:"dnsmasqReloaded"`
+	LastError        string            `json:"lastError,omitempty"`
+	ReportedAt       int64             `json:"reportedAt"`
+	PublicIP         string            `json:"publicIp,omitempty"`
+	DetectionSource  string            `json:"detectionSource,omitempty"`
+	ActiveInterface6 string            `json:"activeInterface6,omitempty"`
+	ActiveCarrier6   string            `json:"activeCarrier6"`
+	PublicIP6        string            `json:"publicIp6,omitempty"`
+	DetectionSource6 string            `json:"detectionSource6,omitempty"`
+	DetectionError   string            `json:"detectionError,omitempty"`
 }
 
 type OpenWrtDNSManager struct {
@@ -69,13 +78,19 @@ type OpenWrtDNSManager struct {
 	udp             *dns.Server
 	tcp             *dns.Server
 	cancel          context.CancelFunc
+	dnsmasqControl  func(bool) (bool, error)
+	dnsmasqServer   string
+	probeToken      string
+	wanWorkers      sync.WaitGroup
 }
 
 func NewOpenWrtDNSManager(statePath string, report func(string, map[string]interface{})) *OpenWrtDNSManager {
 	if strings.TrimSpace(statePath) == "" {
 		statePath = "/etc/flux-panel-dns/state.json"
 	}
-	return &OpenWrtDNSManager{statePath: statePath, report: report, policy: OpenWrtDNSPolicy{DefaultCarrier: "default"}, carrierNetworks: map[string][]*net.IPNet{}, upstreams: readOpenWrtUpstreams}
+	var token [16]byte
+	_, _ = rand.Read(token[:])
+	return &OpenWrtDNSManager{statePath: statePath, report: report, policy: OpenWrtDNSPolicy{DefaultCarrier: "default"}, carrierNetworks: map[string][]*net.IPNet{}, upstreams: readOpenWrtUpstreams, dnsmasqControl: controlOpenWrtDNSMasq, dnsmasqServer: "127.0.0.1:53", probeToken: hex.EncodeToString(token[:])}
 }
 
 func (m *OpenWrtDNSManager) Start(parent context.Context) error {
@@ -125,12 +140,11 @@ func (m *OpenWrtDNSManager) Start(parent context.Context) error {
 			m.reportError("TCP DNS 监听失败：" + err.Error())
 		}
 	}()
-	if err := writeOpenWrtDNSMasqIncludes(m.statePath, m.policy); err != nil {
+	if err := m.ApplyPolicy(m.policy); err != nil {
 		m.reportError(err.Error())
-	} else {
-		_, _ = reloadOpenWrtDNSMasq()
 	}
-	go m.monitorWAN(ctx)
+	m.wanWorkers.Add(1)
+	go func() { defer m.wanWorkers.Done(); m.monitorWAN(ctx) }()
 	return nil
 }
 
@@ -143,6 +157,7 @@ func (m *OpenWrtDNSManager) Stop() {
 	udp, tcp := m.udp, m.tcp
 	m.udp, m.tcp = nil, nil
 	m.mu.Unlock()
+	m.wanWorkers.Wait()
 	if udp != nil {
 		_ = udp.Shutdown()
 	}
@@ -151,7 +166,7 @@ func (m *OpenWrtDNSManager) Stop() {
 	}
 	m.applyMu.Lock()
 	_ = writeOpenWrtDNSMasqIncludes(m.statePath, OpenWrtDNSPolicy{})
-	_, _ = reloadOpenWrtDNSMasq()
+	_, _ = m.dnsmasqControl(true)
 	m.applyMu.Unlock()
 }
 
@@ -161,8 +176,12 @@ func (m *OpenWrtDNSManager) ApplyPolicy(policy OpenWrtDNSPolicy) error {
 	if err := validateOpenWrtDNSPolicy(policy); err != nil {
 		return err
 	}
+	force := policy.ForceRepair
+	policy.ForceRepair = false
+	policy.Groups = append([]OpenWrtDNSDomainPolicy(nil), policy.Groups...)
 	m.mu.RLock()
 	oldRevision := m.policy.Revision
+	oldPolicy := m.policy
 	m.mu.RUnlock()
 	if policy.Revision < oldRevision {
 		return errors.New("拒绝旧版本 DNS 配置")
@@ -184,18 +203,17 @@ func (m *OpenWrtDNSManager) ApplyPolicy(policy OpenWrtDNSPolicy) error {
 	if oldRevision > 0 && policy.Revision == oldRevision && string(previous) != string(serialized) {
 		return errors.New("相同版本的策略内容不一致")
 	}
-	if oldRevision > 0 && policy.Revision == oldRevision {
-		m.mu.RLock()
-		lastError := m.status.LastError
-		m.mu.RUnlock()
-		if _, err := os.Stat(m.statePath); err == nil && lastError == "" {
-			m.ReportNow()
-			return nil
+	if current, readErr := os.ReadFile(m.statePath); readErr != nil || string(current) != string(serialized) {
+		if err := writeOpenWrtAtomic(m.statePath, serialized, 0600); err != nil {
+			return fmt.Errorf("保存 DNS 策略失败：%w", err)
 		}
 	}
-	if err := writeOpenWrtAtomic(m.statePath, serialized, 0600); err != nil {
-		return fmt.Errorf("保存 DNS 策略失败：%w", err)
+	directory, err := openWrtDNSMasqDirectory(m.statePath)
+	if err != nil {
+		return err
 	}
+	includePath := filepath.Join(directory, "flux-panel-smart-entry.conf")
+	before, _ := os.ReadFile(includePath)
 	if err := writeOpenWrtDNSMasqIncludes(m.statePath, policy); err != nil {
 		return fmt.Errorf("生成 dnsmasq 域名规则失败：%w", err)
 	}
@@ -203,13 +221,35 @@ func (m *OpenWrtDNSManager) ApplyPolicy(policy OpenWrtDNSPolicy) error {
 	m.policy = policy
 	m.carrierNetworks = compileOpenWrtCarrierNetworks(policy.CarrierCIDRs)
 	m.status.Revision = policy.Revision
+	m.status.DNSMasqConfDir = directory
 	m.mu.Unlock()
-	reloaded, err := reloadOpenWrtDNSMasq()
+	after, _ := os.ReadFile(includePath)
+	reloaded, err := m.dnsmasqControl(force || string(before) != string(after))
+	if err != nil {
+		return m.restoreAfterDNSControlFailure(oldPolicy, previous, includePath, before, err)
+	}
+	if err == nil && reloaded {
+		err = m.verifyDNS(policy, force)
+		// A successful init-script reload is not evidence that conf-dir was reread.
+		if err != nil && !force && string(before) == string(after) {
+			_, err = m.dnsmasqControl(true)
+			if err != nil {
+				return m.restoreAfterDNSControlFailure(oldPolicy, previous, includePath, before, err)
+			}
+			if err == nil {
+				err = m.verifyDNS(policy, force)
+			}
+		}
+	}
 	m.mu.Lock()
 	m.status.DnsmasqReloaded = err == nil && reloaded
+	if !reloaded && err == nil {
+		m.status.DNSReady = false
+		m.status.DNSStatus = "not-openwrt"
+	}
 	if err != nil {
 		m.status.LastError = err.Error()
-	} else {
+	} else if !reloaded || (m.status.DNSReady && m.status.DNSStatus != "connection-error") {
 		m.status.LastError = ""
 	}
 	status := m.snapshotLocked()
@@ -252,6 +292,9 @@ func validateOpenWrtDNSPolicy(policy OpenWrtDNSPolicy) error {
 		}
 	}
 	for _, group := range policy.Groups {
+		if group.Port < 0 || group.Port > 65535 {
+			return errors.New("业务入口端口无效")
+		}
 		domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(group.Domain)), ".")
 		_, validName := dns.IsDomainName(domain + ".")
 		if domain == "" || !safeDNSMasqName.MatchString(domain) || !validName {
@@ -297,6 +340,12 @@ func (m *OpenWrtDNSManager) handleDNS(writer dns.ResponseWriter, request *dns.Ms
 	question := request.Question[0]
 	domain := strings.TrimSuffix(strings.ToLower(question.Name), ".")
 	m.mu.RLock()
+	if domain == dnsIntegrationProbeName && question.Qtype == dns.TypeTXT && len(m.policy.Groups) > 0 {
+		response.Answer = []dns.RR{&dns.TXT{Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 0}, Txt: []string{m.probeToken}}}
+		m.mu.RUnlock()
+		_ = writer.WriteMsg(response)
+		return
+	}
 	policy := m.policy
 	active := m.status.ActiveCarrier
 	if question.Qtype == dns.TypeAAAA {
@@ -411,6 +460,8 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 	defer report.Stop()
 	lastLookup := time.Time{}
 	lastLookupError := ""
+	lastRepair := time.Time{}
+	repairAttempts := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -420,6 +471,9 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 			var errorsFound []string
 			for _, family := range []string{"4", "6"} {
 				iface, sourceIP, routeErr := detectOpenWrtRoute(family)
+				if ctx.Err() != nil {
+					return
+				}
 				m.mu.RLock()
 				previousInterface, previousIP := m.status.ActiveInterface, m.status.PublicIP
 				if family == "6" {
@@ -481,7 +535,10 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 			m.mu.Unlock()
 			if changed {
 				m.applyMu.Lock()
-				reloaded, reloadErr := reloadOpenWrtDNSMasq()
+				reloaded, reloadErr := m.dnsmasqControl(false)
+				if reloadErr == nil && reloaded {
+					reloadErr = m.verifyDNS(m.snapshotPolicy())
+				}
 				m.applyMu.Unlock()
 				m.mu.Lock()
 				m.status.DnsmasqReloaded = reloaded && reloadErr == nil
@@ -493,6 +550,27 @@ func (m *OpenWrtDNSManager) monitorWAN(ctx context.Context) {
 				m.reportStatus(status)
 			}
 		case <-report.C:
+			m.applyMu.Lock()
+			var verifyError error
+			if _, err := os.Stat("/etc/openwrt_release"); err == nil {
+				verifyError = m.verifyDNS(m.snapshotPolicy())
+			}
+			m.applyMu.Unlock()
+			if verifyError == nil {
+				repairAttempts = 0
+			}
+			if verifyError != nil && repairAttempts < 3 && time.Since(lastRepair) >= time.Minute {
+				lastRepair = time.Now()
+				repairAttempts++
+				policy := m.snapshotPolicy()
+				policy.ForceRepair = true
+				if err := m.ApplyPolicy(policy); err != nil {
+					m.reportError(err.Error())
+				}
+			}
+			if verifyError != nil && repairAttempts >= 3 {
+				m.reportError(verifyError.Error() + "；自动修复未恢复，已停止重复重启 DNS，请查看面板诊断结果")
+			}
 			m.reportStatus(m.snapshot())
 		}
 	}
@@ -594,18 +672,18 @@ func fetchOpenWrtPublicIP(parent context.Context) (string, error) {
 }
 
 func writeOpenWrtDNSMasqIncludes(statePath string, policy OpenWrtDNSPolicy) error {
-	directory := statePath + ".d"
-	if contents, err := os.ReadFile(filepath.Join(filepath.Dir(statePath), "dnsmasq-confdir")); err == nil {
-		directory = strings.TrimSpace(string(contents))
-		if !filepath.IsAbs(directory) || directory == "/" || strings.Contains(directory, "..") {
-			return errors.New("dnsmasq 配置目录无效")
-		}
+	directory, err := openWrtDNSMasqDirectory(statePath)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
 	}
 	var lines []string
 	seen := map[string]bool{}
+	if len(policy.Groups) > 0 {
+		lines = append(lines, "server=/"+dnsIntegrationProbeName+"/127.0.0.1#5354")
+	}
 	for _, group := range policy.Groups {
 		domain := strings.TrimSuffix(strings.ToLower(group.Domain), ".")
 		if seen[domain] {
@@ -614,16 +692,46 @@ func writeOpenWrtDNSMasqIncludes(statePath string, policy OpenWrtDNSPolicy) erro
 		seen[domain] = true
 		lines = append(lines, "server=/"+domain+"/127.0.0.1#5354")
 	}
-	return writeOpenWrtAtomic(filepath.Join(directory, "flux-panel-smart-entry.conf"), []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	file := filepath.Join(directory, "flux-panel-smart-entry.conf")
+	contents := []byte(strings.Join(lines, "\n") + "\n")
+	if old, err := os.ReadFile(file); err != nil || string(old) != string(contents) {
+		if err := writeOpenWrtAtomic(file, contents, 0644); err != nil {
+			return err
+		}
+	}
+	marker := filepath.Join(filepath.Dir(statePath), "dnsmasq-confdir")
+	if old, err := os.ReadFile(marker); err == nil && strings.TrimSpace(string(old)) != directory {
+		previous := strings.TrimSpace(string(old))
+		ownedMarker := filepath.Join(filepath.Dir(statePath), "owned-confdir-setting")
+		ownedValue := filepath.Join(filepath.Dir(statePath), "owned-confdir-value")
+		if _, err := os.Stat(ownedMarker); err == nil {
+			if _, err := os.Stat(ownedValue); os.IsNotExist(err) {
+				if err := writeOpenWrtAtomic(ownedValue, []byte(previous+"\n"), 0600); err != nil {
+					return err
+				}
+			}
+		}
+		if err := writeOpenWrtAtomic(marker, []byte(directory+"\n"), 0600); err != nil {
+			return err
+		}
+		if validConfDir(previous) {
+			_ = os.Remove(filepath.Join(previous, "flux-panel-smart-entry.conf"))
+		}
+	}
+	return nil
 }
 
-func reloadOpenWrtDNSMasq() (bool, error) {
+func controlOpenWrtDNSMasq(restart bool) (bool, error) {
 	if _, err := os.Stat("/etc/openwrt_release"); err != nil {
 		return false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "/etc/init.d/dnsmasq", "reload").CombinedOutput()
+	action := "reload"
+	if restart {
+		action = "restart"
+	}
+	output, err := exec.CommandContext(ctx, "/etc/init.d/dnsmasq", action).CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("重载 dnsmasq 失败：%s", strings.TrimSpace(string(output)))
 	}
@@ -665,6 +773,7 @@ func (m *OpenWrtDNSManager) snapshot() OpenWrtDNSStatus {
 }
 func (m *OpenWrtDNSManager) snapshotLocked() OpenWrtDNSStatus {
 	s := m.status
+	s.DNSChecks = append([]OpenWrtDNSCheck(nil), m.status.DNSChecks...)
 	s.Revision = m.policy.Revision
 	s.ResolvedQueries = m.queries
 	s.ReportedAt = time.Now().UnixMilli()
@@ -679,4 +788,5 @@ func (m *OpenWrtDNSManager) reportStatus(status OpenWrtDNSStatus) {
 	}
 }
 
-func (m *OpenWrtDNSManager) ReportNow() { m.reportStatus(m.snapshot()) }
+func (m *OpenWrtDNSManager) ReportNow()               { m.reportStatus(m.snapshot()) }
+func (m *OpenWrtDNSManager) Status() OpenWrtDNSStatus { return m.snapshot() }

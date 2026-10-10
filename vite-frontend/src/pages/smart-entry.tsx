@@ -42,6 +42,8 @@ import {
   getSmartEntryOverview,
   saveSmartEntry,
   createInternalConnector,
+  getOpenWrtDnsResolvers,
+  type OpenWrtDnsResolver,
   type SmartEntryDnsDiagnosis,
   type SmartEntryEvent,
   type SmartEntryForwardOption,
@@ -50,6 +52,7 @@ import {
 } from "@/api";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 import SmartEntryRouters from "@/components/smart-entry-routers";
+import { hasVerifiedRouterDns } from "@/utils/openwrt-dns-status";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile";
 type RouteForm = Record<Carrier, string>;
@@ -246,6 +249,9 @@ export default function SmartEntryPage() {
   const [dnsAgents, setDnsAgents] = useState<
     { id: number; name: string; online: boolean }[]
   >([]);
+  const [dnsResolverStates, setDnsResolverStates] = useState<
+    OpenWrtDnsResolver[]
+  >([]);
   const [agentName, setAgentName] = useState("");
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [installCommand, setInstallCommand] = useState("");
@@ -277,10 +283,13 @@ export default function SmartEntryPage() {
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [overview, options] = await Promise.all([
+      const [overview, options, resolvers] = await Promise.all([
         getSmartEntryOverview(),
         quiet ? Promise.resolve(null) : getSmartEntryOptions(),
+        getOpenWrtDnsResolvers(),
       ]);
+      if (resolvers.code === 0) setDnsResolverStates(resolvers.data || []);
+      else setDnsResolverStates([]);
       if (overview.code === 0) {
         setGroups(overview.data?.groups || []);
         setSummary(overview.data?.summary || emptySummary);
@@ -841,7 +850,7 @@ export default function SmartEntryPage() {
                       .includes(search.toLowerCase()),
                   )
                   .map((group) => {
-                    const meta =
+                    let meta =
                       group.state === "deleting"
                         ? stateMeta("deleting")
                         : truthy(group.enabled)
@@ -850,6 +859,50 @@ export default function SmartEntryPage() {
                               label: "自动调度已暂停",
                               color: "default" as const,
                             };
+                    if (
+                      group.dnsMode === "local" &&
+                      group.state === "healthy" &&
+                      truthy(group.enabled)
+                    ) {
+                      const bound = (group.dnsAgentIds || []).map((id) =>
+                        dnsResolverStates.find(
+                          (item) => item.connectorId === id,
+                        ),
+                      );
+                      const verified =
+                        bound.length > 0 &&
+                        bound.every(
+                          (router) =>
+                            hasVerifiedRouterDns(router, Date.now(), {
+                              domain: group.domain,
+                              recordType: group.recordType,
+                            }) &&
+                            router?.dnsChecks?.some(
+                              (check) =>
+                                check.domain === group.domain &&
+                                check.recordType === group.recordType &&
+                                check.state === "ready",
+                            ),
+                        );
+                      meta = verified
+                        ? {
+                            label: "入口与本地解析已验证",
+                            color: "success" as const,
+                          }
+                        : {
+                            label: bound.some((router) =>
+                              router?.dnsChecks?.some(
+                                (check) =>
+                                  check.domain === group.domain &&
+                                  check.recordType === group.recordType &&
+                                  check.tcpState === "failed",
+                              ),
+                            )
+                              ? "DNS 正常 · 路由器连接失败"
+                              : "入口健康 · 本地解析待验证",
+                            color: "warning" as const,
+                          };
+                    }
 
                     return (
                       <Card

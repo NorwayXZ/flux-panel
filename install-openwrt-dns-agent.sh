@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-RELEASE="${FLUX_PANEL_DNS_AGENT_RELEASE:-2.54.0}"
+RELEASE="${FLUX_PANEL_DNS_AGENT_RELEASE:-2.56.0}"
 DIRECTORY=/etc/flux-panel-dns
 SERVICE=/etc/init.d/flux-panel-dns
 STATE="$DIRECTORY/state.json"
@@ -11,13 +11,33 @@ download() {
   else wget -T 30 "$1" -O "$2"; fi
 }
 json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g;s/"/\\"/g'; }
+stop_current_agent() {
+  [ -x "$SERVICE" ] || return 0
+  previous_pids=""
+  for executable in /proc/[0-9]*/exe; do
+    target="$(readlink "$executable" 2>/dev/null || true)"
+    case "$target" in "$DIRECTORY/agent"|"$DIRECTORY/agent.previous"|"$DIRECTORY/agent (deleted)"|"$DIRECTORY/agent.previous (deleted)") ;; *) continue;; esac
+    process_dir="${executable%/exe}"
+    previous_pids="$previous_pids ${process_dir##*/}"
+  done
+  "$SERVICE" stop
+  attempt=0
+  while [ "$attempt" -lt 35 ]; do
+    active=0
+    for pid in $previous_pids; do kill -0 "$pid" 2>/dev/null && active=1; done
+    [ "$active" = 1 ] || break
+    sleep 1; attempt=$((attempt+1))
+  done
+  [ "${active:-0}" = 0 ] || fail '旧 DNS Agent 尚未退出，未替换或删除程序，请稍后重试'
+}
 
 [ "$(id -u)" = 0 ] || fail '请使用 root 运行'
 [ -f /etc/openwrt_release ] && [ -f /etc/rc.common ] || fail '仅支持 OpenWrt/procd 系统'
 command -v uci >/dev/null 2>&1 || fail '缺少 uci'
 action="${1:-}"
 if [ "$action" = uninstall ]; then
-  if [ -x "$SERVICE" ]; then "$SERVICE" stop; "$SERVICE" disable; fi
+  stop_current_agent
+  if [ -x "$SERVICE" ]; then "$SERVICE" disable; fi
   if [ -f "$DIRECTORY/dnsmasq-confdir" ]; then
     confdir="$(cat "$DIRECTORY/dnsmasq-confdir")"
     case "$confdir" in /etc/*|/tmp/*) rm -f "$confdir/flux-panel-smart-entry.conf";; *) fail '保存的 DNS 配置目录不安全';; esac
@@ -25,10 +45,11 @@ if [ "$action" = uninstall ]; then
   if [ -f "$DIRECTORY/owned-confdir-setting" ]; then
     section="$(cat "$DIRECTORY/owned-confdir-setting")"
     current="$(uci -q get "dhcp.$section.confdir" || true)"
-    if [ "$current" = "${confdir:-}" ]; then uci -q delete "dhcp.$section.confdir"; uci commit dhcp; fi
+    owned_value="$(cat "$DIRECTORY/owned-confdir-value" 2>/dev/null || printf '%s' "${confdir:-}")"
+    if [ "$current" = "$owned_value" ]; then uci -q delete "dhcp.$section.confdir"; uci commit dhcp; fi
   fi
   /etc/init.d/dnsmasq restart
-  rm -f "$SERVICE" "$DIRECTORY/agent" "$DIRECTORY/agent.next" "$DIRECTORY/agent.previous" "$DIRECTORY/config.json" "$STATE" "$STATE.tmp" "$DIRECTORY/dnsmasq-confdir" "$DIRECTORY/owned-confdir-setting"
+  rm -f "$SERVICE" "$DIRECTORY/agent" "$DIRECTORY/agent.next" "$DIRECTORY/agent.previous" "$DIRECTORY/config.json" "$STATE" "$STATE.tmp" "$DIRECTORY/dnsmasq-confdir" "$DIRECTORY/owned-confdir-setting" "$DIRECTORY/owned-confdir-value"
   rmdir "$DIRECTORY" 2>/dev/null || true
   printf 'OpenWrt DNS Agent 已卸载，原有 DNS 规则保留\n'
   exit 0
@@ -59,7 +80,13 @@ if [ -f "$DIRECTORY/config.json" ]; then
   old_secret="$(jsonfilter -i "$DIRECTORY/config.json" -e '@.secret')"
   [ "$old_address" = "$address" ] && [ "$old_secret" = "$secret" ] || fail '此路由器已绑定另一身份，请先卸载旧 DNS Agent'
 fi
-section="$(uci show dhcp | sed -n 's/^dhcp\.\([^=]*\)=dnsmasq$/\1/p' | head -n 1)"
+section=""
+for candidate in $(uci -q -X show dhcp | sed -n 's/^dhcp\.\([^=]*\)=dnsmasq$/\1/p'); do
+  [ "$(uci -q get "dhcp.$candidate.disabled" || true)" != 1 ] || continue
+  port="$(uci -q get "dhcp.$candidate.port" || true)"
+  [ -z "$port" ] || [ "$port" = 53 ] || continue
+  section="$candidate"; break
+done
 [ -n "$section" ] || fail '未找到 dnsmasq 实例'
 confdir="$(uci -q get "dhcp.$section.confdir" || true)"
 owned=0
@@ -88,7 +115,7 @@ needed_kb="$(( ($(wc -c < "$task_tmp/agent")+1023)/1024+2048 ))"
 [ "$available_kb" -ge "$needed_kb" ] || fail '安装分区空间不足，请先清理空间'
 cp "$task_tmp/agent" "$DIRECTORY/agent.next"
 chmod 755 "$DIRECTORY/agent.next"
-[ ! -x "$SERVICE" ] || "$SERVICE" stop
+stop_current_agent
 if [ -f "$DIRECTORY/agent" ]; then mv "$DIRECTORY/agent" "$DIRECTORY/agent.previous"; fi
 mv "$DIRECTORY/agent.next" "$DIRECTORY/agent"
 umask 077
@@ -96,6 +123,7 @@ printf '{"addr":"%s","secret":"%s","openwrtDnsStatePath":"%s"}\n' "$(json_escape
 printf '%s\n' "$confdir" > "$DIRECTORY/dnsmasq-confdir"
 if [ "$owned" = 1 ]; then
   printf '%s\n' "$section" > "$DIRECTORY/owned-confdir-setting"
+  printf '%s\n' "$confdir" > "$DIRECTORY/owned-confdir-value"
   uci set "dhcp.$section.confdir=$confdir"
   uci commit dhcp
 fi
@@ -110,13 +138,13 @@ start_service() {
   procd_set_param respawn 3600 5 0
   procd_set_param stdout 1
   procd_set_param stderr 1
+  procd_set_param term_timeout 30
   procd_close_instance
 }
 EOF
 chmod 755 "$SERVICE"
 "$SERVICE" enable
 "$SERVICE" start
-/etc/init.d/dnsmasq restart
 sleep 2
 if ! "$SERVICE" status >/dev/null 2>&1; then
   if [ -f "$DIRECTORY/agent.previous" ]; then
@@ -127,5 +155,5 @@ if ! "$SERVICE" status >/dev/null 2>&1; then
   fail 'DNS Agent 未能正常启动，请查看 logread -e flux-panel-dns；更新时已尝试恢复原程序'
 fi
 rm -f "$DIRECTORY/agent.previous"
-printf 'OpenWrt DNS Agent 已安装，请在面板绑定三网策略。\n'
+printf 'OpenWrt DNS Agent 已安装，域名规则将自动同步并验证；在三网优化中查看解析结果。\n'
 printf '客户端需使用此路由器 DNS；业务连接直接到入口。\n'

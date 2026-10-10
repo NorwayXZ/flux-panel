@@ -21,5 +21,7 @@ public class OpenWrtDnsSchemaInitializer {
             Integer exists=jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='openwrt_dns_resolver' AND column_name=?",Integer.class,column[0]);
             if(exists!=null&&exists==0)jdbc.execute("ALTER TABLE openwrt_dns_resolver ADD COLUMN "+column[0]+" "+column[1]);
         }
+        String type=jdbc.queryForObject("SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='openwrt_dns_resolver' AND column_name='status_json'",String.class);
+        if("text".equalsIgnoreCase(type))jdbc.execute("ALTER TABLE openwrt_dns_resolver MODIFY COLUMN status_json mediumtext NULL");
     }
 }

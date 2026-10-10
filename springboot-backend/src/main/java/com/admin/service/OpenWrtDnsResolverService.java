@@ -4,6 +4,8 @@ import com.admin.common.dto.OpenWrtDnsResolverConfigDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
+import com.admin.common.utils.AgentVersionUtil;
+import com.admin.common.dto.GostDto;
 import com.admin.entity.InternalConnector;
 import com.admin.mapper.InternalConnectorMapper;
 import com.alibaba.fastjson.JSON;
@@ -62,7 +64,7 @@ public class OpenWrtDnsResolverService {
             row.put("interfaceCarriers", parseObject(Objects.toString(row.get("interfaceCarriers"), "{}")));
             row.put("smartEntryGroupIds", parseLongs(Objects.toString(row.get("smartEntryGroupIds"), "[]")));
             var status=JSON.parseObject(Objects.toString(row.remove("statusJson"),"{}"));
-            for(String key:List.of("activeInterface6","activeCarrier6","publicIp","publicIp6","detectionSource","detectionSource6","detectionError"))row.put(key,status==null?null:status.get(key));
+            for(String key:List.of("activeInterface6","activeCarrier6","publicIp","publicIp6","detectionSource","detectionSource6","detectionError","dnsReady","dnsStatus","dnsCheckedAt","dnsChecks","dnsmasqConfDir"))row.put(key,status==null?null:status.get(key));
         }
         return R.ok(rows);
     }
@@ -92,13 +94,36 @@ public class OpenWrtDnsResolverService {
         syncedPolicies.remove(connectorId);
     }
 
+    public R repair(Long connectorId) {
+        InternalConnector connector = ownedResolver(connectorId);
+        if (connector == null) return R.err("OpenWrt DNS Agent 不存在或无权访问");
+        if (!WebSocketServer.isConnectorOnline(connectorId)) return R.err("路由器离线，无法验证本地 DNS");
+        if (!AgentVersionUtil.isAtLeast(connector.getVersion(), "2.56.0")) return R.err("请先用安装命令更新此路由器 DNS Agent 到 2.56.0；旧版无法重新加载并验证 DNS 规则");
+        try {
+            Map<String,Object> policy = policy(connectorId);
+            if (policy == null) return R.err("路由器尚未绑定三网策略");
+            if (!advancePolicyRevision(connectorId, policy)) return R.err("策略刚发生变化，请稍后重新验证");
+            policy.put("forceRepair", true);
+            GostDto response = WebSocketServer.sendConnectorMsg(connectorId, policy, "OpenWrtDnsPolicy", 60);
+            syncedPolicies.remove(connectorId);
+            if (response == null || !"OK".equals(response.getMsg())) return R.err(response == null ? "路由器未返回验证结果" : response.getMsg());
+            if (response.getData() == null) return R.err("路由器未返回 DNS 实测结果，请检查 Agent 版本");
+            var status = (com.alibaba.fastjson.JSONObject) JSON.toJSON(response.getData());
+            handleStatus(connectorId, status);
+            boolean verified = status.getBooleanValue("dnsReady") && !"connection-error".equals(status.getString("dnsStatus"));
+            String message = "idle".equals(status.getString("dnsStatus")) ? "本地规则已清理，当前没有启用的三网策略" : verified ? "路由器域名解析与入口 TCP 连接已实测验证；协议握手仍由客户端完成" : Objects.toString(status.get("lastError"), "解析仍不可用，请查看具体域名检查结果");
+            return R.ok(Map.of("verified", verified, "message", message));
+        } catch(RuntimeException e) { return R.err("路由器 DNS 修复失败：" + StringUtils.abbreviate(e.getMessage(), 400)); }
+    }
+
     public void handleStatus(long connectorId, Map<String,Object> status) {
         if (status == null) return;
+        if (!(status.get("revision") instanceof Number revision)) return;
         jdbc.update("UPDATE openwrt_dns_resolver SET active_interface=?,active_carrier=?,resolved_queries=?,dnsmasq_reloaded=?,"
-                        + "last_error=?,reported_at=?,updated_time=?,applied_revision=?,status_json=? WHERE connector_id=?",
+                        + "last_error=?,reported_at=?,updated_time=?,applied_revision=?,status_json=? WHERE connector_id=? AND applied_revision<=?",
                 status.get("activeInterface"),status.get("activeCarrier"),status.get("resolvedQueries"),
                 Boolean.TRUE.equals(status.get("dnsmasqReloaded"))?1:0,StringUtils.abbreviate(Objects.toString(status.get("lastError"),null),500),System.currentTimeMillis(),
-                System.currentTimeMillis(),status.get("revision"),JSON.toJSONString(status),connectorId);
+                System.currentTimeMillis(),revision.longValue(),JSON.toJSONString(status),connectorId,revision.longValue());
         jdbc.update("UPDATE internal_connector SET last_seen=?,updated_time=? WHERE id=? AND connector_role='openwrt_dns'",System.currentTimeMillis(),System.currentTimeMillis(),connectorId);
     }
 
@@ -122,14 +147,14 @@ public class OpenWrtDnsResolverService {
                 if(!advancePolicyRevision(id,policy))continue;
                 String fingerprint=JSON.toJSONString(policy);
                 if(fingerprint.equals(syncedPolicies.get(id)))continue;
-                var response=WebSocketServer.sendConnectorMsg(id,policy,"OpenWrtDnsPolicy",10);
+                var response=WebSocketServer.sendConnectorMsg(id,policy,"OpenWrtDnsPolicy",60);
                 if(response!=null&&"OK".equals(response.getMsg())){
                     syncedPolicies.put(id,fingerprint);
                     jdbc.update("UPDATE openwrt_dns_resolver SET sync_error=NULL WHERE connector_id=?",id);
                 }
                 else jdbc.update("UPDATE openwrt_dns_resolver SET sync_error=? WHERE connector_id=?",
                         StringUtils.abbreviate(response==null?"Agent 无响应":response.getMsg(),500),id);
-            } catch(RuntimeException e){log.warn("OpenWrt DNS sync {}: {}",id,e.getMessage());}
+            } catch(RuntimeException e){log.warn("OpenWrt DNS sync {}: {}",id,e.getMessage());jdbc.update("UPDATE openwrt_dns_resolver SET sync_error=? WHERE connector_id=?",StringUtils.abbreviate(e.getMessage(),500),id);}
         }
     }
 
@@ -158,8 +183,8 @@ public class OpenWrtDnsResolverService {
         List<Long> ids=parseLongs(Objects.toString(config.get("groupIds"),"[]"));
         List<Map<String,Object>> groups=new ArrayList<>();
         for(Long id:ids){
-            Map<String,Object> group=jdbc.query("SELECT id,domain,record_type AS recordType,ttl,switch_cooldown_ms FROM smart_entry_group WHERE id=? AND enabled=1",rs->{
-                if(!rs.next())return null;Map<String,Object> value=new LinkedHashMap<>();value.put("id",rs.getLong("id"));value.put("domain",rs.getString("domain"));value.put("recordType",rs.getString("recordType"));value.put("ttl",5);value.put("cooldown",rs.getInt("switch_cooldown_ms"));return value;
+            Map<String,Object> group=jdbc.query("SELECT id,domain,record_type AS recordType,ttl,switch_cooldown_ms,public_port AS port FROM smart_entry_group WHERE id=? AND enabled=1",rs->{
+                if(!rs.next())return null;Map<String,Object> value=new LinkedHashMap<>();value.put("id",rs.getLong("id"));value.put("domain",rs.getString("domain"));value.put("recordType",rs.getString("recordType"));value.put("ttl",5);value.put("cooldown",rs.getInt("switch_cooldown_ms"));value.put("port",rs.getInt("port"));return value;
             },id);
             if(group==null)continue;
             List<Map<String,Object>> routes=jdbc.queryForList("SELECT carrier,status,forward_id AS forwardId,entry_address AS entryAddress,"

@@ -22,4 +22,8 @@ public class OpenWrtDnsController {
         if(body.get("connectorId")==null)return R.err("缺少 Agent ID");
         return service.removePolicy(body.get("connectorId"));
     }
+    @PostMapping("/repair") @RequireRole public R repair(@RequestBody Map<String,Long> body){
+        if(body.get("connectorId")==null)return R.err("缺少 Agent ID");
+        return service.repair(body.get("connectorId"));
+    }
 }

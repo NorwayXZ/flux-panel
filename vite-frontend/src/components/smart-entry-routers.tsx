@@ -12,11 +12,13 @@ import {
 } from "@heroui/modal";
 import { Router, Plus, RefreshCw, Download, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
+import { hasVerifiedRouterDns } from "@/utils/openwrt-dns-status";
 import {
   createInternalConnector,
   getInternalConnectorInstall,
   getOpenWrtDnsResolvers,
   removeOpenWrtDns,
+  repairOpenWrtDns,
   deleteInternalConnector,
   type OpenWrtDnsResolver,
   type SmartEntryGroup,
@@ -42,6 +44,20 @@ export default function SmartEntryRouters({
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [command, setCommand] = useState("");
+  const [repairingId, setRepairingId] = useState<number>();
+  const repair = async (resolver: OpenWrtDnsResolver) => {
+    setRepairingId(resolver.connectorId);
+    try {
+      const result = await repairOpenWrtDns(resolver.connectorId);
+      if (result.code !== 0) toast.error(result.msg || "验证失败");
+      else if (result.data.verified) toast.success(result.data.message);
+      else toast.error(result.data.message);
+      void load();
+      onChanged();
+    } finally {
+      setRepairingId(undefined);
+    }
+  };
   const load = useCallback(async () => {
     try {
       const result = await getOpenWrtDnsResolvers();
@@ -172,6 +188,7 @@ export default function SmartEntryRouters({
             resolver.policyRevision &&
             Number(resolver.appliedRevision || 0) >= resolver.policyRevision,
           );
+          const verified = hasVerifiedRouterDns(resolver);
           return (
             <Card
               key={resolver.connectorId}
@@ -210,10 +227,60 @@ export default function SmartEntryRouters({
                   {resolver.smartEntryGroupIds?.length || 0} 个策略 ·{" "}
                   {resolver.policyRevision
                     ? applied
-                      ? "配置已应用"
+                      ? "配置已同步"
                       : "等待同步"
                     : "尚未绑定"}
                 </p>
+                <Chip
+                  size="sm"
+                  variant="flat"
+                  color={verified ? "success" : "warning"}
+                >
+                  {verified
+                    ? resolver.dnsStatus === "idle"
+                      ? "无启用策略 · 规则已清理"
+                      : "路由器解析已验证"
+                    : resolver.dnsStatus === "integration-error"
+                      ? "DNS 规则未生效"
+                      : resolver.dnsStatus === "connection-error"
+                        ? "DNS 正常 · 入口 TCP 不可达"
+                        : resolver.dnsStatus === "domain-error"
+                          ? "业务域名解析异常"
+                          : "解析待验证"}
+                </Chip>
+                {!resolver.dnsStatus && (
+                  <p className="text-xs text-warning">
+                    旧版 Agent
+                    只确认配置写入。请执行安装命令更新，才能自动修复并实测 DNS。
+                  </p>
+                )}
+                {Boolean(resolver.dnsChecks?.length) && (
+                  <div className="space-y-1 text-xs">
+                    {resolver.dnsChecks?.map((check) => (
+                      <div
+                        key={`${check.domain}/${check.recordType}`}
+                        className="break-all"
+                      >
+                        <p>
+                          {check.domain} · {check.recordType} →{" "}
+                          {check.answers?.join("、") || "无地址"}
+                        </p>
+                        {check.error && (
+                          <p className="text-warning">{check.error}</p>
+                        )}
+                        {check.tcpState === "reachable" && (
+                          <p className="text-success">
+                            入口 TCP {check.port} 可达（仅验证连接，不验证
+                            VLESS/REALITY 认证）
+                          </p>
+                        )}
+                        {check.tcpError && (
+                          <p className="text-warning">{check.tcpError}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {Boolean(resolver.smartEntryGroupIds?.length) && (
                   <div className="flex flex-wrap gap-1 border-t border-divider pt-2">
                     {resolver.smartEntryGroupIds?.map((id) => {
@@ -259,6 +326,16 @@ export default function SmartEntryRouters({
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    color="primary"
+                    variant="flat"
+                    isDisabled={!resolver.online}
+                    isLoading={repairingId === resolver.connectorId}
+                    onPress={() => void repair(resolver)}
+                  >
+                    修复并验证
+                  </Button>
                   <Button
                     size="sm"
                     variant="flat"

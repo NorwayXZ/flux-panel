@@ -38,6 +38,7 @@ jobs:
         run: |
           sh scripts/check-version-consistency.sh
           sh scripts/test-agent-installer.sh
+          python3 scripts/test-openwrt-dns-installer.py
           bash scripts/test-runtime-healthcheck.sh
           sh scripts/check-runtime-safety.sh
           bash scripts/test-auto-update-check.sh
@@ -101,6 +102,9 @@ jobs:
           go test ./...
           (cd x && go test ./...)
           (cd x && go test -race ./dnsdecision)
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dnsmasq-base
+          (cd x && FLUX_DNSMASQ_TEST_BINARY=/usr/sbin/dnsmasq go test -race ./dnsdecision -run 'TestRealDNSMasq|TestEffectiveConfDir' -v)
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../gost-arm64 .
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ../gost-windows-amd64.exe .

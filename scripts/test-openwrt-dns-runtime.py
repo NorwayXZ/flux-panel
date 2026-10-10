@@ -94,6 +94,11 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
         wait_until(lambda: state.exists() and int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         wait_until(lambda: sql(f"SELECT active_carrier FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="mobile")
         assert dns_answer()=="192.0.2.2"
+        # A non-OpenWrt runtime must not claim that router DNS has been verified.
+        repaired=api("openwrt-dns/repair",{"connectorId":connector_id})
+        assert repaired["verified"] is False
+        assert api("openwrt-dns/list",{})[0]["dnsStatus"]=="not-openwrt"
+        assert "forceRepair" not in json.loads(state.read_text())
         config["interfaceCarriers"]={iface:"unicom"}
         api("openwrt-dns/configure",config)
         revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
