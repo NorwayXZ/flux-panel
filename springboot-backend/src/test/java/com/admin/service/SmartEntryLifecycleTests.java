@@ -147,14 +147,52 @@ class SmartEntryLifecycleTests {
         verify(transactions).commit(any());
     }
 
-    @Test void localModeRequiresAnAgentAndCannotSilentlyTurnIntoPublicDns() {
+    @Test void localModeRequiresAnAgentAndPublicMigrationRequiresCredentials() {
         var config = dto(); config.setDnsMode("local"); config.setDnsAgentIds(List.of());
         assertNotEquals(0, service.save(config).getCode());
         assertTrue(writes.isEmpty());
         group.put("dns_mode", "local");
         config.setDnsMode("public");
+        config.setProviderRefId(null);
         assertNotEquals(0, service.save(config).getCode());
         assertTrue(writes.isEmpty());
+    }
+
+    @Test void localStrategyCanPublishSameDomainAndUnbindStaleAgentIdsWithoutLosingHistory() {
+        group.put("dns_mode", "local"); group.put("provider_ref_id", 0L);
+        group.put("zone_name", "a.example.com");
+        routes.forEach(route -> { route.remove("recordId"); route.put("ownershipReady", 0); });
+        var config = dto(); config.setDnsMode("public"); config.setDnsAgentIds(List.of(11L));
+        assertEquals(0, service.save(config).getCode());
+        verify(bindings).setBindings(7L, List.of());
+        assertTrue(writes.stream().anyMatch(sql -> sql.contains("dns_verified_at=NULL") && sql.contains("dns_state='pending'")));
+        assertFalse(writes.stream().anyMatch(sql -> sql.startsWith("DELETE FROM smart_entry_route")
+                || sql.contains("total_connections=0") || sql.contains("current_forward_id=")
+                || sql.startsWith("INSERT INTO smart_entry_dns_cleanup")));
+        assertNoDnsWrites();
+        verify(transactions).commit(any());
+    }
+
+    @Test void localToPublicMigrationCannotAlsoChangeTheBusinessDomain() {
+        group.put("dns_mode", "local"); group.put("provider_ref_id", 0L);
+        var config = dto(); config.setDnsMode("public"); config.setDomain("different.example.com");
+        assertNotEquals(0, service.save(config).getCode());
+        assertTrue(writes.isEmpty()); verifyNoInteractions(bindings); assertNoDnsWrites();
+    }
+
+    @Test void publicMigrationRollsBackIfUnbindingFails() {
+        group.put("dns_mode", "local"); group.put("provider_ref_id", 0L);
+        var config = dto(); config.setDnsMode("public");
+        doThrow(new IllegalStateException("binding database failure")).when(bindings).setBindings(7L, List.of());
+        assertNotEquals(0, service.save(config).getCode());
+        verify(transactions).rollback(any()); verify(transactions, never()).commit(any());
+        assertNoDnsWrites();
+    }
+
+    @Test void existingPublicStrategyCannotReplaceItsProviderDuringAnEdit() {
+        group.put("dns_mode", "public"); group.put("provider_ref_id", 99L);
+        assertNotEquals(0, service.save(dto()).getCode());
+        assertTrue(writes.isEmpty()); assertNoDnsWrites();
     }
 
     @Test void bindingFailureRollsBackTheEntireStrategySave() {

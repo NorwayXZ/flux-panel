@@ -116,11 +116,22 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
         revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
         wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         assert json.loads(state.read_text())["interfaceCarriers"]=={}
-        api("smart-entry/delete",{"id":group_id})
+        # Publish the same strategy through AliDNS without rebuilding its entries.
+        # Keep it disabled: this test verifies configuration/Agent lifecycle and must
+        # not make production DNS requests with the deliberately invalid credentials.
+        sql("INSERT INTO dynamic_dns_provider(id,name,provider,credential_a,enabled,created_time,updated_time) "
+            "VALUES (900002,'isolated-aliyun-migration','aliyun','invalid-test-key',1,1,1)")
+        before_routes=sql(f"SELECT CONCAT(id,':',forward_id) FROM smart_entry_route WHERE group_id={group_id} ORDER BY id")
+        strategy.update({"dnsMode":"public","providerRefId":900002,"zoneName":"example.test","ttl":600,"enabled":False})
+        api("smart-entry/save",strategy)
+        assert sql(f"SELECT CONCAT(dns_mode,':',provider_ref_id,':',ttl) FROM smart_entry_group WHERE id={group_id}")=="public:900002:600"
+        assert sql(f"SELECT CONCAT(id,':',forward_id) FROM smart_entry_route WHERE group_id={group_id} ORDER BY id")==before_routes
+        assert api("openwrt-dns/list",{})[0]["smartEntryGroupIds"]==[]
         revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
         wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         assert json.loads(state.read_text())["groups"]==[]
         assert (Path(str(state)+".d")/"flux-panel-smart-entry.conf").read_text()=="\n"
+        api("smart-entry/delete",{"id":group_id})
     finally:
         if process and process.poll() is None:
             process.terminate();process.wait(timeout=15)
@@ -129,4 +140,4 @@ api("service-publishing/connector/delete",{"id":connector_id})
 assert api("openwrt-dns/list",{})==[]
 wait_until(lambda: sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={group_id}")=="0")
 assert sql(f"SELECT COUNT(*) FROM smart_entry_route WHERE group_id={group_id}")=="0"
-print("OpenWrt DNS local strategy creation, automatic binding, encrypted policy, carrier selection, reconnect and cleanup integration tests passed")
+print("OpenWrt DNS creation, carrier selection, reconnect, AliDNS migration with preserved entries and acknowledged unbinding passed")

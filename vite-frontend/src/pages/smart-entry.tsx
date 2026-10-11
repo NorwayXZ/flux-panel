@@ -98,7 +98,7 @@ const blankRoutes = (): RouteForm => ({
 const emptyForm = {
   id: undefined as number | undefined,
   name: "",
-  dnsMode: "local" as "local" | "public",
+  dnsMode: "public" as "local" | "public",
   dnsAgentIds: [] as string[],
   providerRefId: "",
   zoneName: "",
@@ -444,8 +444,9 @@ export default function SmartEntryPage() {
       name: group.name,
       dnsMode: group.dnsMode || "public",
       dnsAgentIds: (group.dnsAgentIds || []).map(String),
-      providerRefId: String(group.providerRefId),
-      zoneName: group.zoneName,
+      providerRefId:
+        group.dnsMode === "local" ? "" : String(group.providerRefId),
+      zoneName: group.dnsMode === "local" ? "" : group.zoneName,
       domain: group.domain,
       recordType: group.recordType,
       ttl: String(group.ttl),
@@ -527,7 +528,7 @@ export default function SmartEntryPage() {
       ...form,
       providerRefId:
         form.dnsMode === "local" ? undefined : Number(form.providerRefId),
-      dnsAgentIds: form.dnsAgentIds.map(Number),
+      dnsAgentIds: form.dnsMode === "local" ? form.dnsAgentIds.map(Number) : [],
       ttl: Number(form.ttl),
       probeIntervalMs: Number(form.probeIntervalMs),
       connectTimeoutMs: Number(form.connectTimeoutMs),
@@ -735,13 +736,14 @@ export default function SmartEntryPage() {
                     </Chip>
                   </div>
                   <p className="mt-1 text-xs leading-5 text-default-600 dark:text-default-300">
-                    默认由 OpenWrt 自动识别自己的出口运营商，为使用该路由器 DNS
-                    的设备返回对应入口。业务连接直接到入口；已有连接需要重连。
+                    远程用户使用公共 DNS 线路解析，由阿里云或 DNSPod
+                    返回对应运营商入口，无需安装 Agent 或修改客户端 DNS。
+                    业务连接直接到入口；已有连接不会自动迁移。
                   </p>
                   <div className="mt-3 grid gap-2 text-xs text-default-500 sm:grid-cols-3">
-                    <span>本地模式支持 Cloudflare 等任意 DNS 托管</span>
-                    <span>自动识别，无需配置 WAN</span>
-                    <span>公共模式兼容 DNSPod、阿里云 DNS</span>
+                    <span>公共模式无需 OpenWrt Agent</span>
+                    <span>默认入口用于未匹配的来源</span>
+                    <span>本地模式仅适用于使用该路由器 DNS 的设备</span>
                   </div>
                 </div>
               </div>
@@ -1410,12 +1412,8 @@ export default function SmartEntryPage() {
           <ModalBody className="gap-5">
             <Select
               label="选路方式"
+              disallowEmptySelection
               selectedKeys={[form.dnsMode]}
-              isDisabled={Boolean(
-                form.id &&
-                groups.find((group) => group.id === form.id)?.dnsMode ===
-                  "local",
-              )}
               onSelectionChange={(keys) =>
                 setForm((current) => ({
                   ...current,
@@ -1423,13 +1421,28 @@ export default function SmartEntryPage() {
                 }))
               }
             >
-              <SelectItem key="local" textValue="OpenWrt 自动选路（推荐）">
-                OpenWrt 自动选路（推荐）
+              <SelectItem
+                key="public"
+                textValue="公共 DNS 三网解析（远程用户）"
+              >
+                公共 DNS 三网解析（远程用户，无需 Agent）
               </SelectItem>
-              <SelectItem key="public" textValue="公共 DNS 线路解析">
-                公共 DNS 线路解析（兼容原方案）
+              <SelectItem key="local" textValue="OpenWrt 本地选路">
+                OpenWrt 本地选路（仅使用该路由器 DNS 的设备）
               </SelectItem>
             </Select>
+            {form.dnsMode === "public" &&
+              form.id &&
+              groups.find((group) => group.id === form.id)?.dnsMode ===
+                "local" && (
+                <p className="rounded-lg bg-primary-50 p-3 text-sm text-primary-700 dark:bg-primary-500/10 dark:text-primary-300">
+                  选择阿里云或 DNSPod
+                  账号和主域名后保存，将为现有域名发布公共三网记录，
+                  并解除此策略的 OpenWrt 绑定。域名、端口、入口及流量统计保留。
+                  保存后请等待 DNS
+                  发布并查看诊断结果；离线路由器将在重新上线后清理本地规则。
+                </p>
+              )}
             {form.dnsMode === "local" && (
               <section className="space-y-3 rounded-lg border border-divider p-3">
                 <Select
@@ -1489,7 +1502,11 @@ export default function SmartEntryPage() {
               {form.dnsMode === "public" && (
                 <Select
                   label="DNS 服务商配置"
-                  isDisabled={Boolean(form.id)}
+                  isDisabled={Boolean(
+                    form.id &&
+                    groups.find((group) => group.id === form.id)?.dnsMode !==
+                      "local",
+                  )}
                   placeholder="选择 DNSPod 或阿里云 DNS"
                   selectedKeys={form.providerRefId ? [form.providerRefId] : []}
                   onSelectionChange={(keys) =>
@@ -1512,7 +1529,11 @@ export default function SmartEntryPage() {
                     className="min-w-0 flex-1"
                     errorMessage={domainsError || undefined}
                     isDisabled={
-                      Boolean(form.id) ||
+                      Boolean(
+                        form.id &&
+                        groups.find((group) => group.id === form.id)
+                          ?.dnsMode !== "local",
+                      ) ||
                       !form.providerRefId ||
                       domainsLoading ||
                       Boolean(domainsError)
@@ -1897,7 +1918,8 @@ export default function SmartEntryPage() {
                   DNSPod 或阿里云 DNS 必须是该主域名当前实际使用的权威
                   DNS。运营商识别由 DNS 服务商完成，不读取或保存客户 IP。DNS
                   缓存可能延迟新连接切换，已有连接不会迁移；TTL 的实际下限由 DNS
-                  套餐决定。
+                  套餐决定。第三方 DNS 未传递用户来源时可能匹配默认或其他线路，
+                  等待缓存过期不保证纠正运营商识别。
                 </>
               )}
             </div>

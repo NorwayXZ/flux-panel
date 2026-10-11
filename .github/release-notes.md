@@ -1,3 +1,12 @@
+## 2.56.1 Public carrier DNS without an OpenWrt dependency
+
+- Existing local Smart Entry strategies can switch to AliDNS or DNSPod public carrier DNS in place. Select the provider account and authoritative zone while retaining the business domain, record type, ports, entries, route IDs and traffic history.
+- Public-mode saves remove this strategy from router bindings in the same database transaction, including stale selections from older clients. Other bound strategies are preserved. Offline Agents remove their local overrides when they reconnect; no Agent upgrade is needed for public DNS operation.
+- Clears local DNS verification and ownership state on migration, schedules public record publication, and retains provider errors and retries. Saving is not reported as proof that public DNS or the customer's proxy connection works. Domain and record-type changes remain blocked, as do account changes for existing public strategies.
+- New strategies default to public DNS for remote users. OpenWrt local DNS is explicitly labeled for devices using that router's resolver. The migration form unlocks the DNS account/zone selectors and explains asynchronous publication and router cleanup.
+- Adds transactional migration, failed-unbinding rollback and identity-protection tests, plus an isolated MySQL/real-Agent lifecycle check for AliDNS-mode conversion and acknowledged local-rule removal. No production DNS credentials or live customer connections are used by these tests.
+- Panel-only release; Agents remain at 2.56.0. The 2.56.0 release and the `codex/rollback-before-public-dns-2561` branch retain the previous code. No database schema migration is required. Reverting code does not undo AliDNS records or strategy settings; public mode is supported by the rollback version.
+
 ## 2.56.0 Verified OpenWrt DNS rule activation
 
 - Fixes adding/removing business domains after dnsmasq was already running: a plain reload/SIGHUP does not reread conf-dir files. Domain rule changes now restart dnsmasq, while address-only changes flush caches without a restart. Unchanged working policies do not rewrite files or restart DNS.

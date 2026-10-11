@@ -158,9 +158,9 @@ public class SmartEntryService {
             throw new IllegalStateException("旧 DNS 记录正在清理，请等待完成后再编辑");
         boolean local = "local".equals(dto.getDnsMode());
         boolean wasLocal = oldGroup != null && "local".equals(oldGroup.get("dns_mode"));
-        if (wasLocal && !local) throw new IllegalArgumentException("本地策略改用公共 DNS 时请新建策略");
+        boolean publishingLocal = wasLocal && !local;
         boolean converting = oldGroup != null && local && !wasLocal;
-        if (oldGroup != null && ((!local && (normalized.providerId != number(oldGroup.get("provider_ref_id"))
+        if (oldGroup != null && ((!local && !publishingLocal && (normalized.providerId != number(oldGroup.get("provider_ref_id"))
                 || !normalized.zoneName.equalsIgnoreCase(Objects.toString(oldGroup.get("zone_name")))))
                 || !normalized.domain.equalsIgnoreCase(Objects.toString(oldGroup.get("domain")))
                 || !normalized.recordType.equalsIgnoreCase(Objects.toString(oldGroup.get("record_type"))))) {
@@ -169,6 +169,14 @@ public class SmartEntryService {
         if (converting) {
             for (Map<String, Object> old : oldRoutes) queueCleanup(id, oldGroup, old, now);
             jdbcTemplate.update("UPDATE smart_entry_route SET record_id=NULL,ownership_ready=0,original_address=NULL,original_ttl=NULL,dns_dirty=0,dns_error=NULL WHERE group_id=?", id);
+        }
+        if (publishingLocal) {
+            // Local DNS verification is not evidence of public records. Preserve entry
+            // health and traffic history, but acquire public record ownership afresh.
+            jdbcTemplate.update("UPDATE smart_entry_route SET record_id=NULL,ownership_ready=0,managed_created=0,"
+                    + "original_address=NULL,original_ttl=NULL,applied_ttl=NULL,dns_dirty=1,dns_state='pending',"
+                    + "dns_error=NULL,dns_verified_at=NULL,dns_target_address=NULL,dns_attempted_at=NULL WHERE group_id=?", id);
+            jdbcTemplate.update("UPDATE smart_entry_group SET state='unknown',last_error=NULL WHERE id=?", id);
         }
         Integer duplicate = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM smart_entry_group WHERE domain=? AND record_type=? AND id<>?",
@@ -247,7 +255,9 @@ public class SmartEntryService {
                 }
             }
         }
-        dnsBindings.setBindings(id, dto.getDnsAgentIds());
+        // Public strategies must not retain local overrides, including when a legacy
+        // caller omits dnsAgentIds or submits stale selected router IDs.
+        dnsBindings.setBindings(id, local ? dto.getDnsAgentIds() : List.of());
         event(id, null, "configuration", "pending", local ? "配置已保存，等待入口检测及 OpenWrt 同步" : "配置已保存，等待入口检测及 DNS 同步");
         return id;
     }
