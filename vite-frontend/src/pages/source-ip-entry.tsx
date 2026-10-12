@@ -45,6 +45,7 @@ import {
   type SourceIpEntryOverview,
 } from "@/api";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
+import { formatDateTime, truthy } from "@/utils/format";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile" | "custom";
 type RuleType =
@@ -141,12 +142,7 @@ const emptyForm = (): FormState => ({
   routes: [newRoute("default")],
 });
 
-const truthy = (value: boolean | number | undefined) =>
-  value === true || value === 1;
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未同步";
+const timeText = (value?: number) => formatDateTime(value, "尚未同步");
 
 function statusMeta(state: SourceIpEntryGroup["state"]) {
   switch (state) {

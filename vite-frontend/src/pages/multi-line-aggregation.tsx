@@ -55,6 +55,7 @@ import {
   toggleAggregation,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import { formatDateTime } from "@/utils/format";
 
 type FormState = {
   id?: number;
@@ -128,8 +129,7 @@ const bytes = (value?: number) => {
 
   return `${(amount / Math.pow(1024, index)).toFixed(index > 2 ? 1 : 0)} ${units[index]}`;
 };
-const timeText = (value?: number) =>
-  value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "-";
+const timeText = (value?: number) => formatDateTime(value, "-");
 
 export default function MultiLineAggregationPage() {
   const [data, setData] = useState<AggregationOverview | null>(null);

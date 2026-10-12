@@ -18,6 +18,7 @@ import {
   type SystemUpdateStatus,
 } from "@/api";
 import { siteConfig } from "@/config/site";
+import { formatDateTime } from "@/utils/format";
 
 type CheckState = "idle" | "checking" | "success" | "error";
 
@@ -113,11 +114,8 @@ const getLatestVersion = async (): Promise<RemoteVersion | null> => {
   };
 };
 
-const formatTime = (value: Date | number | null): string => {
-  if (!value) return "尚未检查";
-
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-};
+const formatTime = (value?: Date | number | null) =>
+  formatDateTime(value, "尚未检查");
 
 const updateStateLabels: Record<SystemUpdateState, string> = {
   idle: "等待更新",

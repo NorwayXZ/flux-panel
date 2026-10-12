@@ -47,6 +47,7 @@ import {
   type NftForwardProtocol,
   type NftForwardRule,
 } from "@/api";
+import { formatBytesCompact, formatDateTime } from "@/utils/format";
 
 type RuleForm = {
   id?: number;
@@ -103,21 +104,9 @@ const stateColor = (
 const protocolLabel = (protocol: string) =>
   protocol === "tcp_udp" ? "TCP + UDP" : protocol.toUpperCase();
 
-const formatBytes = (value = 0) => {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length - 1,
-  );
+const formatBytes = formatBytesCompact;
 
-  return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
-};
-
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未同步";
+const timeText = (value?: number) => formatDateTime(value, "尚未同步");
 
 export default function NftForwardPage() {
   const [data, setData] = useState<NftForwardOverview>(emptyOverview);

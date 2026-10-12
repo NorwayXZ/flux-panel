@@ -44,6 +44,7 @@ import { BatchOperationBar } from "@/components/batch-operation-bar";
 import { ResponsiveVirtualGrid } from "@/components/virtual-list";
 import { SkeletonCardGrid } from "@/components/skeleton";
 import { ExportMenu, exportData, type ExportColumn } from "@/components/export";
+import { formatBytes } from "@/utils/format";
 
 const EMPTY_GRANTS: AuthorizedEntryGrant[] = [];
 const grantExportColumns: ExportColumn<AuthorizedEntryGrant>[] = [
@@ -68,17 +69,6 @@ const grantExportColumns: ExportColumn<AuthorizedEntryGrant>[] = [
   { key: "state", label: "状态", format: (_value, grant) => grantLabel(grant) },
 ];
 
-const formatBytes = (value = 0) => {
-  if (value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length - 1,
-  );
-  const amount = value / 1024 ** index;
-
-  return `${amount >= 100 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
-};
 const stateLabel: Record<string, string> = {
   active: "可用",
   provisioning: "部署中",

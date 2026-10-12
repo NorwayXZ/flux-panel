@@ -30,6 +30,7 @@ import {
   type AwsAccessAccount,
   type AwsAccessOverview,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 const EMPTY: AwsAccessOverview = {
   accounts: [],
@@ -44,10 +45,7 @@ const INITIAL_FORM = {
   enabled: true,
 };
 
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未测试";
+const timeText = (value?: number) => formatDateTime(value, "尚未测试");
 
 export default function AwsAccessPage() {
   const [loading, setLoading] = useState(true);

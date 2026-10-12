@@ -72,6 +72,7 @@ import {
   type DnsZoneOption,
 } from "@/api";
 import { isAdmin as isAdminUser } from "@/utils/auth";
+import { formatBytesCompact, formatDateTime } from "@/utils/format";
 
 interface EntryNodeOption {
   id: number;
@@ -102,19 +103,9 @@ const stateMeta: Record<
   released: { label: "已释放", color: "default" },
 };
 
-const formatTime = (value?: number) =>
-  value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "无限制";
+const formatTime = (value?: number) => formatDateTime(value, "无限制");
 
-const formatBytes = (value = 0) => {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length - 1,
-  );
-
-  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-};
+const formatBytes = formatBytesCompact;
 
 const formatSpeed = (value = 0) => `${formatBytes(value)}/s`;
 

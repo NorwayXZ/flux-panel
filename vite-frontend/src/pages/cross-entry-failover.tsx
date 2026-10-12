@@ -60,6 +60,7 @@ import {
   type DnsZoneOption,
 } from "@/api";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
+import { formatBytes, formatDateTime, truthy } from "@/utils/format";
 
 type PresetProfileKey = "fast" | "standard" | "stable";
 type ProfileKey = PresetProfileKey | "custom";
@@ -217,11 +218,7 @@ const blankSchedule = (): ScheduleForm => ({
   enabled: true,
 });
 
-const truthy = (value: boolean | number) => value === true || value === 1;
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未检测";
+const timeText = (value?: number) => formatDateTime(value, "尚未检测");
 const beijingDateTimeInput = (value?: number) =>
   value ? new Date(value + 8 * 60 * 60 * 1000).toISOString().slice(0, 16) : "";
 const beijingTimestamp = (value: string) =>
@@ -248,17 +245,6 @@ const metricText = (value?: number, unit = "") =>
 
 const connectionCountText = (value?: number) =>
   new Intl.NumberFormat("zh-CN").format(Math.max(0, Number(value) || 0));
-const formatBytes = (value = 0) => {
-  if (value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length - 1,
-  );
-  const amount = value / 1024 ** index;
-
-  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
-};
 const explainProbeError = (value?: string) => {
   const reason = String(value || "").trim();
 

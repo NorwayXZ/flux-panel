@@ -41,6 +41,7 @@ import {
   type PrivateProxyType,
 } from "@/api";
 import { isAdmin as isAdminUser } from "@/utils/auth";
+import { formatBytes } from "@/utils/format";
 
 interface NodeOption {
   id: number;
@@ -139,19 +140,6 @@ const stateMeta: Record<
   delete_pending: { label: "待清理", color: "warning" },
   expired: { label: "已到期", color: "default" },
   quota_exhausted: { label: "流量用尽", color: "danger" },
-};
-
-const formatBytes = (value = 0) => {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = Math.max(0, value);
-  let unit = 0;
-
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-
-  return `${size >= 100 || unit === 0 ? size.toFixed(0) : size.toFixed(2)} ${units[unit]}`;
 };
 
 const formatRemainingTime = (milliseconds?: number) => {

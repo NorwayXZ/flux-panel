@@ -49,14 +49,6 @@ public class ForwardRoutingSchemaInitializer implements ApplicationRunner {
     }
 
     private void ensureColumn(String column, String definition) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.columns "
-                        + "WHERE table_schema = DATABASE() AND table_name = 'forward' AND column_name = ?",
-                Integer.class,
-                column
-        );
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE forward ADD COLUMN " + column + " " + definition);
-        }
+        SchemaSupport.ensureColumn(jdbcTemplate, "forward", column, definition);
     }
 }

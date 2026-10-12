@@ -61,6 +61,7 @@ import {
   AwsAccessAccount,
   DnsZoneOption,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 type NativeMemberForm = {
   nodeId: string;
@@ -145,8 +146,7 @@ const bytes = (value?: number) =>
       : value >= 1024 ** 2
         ? `${(value / 1024 ** 2).toFixed(1)} MB`
         : `${Math.round(value / 1024)} KB`;
-const timeText = (value?: number) =>
-  value ? new Date(value).toLocaleString() : "-";
+const timeText = (value?: number) => formatDateTime(value, "-");
 const compactTimeText = (value?: number) =>
   value
     ? new Date(value).toLocaleString("zh-CN", {

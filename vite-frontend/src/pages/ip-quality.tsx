@@ -33,6 +33,7 @@ import {
   type IpQualityOverview,
   type IpQualityScan,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 const initial: IpQualityOverview = {
   minimumAgentVersion: "2.46.0",
@@ -40,10 +41,7 @@ const initial: IpQualityOverview = {
   providers: { ipqsConfigured: false, abuseipdbConfigured: false },
   summary: { total: 0, running: 0, tested: 0, highRisk: 0 },
 };
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未检测";
+const timeText = (value?: number) => formatDateTime(value, "尚未检测");
 const stateText = (state?: string) =>
   state === "available"
     ? "可访问"

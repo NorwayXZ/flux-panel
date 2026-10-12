@@ -34,6 +34,7 @@ import {
   type BandwidthTestTask,
   type BandwidthTestTaskInput,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 type FormState = {
   id?: number;
@@ -73,10 +74,7 @@ const speed = (value?: number) =>
       ? `${(value / 1000).toFixed(2)} Gbps`
       : `${value.toFixed(1)} Mbps`
     : "-";
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未测试";
+const timeText = (value?: number) => formatDateTime(value, "尚未测试");
 const directionText = (value: string) =>
   value === "upload" ? "上传" : value === "download" ? "下载" : "双向";
 const percentText = (value?: number) => `${Number(value || 0).toFixed(2)}%`;

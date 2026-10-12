@@ -43,6 +43,7 @@ import {
   type LanDiscoveryResult,
   type LanDiscoveredService,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 const platformLabel: Record<ConnectorPlatform, string> = {
   linux: "Linux",
@@ -51,10 +52,7 @@ const platformLabel: Record<ConnectorPlatform, string> = {
   openwrt: "OpenWrt DNS",
 };
 
-const formatTime = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未连接";
+const formatTime = (value?: number) => formatDateTime(value, "尚未连接");
 
 const versionAtLeast = (version?: string, minimum = "2.32.0") => {
   const current = String(version || "")

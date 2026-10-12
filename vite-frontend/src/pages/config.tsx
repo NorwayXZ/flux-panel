@@ -46,6 +46,7 @@ import {
   updateSiteConfig,
 } from "@/config/site";
 import { isAdmin } from "@/utils/auth";
+import { formatDateTime } from "@/utils/format";
 
 interface NodeOption {
   id: number;
@@ -123,10 +124,7 @@ const routeStatus = (route: DomainRoute) => {
   };
 };
 
-const formatTime = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未签发";
+const formatTime = (value?: number) => formatDateTime(value, "尚未签发");
 
 export default function ConfigPage() {
   const navigate = useNavigate();

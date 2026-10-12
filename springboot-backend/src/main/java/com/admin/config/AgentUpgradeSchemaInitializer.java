@@ -47,20 +47,10 @@ public class AgentUpgradeSchemaInitializer {
     }
 
     private void ensureColumn(String table, String column, String definition) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name=? AND column_name=?",
-                Integer.class, table, column);
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + column + "` " + definition);
-        }
+        SchemaSupport.ensureColumn(jdbcTemplate, table, column, definition);
     }
 
     private void ensureIndex(String table, String index, String columns) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name=? AND index_name=?",
-                Integer.class, table, index);
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE `" + table + "` ADD KEY `" + index + "` (" + columns + ")");
-        }
+        SchemaSupport.ensureIndex(jdbcTemplate, table, index, columns);
     }
 }

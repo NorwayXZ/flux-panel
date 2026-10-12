@@ -35,6 +35,7 @@ import {
   type UdpQuicDiagnosticRun,
   type UdpQuicDiagnosticTask,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 type FormState = {
   id?: number;
@@ -81,10 +82,7 @@ const initial: UdpQuicDiagnosticOverview = {
   summary: { total: 0, running: 0, success: 0, degraded: 0, failed: 0 },
 };
 const bool = (value?: boolean | number) => value === true || value === 1;
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未诊断";
+const timeText = (value?: number) => formatDateTime(value, "尚未诊断");
 const percentText = (value?: number) => `${Number(value || 0).toFixed(2)}%`;
 const latencyText = (value?: number) =>
   value && value > 0 ? `${Number(value).toFixed(2)} ms` : "-";

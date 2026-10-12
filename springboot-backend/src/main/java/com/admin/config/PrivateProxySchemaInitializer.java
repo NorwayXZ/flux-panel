@@ -46,19 +46,11 @@ public class PrivateProxySchemaInitializer {
     }
 
     private void ensureIndex(String index, String columns) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.STATISTICS "
-                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'private_proxy' AND INDEX_NAME = ?", Integer.class, index);
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE private_proxy ADD KEY `" + index + "` (" + columns + ")");
-        }
+        SchemaSupport.ensureIndex(jdbcTemplate, "private_proxy", index, columns);
     }
 
     private void ensureColumn(String column, String definition) {
-        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.COLUMNS "
-                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'private_proxy' AND COLUMN_NAME = ?", Integer.class, column);
-        if (count == null || count == 0) {
-            jdbcTemplate.execute("ALTER TABLE private_proxy ADD COLUMN `" + column + "` " + definition);
-        }
+        SchemaSupport.ensureColumn(jdbcTemplate, "private_proxy", column, definition);
     }
 
     private void ensureVarcharLength(String column, int minimumLength) {

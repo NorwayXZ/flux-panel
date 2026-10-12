@@ -41,6 +41,7 @@ import {
   type DockerContainerInfo,
   type DnsZoneOption,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 const empty: DockerAppOverview = {
   nodes: [],
@@ -74,8 +75,7 @@ const stateMeta = (state: string) => {
 
   return { label: state || "未知", color: "default" as const };
 };
-const timeText = (value?: number) =>
-  value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "-";
+const timeText = (value?: number) => formatDateTime(value, "-");
 
 export default function DockerAppsPage() {
   const [data, setData] = useState<DockerAppOverview>(empty);

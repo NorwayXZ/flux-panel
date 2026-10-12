@@ -41,6 +41,7 @@ import {
   type DnsZone,
   type DynamicDnsProviderOption,
 } from "@/api";
+import { formatDateTime, truthy } from "@/utils/format";
 
 const emptySummary: DnsProviderSummary = {
   accounts: 0,
@@ -62,11 +63,7 @@ const emptyCarrierForm = {
   credentialB: "",
   enabled: true,
 };
-const truthy = (value: boolean | number) => value === true || value === 1;
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未同步";
+const timeText = (value?: number) => formatDateTime(value, "尚未同步");
 
 export default function DnsSettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();

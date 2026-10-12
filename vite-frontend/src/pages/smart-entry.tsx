@@ -60,6 +60,7 @@ import {
   ttlDelayText,
   uniqueFallbackNames,
 } from "@/utils/smart-entry-display";
+import { formatBytes, formatDateTime, truthy } from "@/utils/format";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile";
 type RouteForm = Record<Carrier, string>;
@@ -189,11 +190,7 @@ const emptySummary = {
   degraded: 0,
   lineRecords: 0,
 };
-const truthy = (value: boolean | number) => value === true || value === 1;
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未检测";
+const timeText = (value?: number) => formatDateTime(value, "尚未检测");
 const carrierLabel = (value?: string) =>
   carriers.find((item) => item.key === value)?.label || "线路";
 const carrierTone = (value?: string) =>
@@ -230,17 +227,6 @@ const carrierTone = (value?: string) =>
   };
 const activityCarriers = (value: string) =>
   value.split(",").filter(Boolean).map(carrierLabel).join(" / ");
-const formatBytes = (value = 0) => {
-  if (value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    Math.floor(Math.log(value) / Math.log(1024)),
-    units.length - 1,
-  );
-  const amount = value / 1024 ** index;
-
-  return `${amount >= 100 || index === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[index]}`;
-};
 const supportsConnectionTelemetry = (version?: string) => {
   const values = String(version || "")
     .replace(/^v/, "")

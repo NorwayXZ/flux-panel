@@ -49,6 +49,7 @@ import {
   type DynamicDnsRule,
 } from "@/api";
 import { isAdmin } from "@/utils/auth";
+import { formatDateTime } from "@/utils/format";
 
 const stateMeta: Record<
   HomeProxyRoute["state"],
@@ -177,11 +178,8 @@ const natPathLabel = (route: HomeProxyRoute) =>
       ? "UDP 直连"
       : "公网中继";
 
-const formatTime = (timestamp?: number | null) => {
-  if (!timestamp) return "尚未检测";
-
-  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
-};
+const formatTime = (value?: Date | number | null) =>
+  formatDateTime(value, "尚未检测");
 
 const isIpv6VerificationWarning = (route: HomeProxyRoute) =>
   route.state === "active" && route.lastError?.startsWith("公网验证未完成：");

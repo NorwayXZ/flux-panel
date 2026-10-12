@@ -1,3 +1,11 @@
+## 2.56.5 Code cleanup
+
+- Removes frontend modules nothing imported, an unreferenced design-token stylesheet, ten API helpers without callers, stale planning documents and eleven unused packages. `@heroui/tooltip` and `@internationalized/date`, which pages import but which were only installed transitively, are now declared.
+- Removes the backend code generator, two unreferenced classes and the generator-only dependencies (`mybatis-plus-generator`, `freemarker`).
+- Timestamp, byte-count and API-flag formatting used by 20 pages now comes from one shared module instead of per-page copies. Empty-value wording per page is unchanged. Two visible differences: the private-network page formats times like every other page, and the authorized-entry page shows whole bytes as "5 B" instead of "5.00 B".
+- Thirteen startup schema initializers share one helper for adding missing columns and indexes. The generated statements are equivalent; two initializers whose tests pin the previous query shape are left as they were.
+- No feature or database schema change. Agents remain at 2.56.0; 2.56.4 remains available for rollback.
+
 ## 2.56.4 Upgrade caching, public configuration and dashboard accuracy
 
 - The panel entry document is now served with `Cache-Control: no-cache`. Previously it had no cache policy, so a browser could keep loading the previous release's page files after an upgrade and show mixed versions. An open tab that requests a page file removed by an upgrade now reloads once automatically, with a one-minute guard against reload loops.

@@ -57,6 +57,7 @@ import {
   type QualityProbeTask,
   type QualityProbeTaskInput,
 } from "@/api";
+import { formatDateTime } from "@/utils/format";
 
 type Range = "24h" | "7d" | "30d";
 type FormState = {
@@ -100,10 +101,7 @@ const metric = (value?: number) =>
   value && value > 0
     ? `${Number(value).toFixed(value >= 100 ? 0 : 1)} ms`
     : "-";
-const timeText = (value?: number) =>
-  value
-    ? new Date(value).toLocaleString("zh-CN", { hour12: false })
-    : "尚未运行";
+const timeText = (value?: number) => formatDateTime(value, "尚未运行");
 const friendlyError = (error?: string) => {
   const value = error || "";
 
