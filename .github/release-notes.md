@@ -1,3 +1,15 @@
+## 2.56.2 Simpler Smart Entry page
+
+- Strategy cards now show the address and port a client must enter, each with a copy button, instead of a small `domain:port` line.
+- Carrier DNS verification moves onto the card. It runs automatically once a saved public strategy has been published, can be rerun with a labelled button, and lists what telecom, unicom, mobile and other networks resolve to. The previous diagnosis dialog remains available as the detail view. Results are samples through public DNS with carrier client subnets; they do not prove a customer's device or proxy session.
+- Status wording is reduced to "正常", "生效中（约 1 分钟）" and "需要处理：<reason>". The separate "配置待生效" chip and the "服务商已同步 · 600s" route chip are replaced by "生效中" / "已生效".
+- TTL is explained as its consequence ("切换网络后最长约 10 分钟生效") in the form and on the card, with the provider plan note. The stored TTL value and its validation are unchanged.
+- Entry selectors only list forwards on the public port already chosen by another carrier. Backup order no longer repeats an entry shared by several carriers or the route's own entry.
+- New strategies ask for the business domain first and select the DNS account and zone hosting it automatically when exactly one saved account matches. Switching a local strategy to public DNS does the same.
+- Page copy describes public DNS first. The routing-mode selector moves into advanced settings for public strategies and stays at the top for local ones. Health probing offers 灵敏 / 标准 / 保守 presets; the six raw values remain under "自定义检测参数" and existing custom values are preserved.
+- Fixes the zone, DNS account and default-entry selectors being cleared by clicking the selected item again.
+- Frontend-only release. No backend logic, database schema, DNS publication behavior or saved request shape changes; Agents remain at 2.56.0. Release 2.56.1 remains available for rollback.
+
 ## 2.56.1 Public carrier DNS without an OpenWrt dependency
 
 - Existing local Smart Entry strategies can switch to AliDNS or DNSPod public carrier DNS in place. Select the provider account and authoritative zone while retaining the business domain, record type, ports, entries, route IDs and traffic history.
