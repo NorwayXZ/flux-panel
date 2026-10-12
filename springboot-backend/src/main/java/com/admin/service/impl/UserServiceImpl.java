@@ -970,7 +970,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         List<UserPackageDto.UserForwardDetailDto> forwards = userMapper.getUserForwardDetails(user.getId().intValue());
 
         // 4. 查询最近24小时流量信息，没有的补0
-        List<StatisticsFlow> statisticsFlows = getLast24HoursFlowStatistics(user.getId());
+        List<StatisticsFlow> statisticsFlows = getLast24HoursFlowStatistics(
+                user.getId(), Objects.equals(roleId, ADMIN_ROLE_ID));
         
         // 5. 构造返回结果
         UserPackageDto packageDto = new UserPackageDto();
@@ -1019,71 +1020,50 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     /**
-     * 获取用户最近24小时的流量统计数据，没有数据的时间点补0
-     * 
-     * @param userId 用户ID
-     * @return 最近24小时流量统计列表
+     * Hourly traffic for the last 24 hours, newest first.
+     *
+     * Samples are selected by when they were recorded, so hours missed while the
+     * panel was down stay empty instead of being filled by older samples.
+     * Administrators see every account combined; other users see their own.
      */
-    private List<StatisticsFlow> getLast24HoursFlowStatistics(Long userId) {
-        // 按ID倒序查最近24条记录（ID越大越新，时间就是23:00, 22:00, 21:00...这样倒序）
-        List<StatisticsFlow> recentFlows = statisticsFlowService.list(
-                new QueryWrapper<StatisticsFlow>()
-                        .eq("user_id", userId)
-                        .orderByDesc("id")
-                        .last("LIMIT 24")
-        );
+    private List<StatisticsFlow> getLast24HoursFlowStatistics(Long userId, boolean allUsers) {
+        long now = System.currentTimeMillis();
+        QueryWrapper<StatisticsFlow> query = new QueryWrapper<StatisticsFlow>()
+                .gt("created_time", now - 24L * 60 * 60 * 1000);
+        if (!allUsers) {
+            query.eq("user_id", userId);
+        }
+        return bucketLast24Hours(statisticsFlowService.list(query), userId, now, java.time.ZoneId.systemDefault());
+    }
 
-        List<StatisticsFlow> result = new ArrayList<>(recentFlows);
-
-        // 如果查出来的记录不足24条，需要补0和对应的时间
-        if (result.size() < 24) {
-            // 获取最早记录的时间，继续往前推
-            int startHour = getCurrentHour();
-            if (!result.isEmpty()) {
-                // 从最后一条记录的时间继续往前推
-                String lastTime = result.get(result.size() - 1).getTime();
-                startHour = parseHour(lastTime) - 1;
+    static List<StatisticsFlow> bucketLast24Hours(
+            List<StatisticsFlow> samples, Long userId, long now, java.time.ZoneId zone) {
+        java.time.ZonedDateTime currentHour = java.time.Instant.ofEpochMilli(now).atZone(zone)
+                .truncatedTo(java.time.temporal.ChronoUnit.HOURS);
+        java.util.Map<Long, Long> flowByHour = new java.util.HashMap<>();
+        for (StatisticsFlow sample : samples) {
+            if (sample == null || sample.getCreatedTime() == null) {
+                continue;
             }
-
-            // 补0到24条
-            while (result.size() < 24) {
-                if (startHour < 0) startHour = 23; // 跨天处理
-
-                StatisticsFlow emptyFlow = new StatisticsFlow();
-                emptyFlow.setUserId(userId);
-                emptyFlow.setFlow(0L);
-                emptyFlow.setTotalFlow(0L);
-                emptyFlow.setTime(String.format("%02d:00", startHour));
-                result.add(emptyFlow);
-
-                startHour--;
-            }
+            long hourStart = java.time.Instant.ofEpochMilli(sample.getCreatedTime()).atZone(zone)
+                    .truncatedTo(java.time.temporal.ChronoUnit.HOURS).toInstant().toEpochMilli();
+            flowByHour.merge(hourStart, sample.getFlow() == null ? 0L : sample.getFlow(), Long::sum);
         }
 
-        log.info("用户 {} 获取到 {} 条实际记录，补齐为 {} 条24小时记录", userId, recentFlows.size(), result.size());
+        List<StatisticsFlow> result = new ArrayList<>(24);
+        for (int hoursAgo = 0; hoursAgo < 24; hoursAgo++) {
+            java.time.ZonedDateTime hour = currentHour.minusHours(hoursAgo);
+            long hourStart = hour.toInstant().toEpochMilli();
+            long flow = flowByHour.getOrDefault(hourStart, 0L);
+            StatisticsFlow bucket = new StatisticsFlow();
+            bucket.setUserId(userId);
+            bucket.setFlow(flow);
+            bucket.setTotalFlow(flow);
+            bucket.setTime(String.format("%02d:00", hour.getHour()));
+            bucket.setCreatedTime(hourStart);
+            result.add(bucket);
+        }
         return result;
-
-    }
-
-    /**
-     * 获取当前小时（0-23）
-     */
-    private int getCurrentHour() {
-        return java.time.LocalDateTime.now().getHour();
-    }
-
-    /**
-     * 解析时间字符串获取小时数
-     */
-    private int parseHour(String timeStr) {
-        try {
-            if (timeStr != null && timeStr.contains(":")) {
-                return Integer.parseInt(timeStr.split(":")[0]);
-            }
-        } catch (Exception e) {
-            // 解析失败，返回当前小时
-        }
-        return getCurrentHour();
     }
 
 

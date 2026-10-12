@@ -122,6 +122,7 @@ interface StatisticsFlow {
   flow: number;
   totalFlow: number;
   time: string;
+  createdTime?: number;
 }
 
 const EMPTY_ADMIN_OVERVIEW: MonitoringOverview = {
@@ -548,7 +549,14 @@ export default function DashboardPage() {
     const flowMap = new Map<string, number>();
 
     statisticsFlows.forEach((item) => {
-      flowMap.set(item.time, item.flow || 0);
+      // Buckets carry their start time; label them in the browser's time zone
+      // and add up entries that fall in the same hour.
+      const key = item.createdTime
+        ? new Date(item.createdTime).getHours().toString().padStart(2, "0") +
+          ":00"
+        : item.time;
+
+      flowMap.set(key, (flowMap.get(key) || 0) + (item.flow || 0));
     });
 
     // 生成图表数据，没有数据的小时显示为0

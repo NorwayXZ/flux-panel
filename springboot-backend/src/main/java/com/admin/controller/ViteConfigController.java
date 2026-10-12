@@ -4,9 +4,13 @@ package com.admin.controller;
 import com.admin.common.annotation.RequireRole;
 import com.admin.common.aop.LogAnnotation;
 import com.admin.common.lang.R;
+import com.admin.common.utils.JwtUtil;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * <p>
@@ -22,24 +26,57 @@ import java.util.Map;
 public class ViteConfigController extends BaseController {
 
     /**
-     * 获取所有网站配置
-     * 前端无需权限即可访问，用于获取网站基本信息
+     * Settings the login page and customer views need. Everything else,
+     * including the Agent communication address, is for administrators only.
+     */
+    static final Set<String> PUBLIC_CONFIG_NAMES = Set.of("app_name", "captcha_enabled", "captcha_type");
+
+    static boolean isPublicConfigName(String name) {
+        return name != null && PUBLIC_CONFIG_NAMES.contains(name);
+    }
+
+    static Map<String, String> visibleConfigs(Map<String, String> configs, boolean admin) {
+        if (admin) return configs;
+        Map<String, String> visible = new HashMap<>();
+        configs.forEach((name, value) -> {
+            if (isPublicConfigName(name)) visible.put(name, value);
+        });
+        return visible;
+    }
+
+    /**
+     * 获取网站配置
+     * 需要登录；非管理员只能看到公开配置
      */
     @LogAnnotation
     @PostMapping("/list")
+    @SuppressWarnings("unchecked")
     public R getConfigs() {
-        return viteConfigService.getConfigs();
+        R result = viteConfigService.getConfigs();
+        if (result.getCode() != 0 || !(result.getData() instanceof Map)) return result;
+        return R.ok(visibleConfigs((Map<String, String>) result.getData(), currentUserIsAdmin()));
     }
 
     /**
      * 根据配置名获取配置值
-     * 前端无需权限即可访问，用于获取特定配置
+     * 无需登录即可访问，因此只返回公开配置
      */
     @LogAnnotation
     @PostMapping("/get")
     public R getConfigByName(@RequestBody Map<String, Object> params) {
-        String name = params.get("name").toString();
-        return viteConfigService.getConfigByName(name);
+        Object name = params == null ? null : params.get("name");
+        if (name == null || !isPublicConfigName(name.toString())) {
+            return R.err("配置不存在");
+        }
+        return viteConfigService.getConfigByName(name.toString());
+    }
+
+    private boolean currentUserIsAdmin() {
+        try {
+            return Objects.equals(JwtUtil.getRoleIdFromToken(), 0);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     /**

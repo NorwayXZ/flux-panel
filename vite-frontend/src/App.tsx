@@ -53,6 +53,7 @@ const PanelAddressPage = lazy(() =>
   })),
 );
 
+import { isStaleChunkError } from "@/utils/stale-chunk";
 import AdminLayout from "@/layouts/admin";
 import H5Layout from "@/layouts/h5";
 import H5SimpleLayout from "@/layouts/h5-simple";
@@ -217,6 +218,23 @@ class PageErrorBoundary extends Component<
 
   static getDerivedStateFromError(error: Error) {
     return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    // After an upgrade the open tab still references the previous release's
+    // page chunks, which no longer exist. Reload once to pick up the new
+    // entry document; the guard prevents a loop if the failure is real.
+    if (!isStaleChunkError(error)) return;
+    try {
+      const key = "flux-stale-chunk-reload";
+      const last = Number(window.sessionStorage.getItem(key) || 0);
+
+      if (Date.now() - last < 60_000) return;
+      window.sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      return;
+    }
+    window.location.reload();
   }
 
   render() {

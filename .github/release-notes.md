@@ -1,3 +1,13 @@
+## 2.56.4 Upgrade caching, public configuration and dashboard accuracy
+
+- The panel entry document is now served with `Cache-Control: no-cache`. Previously it had no cache policy, so a browser could keep loading the previous release's page files after an upgrade and show mixed versions. An open tab that requests a page file removed by an upgrade now reloads once automatically, with a one-minute guard against reload loops.
+- `/api/v1/config/get` needs no login and returned any stored setting by name, including the Agent communication address. It now returns only the site name and the two captcha settings used by the login page. The authenticated configuration list likewise gives non-administrators only those settings. Administrators are unaffected.
+- Hourly traffic sampling no longer records an account's lifetime total as one hour of traffic when the account has no earlier sample. Counter resets still record usage since the reset.
+- The 24-hour traffic figure and chart select samples by when they were recorded instead of taking the latest 24 rows, so hours missed during downtime stay empty. Administrators now get every account combined, matching the card's label; other users still see only their own traffic. Buckets carry their start time and the chart labels them in the browser's time zone.
+- The unread alert count now counts only alerts that are still open. Recovered alerts no longer inflate the badge. Alert history and the per-alert read markers are unchanged.
+- Samples already stored with an inflated first-hour value are not rewritten; they leave the 24-hour window within a day and are deleted after 48 hours as before.
+- Adds tests for configuration visibility, stale page-file detection, hourly increments, 24-hour bucketing and the unread query. No database schema change. Agents remain at 2.56.0; 2.56.3 remains available for rollback.
+
 ## 2.56.3 OpenWrt local routing no longer offered
 
 - New Smart Entry strategies are always public carrier DNS. The routing-mode selector is removed from the create form and from public strategies.

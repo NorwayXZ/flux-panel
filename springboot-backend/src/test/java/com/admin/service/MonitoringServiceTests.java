@@ -27,4 +27,13 @@ class MonitoringServiceTests {
     void normalizesNullDetailToEmptyString() {
         assertEquals("", MonitoringService.boundedDetailForStorage(null));
     }
+
+    @Test
+    void unreadCountIgnoresRecoveredAlerts() {
+        String sql = MonitoringService.unreadAlertCountSql("1 = 1");
+
+        assertTrue(sql.contains("a.status = 'open'"));
+        assertTrue(sql.contains("r.alert_id IS NULL"));
+        assertTrue(sql.endsWith("AND 1 = 1"));
+    }
 }

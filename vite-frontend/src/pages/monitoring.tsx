@@ -327,7 +327,10 @@ export default function MonitoringPage() {
     if (response.code === 0) {
       setAlerts((current) => ({
         ...current,
-        unread: Math.max(0, current.unread - 1),
+        unread:
+          alert.status === "open"
+            ? Math.max(0, current.unread - 1)
+            : current.unread,
         items: current.items.map((item) =>
           item.id === alert.id ? { ...item, read: true } : item,
         ),

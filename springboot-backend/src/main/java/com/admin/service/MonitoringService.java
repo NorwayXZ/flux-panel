@@ -707,12 +707,17 @@ public class MonitoringService {
     private long countUnreadAlerts(Integer userId, Integer roleId) {
         Visibility visibility = visibility(userId, roleId, "a");
         List<Object> args = prepend(userId, visibility.args());
-        return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM monitoring_alert a LEFT JOIN monitoring_alert_read r "
-                        + "ON r.alert_id = a.id AND r.user_id = ? WHERE r.alert_id IS NULL AND " + visibility.sql(),
-                Long.class,
-                args.toArray()
-        );
+        return jdbcTemplate.queryForObject(unreadAlertCountSql(visibility.sql()), Long.class, args.toArray());
+    }
+
+    /**
+     * Unread means "still needs attention": an alert that has recovered no
+     * longer counts, otherwise the badge only ever grows.
+     */
+    static String unreadAlertCountSql(String visibilitySql) {
+        return "SELECT COUNT(*) FROM monitoring_alert a LEFT JOIN monitoring_alert_read r "
+                + "ON r.alert_id = a.id AND r.user_id = ? WHERE r.alert_id IS NULL AND a.status = '"
+                + ALERT_OPEN + "' AND " + visibilitySql;
     }
 
     private Map<String, Object> alertResponse(Map<String, Object> row, Map<Integer, String> userNames) {

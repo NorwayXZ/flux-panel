@@ -63,16 +63,8 @@ public class StatisticsFlowAsync {
             );
 
             long currentTotalFlow = currentFlow;
-            long incrementFlow = currentTotalFlow;
-            
-            if (lastFlowRecord != null) {
-                long lastTotalFlow = lastFlowRecord.getTotalFlow();
-                incrementFlow = currentTotalFlow - lastTotalFlow;
-                
-                if (incrementFlow < 0) {
-                    incrementFlow = currentTotalFlow; 
-                }
-            }
+            long incrementFlow = hourlyIncrement(
+                    lastFlowRecord == null ? null : lastFlowRecord.getTotalFlow(), currentTotalFlow);
 
             StatisticsFlow statisticsFlow = new StatisticsFlow();
             statisticsFlow.setUserId(user.getId());
@@ -87,4 +79,20 @@ public class StatisticsFlowAsync {
         statisticsFlowService.saveBatch(statisticsFlowList);
     }
 
+
+    /**
+     * Traffic used since the previous hourly sample.
+     *
+     * The first sample of an account has nothing to compare with, so it records
+     * zero rather than the account's whole lifetime total. A total lower than the
+     * previous one means the counter was reset; usage since the reset is the
+     * current total.
+     */
+    static long hourlyIncrement(Long previousTotal, long currentTotal) {
+        if (previousTotal == null) {
+            return 0L;
+        }
+        long increment = currentTotal - previousTotal;
+        return increment < 0 ? currentTotal : increment;
+    }
 }
