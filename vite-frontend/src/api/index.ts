@@ -258,11 +258,6 @@ export const startBatchAgentUpgrade = (
 ) => Network.post<AgentUpgradeBatch>("/node/upgrade/batch", { mode });
 export const getManualAgentUpgradeCommand = (nodeId: number) =>
   Network.post<string>("/node/upgrade/manual-command", { nodeId });
-export const getAgentUpgradeHistory = (nodeId?: number) =>
-  Network.post<AgentUpgradeTask[]>(
-    "/node/upgrade/history",
-    nodeId ? { nodeId } : {},
-  );
 
 export type SelfCheckStatus = "healthy" | "warning" | "failed" | "skipped";
 export interface SystemSelfCheckRun {
@@ -488,8 +483,6 @@ export const removeUserNode = (data: { userId: number; nodeId: number }) =>
 export const createTunnel = (data: any) =>
   Network.mutate("/tunnel/create", data, ["/tunnel/list"]);
 export const getTunnelList = () => Network.postCached("/tunnel/list", {}, 8000);
-export const getTunnelById = (id: number) =>
-  Network.post("/tunnel/get", { id });
 export const updateTunnel = (data: any) =>
   Network.mutate("/tunnel/update", data, ["/tunnel/list"]);
 export const deleteTunnel = (id: number) =>
@@ -2504,11 +2497,6 @@ export interface TopologyGraph {
 export const getTopologyGraph = () =>
   Network.post<TopologyGraph>("/topology/graph");
 
-// 转发排序操作
-export const updateForwardOrder = (data: {
-  forwards: Array<{ id: number; inx: number }>;
-}) => Network.mutate("/forward/update-order", data, ["/forward/list"]);
-
 // 用户级卡片布局
 export const getLayoutOrder = (scope: string) =>
   Network.post<string[]>("/layout/order", { scope });
@@ -2680,14 +2668,7 @@ export const saveTelegramNotificationSettings = (
 export const testTelegramNotification = () =>
   Network.post<string>("/monitoring/notifications/test");
 
-// 限速规则CRUD操作 - 全部使用POST请求
-export const createSpeedLimit = (data: any) =>
-  Network.post("/speed-limit/create", data);
 export const getSpeedLimitList = () => Network.post("/speed-limit/list");
-export const updateSpeedLimit = (data: any) =>
-  Network.post("/speed-limit/update", data);
-export const deleteSpeedLimit = (id: number) =>
-  Network.post("/speed-limit/delete", { id });
 
 // 修改密码接口
 export const updatePassword = (data: any) =>
@@ -3029,28 +3010,6 @@ export interface OpenWrtDnsResolver {
 }
 export const getOpenWrtDnsResolvers = () =>
   Network.post<OpenWrtDnsResolver[]>("/openwrt-dns/list");
-export const getOpenWrtDnsOptions = () =>
-  Network.post<{
-    groups: {
-      id: number;
-      name: string;
-      domain: string;
-      recordType: string;
-      state: string;
-      routeCount: number;
-    }[];
-    carrierDatabase: {
-      carrier: string;
-      state: string;
-      cidrCount: number;
-      updatedAt: number;
-    }[];
-  }>("/openwrt-dns/options");
-export const configureOpenWrtDns = (data: {
-  connectorId: number;
-  interfaceCarriers: Record<string, string>;
-  smartEntryGroupIds: number[];
-}) => Network.post("/openwrt-dns/configure", data, 170000);
 export const removeOpenWrtDns = (connectorId: number) =>
   Network.post("/openwrt-dns/remove", { connectorId });
 export const repairOpenWrtDns = (connectorId: number) =>
@@ -3467,6 +3426,3 @@ export const getHomeProxyNatEvents = (id: number) =>
 
 // 验证码相关接口
 export const checkCaptcha = () => Network.post("/captcha/check");
-export const generateCaptcha = () => Network.post(`/captcha/generate`);
-export const verifyCaptcha = (data: { captchaId: string; trackData: string }) =>
-  Network.post("/captcha/verify", data);
