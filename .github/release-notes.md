@@ -1,3 +1,11 @@
+## 2.56.3 OpenWrt local routing no longer offered
+
+- New Smart Entry strategies are always public carrier DNS. The routing-mode selector is removed from the create form and from public strategies.
+- Existing local OpenWrt strategies keep running unchanged. Their edit form still shows the selector so they can stay local or move to public DNS, and they can be deleted as before. Adding new routers from the strategy form or the router tab is removed; install, uninstall, repair and record removal for existing routers remain.
+- The router tab is labelled "OpenWrt 路由器（旧）" and is hidden when there are no local strategies and no registered routers.
+- The Smart Entry tutorial now describes the public DNS flow.
+- Frontend-only release. Backend APIs, the database and installed router Agents are untouched, so the option can be restored by reverting this release. Agents remain at 2.56.0; 2.56.2 remains available for rollback.
+
 ## 2.56.2 Simpler Smart Entry page
 
 - Strategy cards now show the address and port a client must enter, each with a copy button, instead of a small `domain:port` line.

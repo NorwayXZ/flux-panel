@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
-import { Input } from "@heroui/input";
 import {
   Modal,
   ModalBody,
@@ -10,11 +9,10 @@ import {
   ModalFooter,
   ModalHeader,
 } from "@heroui/modal";
-import { Router, Plus, RefreshCw, Download, Trash2 } from "lucide-react";
+import { Router, RefreshCw, Download, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { hasVerifiedRouterDns } from "@/utils/openwrt-dns-status";
 import {
-  createInternalConnector,
   getInternalConnectorInstall,
   getOpenWrtDnsResolvers,
   removeOpenWrtDns,
@@ -40,9 +38,6 @@ export default function SmartEntryRouters({
   const [resolvers, setResolvers] = useState<OpenWrtDnsResolver[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
   const [command, setCommand] = useState("");
   const [repairingId, setRepairingId] = useState<number>();
   const repair = async (resolver: OpenWrtDnsResolver) => {
@@ -81,26 +76,6 @@ export default function SmartEntryRouters({
   useEffect(() => {
     void load();
   }, [groups, load]);
-  const create = async () => {
-    if (!name.trim()) return toast.error("请输入路由器名称");
-    setSaving(true);
-    try {
-      const result = await createInternalConnector({
-        name: name.trim(),
-        platform: "openwrt",
-        connectorRole: "openwrt_dns",
-      });
-      if (result.code !== 0) return toast.error(result.msg || "创建失败");
-      setCreateOpen(false);
-      setName("");
-      setCommand(result.data.installCommand);
-      toast.success("路由器已添加，安装后创建策略并选择即可");
-      void load();
-      onChanged();
-    } finally {
-      setSaving(false);
-    }
-  };
   const install = async (resolver: OpenWrtDnsResolver, uninstall = false) => {
     const result = await getInternalConnectorInstall(
       resolver.connectorId,
@@ -150,13 +125,6 @@ export default function SmartEntryRouters({
           >
             刷新
           </Button>
-          <Button
-            color="primary"
-            startContent={<Plus size={16} />}
-            onPress={() => setCreateOpen(true)}
-          >
-            添加路由器
-          </Button>
         </div>
       </header>
       <details className="rounded-lg border border-divider p-4 text-sm">
@@ -179,7 +147,7 @@ export default function SmartEntryRouters({
       {!resolvers.length && !loading && (
         <div className="py-10 text-center text-default-500">
           <Router className="mx-auto mb-3" size={32} />
-          暂无路由器，也可以在新建三网优化时直接添加。
+          暂无路由器。OpenWrt 本地选路已不再提供新建。
         </div>
       )}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -375,26 +343,6 @@ export default function SmartEntryRouters({
           );
         })}
       </div>
-      <Modal isOpen={createOpen} onOpenChange={setCreateOpen}>
-        <ModalContent>
-          <ModalHeader>添加路由器</ModalHeader>
-          <ModalBody>
-            <Input label="路由器名称" value={name} onValueChange={setName} />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setCreateOpen(false)}>
-              取消
-            </Button>
-            <Button
-              color="primary"
-              isLoading={saving}
-              onPress={() => void create()}
-            >
-              添加
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
       <Modal
         isOpen={Boolean(command)}
         onOpenChange={(open) => {

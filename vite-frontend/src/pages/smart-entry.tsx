@@ -42,7 +42,6 @@ import {
   getSmartEntryOptions,
   getSmartEntryOverview,
   saveSmartEntry,
-  createInternalConnector,
   getOpenWrtDnsResolvers,
   type OpenWrtDnsResolver,
   type SmartEntryDnsDiagnosis,
@@ -316,9 +315,6 @@ export default function SmartEntryPage() {
   const [dnsResolverStates, setDnsResolverStates] = useState<
     OpenWrtDnsResolver[]
   >([]);
-  const [agentName, setAgentName] = useState("");
-  const [creatingAgent, setCreatingAgent] = useState(false);
-  const [installCommand, setInstallCommand] = useState("");
   const [domains, setDomains] = useState<string[]>([]);
   const [domainsLoading, setDomainsLoading] = useState(false);
   const [domainsError, setDomainsError] = useState("");
@@ -556,34 +552,6 @@ export default function SmartEntryPage() {
       void loadDomains(String(group.providerRefId), group.zoneName);
   };
 
-  const addAgent = async () => {
-    if (!agentName.trim()) return toast.error("请输入路由器名称");
-    setCreatingAgent(true);
-    try {
-      const response = await createInternalConnector({
-        name: agentName.trim(),
-        platform: "openwrt",
-        connectorRole: "openwrt_dns",
-      });
-      if (response.code !== 0)
-        return toast.error(response.msg || "创建路由器失败");
-      const agent = response.data.connector;
-      setDnsAgents((current) => [
-        ...current,
-        { id: agent.id, name: agent.name, online: false },
-      ]);
-      setForm((current) => ({
-        ...current,
-        dnsAgentIds: [...current.dnsAgentIds, String(agent.id)],
-      }));
-      setInstallCommand(response.data.installCommand);
-      setAgentName("");
-      toast.success("已添加并选中路由器，请执行安装命令");
-    } finally {
-      setCreatingAgent(false);
-    }
-  };
-
   const selectProvider = (providerRefId: string) => {
     const provider = providers.find(
       (item) => String(item.id) === providerRefId,
@@ -798,7 +766,13 @@ export default function SmartEntryPage() {
   const editingLocal =
     Boolean(form.id) &&
     groups.find((group) => group.id === form.id)?.dnsMode === "local";
-  const modeAtTop = editingLocal || form.dnsMode === "local";
+  // Local OpenWrt routing is no longer offered. The selector only remains on
+  // an existing local strategy so it can stay as it is or move to public DNS.
+  const showRouters =
+    groups.some((group) => group.dnsMode === "local") ||
+    dnsAgents.length > 0 ||
+    dnsResolverStates.length > 0;
+  const activeView = showRouters ? view : "strategies";
   const modeSelect = (
     <Select
       disallowEmptySelection
@@ -817,7 +791,7 @@ export default function SmartEntryPage() {
         公共 DNS 三网解析（远程用户，无需 Agent）
       </SelectItem>
       <SelectItem key="local" textValue="OpenWrt 本地选路">
-        OpenWrt 本地选路（仅使用该路由器 DNS 的设备）
+        保持 OpenWrt 本地选路（仅使用该路由器 DNS 的设备）
       </SelectItem>
     </Select>
   );
@@ -846,15 +820,17 @@ export default function SmartEntryPage() {
           新建三网优化
         </Button>
       </header>
-      <Tabs
-        aria-label="三网优化管理"
-        selectedKey={view}
-        onSelectionChange={(key) => changeView(String(key))}
-        variant="underlined"
-      >
-        <Tab key="strategies" title="优化策略" />
-        <Tab key="routers" title="OpenWrt 路由器" />
-      </Tabs>
+      {showRouters && (
+        <Tabs
+          aria-label="三网优化管理"
+          selectedKey={activeView}
+          variant="underlined"
+          onSelectionChange={(key) => changeView(String(key))}
+        >
+          <Tab key="strategies" title="优化策略" />
+          <Tab key="routers" title="OpenWrt 路由器（旧）" />
+        </Tabs>
+      )}
       {loadError && (
         <div
           role="alert"
@@ -864,7 +840,7 @@ export default function SmartEntryPage() {
         </div>
       )}
 
-      {view === "routers" ? (
+      {activeView === "routers" ? (
         <SmartEntryRouters
           groups={groups}
           onChanged={() => void loadData()}
@@ -961,10 +937,7 @@ export default function SmartEntryPage() {
                   <div className="mt-3 grid gap-2 text-xs text-default-500 sm:grid-cols-3">
                     <span>客户端无需安装任何程序</span>
                     <span>默认入口用于识别不出运营商的来源</span>
-                    <span>
-                      OpenWrt 本地选路属于高级用法，仅对使用该路由器 DNS
-                      的设备生效
-                    </span>
+                    <span>手机 5G、家宽、公司网络都按各自运营商解析</span>
                   </div>
                 </div>
               </div>
@@ -1751,7 +1724,7 @@ export default function SmartEntryPage() {
         <ModalContent>
           <ModalHeader>{form.id ? "编辑三网优化" : "新建三网优化"}</ModalHeader>
           <ModalBody className="gap-5">
-            {modeAtTop && modeSelect}
+            {editingLocal && modeSelect}
             {form.dnsMode === "public" &&
               form.id &&
               groups.find((group) => group.id === form.id)?.dnsMode ===
@@ -1784,33 +1757,10 @@ export default function SmartEntryPage() {
                     </SelectItem>
                   ))}
                 </Select>
-                <div className="flex items-end gap-2">
-                  <Input
-                    label="添加新路由器"
-                    placeholder="例如：家里的 OpenWrt"
-                    value={agentName}
-                    onValueChange={setAgentName}
-                  />
-                  <Button
-                    variant="flat"
-                    isLoading={creatingAgent}
-                    onPress={() => void addAgent()}
-                  >
-                    添加
-                  </Button>
-                </div>
                 <p className="text-xs text-default-500">
-                  自动识别出口运营商，无需填写 WAN。支持
-                  Cloudflare、阿里云、腾讯云等域名托管，不需要 DNS API 凭据。
+                  OpenWrt 本地选路已不再提供新建，仅对使用该路由器 DNS
+                  的设备生效。远程用户请将上方选路方式改为公共 DNS。
                 </p>
-                {form.id &&
-                  groups.find((group) => group.id === form.id)?.dnsMode !==
-                    "local" && (
-                    <p className="text-xs text-warning">
-                      保存后将转为本地选路并释放面板接管的公共 DNS
-                      线路记录。未使用该 OpenWrt DNS 的设备将不再受此策略调度。
-                    </p>
-                  )}
               </section>
             )}
             <section className="grid gap-3 sm:grid-cols-2">
@@ -2138,7 +2088,6 @@ export default function SmartEntryPage() {
               <summary className="cursor-pointer text-sm font-semibold">
                 高级设置
               </summary>
-              {!modeAtTop && <div className="mt-3">{modeSelect}</div>}
               <div className="mb-3 mt-4">
                 <h3 className="text-sm font-semibold">故障切换灵敏度</h3>
                 <p className="mt-1 text-xs text-default-500">
@@ -2315,44 +2264,6 @@ export default function SmartEntryPage() {
             </Button>
             <Button color="primary" isLoading={saving} onPress={submit}>
               保存
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal
-        isOpen={Boolean(installCommand)}
-        onOpenChange={(open) => {
-          if (!open) setInstallCommand("");
-        }}
-        scrollBehavior="inside"
-        size="2xl"
-      >
-        <ModalContent>
-          <ModalHeader>安装 OpenWrt Agent</ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-default-500">
-              复制到 OpenWrt
-              终端执行。安装后保存当前策略即可，无需另行绑定或设置 WAN。
-            </p>
-            <pre className="whitespace-pre-wrap break-all rounded-lg bg-default-100 p-3 text-xs">
-              {installCommand}
-            </pre>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setInstallCommand("")}>
-              关闭
-            </Button>
-            <Button
-              color="primary"
-              onPress={() =>
-                void navigator.clipboard.writeText(installCommand).then(
-                  () => toast.success("已复制"),
-                  () => toast.error("复制失败，请手动复制"),
-                )
-              }
-            >
-              复制命令
             </Button>
           </ModalFooter>
         </ModalContent>
