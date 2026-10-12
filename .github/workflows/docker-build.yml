@@ -37,6 +37,7 @@ jobs:
       - name: Test deployment scripts and Compose files
         run: |
           sh scripts/check-version-consistency.sh
+          python3 scripts/check-schema-sources.py
           sh scripts/test-agent-installer.sh
           python3 scripts/test-openwrt-dns-installer.py
           bash scripts/test-runtime-healthcheck.sh
