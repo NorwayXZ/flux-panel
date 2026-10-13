@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.Map;
 
 @Data
 public class PrivateProxy implements Serializable {
@@ -36,6 +37,8 @@ public class PrivateProxy implements Serializable {
     private Integer flowResetDay;
     private Long lastFlowResetAt;
     private Integer speedLimitMbps;
+    private String exitType;
+    private String exitCountry;
     private Long createdTime;
     private Long updatedTime;
 
@@ -50,4 +53,5 @@ public class PrivateProxy implements Serializable {
     @TableField(exist = false) private Long remainingFlow;
     @TableField(exist = false) private Long remainingTime;
     @TableField(exist = false) private Boolean speedLimitSupported;
+    @TableField(exist = false) private Map<String, Object> exit;
 }

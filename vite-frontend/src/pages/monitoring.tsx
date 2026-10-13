@@ -120,6 +120,7 @@ const RESOURCE_LABELS: Record<MonitoringResourceType, string> = {
   forward: "转发",
   certificate: "证书",
   dynamic_dns: "动态 DNS",
+  exit_group: "家宽出口",
 };
 
 const STATUS_LABELS: Record<MonitoringStatus, string> = {
@@ -1174,6 +1175,7 @@ function AlertList(props: AlertListProps) {
             <option value="forward">转发</option>
             <option value="certificate">证书</option>
             <option value="dynamic_dns">动态 DNS</option>
+            <option value="exit_group">家宽出口</option>
           </select>
           <select
             aria-label="严重程度"

@@ -35,4 +35,8 @@ public class PrivateProxyCreateDto {
     private Integer leaseHours;
     @NotNull
     private Boolean permanent;
+    @Pattern(regexp = "|node|residential", message = "不支持的出口类型")
+    private String exitType;
+    @Pattern(regexp = "|[A-Za-z]{2}", message = "出口国家格式不正确")
+    private String exitCountry;
 }

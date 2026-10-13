@@ -27,6 +27,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.net.InetAddress;
@@ -60,12 +62,14 @@ public class PrivateProxyService {
     private final PortAllocationLockMapper allocationLockMapper;
     private final PortLedgerService portLedgerService;
     private final UserQuotaService userQuotaService;
+    private final ExitPoolService exitPoolService;
     private final AESCrypto crypto;
     private final TransactionTemplate transactionTemplate;
 
     public PrivateProxyService(PrivateProxyMapper proxyMapper, NodeMapper nodeMapper, UserMapper userMapper,
                                PortAllocationLockMapper allocationLockMapper, PortLedgerService portLedgerService,
-                               UserQuotaService userQuotaService, PlatformTransactionManager transactionManager,
+                               UserQuotaService userQuotaService, ExitPoolService exitPoolService,
+                               PlatformTransactionManager transactionManager,
                                @Value("${jwt-secret}") String secret) {
         this.proxyMapper = proxyMapper;
         this.nodeMapper = nodeMapper;
@@ -73,6 +77,7 @@ public class PrivateProxyService {
         this.allocationLockMapper = allocationLockMapper;
         this.portLedgerService = portLedgerService;
         this.userQuotaService = userQuotaService;
+        this.exitPoolService = exitPoolService;
         this.crypto = new AESCrypto(secret + ":private-proxy");
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -159,6 +164,13 @@ public class PrivateProxyService {
         if (grant == null && Boolean.FALSE.equals(dto.getPermanent()) && (dto.getLeaseHours() == null || dto.getLeaseHours() < 1)) {
             return R.err("定时代理必须填写有效期");
         }
+        boolean residentialExit = "residential".equals(dto.getExitType());
+        String exitCountry = residentialExit ? ExitPoolService.normalizeCountry(dto.getExitCountry()) : null;
+        if (residentialExit) {
+            R exitCheck = checkResidentialExit(proxyType, node, exitCountry);
+            if (exitCheck.getCode() != 0) return exitCheck;
+        }
+        String exitInterface = residentialExit ? ExitPoolService.interfaceName(exitCountry) : null;
         if (Boolean.TRUE.equals(portLedgerService.diagnose(node.getId(), dto.getListenPort()).get("occupied"))) {
             return R.err("端口已被面板中的其他业务占用");
         }
@@ -191,6 +203,8 @@ public class PrivateProxyService {
         proxy.setFlowResetDay(grant == null ? 0 : grant.getFlowResetDay());
         proxy.setLastFlowResetAt(grant == null ? null : now);
         proxy.setSpeedLimitMbps(grant != null && supportsGrantRateLimit(proxyType) ? grant.getSpeedLimitMbps() : null);
+        proxy.setExitType(residentialExit ? "residential" : "node");
+        proxy.setExitCountry(exitCountry);
         assignRuntimeNames(proxy, !cidrs.isEmpty());
         proxy.setCreatedTime(now);
         proxy.setUpdatedTime(now);
@@ -207,8 +221,9 @@ public class PrivateProxyService {
             }
             Map<String, Object> clientConfig;
             if ("shadowsocks".equals(proxyType)) {
-                requireGost(GostUtil.AddShadowsocksProxy(node.getId(), proxy.getServiceName(), bindIp,
-                        proxy.getListenPort(), cipher, password, proxy.getAdmissionName(), limiterName), "创建 Shadowsocks 失败");
+                requireGost(GostUtil.sendShadowsocksProxy(node.getId(), proxy.getServiceName(), bindIp,
+                        proxy.getListenPort(), cipher, password, proxy.getAdmissionName(), limiterName,
+                        exitInterface, "AddService"), "创建 Shadowsocks 失败");
                 clientConfig = new LinkedHashMap<>();
                 clientConfig.put("cipher", cipher);
                 clientConfig.put("password", password);
@@ -263,8 +278,9 @@ public class PrivateProxyService {
                     clientConfig.put("clientAddress", clientAddress);
                 }
             } else {
-                requireGost(GostUtil.AddPrivateProxy(node.getId(), proxy.getServiceName(), proxyType, bindIp,
-                        proxy.getListenPort(), username, password, proxy.getAdmissionName(), limiterName), "创建代理失败");
+                requireGost(GostUtil.sendPrivateProxy(node.getId(), proxy.getServiceName(), proxyType, bindIp,
+                        proxy.getListenPort(), username, password, proxy.getAdmissionName(), limiterName,
+                        exitInterface, "AddService"), "创建代理失败");
                 clientConfig = new LinkedHashMap<>();
                 clientConfig.put("username", username);
                 clientConfig.put("password", password);
@@ -274,6 +290,7 @@ public class PrivateProxyService {
             proxy.setLastError(null);
             proxy.setUpdatedTime(System.currentTimeMillis());
             proxyMapper.updateById(proxy);
+            if (residentialExit) reconcileExitsAfterCommit();
             return R.ok(view(proxy));
         } catch (RuntimeException e) {
             boolean cleaned = cleanupRuntime(proxy, node);
@@ -283,6 +300,80 @@ public class PrivateProxyService {
             proxyMapper.updateById(proxy);
             return R.err(e.getMessage());
         }
+    }
+
+    /**
+     * 修改已有代理的出口。改回“节点自身 IP”即可随时停用家宽出口。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public R updateExit(Long id, String exitType, String country) {
+        if (!isAdmin()) return R.err("只有管理员可以修改代理出口");
+        PrivateProxy proxy = id == null ? null : proxyMapper.selectById(id);
+        if (proxy == null || "deleted".equals(proxy.getState())) return R.err("代理不存在");
+        boolean residentialExit = "residential".equals(exitType);
+        if (!residentialExit && !"node".equals(exitType)) return R.err("不支持的出口类型");
+        String exitCountry = residentialExit ? ExitPoolService.normalizeCountry(country) : null;
+        if (Objects.equals(StringUtils.defaultIfBlank(proxy.getExitType(), "node"), exitType)
+                && Objects.equals(proxy.getExitCountry(), exitCountry)) {
+            return R.ok(view(proxy));
+        }
+        if (!ExitPoolService.SUPPORTED_PROXY_TYPES.contains(proxy.getProxyType())) {
+            return R.err("家宽出口目前支持 SOCKS5、HTTP 和 Shadowsocks 代理");
+        }
+        if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以修改出口，请先恢复代理");
+        Node node = nodeMapper.selectById(proxy.getNodeId());
+        if (node == null || !WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法修改出口");
+        if (residentialExit) {
+            R exitCheck = checkResidentialExit(proxy.getProxyType(), node, exitCountry);
+            if (exitCheck.getCode() != 0) return exitCheck;
+        }
+        String exitInterface = residentialExit ? ExitPoolService.interfaceName(exitCountry) : null;
+        String limiterName = proxy.getGrantedByUserId() != null && supportsGrantRateLimit(proxy.getProxyType()) ? limiterName(proxy) : null;
+        String password;
+        try {
+            password = crypto.decryptString(proxy.getAuthPassword());
+        } catch (Exception e) {
+            return R.err("代理密码解密失败，无法修改出口");
+        }
+        GostDto result = "shadowsocks".equals(proxy.getProxyType())
+                ? GostUtil.sendShadowsocksProxy(node.getId(), proxy.getServiceName(), proxy.getBindIp(), proxy.getListenPort(),
+                proxy.getAuthUsername(), password, proxy.getAdmissionName(), limiterName, exitInterface, "UpdateService")
+                : GostUtil.sendPrivateProxy(node.getId(), proxy.getServiceName(), proxy.getProxyType(), proxy.getBindIp(),
+                proxy.getListenPort(), proxy.getAuthUsername(), password, proxy.getAdmissionName(), limiterName,
+                exitInterface, "UpdateService");
+        if (!gostSuccess(result)) return R.err("修改出口失败：" + gostMessage(result));
+        proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
+                .set("exit_type", exitType).set("exit_country", exitCountry)
+                .set("updated_time", System.currentTimeMillis()));
+        reconcileExitsAfterCommit();
+        return R.ok(view(proxyMapper.selectById(proxy.getId())));
+    }
+
+    private R checkResidentialExit(String proxyType, Node node, String exitCountry) {
+        if (!isAdmin()) return R.err("家宽出口目前仅管理员可以配置");
+        if (StringUtils.isBlank(exitCountry)) return R.err("请选择出口国家");
+        if (!ExitPoolService.SUPPORTED_PROXY_TYPES.contains(proxyType)) {
+            return R.err("家宽出口目前支持 SOCKS5、HTTP 和 Shadowsocks 代理");
+        }
+        if (!AgentVersionUtil.isAtLeast(node.getVersion(), ExitPoolService.MIN_AGENT_VERSION)) {
+            return R.err("家宽出口需要节点 Agent " + ExitPoolService.MIN_AGENT_VERSION + " 或更高版本，请先升级该节点");
+        }
+        if (!exitPoolService.hasCandidates(exitCountry)) return R.err("该国家当前没有可用的家宽出口");
+        return R.ok();
+    }
+
+    /** 事务提交后再触发出口调度，保证调度线程能读到刚保存的代理。 */
+    private void reconcileExitsAfterCommit() {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            exitPoolService.requestReconcile();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                exitPoolService.requestReconcile();
+            }
+        });
     }
 
     public R list() {
@@ -565,6 +656,13 @@ public class PrivateProxyService {
         proxy.setRemainingTime(proxy.getExpiresAt() == null ? null
                 : Math.max(0L, proxy.getExpiresAt() - System.currentTimeMillis()));
         String unavailableReason = unavailableReason(proxy);
+        if ("residential".equals(proxy.getExitType()) && StringUtils.isNotBlank(proxy.getExitCountry())) {
+            Map<String, Object> exit = exitPoolService.exitView(proxy.getNodeId(), proxy.getExitCountry());
+            proxy.setExit(exit);
+            if (unavailableReason == null && !"ok".equals(exit.get("status"))) {
+                unavailableReason = "当前没有可用的" + exit.get("countryName") + "家宽出口，代理已断开，不会改用节点自身 IP";
+            }
+        }
         proxy.setAvailable(unavailableReason == null);
         proxy.setUnavailableReason(unavailableReason);
         hideInternalGrantPolicy(proxy, isAdmin());

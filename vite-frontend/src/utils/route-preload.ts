@@ -31,6 +31,7 @@ const routeLoaders: Record<string, RouteLoader> = {
   "/udp-quic-diagnostic": () => import("@/pages/udp-quic-diagnostic"),
   "/multi-line-aggregation": () => import("@/pages/multi-line-aggregation"),
   "/ip-quality": () => import("@/pages/ip-quality"),
+  "/exit-pool": () => import("@/pages/exit-pool"),
   "/virtual-lan": () => import("@/pages/private-network"),
   "/private-network": () => import("@/pages/private-network"),
   "/server-assets": () => import("@/pages/server-assets"),

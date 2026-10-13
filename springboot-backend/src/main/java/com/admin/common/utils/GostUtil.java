@@ -38,6 +38,18 @@ public class GostUtil {
     public static GostDto AddPrivateProxy(Long nodeId, String serviceName, String proxyType,
                                           String bindIp, Integer port, String username,
                                           String password, String admissionName, String limiterName) {
+        return sendPrivateProxy(nodeId, serviceName, proxyType, bindIp, port, username, password,
+                admissionName, limiterName, null, "AddService");
+    }
+
+    /**
+     * 创建或更新 SOCKS5/HTTP 私人代理。exitInterface 非空时，代理的全部出站连接只走该出口；
+     * 出口不可用时连接直接失败，不会改走节点自身的网络。
+     */
+    public static GostDto sendPrivateProxy(Long nodeId, String serviceName, String proxyType,
+                                           String bindIp, Integer port, String username,
+                                           String password, String admissionName, String limiterName,
+                                           String exitInterface, String command) {
         JSONObject service = new JSONObject();
         service.put("name", serviceName);
         service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
@@ -54,10 +66,11 @@ public class GostUtil {
         JSONObject listener = new JSONObject();
         listener.put("type", "tcp");
         service.put("listener", listener);
+        if (StringUtils.isNotBlank(exitInterface)) service.put("interface", exitInterface);
 
         JSONArray services = new JSONArray();
         services.add(service);
-        return WebSocketServer.send_msg(nodeId, services, "AddService");
+        return WebSocketServer.send_msg(nodeId, services, command);
     }
 
     public static GostDto AddPrivateProxyWithChain(Long nodeId, String serviceName, String proxyType,
@@ -82,12 +95,38 @@ public class GostUtil {
 
     public static GostDto AddShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
                                                String cipher, String password, String admissionName, String limiterName) {
+        return sendShadowsocksProxy(nodeId, serviceName, bindIp, port, cipher, password, admissionName, limiterName,
+                null, "AddService");
+    }
+
+    public static GostDto sendShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
+                                                String cipher, String password, String admissionName, String limiterName,
+                                                String exitInterface, String command) {
         JSONArray services = new JSONArray();
         services.add(createAuthenticatedService(serviceName + "-tcp", bindIp, port, "ss", "tcp",
                 cipher, password, admissionName, limiterName));
         services.add(createAuthenticatedService(serviceName + "-udp", bindIp, port, "ssu", "udp",
                 cipher, password, admissionName, limiterName));
-        return WebSocketServer.send_msg(nodeId, services, "AddService");
+        if (StringUtils.isNotBlank(exitInterface)) {
+            for (int i = 0; i < services.size(); i++) services.getJSONObject(i).put("interface", exitInterface);
+        }
+        return WebSocketServer.send_msg(nodeId, services, command);
+    }
+
+    public static GostDto SyncExitPool(Long nodeId, JSONObject payload) {
+        return WebSocketServer.send_msg(nodeId, payload, "ExitPoolSync", 10);
+    }
+
+    public static GostDto GetExitPoolStatus(Long nodeId, String group) {
+        JSONObject data = new JSONObject();
+        data.put("group", group);
+        return WebSocketServer.send_msg(nodeId, data, "ExitPoolStatus", 8);
+    }
+
+    public static GostDto DeleteExitPool(Long nodeId, String group) {
+        JSONObject data = new JSONObject();
+        data.put("group", group);
+        return WebSocketServer.send_msg(nodeId, data, "ExitPoolDelete", 15);
     }
 
     public static GostDto AddRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,

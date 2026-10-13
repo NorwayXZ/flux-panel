@@ -345,6 +345,7 @@ public class TelegramNotificationService {
             case "tunnel" -> settings.tunnelEnabled();
             case "forward" -> settings.forwardEnabled();
             case "certificate" -> settings.forwardEnabled();
+            case "exit_group" -> settings.forwardEnabled();
             default -> false;
         };
     }
@@ -411,6 +412,7 @@ public class TelegramNotificationService {
             case "forward" -> "转发";
             case "certificate" -> "证书";
             case "dynamic_dns" -> "动态 DNS";
+            case "exit_group" -> "家宽出口";
             default -> "资源";
         };
     }

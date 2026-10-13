@@ -36,6 +36,7 @@ public class MonitoringService {
     private static final String OFFLINE = "offline";
     private static final String PAUSED = "paused";
     private static final String UNKNOWN = "unknown";
+    private static final long EXIT_ALERT_DELAY_MS = 5 * 60_000L;
     private static final String ALERT_OPEN = "open";
     private static final String ALERT_RESOLVED = "resolved";
     static final int DETAIL_MAX_LENGTH = 500;
@@ -99,6 +100,7 @@ public class MonitoringService {
         states.addAll(forwardStates.values());
         states.addAll(certificateStates.values());
         states.addAll(dynamicDnsStates.values());
+        states.addAll(evaluateExitGroups(now).values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -219,7 +221,7 @@ public class MonitoringService {
             where.append(" AND a.status = ?");
             args.add(status);
         }
-        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns").contains(resourceType)) {
+        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group").contains(resourceType)) {
             where.append(" AND a.resource_type = ?");
             args.add(resourceType);
         }
@@ -490,6 +492,45 @@ public class MonitoringService {
                     : "success".equals(lastStatus) ? "当前地址：" + stringValue(row.get("last_applied_ip"))
                     : "等待首次检测";
             states.put(id, new ResourceState("dynamic_dns", id, stringValue(row.get("name")), 1, status, detail));
+        }
+        return states;
+    }
+
+    /** 家宽出口：持续几分钟没有可用出口，或节点环境不满足时告警。短暂的切换不告警。 */
+    private Map<Long, ResourceState> evaluateExitGroups(long now) {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList(
+                    "SELECT g.id,g.country,g.status,g.detail,g.active_exit_ip,g.active_owner,g.no_exit_since,n.name AS node_name "
+                            + "FROM exit_group g JOIN node n ON n.id=g.node_id WHERE g.status<>'removing' ORDER BY g.id");
+        } catch (org.springframework.dao.DataAccessException e) {
+            // 出口功能的存储不可用时不影响其他资源的监控
+            return states;
+        }
+        if (rows == null) return states;
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("id"));
+            String groupStatus = stringValue(row.get("status"));
+            String name = stringValue(row.get("node_name")) + " · " + ExitPoolService.countryName(stringValue(row.get("country")));
+            long withoutExit = row.get("no_exit_since") == null ? 0L : now - longValue(row.get("no_exit_since"));
+            String status;
+            String detail;
+            if ("ok".equals(groupStatus)) {
+                status = HEALTHY;
+                String owner = stringValue(row.get("active_owner"));
+                detail = "当前出口 " + stringValue(row.get("active_exit_ip")) + (owner.isBlank() ? "" : "（" + owner + "）");
+            } else if (List.of("agent_outdated", "setup_failed").contains(groupStatus)) {
+                status = OFFLINE;
+                detail = stringValue(row.get("detail"));
+            } else if (List.of("no_exit", "agent_error", "searching").contains(groupStatus) && withoutExit >= EXIT_ALERT_DELAY_MS) {
+                status = OFFLINE;
+                detail = "已有 " + (withoutExit / 60_000L) + " 分钟没有可用出口，相关代理已断开：" + stringValue(row.get("detail"));
+            } else {
+                status = UNKNOWN;
+                detail = stringValue(row.get("detail"));
+            }
+            states.put(id, new ResourceState("exit_group", id, name, 1, status, detail));
         }
         return states;
     }
@@ -848,6 +889,7 @@ public class MonitoringService {
             case "forward" -> "转发";
             case "certificate" -> "证书";
             case "dynamic_dns" -> "动态 DNS";
+            case "exit_group" -> "家宽出口";
             default -> "资源";
         };
     }

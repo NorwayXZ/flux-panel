@@ -38,6 +38,9 @@ public class PrivateProxySchemaInitializer {
             ensureColumn("speed_limit_mbps", "int DEFAULT NULL AFTER last_flow_reset_at");
             ensureColumn("runtime_in_flow", "bigint NOT NULL DEFAULT 0 AFTER out_flow");
             ensureColumn("runtime_out_flow", "bigint NOT NULL DEFAULT 0 AFTER runtime_in_flow");
+            // 出口设置。带默认值，旧版本后端写入时不提供这两列也能成功，版本可以回退。
+            ensureColumn("exit_type", "varchar(16) NOT NULL DEFAULT 'node'");
+            ensureColumn("exit_country", "varchar(8) DEFAULT NULL");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

@@ -147,6 +147,7 @@ type WebSocketReporter struct {
 	bandwidthManager  *bandwidthTestManager
 	udpQuicManager    *udpQuicDiagnosticManager
 	virtualLanManager *virtualLanRuntimeManager
+	exitManager       *exitPoolManager
 }
 
 const maxIncomingWebSocketMessage = 4 * 1024 * 1024
@@ -183,6 +184,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.bandwidthManager = newBandwidthTestManager()
 	reporter.udpQuicManager = newUDPQuicDiagnosticManager()
 	reporter.virtualLanManager = newVirtualLanRuntimeManager()
+	reporter.exitManager = newExitPoolManager()
 	return reporter
 }
 
@@ -202,6 +204,9 @@ func (w *WebSocketReporter) Start() {
 	}
 	if w.virtualLanManager != nil {
 		go w.virtualLanManager.restore()
+	}
+	if w.exitManager != nil {
+		go w.exitManager.restore()
 	}
 	go w.run()
 }
@@ -229,6 +234,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.virtualLanManager != nil {
 		w.virtualLanManager.stopAll()
+	}
+	if w.exitManager != nil {
+		w.exitManager.stopAll()
 	}
 	if w.conn != nil {
 		w.conn.Close()
@@ -616,13 +624,18 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		w.routeTerminalCommand(cmd)
 		return
 	}
-	jsonBytes, errs := json.Marshal(cmd)
-	if errs != nil {
-		fmt.Println("Error marshaling JSON:", errs)
-		return
-	}
+	if strings.HasPrefix(cmd.Type, "ExitPool") {
+		// 出口池指令按固定周期下发且带有证书，只记录类型
+		fmt.Println("🔔 收到命令: ", cmd.Type)
+	} else {
+		jsonBytes, errs := json.Marshal(cmd)
+		if errs != nil {
+			fmt.Println("Error marshaling JSON:", errs)
+			return
+		}
 
-	fmt.Println("🔔 收到命令: ", string(jsonBytes))
+		fmt.Println("🔔 收到命令: ", string(jsonBytes))
+	}
 	var err error
 	var response CommandResponse
 
@@ -829,6 +842,38 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		result, err = w.handlePrivateProxyRuntimeTraffic(cmd.Data)
 		response.Type = "PrivateProxyRuntimeTrafficResponse"
 		response.Data = result
+
+	case "ExitPoolSync":
+		var request exitPoolSyncRequest
+		err = decodeCommandData(cmd.Data, &request)
+		var result exitPoolStatus
+		if err == nil && w.exitManager != nil {
+			result, err = w.exitManager.sync(request)
+		}
+		response.Type = "ExitPoolSyncResponse"
+		response.Data = result
+
+	case "ExitPoolStatus":
+		var request struct {
+			Group string `json:"group"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		var result exitPoolStatus
+		if err == nil && w.exitManager != nil {
+			result, err = w.exitManager.status(request.Group)
+		}
+		response.Type = "ExitPoolStatusResponse"
+		response.Data = result
+
+	case "ExitPoolDelete":
+		var request struct {
+			Group string `json:"group"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil && w.exitManager != nil {
+			err = w.exitManager.delete(request.Group)
+		}
+		response.Type = "ExitPoolDeleteResponse"
 
 	case "NatPrepare":
 		var request natPrepareRequest

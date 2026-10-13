@@ -691,6 +691,100 @@ export interface PrivateProxyItem {
   remainingTime?: number;
   available?: boolean;
   unavailableReason?: string;
+  exitType?: PrivateProxyExitType;
+  exitCountry?: string;
+  exit?: ExitStatusView;
+  createdTime: number;
+}
+
+export type PrivateProxyExitType = "node" | "residential";
+
+export type ExitGroupStatus =
+  | "ok"
+  | "searching"
+  | "no_exit"
+  | "node_offline"
+  | "agent_outdated"
+  | "agent_error"
+  | "setup_failed"
+  | "removing";
+
+export interface ExitStatusView {
+  groupId?: number;
+  country: string;
+  countryName: string;
+  status: ExitGroupStatus;
+  detail?: string;
+  exitIp?: string;
+  exitOwner?: string;
+  activeSince?: number;
+  noExitSince?: number;
+  switchesToday?: number;
+  runtimeVersion?: string;
+  checkedAt?: number;
+}
+
+export interface ExitCountry {
+  country: string;
+  name: string;
+  total: number;
+  available: number;
+}
+
+export interface ExitCountriesResponse {
+  minAgentVersion: string;
+  supportedProxyTypes: PrivateProxyType[];
+  countries: ExitCountry[];
+  lastRefreshAt?: number;
+  lastRefreshError?: string;
+}
+
+export interface ExitMember {
+  id: number;
+  state: "connecting" | "up" | "failed" | "rejected" | "idle";
+  host: string;
+  port: number;
+  proto: string;
+  owner?: string;
+  flaggedProxy?: number;
+  exitIp?: string;
+  exitOwner?: string;
+  exitKind?: string;
+  exitFlagged?: number;
+  approved?: number;
+  active?: number;
+  latencyMs?: number;
+  rxBytes?: number;
+  txBytes?: number;
+  connectedAt?: number;
+  lastOkAt?: number;
+  error?: string;
+  retryAfter?: number;
+  updatedTime?: number;
+}
+
+export interface ExitGroup extends ExitStatusView {
+  id: number;
+  nodeId: number;
+  nodeName: string;
+  proxyCount: number;
+  members: ExitMember[];
+}
+
+export interface ExitPoolOverview {
+  minAgentVersion: string;
+  countries: ExitCountry[];
+  groups: ExitGroup[];
+  lastRefreshAt?: number;
+  lastRefreshError?: string;
+}
+
+export interface ExitEvent {
+  id: number;
+  type: "activate" | "switch" | "lost" | "reject" | "fail";
+  fromIp?: string;
+  toIp?: string;
+  message?: string;
   createdTime: number;
 }
 
@@ -707,6 +801,8 @@ export interface PrivateProxyCreateRequest {
   allowedCidrs?: string;
   leaseHours?: number;
   permanent: boolean;
+  exitType?: PrivateProxyExitType;
+  exitCountry?: string;
 }
 
 export interface PrivateProxyClientConfig {
@@ -782,6 +878,27 @@ export const resetPrivateProxyGrantFlow = (id: number) =>
   Network.mutate<PrivateProxyItem>("/private-proxy/grant-reset", { id }, [
     "/private-proxy/list",
   ]);
+export const updatePrivateProxyExit = (
+  id: number,
+  exitType: PrivateProxyExitType,
+  exitCountry?: string,
+) =>
+  Network.mutate<PrivateProxyItem>(
+    "/private-proxy/exit",
+    { id, exitType, exitCountry },
+    ["/private-proxy/list"],
+  );
+
+// 国家家宽出口
+export const getExitCountries = () =>
+  Network.post<ExitCountriesResponse>("/exit-pool/countries", {});
+export const getExitPoolOverview = () =>
+  Network.post<ExitPoolOverview>("/exit-pool/overview", {});
+export const getExitPoolEvents = (groupId: number) =>
+  Network.post<ExitEvent[]>("/exit-pool/events", { groupId });
+export const refreshExitPool = () => Network.post("/exit-pool/refresh", {});
+export const blockExitMember = (memberId: number) =>
+  Network.post("/exit-pool/block", { memberId });
 
 export interface NetworkDiagnosticResult {
   mode: "ping" | "tcp" | "dns" | "trace";
@@ -2505,7 +2622,12 @@ export const saveLayoutOrder = (scope: string, order: string[]) =>
 
 export type MonitoringRange = "24h" | "7d" | "30d";
 export type MonitoringResourceType =
-  "node" | "tunnel" | "forward" | "certificate" | "dynamic_dns";
+  | "node"
+  | "tunnel"
+  | "forward"
+  | "certificate"
+  | "dynamic_dns"
+  | "exit_group";
 export type MonitoringStatus =
   "healthy" | "degraded" | "offline" | "paused" | "unknown";
 

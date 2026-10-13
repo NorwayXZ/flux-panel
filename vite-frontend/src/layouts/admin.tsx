@@ -29,6 +29,7 @@ import {
   FlaskConical,
   Gauge,
   Home,
+  House,
   LockKeyhole,
   MapPinned,
   Network,
@@ -172,6 +173,12 @@ export default function AdminLayout({
       path: "/private-proxy",
       label: "私人代理",
       icon: <LockKeyhole className="h-5 w-5" />,
+    },
+    {
+      path: "/exit-pool",
+      label: "家宽出口池",
+      icon: <House className="h-5 w-5" />,
+      adminOnly: true,
     },
     {
       path: "/home-access",
@@ -351,6 +358,7 @@ export default function AdminLayout({
         "/service-publishing",
         "/docker-apps",
         "/private-proxy",
+        "/exit-pool",
         "/home-access",
         "/private-network",
       ],

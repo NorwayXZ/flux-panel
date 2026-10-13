@@ -56,6 +56,10 @@ captcha:
     enabled: true
     expire: 120000
 
+exit-pool:
+  vpngate-url: ${EXIT_POOL_VPNGATE_URL:http://www.vpngate.net/api/iphone/}
+  ip-lookup-url: ${EXIT_POOL_IP_LOOKUP_URL:http://ip-api.com/batch}
+
 forward-routing:
   check-interval-ms: ${FORWARD_HEALTH_CHECK_INTERVAL_MS:60000}
   failure-threshold: ${FORWARD_FAILURE_THRESHOLD:2}

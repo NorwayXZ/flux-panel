@@ -81,6 +81,10 @@ func (d *Dialer) Dial(ctx context.Context, network, addr string) (conn net.Conn,
 	default:
 	}
 
+	if group, ok := ExitGroup(d.Interface); ok {
+		return d.dialExit(ctx, network, addr, group)
+	}
+
 	ifces := strings.Split(d.Interface, ",")
 	for _, ifce := range ifces {
 		strict := strings.HasSuffix(ifce, "!")

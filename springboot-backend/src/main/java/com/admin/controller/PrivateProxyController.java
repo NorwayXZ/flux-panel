@@ -31,6 +31,12 @@ public class PrivateProxyController {
     @RequireRole @LogAnnotation @PostMapping("/grant-reset") public R resetGrant(@RequestBody Map<String, Long> body) { return service.resetGrantFlow(body.get("id")); }
     @PostMapping("/list") public R list() { return service.list(); }
     @PostMapping("/client-config") public R clientConfig(@RequestBody Map<String, Long> body) { return service.clientConfig(body.get("id")); }
+    @RequireRole @LogAnnotation @PostMapping("/exit") public R updateExit(@RequestBody Map<String, Object> body) {
+        Object id = body.get("id");
+        return service.updateExit(id == null ? null : Long.valueOf(id.toString()),
+                body.get("exitType") == null ? null : body.get("exitType").toString(),
+                body.get("exitCountry") == null ? null : body.get("exitCountry").toString());
+    }
     @LogAnnotation @PostMapping("/pause") public R pause(@RequestBody Map<String, Long> body) { return service.pause(body.get("id")); }
     @LogAnnotation @PostMapping("/resume") public R resume(@RequestBody Map<String, Long> body) { return service.resume(body.get("id")); }
     @LogAnnotation @PostMapping("/delete") public R delete(@RequestBody Map<String, Long> body) { return service.delete(body.get("id")); }

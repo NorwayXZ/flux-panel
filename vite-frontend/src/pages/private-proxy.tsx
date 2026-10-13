@@ -18,6 +18,8 @@ import {
   Clock3,
   Copy,
   Globe2,
+  History,
+  Home,
   KeyRound,
   Pause,
   Play,
@@ -27,20 +29,31 @@ import {
   Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
 
 import {
   createPrivateProxy,
   deletePrivateProxy,
+  getExitCountries,
   getNodeList,
   getPrivateProxies,
   getPrivateProxyClientConfig,
   pausePrivateProxy,
   resumePrivateProxy,
+  updatePrivateProxyExit,
+  type ExitCountriesResponse,
   type PrivateProxyClientConfig,
   type PrivateProxyItem,
   type PrivateProxyType,
 } from "@/api";
+import ExitEventsModal from "@/components/exit-events-modal";
+import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
 import { isAdmin as isAdminUser } from "@/utils/auth";
+import {
+  agentSupportsExit,
+  exitStatusMeta,
+  exitSummary,
+} from "@/utils/exit-display";
 import { formatBytes } from "@/utils/format";
 
 interface NodeOption {
@@ -74,7 +87,12 @@ interface ProxyForm {
   allowedCidrs: string;
   permanent: boolean;
   leaseHours: string;
+  exitType: ExitChoice["exitType"];
+  exitCountry: string;
 }
+
+const EXIT_PROXY_TYPES: PrivateProxyType[] = ["socks5", "http", "shadowsocks"];
+const DEFAULT_EXIT_AGENT_VERSION = "2.57.0";
 
 const randomSecret = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
@@ -98,6 +116,8 @@ const initialForm = (): ProxyForm => ({
   allowedCidrs: "",
   permanent: true,
   leaseHours: "24",
+  exitType: "node",
+  exitCountry: "",
 });
 
 const protocolMeta: Record<
@@ -159,6 +179,7 @@ const copyText = async (value: string, label: string) => {
 };
 
 export default function PrivateProxyPage() {
+  const navigate = useNavigate();
   const isAdmin = isAdminUser();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -170,6 +191,52 @@ export default function PrivateProxyPage() {
   const [nodes, setNodes] = useState<NodeOption[]>([]);
   const [form, setForm] = useState<ProxyForm>(initialForm);
   const [protocolGroup, setProtocolGroup] = useState<ProxyGroup>("general");
+  const [exitInfo, setExitInfo] = useState<ExitCountriesResponse | null>(null);
+  const [exitInfoLoading, setExitInfoLoading] = useState(false);
+  const [exitInfoError, setExitInfoError] = useState("");
+  const [exitTarget, setExitTarget] = useState<PrivateProxyItem | null>(null);
+  const [exitChoice, setExitChoice] = useState<ExitChoice>({
+    exitType: "node",
+    exitCountry: "",
+  });
+  const [exitSaving, setExitSaving] = useState(false);
+  const [eventsTarget, setEventsTarget] = useState<{
+    groupId: number;
+    title: string;
+  } | null>(null);
+
+  const minExitAgentVersion =
+    exitInfo?.minAgentVersion || DEFAULT_EXIT_AGENT_VERSION;
+
+  const loadExitInfo = async () => {
+    setExitInfoLoading(true);
+    try {
+      const response = await getExitCountries();
+
+      if (response.code === 0 && response.data) {
+        setExitInfo(response.data);
+        setExitInfoError(response.data.lastRefreshError || "");
+      } else setExitInfoError(response.msg || "读取失败");
+    } catch {
+      setExitInfoError("读取失败");
+    }
+    setExitInfoLoading(false);
+  };
+
+  /** 当前协议和节点不能使用家宽出口时返回原因。 */
+  const exitBlockedReason = (
+    proxyType: PrivateProxyType,
+    nodeId?: number | string,
+  ) => {
+    if (!EXIT_PROXY_TYPES.includes(proxyType))
+      return "家宽出口目前支持 SOCKS5、HTTP 和 Shadowsocks 代理。";
+    const node = nodes.find((item) => String(item.id) === String(nodeId));
+
+    if (node && !agentSupportsExit(node.version, minExitAgentVersion))
+      return `该节点的 Agent 版本是 ${node.version || "未知"}，升级到 ${minExitAgentVersion} 或更高后才能使用家宽出口。`;
+
+    return "";
+  };
 
   const load = async () => {
     setLoading(items.length === 0);
@@ -207,6 +274,29 @@ export default function PrivateProxyPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  // 有代理在用家宽出口时定期刷新，出口状态和切换能及时显示
+  const hasResidentialExit = items.some(
+    (item) => item.exitType === "residential",
+  );
+
+  useEffect(() => {
+    if (!hasResidentialExit) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void load();
+    }, 10_000);
+
+    return () => window.clearInterval(timer);
+  }, [hasResidentialExit]);
+
+  // 只在真正要选家宽出口时才读取候选列表，不使用该功能时面板不会访问外部列表
+  const wantsExitInfo =
+    isAdmin &&
+    ((modalOpen && form.exitType === "residential") || Boolean(exitTarget));
+
+  useEffect(() => {
+    if (wantsExitInfo) void loadExitInfo();
+  }, [wantsExitInfo]);
 
   const summary = useMemo(
     () => ({
@@ -251,6 +341,9 @@ export default function PrivateProxyPage() {
     setForm((current) => ({
       ...current,
       proxyType,
+      exitType: EXIT_PROXY_TYPES.includes(proxyType)
+        ? current.exitType
+        : "node",
       authUsername:
         proxyType === "socks5" || proxyType === "http"
           ? current.authUsername
@@ -287,6 +380,14 @@ export default function PrivateProxyPage() {
 
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       return toast.error("监听端口应为 1-65535");
+    const residentialExit = isAdmin && form.exitType === "residential";
+
+    if (residentialExit) {
+      const blocked = exitBlockedReason(form.proxyType, form.nodeId);
+
+      if (blocked) return toast.error(blocked);
+      if (!form.exitCountry) return toast.error("请选择出口国家");
+    }
     setSubmitting(true);
     const response = await createPrivateProxy({
       name: form.name.trim(),
@@ -301,6 +402,8 @@ export default function PrivateProxyPage() {
       allowedCidrs: form.allowedCidrs.trim(),
       permanent: form.permanent,
       leaseHours: form.permanent ? undefined : Number(form.leaseHours),
+      exitType: residentialExit ? "residential" : "node",
+      exitCountry: residentialExit ? form.exitCountry : undefined,
     });
 
     setSubmitting(false);
@@ -320,6 +423,46 @@ export default function PrivateProxyPage() {
     if (response.code !== 0 || !response.data)
       return toast.error(response.msg || "读取连接信息失败");
     setClientConfig(response.data);
+  };
+
+  const openExitSettings = (item: PrivateProxyItem) => {
+    setExitChoice({
+      exitType: item.exitType === "residential" ? "residential" : "node",
+      exitCountry: item.exitCountry || "",
+    });
+    setExitTarget(item);
+  };
+
+  const saveExit = async () => {
+    if (!exitTarget) return;
+    if (exitChoice.exitType === "residential" && !exitChoice.exitCountry)
+      return toast.error("请选择出口国家");
+    setExitSaving(true);
+    const response = await updatePrivateProxyExit(
+      exitTarget.id,
+      exitChoice.exitType,
+      exitChoice.exitType === "residential"
+        ? exitChoice.exitCountry
+        : undefined,
+    );
+
+    setExitSaving(false);
+    if (response.code !== 0) return toast.error(response.msg || "修改出口失败");
+    toast.success(
+      exitChoice.exitType === "residential"
+        ? "出口已修改，正在连接家宽出口"
+        : "已改回节点自身 IP",
+    );
+    setExitTarget(null);
+    void load();
+  };
+
+  const showEvents = (item: PrivateProxyItem) => {
+    if (!item.exit?.groupId) return toast.error("出口还在准备，暂时没有记录");
+    setEventsTarget({
+      groupId: item.exit.groupId,
+      title: `${item.exit.countryName}家宽出口的切换记录`,
+    });
   };
 
   const control = async (
@@ -384,13 +527,24 @@ export default function PrivateProxyPage() {
           <p className="text-sm text-default-500">独立服务</p>
           <h1 className="mt-1 text-2xl font-semibold">私人代理</h1>
         </div>
-        <Button
-          color="primary"
-          startContent={<Plus size={18} />}
-          onPress={() => setModalOpen(true)}
-        >
-          新建代理
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && hasResidentialExit && (
+            <Button
+              startContent={<Home size={17} />}
+              variant="flat"
+              onPress={() => navigate("/exit-pool")}
+            >
+              家宽出口池
+            </Button>
+          )}
+          <Button
+            color="primary"
+            startContent={<Plus size={18} />}
+            onPress={() => setModalOpen(true)}
+          >
+            新建代理
+          </Button>
+        </div>
       </header>
 
       <section className="grid overflow-hidden rounded-lg border border-divider sm:grid-cols-3">
@@ -618,6 +772,20 @@ export default function PrivateProxyPage() {
                         >
                           <KeyRound size={17} />
                         </Button>
+                        {isAdmin &&
+                          item.state === "active" &&
+                          EXIT_PROXY_TYPES.includes(item.proxyType) && (
+                            <Button
+                              isIconOnly
+                              aria-label={`设置 ${item.name} 的出口`}
+                              size="sm"
+                              title="出口设置"
+                              variant="light"
+                              onPress={() => openExitSettings(item)}
+                            >
+                              <Home size={17} />
+                            </Button>
+                          )}
                         {(isAdmin || !item.granted) &&
                           item.state === "active" && (
                             <Button
@@ -659,6 +827,40 @@ export default function PrivateProxyPage() {
                           </Button>
                         )}
                       </div>
+                      {item.exitType === "residential" && item.exit && (
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-default-50 px-3 py-2 text-xs lg:col-span-5">
+                          <span className="flex items-center gap-1.5 font-medium text-default-700">
+                            <Home size={14} />
+                            出口 · {item.exit.countryName}家宽
+                          </span>
+                          <Chip
+                            className="flex-none"
+                            color={exitStatusMeta(item.exit.status).color}
+                            size="sm"
+                            variant="flat"
+                          >
+                            {exitStatusMeta(item.exit.status).label}
+                          </Chip>
+                          <span className="min-w-0 break-all text-default-500">
+                            {exitSummary(item.exit)}
+                            {item.exit.status === "ok" &&
+                            item.exit.switchesToday !== undefined
+                              ? ` · 今日切换 ${item.exit.switchesToday} 次`
+                              : ""}
+                          </span>
+                          {isAdmin && (
+                            <Button
+                              className="ml-auto h-7 min-w-0 px-2 text-xs"
+                              size="sm"
+                              startContent={<History size={14} />}
+                              variant="light"
+                              onPress={() => showEvents(item)}
+                            >
+                              切换记录
+                            </Button>
+                          )}
+                        </div>
+                      )}
                       {(item.unavailableReason || item.lastError) && (
                         <div className="text-xs text-danger lg:col-span-5">
                           {item.unavailableReason || item.lastError}
@@ -915,6 +1117,21 @@ export default function PrivateProxyPage() {
                 IP 白名单暂不适用于此类协议。
               </div>
             )}
+            {isAdmin && (
+              <div className="border-t border-divider pt-4">
+                <ExitPicker
+                  blockedReason={exitBlockedReason(form.proxyType, form.nodeId)}
+                  countries={exitInfo?.countries || []}
+                  error={exitInfoError}
+                  loading={exitInfoLoading && !exitInfo}
+                  value={{
+                    exitType: form.exitType,
+                    exitCountry: form.exitCountry,
+                  }}
+                  onChange={(value) => setForm({ ...form, ...value })}
+                />
+              </div>
+            )}
             <div className="grid items-center gap-4 border-t border-divider pt-4 md:grid-cols-2">
               <Switch
                 isSelected={form.permanent}
@@ -951,6 +1168,52 @@ export default function PrivateProxyPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      <Modal
+        isOpen={Boolean(exitTarget)}
+        scrollBehavior="inside"
+        size="2xl"
+        onOpenChange={(open) => {
+          if (!open) setExitTarget(null);
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>
+            {exitTarget ? `“${exitTarget.name}”的出口` : "出口设置"}
+          </ModalHeader>
+          <ModalBody>
+            {exitTarget && (
+              <ExitPicker
+                blockedReason={exitBlockedReason(
+                  exitTarget.proxyType,
+                  exitTarget.nodeId,
+                )}
+                countries={exitInfo?.countries || []}
+                error={exitInfoError}
+                loading={exitInfoLoading && !exitInfo}
+                value={exitChoice}
+                onChange={setExitChoice}
+              />
+            )}
+            <p className="text-xs text-default-500">
+              保存后代理会重新启动，正在进行的连接需要重连；设备上填写的地址、端口和密码都不用改。
+            </p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setExitTarget(null)}>
+              取消
+            </Button>
+            <Button color="primary" isLoading={exitSaving} onPress={saveExit}>
+              保存
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <ExitEventsModal
+        target={eventsTarget}
+        onClose={() => setEventsTarget(null)}
+      />
 
       <Modal
         isOpen={Boolean(clientConfig)}

@@ -40,6 +40,7 @@ const MultiLineAggregationPage = lazy(
   () => import("@/pages/multi-line-aggregation"),
 );
 const IpQualityPage = lazy(() => import("@/pages/ip-quality"));
+const ExitPoolPage = lazy(() => import("@/pages/exit-pool"));
 const PrivateNetworkPage = lazy(() => import("@/pages/private-network"));
 const ServerAssetsPage = lazy(() => import("@/pages/server-assets"));
 const DynamicDnsPage = lazy(() => import("@/pages/dynamic-dns"));
@@ -593,6 +594,14 @@ function App() {
                 </ProtectedRoute>
               }
               path="/ip-quality"
+            />
+            <Route
+              element={
+                <ProtectedRoute adminOnly>
+                  <ExitPoolPage />
+                </ProtectedRoute>
+              }
+              path="/exit-pool"
             />
             <Route
               element={
