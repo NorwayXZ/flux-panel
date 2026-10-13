@@ -52,7 +52,35 @@ func (d *Dialer) dialExit(ctx context.Context, network, addr, group string) (net
 
 // DialDevice opens an IPv4 connection that is bound to the given device and
 // fails when the binding cannot be applied.
+//
+// Host names are resolved through the device as well. The node's own
+// resolver may hand out addresses that only work from the node's address
+// (regional DNS services do this), and its answers reflect where the node
+// is, not where the exit is.
 func DialDevice(ctx context.Context, network, addr, device string, mark int) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if addr == "" || err != nil || net.ParseIP(host) != nil {
+		return dialDeviceAddr(ctx, network, addr, device, mark)
+	}
+	ips, err := resolveThroughDevice(ctx, host, device, mark)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialDeviceAddr(ctx, network, net.JoinHostPort(ip.String(), port), device, mark)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func dialDeviceAddr(ctx context.Context, network, addr, device string, mark int) (net.Conn, error) {
 	local, err := deviceIPv4(device)
 	if err != nil {
 		return nil, err

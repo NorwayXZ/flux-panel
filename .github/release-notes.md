@@ -1,3 +1,12 @@
+## 2.58.1 Residential exits resolve host names through the exit
+
+- Fixes proxies with a residential exit failing on nodes whose own DNS returns addresses that only work from the node's IP, such as regional DNS unlocking services. The Agent resolved destination names with the node's resolver and then connected through the exit, so the connection went to an address the exit could not reach and timed out. Reported on a node where `www.google.com` resolved to such a relay.
+- Names requested through an exit are now resolved with DNS queries that leave through the same exit (to 1.1.1.1, then 8.8.8.8), cached for 60 seconds per exit. The node's resolver and hosts file are no longer consulted for this traffic, and answers now reflect the exit's location. A name that cannot be resolved through the exit fails; there is no fallback to the node's resolver.
+- This replaces the limit stated in 2.57.0 that host names are resolved by the node. Destinations given as IPv6 addresses are still not carried.
+- Applies to every protocol that supports exits. Agent-only change: upgrade the Agent on nodes that use exits to 2.58.1. The panel is rebuilt with the new version number only; no database change.
+- Verified in a Linux VM by making the node resolve a test site to an unreachable address: the released 2.58.0 Agent failed with the same error as the report, and 2.58.1 reached the site through the exit for SOCKS5, VLESS + REALITY, Hysteria2 and TUIC.
+- Agents move to 2.58.1. 2.58.0 remains available for rollback.
+
 ## 2.58.0 Residential exits for VLESS + REALITY, Trojan, Hysteria2 and TUIC
 
 - The residential exit option introduced in 2.57.0 now also works for VLESS + REALITY, Trojan, Hysteria2 and TUIC private proxies. WireGuard remains unsupported.
