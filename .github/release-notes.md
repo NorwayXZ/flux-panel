@@ -1,3 +1,12 @@
+## 2.59.0 Switch, choose and remotely change a residential exit
+
+- Switch on demand. Proxy rows and the 家宽出口池 page have a 换一个出口 button that moves to the standby exit immediately. It is available only while a standby is ready, so a manual switch never leaves the proxy without an exit. The exit that was left is kept out of rotation for ten minutes so the next automatic choice does not go straight back to it, but it is reused at once if no other exit is left. Switches are limited to one per ten seconds per exit.
+- Choose an exit. On the pool page, a standby exit can be selected directly, and 指定出口 lists every current home candidate of that country. A chosen candidate is connected and checked first; traffic moves to it only after its real exit IP is confirmed as a home address in that country. If it cannot connect, is rejected, or fails later, the choice is cleared and automatic selection resumes. The list shows a candidate's entry address; the exit IP is known only after it connects.
+- Remote switch link. Each proxy with a residential exit can show a link that switches to the standby exit when opened and replies with the new exit IP as plain text (`&format=json` for JSON). No login is needed, so it works as a browser bookmark or a phone shortcut. The link's token can only trigger this one action and can be reset, which invalidates the old link. Tokens are not included in proxy lists.
+- Panel-only change. Agents stay at 2.58.1. Database: adds `exit_group.preferred_candidate_id` and `private_proxy.exit_switch_token`, both nullable.
+- Verified in a Linux VM against live exits: the device-visible IP after a button switch and after opening the link, the ten-second limit, an invalid and a reset token, choosing a candidate that works, choosing one that cannot connect, and recovery when the exit switched to fails with no standby.
+- 2.58.1 remains available for rollback.
+
 ## 2.58.1 Residential exits resolve host names through the exit
 
 - Fixes proxies with a residential exit failing on nodes whose own DNS returns addresses that only work from the node's IP, such as regional DNS unlocking services. The Agent resolved destination names with the node's resolver and then connected through the exit, so the connection went to an address the exit could not reach and timed out. Reported on a node where `www.google.com` resolved to such a relay.

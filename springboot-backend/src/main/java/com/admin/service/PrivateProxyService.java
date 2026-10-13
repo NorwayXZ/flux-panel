@@ -433,6 +433,36 @@ public class PrivateProxyService {
         }
     }
 
+    /** 远程切换链接使用的令牌。只有管理员可以查看和重置。 */
+    public R exitSwitchToken(Long id, boolean reset) {
+        if (!isAdmin()) return R.err("只有管理员可以管理远程切换链接");
+        PrivateProxy proxy = id == null ? null : proxyMapper.selectById(id);
+        if (proxy == null || "deleted".equals(proxy.getState())) return R.err("代理不存在");
+        if (!"residential".equals(proxy.getExitType())) return R.err("这个代理没有使用家宽出口");
+        if (reset || StringUtils.isBlank(proxy.getExitSwitchToken())) {
+            byte[] bytes = new byte[24];
+            new java.security.SecureRandom().nextBytes(bytes);
+            proxy.setExitSwitchToken(java.util.HexFormat.of().formatHex(bytes));
+            proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
+                    .set("exit_switch_token", proxy.getExitSwitchToken()));
+        }
+        return R.ok(Map.of("token", proxy.getExitSwitchToken()));
+    }
+
+    /** 凭令牌换一个出口，供不登录面板时使用。 */
+    public R switchExitByToken(String token) {
+        if (StringUtils.isBlank(token) || !token.matches("[0-9a-f]{48}")) return R.err("链接无效");
+        PrivateProxy proxy = proxyMapper.selectOne(new QueryWrapper<PrivateProxy>().eq("exit_switch_token", token)
+                .ne("state", "deleted").last("LIMIT 1"));
+        if (proxy == null) return R.err("链接无效或已重置");
+        if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
+            return R.err("这个代理当前没有使用家宽出口");
+        }
+        Long groupId = exitPoolService.groupId(proxy.getNodeId(), proxy.getExitCountry());
+        if (groupId == null) return R.err("出口还没有准备好，请稍后再试");
+        return exitPoolService.switchExit(groupId, null, "远程切换");
+    }
+
     private R checkResidentialExit(String proxyType, Node node, String exitCountry) {
         if (!isAdmin()) return R.err("家宽出口目前仅管理员可以配置");
         if (StringUtils.isBlank(exitCountry)) return R.err("请选择出口国家");
@@ -752,6 +782,7 @@ public class PrivateProxyService {
         proxy.setUnavailableReason(unavailableReason);
         hideInternalGrantPolicy(proxy, isAdmin());
         proxy.setAuthPassword(null);
+        proxy.setExitSwitchToken(null);
         proxy.setClientConfig(null);
         proxy.setRuntimeInFlow(null);
         proxy.setRuntimeOutFlow(null);

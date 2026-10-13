@@ -42,6 +42,7 @@ public class PrivateProxySchemaInitializer {
             ensureColumn("exit_type", "varchar(16) NOT NULL DEFAULT 'node'");
             ensureColumn("exit_country", "varchar(8) DEFAULT NULL");
             ensureColumn("exit_route_port", "int DEFAULT NULL");
+            ensureColumn("exit_switch_token", "varchar(64) DEFAULT NULL");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

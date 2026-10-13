@@ -37,6 +37,10 @@ public class PrivateProxyController {
                 body.get("exitType") == null ? null : body.get("exitType").toString(),
                 body.get("exitCountry") == null ? null : body.get("exitCountry").toString());
     }
+    @RequireRole @LogAnnotation @PostMapping("/exit-switch-token") public R exitSwitchToken(@RequestBody Map<String, Object> body) {
+        Object id = body.get("id");
+        return service.exitSwitchToken(id == null ? null : Long.valueOf(id.toString()), Boolean.TRUE.equals(body.get("reset")));
+    }
     @LogAnnotation @PostMapping("/pause") public R pause(@RequestBody Map<String, Long> body) { return service.pause(body.get("id")); }
     @LogAnnotation @PostMapping("/resume") public R resume(@RequestBody Map<String, Long> body) { return service.resume(body.get("id")); }
     @LogAnnotation @PostMapping("/delete") public R delete(@RequestBody Map<String, Long> body) { return service.delete(body.get("id")); }

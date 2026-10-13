@@ -20,6 +20,9 @@ import {
   Globe2,
   History,
   Home,
+  Link2,
+  RefreshCw,
+  Shuffle,
   KeyRound,
   Pause,
   Play,
@@ -35,6 +38,8 @@ import {
   createPrivateProxy,
   deletePrivateProxy,
   getExitCountries,
+  getExitSwitchToken,
+  switchExit,
   getNodeList,
   getPrivateProxies,
   getPrivateProxyClientConfig,
@@ -449,6 +454,7 @@ export default function PrivateProxyPage() {
       exitType: item.exitType === "residential" ? "residential" : "node",
       exitCountry: item.exitCountry || "",
     });
+    setSwitchLink("");
     setExitTarget(item);
   };
 
@@ -474,6 +480,32 @@ export default function PrivateProxyPage() {
     );
     setExitTarget(null);
     void load();
+  };
+
+  const [switchingExit, setSwitchingExit] = useState<number | null>(null);
+  const [switchLink, setSwitchLink] = useState("");
+
+  const changeExit = async (item: PrivateProxyItem) => {
+    if (!item.exit?.groupId) return toast.error("出口还在准备，请稍后再试");
+    setSwitchingExit(item.id);
+    const response = await switchExit(item.exit.groupId);
+
+    setSwitchingExit(null);
+    if (response.code !== 0) return toast.error(response.msg || "切换失败");
+    toast.success(`已切换到 ${response.data?.exitIp || "新的出口"}`);
+    void load();
+  };
+
+  const loadSwitchLink = async (item: PrivateProxyItem, reset = false) => {
+    if (reset && !window.confirm("重置后旧链接立即失效，确认重置吗？")) return;
+    const response = await getExitSwitchToken(item.id, reset);
+
+    if (response.code !== 0 || !response.data)
+      return toast.error(response.msg || "读取链接失败");
+    setSwitchLink(
+      `${window.location.origin}/api/v1/open_api/exit-switch?token=${response.data.token}`,
+    );
+    if (reset) toast.success("链接已重置");
   };
 
   const showEvents = (item: PrivateProxyItem) => {
@@ -870,6 +902,28 @@ export default function PrivateProxyPage() {
                           {isAdmin && (
                             <Button
                               className="ml-auto h-7 min-w-0 px-2 text-xs"
+                              isDisabled={!item.exit.standbyReady}
+                              isLoading={switchingExit === item.id}
+                              size="sm"
+                              startContent={
+                                switchingExit !== item.id && (
+                                  <Shuffle size={14} />
+                                )
+                              }
+                              title={
+                                item.exit.standbyReady
+                                  ? "换到已就绪的备用出口"
+                                  : "备用出口还没有就绪，稍后再试"
+                              }
+                              variant="light"
+                              onPress={() => changeExit(item)}
+                            >
+                              换一个出口
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            <Button
+                              className="h-7 min-w-0 px-2 text-xs"
                               size="sm"
                               startContent={<History size={14} />}
                               variant="light"
@@ -1217,6 +1271,47 @@ export default function PrivateProxyPage() {
             <p className="text-xs text-default-500">
               保存后代理会重新启动，正在进行的连接需要重连；设备上填写的地址、端口和密码都不用改。
             </p>
+            {exitTarget?.exitType === "residential" && (
+              <div className="space-y-2 border-t border-divider pt-4">
+                <div className="text-sm font-medium">远程切换链接</div>
+                <p className="text-xs text-default-500">
+                  不用登录面板，打开这个链接就会换到备用出口，并显示新的出口
+                  IP。可以存成浏览器书签或手机快捷指令。拿到链接的人只能触发换出口，请不要公开。
+                </p>
+                {switchLink ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="min-w-0 flex-1 break-all rounded-md bg-default-100 px-3 py-2 text-xs">
+                      {switchLink}
+                    </code>
+                    <Button
+                      size="sm"
+                      startContent={<Copy size={14} />}
+                      variant="flat"
+                      onPress={() => copyText(switchLink, "链接")}
+                    >
+                      复制
+                    </Button>
+                    <Button
+                      size="sm"
+                      startContent={<RefreshCw size={14} />}
+                      variant="light"
+                      onPress={() => loadSwitchLink(exitTarget, true)}
+                    >
+                      重置
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    startContent={<Link2 size={14} />}
+                    variant="flat"
+                    onPress={() => loadSwitchLink(exitTarget)}
+                  >
+                    显示链接
+                  </Button>
+                )}
+              </div>
+            )}
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={() => setExitTarget(null)}>

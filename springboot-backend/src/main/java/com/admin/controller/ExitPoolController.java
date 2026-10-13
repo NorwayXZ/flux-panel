@@ -26,6 +26,14 @@ public class ExitPoolController {
     @RequireRole @LogAnnotation @PostMapping("/refresh") public R refresh() { return service.refresh(); }
     @RequireRole @LogAnnotation @PostMapping("/block") public R block(@RequestBody Map<String, Object> body) { return service.block(id(body, "memberId")); }
 
+    @RequireRole @LogAnnotation @PostMapping("/switch") public R switchExit(@RequestBody Map<String, Object> body) {
+        return service.switchExit(id(body, "groupId"), id(body, "memberId"), "手动切换");
+    }
+    @RequireRole @PostMapping("/candidates") public R candidates(@RequestBody Map<String, Object> body) { return service.candidates(id(body, "groupId")); }
+    @RequireRole @LogAnnotation @PostMapping("/prefer") public R prefer(@RequestBody Map<String, Object> body) {
+        return service.prefer(id(body, "groupId"), id(body, "candidateId"));
+    }
+
     private static Long id(Map<String, Object> body, String key) {
         Object value = body == null ? null : body.get(key);
         try {

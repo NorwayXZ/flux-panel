@@ -40,6 +40,7 @@ public class PrivateProxy implements Serializable {
     private String exitType;
     private String exitCountry;
     private Integer exitRoutePort;
+    private String exitSwitchToken;
     private Long createdTime;
     private Long updatedTime;
 

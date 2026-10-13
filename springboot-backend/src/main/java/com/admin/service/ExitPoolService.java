@@ -241,6 +241,140 @@ public class ExitPoolService {
         return R.ok();
     }
 
+    private static final long MANUAL_SWITCH_INTERVAL_MS = 10_000L;
+    private static final long RELEASED_COOLDOWN_MS = 10 * 60_000L;
+    private final Map<Long, Long> lastManualSwitchAt = new ConcurrentHashMap<>();
+
+    /**
+     * 立即换一个出口。memberId 为空时换到已就绪的备用出口；指定时换到那个出口。
+     * 只在有另一个已就绪的出口时才会切换，不会让代理因为手动操作而断线。
+     */
+    public synchronized R switchExit(Long groupId, Long memberId, String source) {
+        if (groupId == null) return R.err("缺少出口编号");
+        List<Map<String, Object>> groups = jdbc.queryForList("SELECT * FROM exit_group WHERE id = ?", groupId);
+        if (groups.isEmpty()) return R.err("出口还没有准备好，请稍后再试");
+        Map<String, Object> group = groups.get(0);
+        long now = System.currentTimeMillis();
+        Long last = lastManualSwitchAt.get(groupId);
+        if (last != null && now - last < MANUAL_SWITCH_INTERVAL_MS) return R.err("刚刚切换过，请十秒后再试");
+        long activeId = longValue(group.get("active_member_id"));
+        List<Map<String, Object>> ready = jdbc.queryForList("SELECT id, exit_ip, exit_owner FROM exit_member WHERE group_id = ? AND state = 'up' "
+                + "AND approved = 1 AND id <> ? ORDER BY COALESCE(latency_ms, 999999), id", groupId, activeId);
+        Map<String, Object> target = null;
+        for (Map<String, Object> row : ready) {
+            if (memberId == null || longValue(row.get("id")) == memberId) {
+                target = row;
+                break;
+            }
+        }
+        if (target == null) {
+            return R.err(memberId == null ? "暂时没有已就绪的备用出口，系统正在准备，请稍后再试" : "这个出口还没有就绪，无法切换");
+        }
+        String fromIp = string(group.get("active_exit_ip"));
+        String toIp = string(target.get("exit_ip"));
+        // 放掉原来的出口并把目标排到最前，节点收到新列表后会立刻改用目标
+        if (activeId > 0) {
+            jdbc.update("UPDATE exit_member SET state='idle', approved=0, error='手动切换后释放', retry_after=?, updated_time=? WHERE id=?",
+                    now + RELEASED_COOLDOWN_MS, now, activeId);
+        }
+        jdbc.update("UPDATE exit_group SET active_member_id=?, active_exit_ip=?, active_owner=?, active_since=?, preferred_candidate_id=NULL, "
+                + "updated_time=? WHERE id=?", target.get("id"), toIp, target.get("exit_owner"), now, now, groupId);
+        event(groupId, longValue(group.get("node_id")), string(group.get("country")), "switch", fromIp, toIp,
+                source + "：从 " + StringUtils.defaultString(fromIp, "原出口") + " 切换到 " + toIp + ownerSuffix(string(target.get("exit_owner"))));
+        lastManualSwitchAt.put(groupId, now);
+        try {
+            reconcileGroup(jdbc.queryForList("SELECT * FROM exit_group WHERE id = ?", groupId).get(0));
+        } catch (Exception e) {
+            log.warn("Exit group {} manual switch push failed: {}", groupId, e.getMessage());
+        }
+        requestReconcile();
+        Map<String, Object> view = groupView(jdbc.queryForList("SELECT * FROM exit_group WHERE id = ?", groupId).get(0), now);
+        view.put("groupId", groupId);
+        return R.ok(view);
+    }
+
+    public Long groupId(Long nodeId, String country) {
+        List<Long> ids = jdbc.queryForList("SELECT id FROM exit_group WHERE node_id = ? AND country = ?", Long.class,
+                nodeId, normalizeCountry(country));
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
+    /** 可以手动指定的候选出口。 */
+    public R candidates(Long groupId) {
+        if (groupId == null) return R.err("缺少出口编号");
+        List<Map<String, Object>> groups = jdbc.queryForList("SELECT * FROM exit_group WHERE id = ?", groupId);
+        if (groups.isEmpty()) return R.err("出口不存在");
+        long now = System.currentTimeMillis();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("preferredCandidateId", groups.get(0).get("preferred_candidate_id"));
+        result.put("candidates", jdbc.queryForList("SELECT c.id, c.host, c.owner, c.flagged_proxy AS flaggedProxy, c.list_sessions AS sessions, "
+                        + "c.list_speed AS speed, c.list_uptime AS uptime, m.state, m.exit_ip AS exitIp, m.latency_ms AS latencyMs, "
+                        + "m.success_count AS successCount, m.fail_count AS failCount, m.error "
+                        + "FROM exit_candidate c LEFT JOIN exit_member m ON m.candidate_id = c.id AND m.group_id = ? "
+                        + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? "
+                        + "ORDER BY FIELD(COALESCE(m.state,'new'),'up','connecting','new','idle','failed','rejected'), "
+                        + "COALESCE(m.success_count,0) DESC, c.flagged_proxy, c.list_score DESC LIMIT 80",
+                groupId, groups.get(0).get("country"), KIND_HOME, now - CANDIDATE_FRESH_MS));
+        for (Map<String, Object> row : (List<Map<String, Object>>) result.get("candidates")) {
+            if (row.get("error") != null) row.put("error", translate(string(row.get("error"))));
+        }
+        return R.ok(result);
+    }
+
+    /**
+     * 指定使用某个候选出口。系统先连接并检测它，确认是家宽后再切换过去，期间继续使用当前出口；
+     * 它连不上、不是家宽或者以后失效时，自动回到自动选择。
+     */
+    public synchronized R prefer(Long groupId, Long candidateId) {
+        if (groupId == null || candidateId == null) return R.err("缺少参数");
+        List<Map<String, Object>> groups = jdbc.queryForList("SELECT * FROM exit_group WHERE id = ?", groupId);
+        if (groups.isEmpty()) return R.err("出口不存在");
+        Map<String, Object> group = groups.get(0);
+        long now = System.currentTimeMillis();
+        List<Map<String, Object>> candidates = jdbc.queryForList("SELECT host FROM exit_candidate WHERE id = ? AND country = ? AND ip_kind = ? "
+                + "AND last_seen >= ?", candidateId, group.get("country"), KIND_HOME, now - CANDIDATE_FRESH_MS);
+        if (candidates.isEmpty()) return R.err("这个候选已经不在列表里了，请重新选择");
+        jdbc.update("UPDATE exit_group SET preferred_candidate_id=?, updated_time=? WHERE id=?", candidateId, now, groupId);
+        jdbc.update("UPDATE exit_member SET retry_after=NULL WHERE group_id=? AND candidate_id=? AND state NOT IN ('connecting','up')",
+                groupId, candidateId);
+        event(longValue(group.get("id")), longValue(group.get("node_id")), string(group.get("country")), "prefer", null,
+                string(candidates.get(0).get("host")), "已指定出口 " + candidates.get(0).get("host") + "，正在连接和检测，通过后自动切换");
+        requestReconcile();
+        return R.ok();
+    }
+
+    /** 处理手动指定的出口：就绪后切换过去；不可用时取消指定。 */
+    private void followPreference(Map<String, Object> group, long now) {
+        if (group.get("preferred_candidate_id") == null) return;
+        long groupId = longValue(group.get("id"));
+        long candidateId = longValue(group.get("preferred_candidate_id"));
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT id, state, approved, exit_ip, error FROM exit_member WHERE group_id = ? "
+                + "AND candidate_id = ?", groupId, candidateId);
+        if (rows.isEmpty()) return;
+        Map<String, Object> member = rows.get(0);
+        String state = string(member.get("state"));
+        if ("failed".equals(state) || "rejected".equals(state)) {
+            jdbc.update("UPDATE exit_group SET preferred_candidate_id=NULL WHERE id=?", groupId);
+            event(groupId, longValue(group.get("node_id")), string(group.get("country")), "prefer", null, null,
+                    "指定的出口不可用（" + translate(string(member.get("error"))) + "），已恢复自动选择");
+            return;
+        }
+        if ("up".equals(state) && longValue(member.get("approved")) == 1
+                && longValue(member.get("id")) != longValue(group.get("active_member_id"))) {
+            long activeId = longValue(group.get("active_member_id"));
+            if (activeId > 0) {
+                jdbc.update("UPDATE exit_member SET state='idle', approved=0, error='改用指定出口后释放', retry_after=?, updated_time=? WHERE id=?",
+                        now + RELEASED_COOLDOWN_MS, now, activeId);
+            }
+            jdbc.update("UPDATE exit_group SET active_member_id=?, active_exit_ip=?, active_since=?, updated_time=? WHERE id=?",
+                    member.get("id"), member.get("exit_ip"), now, now, groupId);
+            event(groupId, longValue(group.get("node_id")), string(group.get("country")), "switch", string(group.get("active_exit_ip")),
+                    string(member.get("exit_ip")), "已切换到指定的出口 " + member.get("exit_ip"));
+            group.put("active_member_id", member.get("id"));
+            group.put("active_exit_ip", member.get("exit_ip"));
+        }
+    }
+
     /** 某个国家当前是否有可用的家宽候选。 */
     public boolean hasCandidates(String country) {
         // 只读数据库：调用方持有端口分配锁，不能在这里等待外部网络
@@ -279,6 +413,9 @@ public class ExitPoolService {
         view.put("activeSince", group.get("active_since"));
         view.put("noExitSince", group.get("no_exit_since"));
         view.put("runtimeVersion", group.get("runtime_version"));
+        view.put("preferredCandidateId", group.get("preferred_candidate_id"));
+        view.put("standbyReady", jdbc.queryForObject("SELECT COUNT(*) FROM exit_member WHERE group_id = ? AND state = 'up' AND approved = 1 "
+                + "AND id <> ?", Long.class, groupId, longValue(group.get("active_member_id"))));
         long dayStart = LocalDate.now(ZoneId.systemDefault()).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
         view.put("switchesToday", jdbc.queryForObject("SELECT COUNT(*) FROM exit_event WHERE group_id = ? AND type = 'switch' AND created_time >= ?",
                 Long.class, groupId, dayStart));
@@ -436,7 +573,7 @@ public class ExitPoolService {
     // ---------------------------------------------------------------- 调度
 
     /** 执行一轮调度；返回是否还有出口组在等待可用出口。 */
-    boolean reconcile() {
+    synchronized boolean reconcile() {
         List<Map<String, Object>> wanted = jdbc.queryForList("SELECT DISTINCT node_id, UPPER(exit_country) AS country FROM private_proxy "
                 + "WHERE exit_type = 'residential' AND exit_country IS NOT NULL AND exit_country <> '' AND state IN ('provisioning','active')");
         List<Map<String, Object>> groups = jdbc.queryForList("SELECT * FROM exit_group");
@@ -510,7 +647,9 @@ public class ExitPoolService {
         }
 
         foldAgentStatus(groupId, nodeId, country, status, now);
-        topUpMembers(groupId, country, now, StringUtils.isNotBlank(status.getString("setupError")), status.getString("activeId"));
+        followPreference(group, now);
+        Long preferred = group.get("preferred_candidate_id") == null ? null : longValue(group.get("preferred_candidate_id"));
+        topUpMembers(groupId, country, now, StringUtils.isNotBlank(status.getString("setupError")), status.getString("activeId"), preferred);
 
         List<Map<String, Object>> members = jdbc.queryForList("SELECT m.*, c.host, c.port, c.proto, c.cipher, c.auth, c.ca, c.cert, c.client_key "
                 + "FROM exit_member m JOIN exit_candidate c ON c.id = m.candidate_id WHERE m.group_id = ? AND m.state IN ('connecting','up') "
@@ -596,14 +735,25 @@ public class ExitPoolService {
     }
 
     /** 保证有足够的出口在连接或待命：没有可用出口时并行多试几个，有了之后只保留一个备用。 */
-    private void topUpMembers(long groupId, String country, long now, boolean setupFailed, String activeName) {
+    private void topUpMembers(long groupId, String country, long now, boolean setupFailed, String activeName, Long preferred) {
+        if (preferred != null) {
+            // 指定的出口不受数量限制和冷却限制，直接加入
+            Long live = jdbc.queryForObject("SELECT COUNT(*) FROM exit_member WHERE group_id = ? AND candidate_id = ? "
+                    + "AND state IN ('connecting','up')", Long.class, groupId, preferred);
+            if (live == null || live == 0) {
+                jdbc.update("INSERT INTO exit_member (group_id,candidate_id,state,attempt,created_time,updated_time) VALUES (?,?,?,1,?,?) "
+                                + "ON DUPLICATE KEY UPDATE state='connecting', approved=0, exit_ip=NULL, error=NULL, attempt=attempt+1, "
+                                + "retry_after=NULL, updated_time=VALUES(updated_time)", groupId, preferred, "connecting", now, now);
+            }
+        }
         List<Map<String, Object>> live = jdbc.queryForList("SELECT id, candidate_id, state, approved, latency_ms FROM exit_member "
                 + "WHERE group_id = ? AND state IN ('connecting','up')", groupId);
         long ready = live.stream().filter(row -> "up".equals(row.get("state")) && longValue(row.get("approved")) == 1).count();
         // 多出来的备用出口只在知道节点正在用哪一个之后才释放，避免把在用的那个释放掉
         if (ready > READY_TARGET && StringUtils.isNotBlank(activeName)) {
             live.stream().filter(row -> "up".equals(row.get("state")) && longValue(row.get("approved")) == 1
-                            && !memberName(longValue(row.get("candidate_id"))).equals(activeName))
+                            && !memberName(longValue(row.get("candidate_id"))).equals(activeName)
+                            && (preferred == null || longValue(row.get("candidate_id")) != preferred))
                     .sorted(Comparator.comparingLong((Map<String, Object> row) -> row.get("latency_ms") == null
                             ? Long.MAX_VALUE : longValue(row.get("latency_ms"))).reversed())
                     .limit(ready - READY_TARGET)
@@ -616,9 +766,11 @@ public class ExitPoolService {
         List<Map<String, Object>> picks = jdbc.queryForList("SELECT c.id FROM exit_candidate c "
                         + "LEFT JOIN exit_member m ON m.candidate_id = c.id AND m.group_id = ? "
                         + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? "
-                        + "AND (m.id IS NULL OR (m.state NOT IN ('connecting','up') AND (m.retry_after IS NULL OR m.retry_after <= ?))) "
+                        // 手动切换时放掉的出口本身是好的：平时先冷却，避免马上又换回去；一个可用出口都没有时立刻拿回来用
+                        + "AND (m.id IS NULL OR (m.state NOT IN ('connecting','up') AND (m.retry_after IS NULL OR m.retry_after <= ? "
+                        + "OR (m.state = 'idle' AND ? = 1)))) "
                         + "ORDER BY COALESCE(m.success_count, 0) DESC, c.flagged_proxy ASC, c.list_score DESC LIMIT ?",
-                groupId, country, KIND_HOME, now - CANDIDATE_FRESH_MS, now, missing);
+                groupId, country, KIND_HOME, now - CANDIDATE_FRESH_MS, now, ready == 0 ? 1 : 0, missing);
         for (Map<String, Object> pick : picks) {
             // attempt 每次加一：节点据此知道这是一次新的连接请求，而不是它已经试过的那一次
             jdbc.update("INSERT INTO exit_member (group_id,candidate_id,state,attempt,created_time,updated_time) VALUES (?,?,?,1,?,?) "

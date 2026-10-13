@@ -2,17 +2,27 @@ import { useEffect, useState } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
-import { Ban, History, Home, RefreshCw } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Ban,
+  History,
+  Home,
+  MousePointerClick,
+  RefreshCw,
+  Shuffle,
+} from "lucide-react";
 import toast from "react-hot-toast";
 
 import {
   blockExitMember,
   getExitPoolOverview,
   refreshExitPool,
+  switchExit,
   type ExitGroup,
   type ExitMember,
   type ExitPoolOverview,
 } from "@/api";
+import ExitCandidateModal from "@/components/exit-candidate-modal";
 import ExitEventsModal from "@/components/exit-events-modal";
 import {
   exitMemberMeta,
@@ -100,6 +110,22 @@ export default function ExitPoolPage() {
     setRefreshing(false);
     if (response.code !== 0) toast.error(response.msg || "刷新失败");
     else toast.success("候选列表已刷新");
+    void load();
+  };
+
+  const [candidateTarget, setCandidateTarget] = useState<{
+    groupId: number;
+    title: string;
+  } | null>(null);
+  const [switching, setSwitching] = useState<number | null>(null);
+
+  const change = async (group: ExitGroup, member?: ExitMember) => {
+    setSwitching(group.id);
+    const response = await switchExit(group.id, member?.id);
+
+    setSwitching(null);
+    if (response.code !== 0) return toast.error(response.msg || "切换失败");
+    toast.success(`已切换到 ${response.data?.exitIp || "新的出口"}`);
     void load();
   };
 
@@ -229,19 +255,51 @@ export default function ExitPoolPage() {
                           : ""}
                       </p>
                     </div>
-                    <Button
-                      size="sm"
-                      startContent={<History size={15} />}
-                      variant="flat"
-                      onPress={() =>
-                        setEventsTarget({
-                          groupId: group.id,
-                          title: `${group.countryName}家宽 · ${group.nodeName} 的切换记录`,
-                        })
-                      }
-                    >
-                      切换记录
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        isDisabled={!group.standbyReady}
+                        isLoading={switching === group.id}
+                        size="sm"
+                        startContent={
+                          switching !== group.id && <Shuffle size={15} />
+                        }
+                        title={
+                          group.standbyReady
+                            ? "换到已就绪的备用出口"
+                            : "备用出口还没有就绪，稍后再试"
+                        }
+                        variant="flat"
+                        onPress={() => change(group)}
+                      >
+                        换一个出口
+                      </Button>
+                      <Button
+                        size="sm"
+                        startContent={<MousePointerClick size={15} />}
+                        variant="flat"
+                        onPress={() =>
+                          setCandidateTarget({
+                            groupId: group.id,
+                            title: `为 ${group.countryName}家宽 · ${group.nodeName} 指定出口`,
+                          })
+                        }
+                      >
+                        指定出口
+                      </Button>
+                      <Button
+                        size="sm"
+                        startContent={<History size={15} />}
+                        variant="flat"
+                        onPress={() =>
+                          setEventsTarget({
+                            groupId: group.id,
+                            title: `${group.countryName}家宽 · ${group.nodeName} 的切换记录`,
+                          })
+                        }
+                      >
+                        切换记录
+                      </Button>
+                    </div>
                   </div>
                   {group.members.length === 0 || !membersCurrent(group) ? (
                     <p className="px-5 py-6 text-sm text-default-500">
@@ -318,6 +376,20 @@ export default function ExitPoolPage() {
                                   </div>
                                 </td>
                                 <td className="px-5 py-3 text-right">
+                                  {member.state === "up" &&
+                                  member.approved &&
+                                  !member.active ? (
+                                    <Button
+                                      isIconOnly
+                                      aria-label={`切换到出口 ${member.exitIp || member.host}`}
+                                      size="sm"
+                                      title="切换到这个出口"
+                                      variant="light"
+                                      onPress={() => change(group, member)}
+                                    >
+                                      <ArrowLeftRight size={16} />
+                                    </Button>
+                                  ) : null}
                                   {live && (
                                     <Button
                                       isIconOnly
@@ -373,6 +445,11 @@ export default function ExitPoolPage() {
         </>
       )}
 
+      <ExitCandidateModal
+        target={candidateTarget}
+        onChanged={load}
+        onClose={() => setCandidateTarget(null)}
+      />
       <ExitEventsModal
         target={eventsTarget}
         onClose={() => setEventsTarget(null)}

@@ -51,6 +51,8 @@ public class ExitPoolSchemaInitializer {
                     + "UNIQUE KEY uk_exit_member (group_id,candidate_id), KEY idx_exit_member_state (group_id,state)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             SchemaSupport.ensureColumn(jdbcTemplate, "exit_member", "attempt", "int NOT NULL DEFAULT 0");
+            // 手动指定的出口；它失效后清空，恢复自动选择
+            SchemaSupport.ensureColumn(jdbcTemplate, "exit_group", "preferred_candidate_id", "bigint DEFAULT NULL");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS exit_event ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, group_id bigint NOT NULL, node_id bigint NOT NULL, country varchar(8) NOT NULL, "
                     + "type varchar(24) NOT NULL, from_ip varchar(64) DEFAULT NULL, to_ip varchar(64) DEFAULT NULL, "

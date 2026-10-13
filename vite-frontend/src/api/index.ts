@@ -722,6 +722,31 @@ export interface ExitStatusView {
   switchesToday?: number;
   runtimeVersion?: string;
   checkedAt?: number;
+  /** 已就绪、可以立即切换过去的备用出口数量 */
+  standbyReady?: number;
+  /** 手动指定的候选出口 */
+  preferredCandidateId?: number;
+}
+
+export interface ExitCandidateOption {
+  id: number;
+  host: string;
+  owner?: string;
+  flaggedProxy?: number;
+  sessions?: number;
+  speed?: number;
+  uptime?: number;
+  state?: ExitMember["state"];
+  exitIp?: string;
+  latencyMs?: number;
+  successCount?: number;
+  failCount?: number;
+  error?: string;
+}
+
+export interface ExitCandidatesResponse {
+  preferredCandidateId?: number;
+  candidates: ExitCandidateOption[];
 }
 
 export interface ExitCountry {
@@ -782,7 +807,7 @@ export interface ExitPoolOverview {
 
 export interface ExitEvent {
   id: number;
-  type: "activate" | "switch" | "lost" | "reject" | "fail";
+  type: "activate" | "switch" | "lost" | "reject" | "fail" | "prefer";
   fromIp?: string;
   toIp?: string;
   message?: string;
@@ -900,6 +925,19 @@ export const getExitPoolEvents = (groupId: number) =>
 export const refreshExitPool = () => Network.post("/exit-pool/refresh", {});
 export const blockExitMember = (memberId: number) =>
   Network.post("/exit-pool/block", { memberId });
+export const switchExit = (groupId: number, memberId?: number) =>
+  Network.mutate<ExitStatusView>("/exit-pool/switch", { groupId, memberId }, [
+    "/private-proxy/list",
+  ]);
+export const getExitCandidates = (groupId: number) =>
+  Network.post<ExitCandidatesResponse>("/exit-pool/candidates", { groupId });
+export const preferExit = (groupId: number, candidateId: number) =>
+  Network.post("/exit-pool/prefer", { groupId, candidateId });
+export const getExitSwitchToken = (id: number, reset = false) =>
+  Network.post<{ token: string }>("/private-proxy/exit-switch-token", {
+    id,
+    reset,
+  });
 
 export interface NetworkDiagnosticResult {
   mode: "ping" | "tcp" | "dns" | "trace";
