@@ -109,3 +109,27 @@ describe("agentSupportsExit", () => {
     expect(agentSupportsExit("dev", "2.57.0")).toBe(false);
   });
 });
+
+describe("exitPurity", () => {
+  it("rates home addresses by the available signals", async () => {
+    const { exitPurity } = await import("@/utils/exit-display");
+
+    expect(exitPurity({ kind: "home" }).label).toBe("较干净");
+    expect(exitPurity({ kind: "home", flaggedProxy: 1 }).label).toBe(
+      "已被标记",
+    );
+    expect(exitPurity({ kind: "home", ipqsScore: 10 }).label).toBe("干净");
+    expect(exitPurity({ kind: "home", ipqsScore: 90 }).label).toBe("风险高");
+    expect(exitPurity({ kind: "home", abuseScore: 60 }).label).toBe("风险高");
+    expect(
+      exitPurity({ kind: "home", flaggedProxy: 1, ipqsScore: 20 }).label,
+    ).toBe("已被标记");
+  });
+
+  it("marks addresses that are not home broadband", async () => {
+    const { exitPurity } = await import("@/utils/exit-display");
+
+    expect(exitPurity({ kind: "hosting" }).label).toBe("不是家宽");
+    expect(exitPurity({ kind: "project" }).reason).toContain("项目方");
+  });
+});

@@ -1,3 +1,13 @@
+## 2.60.0 Browse every candidate IP of a country with a purity rating
+
+- On the 家宽出口池 page, clicking a country now opens the full list of that country's current candidates: address, provider, purity, risk scores, how many people share it and how long it has been online. Addresses that are not home broadband (data centre, mobile, VPN Gate's own servers, wrong country) are listed too, greyed out, so the gap between the list total and the usable count is visible.
+- Purity is a plain reading of the available signals: 较干净 when the address is home broadband and not flagged as a proxy by the IP database; 已被标记 when it is flagged; 干净 or 风险高 once risk scores exist. The list is ordered with unflagged, less shared addresses first.
+- 深度检测 queries IPQualityScore and AbuseIPDB for one address, using the keys already stored on the IP 质量检测 page, and keeps the scores. It runs only when clicked because each query uses provider quota, and only for addresses in the exit pool. Without a stored key it explains where to add one.
+- A candidate can be chosen from this list directly when an exit of that country is in use; with several nodes using the country there is one button per node. The existing 指定出口 dialog also shows the scores.
+- Panel-only change. Agents stay at 2.58.1. Database: adds four nullable columns to `exit_ip_info`.
+- The list, ordering, the no-key message and the restriction to pool addresses were checked on a test panel with live data. The scoring path with a real provider key was not exercised here; it reuses the lookups the IP 质量检测 page already performs.
+- 2.59.0 remains available for rollback.
+
 ## 2.59.0 Switch, choose and remotely change a residential exit
 
 - Switch on demand. Proxy rows and the 家宽出口池 page have a 换一个出口 button that moves to the standby exit immediately. It is available only while a standby is ready, so a manual switch never leaves the proxy without an exit. The exit that was left is kept out of rotation for ten minutes so the next automatic choice does not go straight back to it, but it is reused at once if no other exit is left. Switches are limited to one per ten seconds per exit.

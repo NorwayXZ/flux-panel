@@ -23,6 +23,7 @@ import {
   type ExitPoolOverview,
 } from "@/api";
 import ExitCandidateModal from "@/components/exit-candidate-modal";
+import ExitCountryModal from "@/components/exit-country-modal";
 import ExitEventsModal from "@/components/exit-events-modal";
 import {
   exitMemberMeta,
@@ -118,6 +119,10 @@ export default function ExitPoolPage() {
     title: string;
   } | null>(null);
   const [switching, setSwitching] = useState<number | null>(null);
+  const [countryTarget, setCountryTarget] = useState<{
+    code: string;
+    name: string;
+  } | null>(null);
 
   const change = async (group: ExitGroup, member?: ExitMember) => {
     setSwitching(group.id);
@@ -199,9 +204,17 @@ export default function ExitPoolPage() {
             ) : (
               <div className="grid grid-cols-2 gap-px bg-divider sm:grid-cols-3 lg:grid-cols-6">
                 {countries.map((country) => (
-                  <div
+                  <button
                     key={country.country}
-                    className="bg-background px-5 py-4"
+                    className="bg-background px-5 py-4 text-left transition-colors hover:bg-default-50"
+                    title={`查看${country.name}的全部候选 IP`}
+                    type="button"
+                    onClick={() =>
+                      setCountryTarget({
+                        code: country.country,
+                        name: country.name,
+                      })
+                    }
                   >
                     <div className="text-sm font-medium">{country.name}</div>
                     <div
@@ -210,9 +223,9 @@ export default function ExitPoolPage() {
                       {country.available}
                     </div>
                     <div className="mt-0.5 text-xs text-default-500">
-                      列表共 {country.total} 个
+                      列表共 {country.total} 个 · 点击查看
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -445,6 +458,11 @@ export default function ExitPoolPage() {
         </>
       )}
 
+      <ExitCountryModal
+        country={countryTarget}
+        onChanged={load}
+        onClose={() => setCountryTarget(null)}
+      />
       <ExitCandidateModal
         target={candidateTarget}
         onChanged={load}

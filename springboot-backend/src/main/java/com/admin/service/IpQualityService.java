@@ -127,6 +127,20 @@ public class IpQualityService {
         }
     }
 
+    /** 查询单个 IP 的风险情报，供家宽出口评估候选使用。两个情报源都没有配置密钥时 configured 为 false。 */
+    public JSONObject reputation(String ip) {
+        JSONObject sources = new JSONObject();
+        Integer ipqs = queryIpqs(ip, sources);
+        Integer abuse = queryAbuse(ip, sources);
+        JSONObject result = new JSONObject();
+        Map<String, Object> status = providerStatus();
+        result.put("configured", Boolean.TRUE.equals(status.get("ipqsConfigured")) || Boolean.TRUE.equals(status.get("abuseipdbConfigured")));
+        result.put("ipqsScore", ipqs);
+        result.put("abuseScore", abuse);
+        result.put("sources", sources);
+        return result;
+    }
+
     private Integer queryIpqs(String ip, JSONObject sources) {
         String key = decrypt(providerRow().get("ipqs_api_key"));
         JSONObject source = new JSONObject(); source.put("name", "IPQualityScore"); source.put("configured", StringUtils.isNotBlank(key));

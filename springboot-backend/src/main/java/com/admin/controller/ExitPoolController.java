@@ -34,6 +34,13 @@ public class ExitPoolController {
         return service.prefer(id(body, "groupId"), id(body, "candidateId"));
     }
 
+    @RequireRole @PostMapping("/country-candidates") public R countryCandidates(@RequestBody Map<String, Object> body) {
+        return service.countryCandidates(body == null || body.get("country") == null ? null : body.get("country").toString());
+    }
+    @RequireRole @LogAnnotation @PostMapping("/reputation") public R reputation(@RequestBody Map<String, Object> body) {
+        return service.reputation(body == null || body.get("ip") == null ? null : body.get("ip").toString());
+    }
+
     private static Long id(Map<String, Object> body, String key) {
         Object value = body == null ? null : body.get(key);
         try {

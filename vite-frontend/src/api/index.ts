@@ -742,6 +742,40 @@ export interface ExitCandidateOption {
   successCount?: number;
   failCount?: number;
   error?: string;
+  ipqsScore?: number | null;
+  abuseScore?: number | null;
+}
+
+export interface ExitCountryCandidate {
+  id: number;
+  host: string;
+  port: number;
+  proto: string;
+  owner?: string;
+  asn?: string;
+  kind: string;
+  flaggedProxy?: number;
+  sessions?: number;
+  speed?: number;
+  uptime?: number;
+  score?: number;
+  ipqsScore?: number | null;
+  abuseScore?: number | null;
+  reputationAt?: number | null;
+}
+
+export interface ExitCountryCandidatesResponse {
+  country: string;
+  countryName: string;
+  groups: { id: number; nodeName: string }[];
+  candidates: ExitCountryCandidate[];
+}
+
+export interface ExitReputation {
+  ip: string;
+  ipqsScore?: number | null;
+  abuseScore?: number | null;
+  reputationAt: number;
 }
 
 export interface ExitCandidatesResponse {
@@ -933,6 +967,12 @@ export const getExitCandidates = (groupId: number) =>
   Network.post<ExitCandidatesResponse>("/exit-pool/candidates", { groupId });
 export const preferExit = (groupId: number, candidateId: number) =>
   Network.post("/exit-pool/prefer", { groupId, candidateId });
+export const getExitCountryCandidates = (country: string) =>
+  Network.post<ExitCountryCandidatesResponse>("/exit-pool/country-candidates", {
+    country,
+  });
+export const checkExitReputation = (ip: string) =>
+  Network.post<ExitReputation>("/exit-pool/reputation", { ip });
 export const getExitSwitchToken = (id: number, reset = false) =>
   Network.post<{ token: string }>("/private-proxy/exit-switch-token", {
     id,

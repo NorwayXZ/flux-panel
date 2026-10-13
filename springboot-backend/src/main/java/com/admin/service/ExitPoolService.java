@@ -95,6 +95,7 @@ public class ExitPoolService {
 
     private final JdbcTemplate jdbc;
     private final NodeMapper nodeMapper;
+    private final IpQualityService ipQualityService;
     private final String listUrl;
     private final String lookupUrl;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8))
@@ -114,11 +115,12 @@ public class ExitPoolService {
     private final Map<String, Long> lookupRetryAt = new ConcurrentHashMap<>();
     private volatile long lastCleanupAt;
 
-    public ExitPoolService(JdbcTemplate jdbc, NodeMapper nodeMapper,
+    public ExitPoolService(JdbcTemplate jdbc, NodeMapper nodeMapper, IpQualityService ipQualityService,
                            @Value("${exit-pool.vpngate-url:http://www.vpngate.net/api/iphone/}") String listUrl,
                            @Value("${exit-pool.ip-lookup-url:http://ip-api.com/batch}") String lookupUrl) {
         this.jdbc = jdbc;
         this.nodeMapper = nodeMapper;
+        this.ipQualityService = ipQualityService;
         this.listUrl = listUrl;
         this.lookupUrl = lookupUrl;
     }
@@ -293,6 +295,45 @@ public class ExitPoolService {
         return R.ok(view);
     }
 
+    /** 某个国家当前列表里的全部候选及其纯净度信息，包括被排除的非家宽地址。 */
+    public R countryCandidates(String country) {
+        String code = normalizeCountry(country);
+        if (!code.matches("[A-Z]{2}")) return R.err("国家代码不正确");
+        long now = System.currentTimeMillis();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("country", code);
+        result.put("countryName", countryName(code));
+        result.put("groups", jdbc.queryForList("SELECT g.id, n.name AS nodeName FROM exit_group g JOIN node n ON n.id = g.node_id "
+                + "WHERE g.country = ? AND g.status <> 'removing' ORDER BY g.id", code));
+        result.put("candidates", jdbc.queryForList("SELECT c.id, c.host, c.port, c.proto, c.owner, c.asn, c.ip_kind AS kind, "
+                        + "c.flagged_proxy AS flaggedProxy, c.list_sessions AS sessions, c.list_speed AS speed, c.list_uptime AS uptime, "
+                        + "c.list_score AS score, i.ipqs_score AS ipqsScore, i.abuse_score AS abuseScore, i.reputation_at AS reputationAt "
+                        + "FROM exit_candidate c LEFT JOIN exit_ip_info i ON i.ip = c.host WHERE c.country = ? AND c.last_seen >= ? "
+                        + "ORDER BY (c.ip_kind = 'home') DESC, c.flagged_proxy, COALESCE(i.ipqs_score, 50), c.list_sessions, c.list_score DESC",
+                code, now - CANDIDATE_FRESH_MS));
+        return R.ok(result);
+    }
+
+    /** 用已配置的风险情报源对一个候选 IP 做深度检测。按次消耗情报源额度，所以只在手动点击时执行。 */
+    public R reputation(String ip) {
+        String address = ExitCandidateParser.publicIpv4(ip);
+        if (address == null) return R.err("IP 格式不正确");
+        Long known = jdbc.queryForObject("SELECT (SELECT COUNT(*) FROM exit_candidate WHERE host = ?) + "
+                + "(SELECT COUNT(*) FROM exit_member WHERE exit_ip = ?)", Long.class, address, address);
+        if (known == null || known == 0) return R.err("只能检测出口池里的 IP");
+        JSONObject reputation = JSONObject.parseObject(ipQualityService.reputation(address).toJSONString());
+        if (!reputation.getBooleanValue("configured")) {
+            return R.err("还没有配置 IPQualityScore 或 AbuseIPDB 的密钥，可以在“IP 质量检测”页面配置后再检测");
+        }
+        long now = System.currentTimeMillis();
+        jdbc.update("UPDATE exit_ip_info SET ipqs_score=?, abuse_score=?, reputation_json=?, reputation_at=? WHERE ip=?",
+                reputation.getInteger("ipqsScore"), reputation.getInteger("abuseScore"),
+                reputation.getJSONObject("sources").toJSONString(), now, address);
+        reputation.put("ip", address);
+        reputation.put("reputationAt", now);
+        return R.ok(reputation);
+    }
+
     public Long groupId(Long nodeId, String country) {
         List<Long> ids = jdbc.queryForList("SELECT id FROM exit_group WHERE node_id = ? AND country = ?", Long.class,
                 nodeId, normalizeCountry(country));
@@ -309,8 +350,10 @@ public class ExitPoolService {
         result.put("preferredCandidateId", groups.get(0).get("preferred_candidate_id"));
         result.put("candidates", jdbc.queryForList("SELECT c.id, c.host, c.owner, c.flagged_proxy AS flaggedProxy, c.list_sessions AS sessions, "
                         + "c.list_speed AS speed, c.list_uptime AS uptime, m.state, m.exit_ip AS exitIp, m.latency_ms AS latencyMs, "
-                        + "m.success_count AS successCount, m.fail_count AS failCount, m.error "
+                        + "m.success_count AS successCount, m.fail_count AS failCount, m.error, i.ipqs_score AS ipqsScore, "
+                        + "i.abuse_score AS abuseScore "
                         + "FROM exit_candidate c LEFT JOIN exit_member m ON m.candidate_id = c.id AND m.group_id = ? "
+                        + "LEFT JOIN exit_ip_info i ON i.ip = c.host "
                         + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? "
                         + "ORDER BY FIELD(COALESCE(m.state,'new'),'up','connecting','new','idle','failed','rejected'), "
                         + "COALESCE(m.success_count,0) DESC, c.flagged_proxy, c.list_score DESC LIMIT 80",

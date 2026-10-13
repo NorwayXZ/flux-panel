@@ -50,6 +50,66 @@ export const exitMemberMeta = (
   return { label: "连不上", color: "danger" };
 };
 
+export interface ExitPuritySignals {
+  kind?: string;
+  flaggedProxy?: number | boolean | null;
+  ipqsScore?: number | null;
+  abuseScore?: number | null;
+}
+
+/**
+ * 候选出口的纯净度。依据是 IP 库给出的网络类型、是否已被标记为代理，
+ * 以及做过深度检测时的风险分。没有做过深度检测时只能给出初步结论。
+ */
+export const exitPurity = (
+  signals: ExitPuritySignals,
+): { label: string; color: ChipColor; reason: string } => {
+  const kind = signals.kind || "home";
+
+  if (kind !== "home") {
+    const names: Record<string, string> = {
+      hosting: "机房网络",
+      mobile: "移动网络",
+      project: "VPN Gate 项目方网络",
+      mismatch: "IP 库显示在别的国家",
+      unknown: "归属未知",
+    };
+
+    return {
+      label: "不是家宽",
+      color: "default",
+      reason: `${names[kind] || kind}，不会被选用`,
+    };
+  }
+  const fraud = signals.ipqsScore ?? null;
+  const abuse = signals.abuseScore ?? null;
+
+  if ((fraud !== null && fraud >= 75) || (abuse !== null && abuse >= 50))
+    return {
+      label: "风险高",
+      color: "danger",
+      reason: "风险情报评分高，容易被网站拦截",
+    };
+  if (signals.flaggedProxy)
+    return {
+      label: "已被标记",
+      color: "warning",
+      reason: "IP 库已把它标记为代理，敏感网站可能识别",
+    };
+  if (fraud !== null || abuse !== null)
+    return {
+      label: "干净",
+      color: "success",
+      reason: "未被标记为代理，风险情报评分低",
+    };
+
+  return {
+    label: "较干净",
+    color: "success",
+    reason: "未被标记为代理；尚未做深度检测",
+  };
+};
+
 /** 把毫秒时长写成“3 小时 12 分”这样的短句。 */
 export const formatExitDuration = (milliseconds?: number | null): string => {
   if (milliseconds === undefined || milliseconds === null || milliseconds < 0)
