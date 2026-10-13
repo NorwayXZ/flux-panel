@@ -38,6 +38,11 @@ type privateProxyRuntimeRequest struct {
 	ListenPort int    `json:"listenPort"`
 	Password   string `json:"password"`
 	ServerName string `json:"serverName"`
+	// A local SOCKS5 service that all outbound traffic is handed to. When
+	// absent the runtime connects to destinations directly.
+	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
+	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
+	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
 }
 
 type privateProxyRuntimeResponse struct {
@@ -70,6 +75,10 @@ type privateProxyRuntimeState struct {
 	ServerAddress    string `json:"serverAddress,omitempty"`
 	ControllerPort   int    `json:"controllerPort,omitempty"`
 	Version          string `json:"version"`
+
+	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
+	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
+	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
 }
 
 type privateProxyRuntimeManager struct {
@@ -125,6 +134,17 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 	if request.ServerName == "" {
 		request.ServerName = "cloudnest.local"
 	}
+	if request.OutboundProxyPort != 0 {
+		if request.ProxyType == "wireguard" {
+			return privateProxyRuntimeResponse{}, errors.New("WireGuard does not support a routed exit")
+		}
+		if request.OutboundProxyPort < 1 || request.OutboundProxyPort > 65535 ||
+			request.OutboundProxyUsername == "" || request.OutboundProxyPassword == "" {
+			return privateProxyRuntimeResponse{}, errors.New("invalid private proxy outbound route")
+		}
+	} else {
+		request.OutboundProxyUsername, request.OutboundProxyPassword = "", ""
+	}
 	if request.ProxyType == "wireguard" {
 		return m.addWireGuard(request)
 	}
@@ -134,6 +154,17 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 	if existing, err := m.readState(request.Name); err == nil {
 		if existing.ProxyType != request.ProxyType || existing.BindIP != request.BindIP || existing.ListenPort != request.ListenPort || existing.Password != request.Password {
 			return privateProxyRuntimeResponse{}, errors.New("private proxy runtime already exists with different settings")
+		}
+		if existing.OutboundProxyPort != request.OutboundProxyPort || existing.OutboundProxyUsername != request.OutboundProxyUsername ||
+			existing.OutboundProxyPassword != request.OutboundProxyPassword {
+			// Only where traffic leaves changes; certificates and client
+			// credentials are kept.
+			existing.OutboundProxyPort = request.OutboundProxyPort
+			existing.OutboundProxyUsername, existing.OutboundProxyPassword = request.OutboundProxyUsername, request.OutboundProxyPassword
+			if err := m.writeStateAndConfig(existing); err != nil {
+				return privateProxyRuntimeResponse{}, err
+			}
+			m.stop(existing.Name)
 		}
 		if err := m.ensureRunning(existing); err != nil {
 			return privateProxyRuntimeResponse{}, err
@@ -412,6 +443,8 @@ func newPrivateProxyRuntimeState(request privateProxyRuntimeRequest) (privatePro
 	state := privateProxyRuntimeState{
 		Name: request.Name, ProxyType: request.ProxyType, BindIP: request.BindIP, ListenPort: request.ListenPort,
 		Password: request.Password, ServerName: request.ServerName, Version: singBoxRuntimeVersion,
+		OutboundProxyPort: request.OutboundProxyPort, OutboundProxyUsername: request.OutboundProxyUsername,
+		OutboundProxyPassword: request.OutboundProxyPassword,
 	}
 	if request.ProxyType == "tuic" {
 		id, err := randomRuntimeUUID()
@@ -479,10 +512,19 @@ func (m *privateProxyRuntimeManager) runtimeConfig(state privateProxyRuntimeStat
 		inbound["users"] = []interface{}{map[string]interface{}{"uuid": state.ClientID, "password": state.Password}}
 		inbound["congestion_control"] = "bbr"
 	}
+	outbound := map[string]interface{}{"type": "direct", "tag": "direct"}
+	if state.OutboundProxyPort > 0 {
+		// The only outbound: with the local route unavailable connections
+		// fail instead of leaving from the node's own address.
+		outbound = map[string]interface{}{
+			"type": "socks", "tag": "routed", "version": "5", "server": "127.0.0.1", "server_port": state.OutboundProxyPort,
+			"username": state.OutboundProxyUsername, "password": state.OutboundProxyPassword,
+		}
+	}
 	config := map[string]interface{}{
 		"log":       map[string]interface{}{"level": "warn"},
 		"inbounds":  []interface{}{inbound},
-		"outbounds": []interface{}{map[string]interface{}{"type": "direct", "tag": "direct"}},
+		"outbounds": []interface{}{outbound},
 	}
 	if state.ControllerPort > 0 {
 		config["experimental"] = map[string]interface{}{

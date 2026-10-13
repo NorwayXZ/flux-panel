@@ -651,7 +651,7 @@ const entries: GuideEntry[] = [
     prerequisites: [
       "一台 Linux 节点，Agent 版本 2.57.0 或更高，并支持 TUN 虚拟网卡。",
       "节点离目标国家越近越好，例如用日本出口就选日本或东亚的节点。",
-      "代理协议为 SOCKS5、HTTP 或 Shadowsocks。",
+      "除 WireGuard 外的协议都可以使用。VLESS + REALITY、Trojan、Hysteria2、TUIC 需要 Agent 2.58.0 或更高。",
     ],
     steps: [
       "在“私人代理”新建代理，把“出口”选成“指定国家的家宽”，再选国家。国家旁边的数字是当前可用的候选数量。",

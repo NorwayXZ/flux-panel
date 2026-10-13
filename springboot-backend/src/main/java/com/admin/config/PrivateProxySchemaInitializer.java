@@ -41,6 +41,7 @@ public class PrivateProxySchemaInitializer {
             // 出口设置。带默认值，旧版本后端写入时不提供这两列也能成功，版本可以回退。
             ensureColumn("exit_type", "varchar(16) NOT NULL DEFAULT 'node'");
             ensureColumn("exit_country", "varchar(8) DEFAULT NULL");
+            ensureColumn("exit_route_port", "int DEFAULT NULL");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

@@ -113,6 +113,34 @@ public class GostUtil {
         return WebSocketServer.send_msg(nodeId, services, command);
     }
 
+    /**
+     * 节点本机的出口通道：只监听 127.0.0.1 的 SOCKS5 服务，把交给它的流量从指定家宽出口发出去。
+     * 由独立运行时（xray、sing-box）承载的协议通过它使用家宽出口；出口不可用时通道拒绝连接。
+     */
+    public static GostDto sendExitRoute(Long nodeId, String serviceName, Integer port, String username,
+                                        String password, String exitInterface, String command) {
+        JSONObject service = new JSONObject();
+        service.put("name", serviceName);
+        service.put("addr", "127.0.0.1:" + port);
+        JSONObject auth = new JSONObject();
+        auth.put("username", username);
+        auth.put("password", password);
+        JSONObject metadata = new JSONObject();
+        metadata.put("udp", true);
+        JSONObject handler = new JSONObject();
+        handler.put("type", "socks5");
+        handler.put("auth", auth);
+        handler.put("metadata", metadata);
+        service.put("handler", handler);
+        JSONObject listener = new JSONObject();
+        listener.put("type", "tcp");
+        service.put("listener", listener);
+        service.put("interface", exitInterface);
+        JSONArray services = new JSONArray();
+        services.add(service);
+        return WebSocketServer.send_msg(nodeId, services, command);
+    }
+
     public static GostDto SyncExitPool(Long nodeId, JSONObject payload) {
         return WebSocketServer.send_msg(nodeId, payload, "ExitPoolSync", 10);
     }
@@ -276,7 +304,19 @@ public class GostUtil {
 
     public static GostDto AddPrivateProxyRuntime(Long nodeId, String runtimeName, String proxyType, String bindIp,
                                                  Integer port, String password) {
+        return AddPrivateProxyRuntime(nodeId, runtimeName, proxyType, bindIp, port, password, null, null, null);
+    }
+
+    /** outboundPort 非空时，运行时的全部出站流量交给本机的出口通道。对已存在的运行时只更新出站方式，密钥不变。 */
+    public static GostDto AddPrivateProxyRuntime(Long nodeId, String runtimeName, String proxyType, String bindIp,
+                                                 Integer port, String password, Integer outboundPort,
+                                                 String outboundUsername, String outboundPassword) {
         JSONObject data = new JSONObject();
+        if (outboundPort != null) {
+            data.put("outboundProxyPort", outboundPort);
+            data.put("outboundProxyUsername", outboundUsername);
+            data.put("outboundProxyPassword", outboundPassword);
+        }
         data.put("name", runtimeName);
         data.put("proxyType", proxyType);
         data.put("bindIp", StringUtils.defaultString(bindIp));

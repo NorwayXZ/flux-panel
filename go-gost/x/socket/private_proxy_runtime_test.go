@@ -195,3 +195,27 @@ func TestAdvancedPrivateProxyRuntimeSingBoxValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAdvancedPrivateProxyRuntimeRoutesEverythingThroughTheLocalExit(t *testing.T) {
+	manager := &privateProxyRuntimeManager{directory: t.TempDir()}
+	state := privateProxyRuntimeState{Name: "p", ProxyType: "hysteria2", ListenPort: 24443, Password: "test-password-123"}
+	direct := manager.runtimeConfig(state)["outbounds"].([]interface{})
+	if len(direct) != 1 || direct[0].(map[string]interface{})["type"] != "direct" {
+		t.Fatalf("without a route the runtime connects directly, got %v", direct)
+	}
+
+	state.OutboundProxyPort, state.OutboundProxyUsername, state.OutboundProxyPassword = 45001, "exit", "secret"
+	routed := manager.runtimeConfig(state)["outbounds"].([]interface{})
+	if len(routed) != 1 {
+		t.Fatalf("the local exit must be the only outbound so traffic cannot leave directly, got %v", routed)
+	}
+	outbound := routed[0].(map[string]interface{})
+	if outbound["type"] != "socks" || outbound["server"] != "127.0.0.1" || outbound["server_port"] != 45001 || outbound["username"] != "exit" {
+		t.Fatalf("unexpected routed outbound %v", outbound)
+	}
+
+	if _, err := manager.add(privateProxyRuntimeRequest{Name: "w", ProxyType: "wireguard", ListenPort: 24444,
+		Password: "test-password-123", OutboundProxyPort: 45001, OutboundProxyUsername: "exit", OutboundProxyPassword: "secret"}); err == nil && runtime.GOOS == "linux" {
+		t.Fatal("WireGuard must refuse a routed exit")
+	}
+}

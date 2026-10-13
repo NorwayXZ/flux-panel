@@ -55,7 +55,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class ExitPoolService {
     public static final String MIN_AGENT_VERSION = "2.57.0";
-    public static final Set<String> SUPPORTED_PROXY_TYPES = Set.of("socks5", "http", "shadowsocks");
+    /** 由独立运行时承载、经本机出口通道使用家宽出口的协议，需要更高的 Agent 版本。 */
+    public static final String MIN_ROUTED_AGENT_VERSION = "2.58.0";
+    public static final Set<String> ROUTED_PROXY_TYPES = Set.of("vless_reality", "trojan", "hysteria2", "tuic");
+    public static final Set<String> SUPPORTED_PROXY_TYPES = Set.of("socks5", "http", "shadowsocks",
+            "vless_reality", "trojan", "hysteria2", "tuic");
+
+    public static String minAgentVersion(String proxyType) {
+        return ROUTED_PROXY_TYPES.contains(proxyType) ? MIN_ROUTED_AGENT_VERSION : MIN_AGENT_VERSION;
+    }
 
     static final String KIND_HOME = "home";
     static final String KIND_MOBILE = "mobile";
@@ -156,6 +164,8 @@ public class ExitPoolService {
         refreshCandidatesIfDue(false);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("minAgentVersion", MIN_AGENT_VERSION);
+        result.put("minRoutedAgentVersion", MIN_ROUTED_AGENT_VERSION);
+        result.put("routedProxyTypes", ROUTED_PROXY_TYPES);
         result.put("supportedProxyTypes", SUPPORTED_PROXY_TYPES);
         result.put("countries", countryRows());
         result.put("lastRefreshAt", lastRefreshAt == 0 ? null : lastRefreshAt);

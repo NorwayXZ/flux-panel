@@ -180,10 +180,19 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
 	}
 	if state, err := m.readState(request.Name); err == nil {
-		if state.Mode != "server" || state.ServerName != request.ServerName ||
-			state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
-			state.OutboundProxyUsername != request.OutboundProxyUsername || state.OutboundProxyPassword != request.OutboundProxyPassword {
+		if state.Mode != "server" || state.ServerName != request.ServerName {
 			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
+		}
+		if state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
+			state.OutboundProxyUsername != request.OutboundProxyUsername || state.OutboundProxyPassword != request.OutboundProxyPassword {
+			// Only where traffic leaves changes. The keys and client ID are kept,
+			// so devices keep working with the configuration they already have.
+			state.OutboundProxyHost, state.OutboundProxyPort = request.OutboundProxyHost, request.OutboundProxyPort
+			state.OutboundProxyUsername, state.OutboundProxyPassword = request.OutboundProxyUsername, request.OutboundProxyPassword
+			if err := m.writeStateAndConfig(state); err != nil {
+				return realityRuntimeResponse{}, err
+			}
+			m.stopProcess(state.Name)
 		}
 		if err := m.ensureRunning(state); err != nil {
 			return realityRuntimeResponse{}, err
@@ -412,6 +421,16 @@ func (m *realityRuntimeManager) delete(name string) error {
 	if !runtimeNamePattern.MatchString(name) {
 		return errors.New("invalid REALITY runtime name")
 	}
+	m.stopProcess(name)
+	for _, path := range []string{m.statePath(name), m.configPath(name), m.logPath(name)} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove REALITY runtime file: %w", err)
+		}
+	}
+	return nil
+}
+
+func (m *realityRuntimeManager) stopProcess(name string) {
 	m.mu.Lock()
 	m.stopping[name] = true
 	cmd := m.processes[name]
@@ -427,12 +446,6 @@ func (m *realityRuntimeManager) delete(name string) error {
 	delete(m.processes, name)
 	delete(m.stopping, name)
 	m.mu.Unlock()
-	for _, path := range []string{m.statePath(name), m.configPath(name), m.logPath(name)} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove REALITY runtime file: %w", err)
-		}
-	}
-	return nil
 }
 
 func (m *realityRuntimeManager) restore() {

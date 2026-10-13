@@ -91,8 +91,24 @@ interface ProxyForm {
   exitCountry: string;
 }
 
-const EXIT_PROXY_TYPES: PrivateProxyType[] = ["socks5", "http", "shadowsocks"];
+const EXIT_PROXY_TYPES: PrivateProxyType[] = [
+  "socks5",
+  "http",
+  "shadowsocks",
+  "vless_reality",
+  "trojan",
+  "hysteria2",
+  "tuic",
+];
+// 由独立运行时承载的协议经节点本机的出口通道使用家宽出口，需要更高的 Agent 版本
+const ROUTED_EXIT_PROXY_TYPES: PrivateProxyType[] = [
+  "vless_reality",
+  "trojan",
+  "hysteria2",
+  "tuic",
+];
 const DEFAULT_EXIT_AGENT_VERSION = "2.57.0";
+const DEFAULT_ROUTED_EXIT_AGENT_VERSION = "2.58.0";
 
 const randomSecret = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
@@ -229,11 +245,14 @@ export default function PrivateProxyPage() {
     nodeId?: number | string,
   ) => {
     if (!EXIT_PROXY_TYPES.includes(proxyType))
-      return "家宽出口目前支持 SOCKS5、HTTP 和 Shadowsocks 代理。";
+      return "家宽出口暂不支持 WireGuard。";
+    const requiredVersion = ROUTED_EXIT_PROXY_TYPES.includes(proxyType)
+      ? exitInfo?.minRoutedAgentVersion || DEFAULT_ROUTED_EXIT_AGENT_VERSION
+      : minExitAgentVersion;
     const node = nodes.find((item) => String(item.id) === String(nodeId));
 
-    if (node && !agentSupportsExit(node.version, minExitAgentVersion))
-      return `该节点的 Agent 版本是 ${node.version || "未知"}，升级到 ${minExitAgentVersion} 或更高后才能使用家宽出口。`;
+    if (node && !agentSupportsExit(node.version, requiredVersion))
+      return `该节点的 Agent 版本是 ${node.version || "未知"}，${protocolMeta[proxyType].label} 使用家宽出口需要升级到 ${requiredVersion} 或更高。`;
 
     return "";
   };

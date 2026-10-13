@@ -733,6 +733,7 @@ export interface ExitCountry {
 
 export interface ExitCountriesResponse {
   minAgentVersion: string;
+  minRoutedAgentVersion?: string;
   supportedProxyTypes: PrivateProxyType[];
   countries: ExitCountry[];
   lastRefreshAt?: number;

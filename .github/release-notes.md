@@ -1,3 +1,14 @@
+## 2.58.0 Residential exits for VLESS + REALITY, Trojan, Hysteria2 and TUIC
+
+- The residential exit option introduced in 2.57.0 now also works for VLESS + REALITY, Trojan, Hysteria2 and TUIC private proxies. WireGuard remains unsupported.
+- These protocols run in a separate program on the node (xray or sing-box), which previously always connected to destinations directly. With an exit selected, the panel creates a SOCKS5 service on the node that listens only on 127.0.0.1 and is bound to the exit group, and the runtime uses it as its only outbound for TCP and UDP. Because there is no direct outbound left, these proxies fail closed in the same way: without a usable exit their connections fail instead of leaving from the node's own address.
+- Changing the exit of an existing proxy, including turning it on or off, keeps its keys, UUID and certificate. Devices continue to work with the configuration they already have. The runtime restarts, so open connections reconnect.
+- Requirements. Agent 2.58.0 on the node for these four protocols. SOCKS5, HTTP and Shadowsocks proxies with an exit keep working on Agent 2.57.0.
+- Database. One nullable column, `exit_route_port`, on `private_proxy`.
+- Rollback. Panel 2.57.0 and 2.56.5 run on the upgraded database. Switch these proxies back to the node's own IP before rolling back the panel or the Agent; on an older Agent a proxy still bound to an exit refuses connections rather than using the node's address.
+- Verified in a Linux VM against live exits with real clients for each protocol: the site-visible IP over TCP and UDP, enabling an exit on an existing VLESS proxy without changing the client configuration, returning to the node IP, changing country, loss of every exit, Agent restart, and rolling the Agent back to 2.56.0 and forward again.
+- Agents move to 2.58.0. 2.57.0 remains available for rollback.
+
 ## 2.57.0 Residential exits by country for private proxies
 
 - A SOCKS5, HTTP or Shadowsocks private proxy can now leave through a home-broadband IP of a chosen country instead of the node's own address. The address and port a device connects to stay the same. Candidates come from the public VPN Gate list; the panel selects, checks and replaces them without manual work.
