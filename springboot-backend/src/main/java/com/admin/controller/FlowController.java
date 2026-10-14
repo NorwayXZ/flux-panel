@@ -59,6 +59,7 @@ import java.util.stream.Collectors;
 @CrossOrigin
 @Slf4j
 public class FlowController extends BaseController {
+    @Resource private com.admin.service.CnixSharedRelayService cnixSharedRelayService;
 
     // 常量定义
     private static final String SUCCESS_RESPONSE = "ok";
@@ -397,6 +398,11 @@ public class FlowController extends BaseController {
             Integer activeTunnelId = forward.getActiveTunnelId() == null ? forward.getTunnelId() : forward.getActiveTunnelId();
             Tunnel tunnel = tunnelService.getById(activeTunnelId);
             if (tunnel != null){
+                if(cnixSharedRelayService!=null && cnixSharedRelayService.isShared(tunnel)) {
+                    var paused=forwardService.pauseManagedForward(forward.getId());
+                    if(paused.getCode()!=0)log.warn("共享业务额度暂停未完成 forwardId={}: {}",forward.getId(),paused.getMsg());
+                    continue;
+                }
                 GostUtil.PauseService(tunnel.getInNodeId(), name);
                 if (tunnel.getType() == 2){
                     GostUtil.PauseRemoteService(tunnel.getOutNodeId(), name);

@@ -79,6 +79,11 @@ interface Forward {
 }
 
 interface Tunnel {
+  sharedRelay?: {
+    servicePort?: number;
+    externalAddress?: string;
+    state?: string;
+  };
   id: number;
   name: string;
   type?: number;
@@ -770,6 +775,8 @@ export default function ForwardPage() {
     setForm((prev) => ({
       ...prev,
       tunnelId: parseInt(tunnelId),
+      protocolMode: tunnel?.sharedRelay ? "tcp" : prev.protocolMode,
+      routeMode: tunnel?.sharedRelay ? "single" : prev.routeMode,
       routeTunnelIds: prev.routeTunnelIds.filter((candidateId) => {
         const candidate = tunnels.find((item) => item.id === candidateId);
 
@@ -2282,7 +2289,7 @@ export default function ForwardPage() {
       ) : (
         /* 空状态 */
         <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
-            <CardBody className="text-center py-10">
+          <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
                 <svg
@@ -2429,6 +2436,10 @@ export default function ForwardPage() {
                       ).map(([value, label]) => (
                         <Button
                           key={value}
+                          isDisabled={
+                            Boolean(selectedTunnel?.sharedRelay) &&
+                            value !== "tcp"
+                          }
                           radius="none"
                           variant={
                             form.protocolMode === value ? "solid" : "light"

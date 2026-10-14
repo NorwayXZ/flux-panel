@@ -10,6 +10,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class GostUtilTests {
+    @Test void sharedBusinessKeepsItsOwnTargetAndLimiterAndRequiresRemoteResolution() {
+        var tunnel=new com.admin.entity.Tunnel();tunnel.setType(2);tunnel.setTcpListenAddr("0.0.0.0");tunnel.setSharedRelay(new com.admin.common.dto.CnixSharedRelayDto());
+        for(int index=1;index<=3;index++) {
+            var service=GostUtil.createServiceConfig(index+"_7_9",12000+index,index,"landing"+index+".example:443","tcp",2,tunnel,"fifo",null,index+"_7_9");
+            assertEquals("landing"+index+".example:443",service.getJSONObject("forwarder").getJSONArray("nodes").getJSONObject(0).getString("addr"));
+            assertEquals(Integer.toString(index),service.getString("limiter"));
+            assertEquals(index+"_7_9_chains",service.getJSONObject("handler").getString("chain"));
+            org.junit.jupiter.api.Assertions.assertTrue(service.getJSONObject("handler").getJSONObject("metadata").getBooleanValue("cnix.remoteResolution"));
+        }
+    }
 
     @Test
     void buildsOrderedSocks5HopsForHomeTunnelEgress() {

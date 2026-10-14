@@ -27,6 +27,7 @@ import java.util.List;
 @Configuration
 @EnableScheduling
 public class ResetFlowAsync {
+    @Resource private com.admin.service.CnixSharedRelayService cnixSharedRelayService;
 
     @Resource
     UserService userService;
@@ -250,6 +251,11 @@ public class ResetFlowAsync {
     private void pauseForwardService(Forward forward, Integer userTunnelId) {
         Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
         if (tunnel == null) return;
+        if(cnixSharedRelayService!=null && cnixSharedRelayService.isShared(tunnel)) {
+            var result=forwardService.pauseManagedForward(forward.getId());
+            if(result.getCode()!=0)throw new IllegalStateException("共享业务到期暂停失败："+result.getMsg());
+            return;
+        }
 
         GostUtil.PauseService(tunnel.getInNodeId(), buildServiceName(forward.getId(), forward.getUserId(), userTunnelId));
         if (tunnel.getType() == 2){

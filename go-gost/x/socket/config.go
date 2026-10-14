@@ -1,25 +1,20 @@
 package socket
 
 import (
-	"os"
+	"bytes"
+	"sync"
 
 	"github.com/go-gost/x/config"
 )
 
-func saveConfig() {
+var configSaveMu sync.Mutex
 
-	file := "gost.json"
-
-	f, err := os.Create(file)
-	if err != nil {
-		return
+func saveConfig() error {
+	configSaveMu.Lock()
+	defer configSaveMu.Unlock()
+	var data bytes.Buffer
+	if err := config.Global().Write(&data, "json"); err != nil {
+		return err
 	}
-	defer f.Close()
-
-	if err := config.Global().Write(f, "json"); err != nil {
-
-		return
-	}
-
-	return
+	return writePrivateFile("gost.json", data.Bytes())
 }

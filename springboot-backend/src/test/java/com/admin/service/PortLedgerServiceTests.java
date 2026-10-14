@@ -39,6 +39,7 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class PortLedgerServiceTests {
+    @Mock private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
     @Mock private NodeMapper nodeMapper;
     @Mock private TunnelMapper tunnelMapper;
     @Mock private ForwardMapper forwardMapper;

@@ -87,6 +87,12 @@ public class PortLedgerService {
         addSourceIpEntries(entries, nodeMap, userMap);
         addNftForwards(entries, nodeMap, userMap);
         addNetworkRouteApplications(entries, nodeMap, tunnelMap);
+        for(var row:jdbcTemplate.queryForList("SELECT tunnel_id,out_node_id,service_port,created_time FROM cnix_shared_relay")) {
+            long id=((Number)row.get("tunnel_id")).longValue(); Tunnel tunnel=tunnelMap.get(id);
+            int port=((Number)row.get("service_port")).intValue();
+            add(entries,nodeEntry("cnix_shared_relay","occupied",nodeMap.get(((Number)row.get("out_node_id")).longValue()),port,port,"tcp",
+                    tunnel==null?0:tunnel.getOwnerUserId(),"",id,tunnel==null?"CNIX共享隧道":tunnel.getName(),"共享relay/TLS出口",((Number)row.get("created_time")).longValue(),null));
+        }
 
         String namespaceFilter = null;
         if (query != null && query.getNodeId() != null && nodeMap.containsKey(query.getNodeId())) {

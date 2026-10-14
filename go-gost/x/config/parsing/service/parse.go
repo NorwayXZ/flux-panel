@@ -31,6 +31,7 @@ import (
 	logger_parser "github.com/go-gost/x/config/parsing/logger"
 	selector_parser "github.com/go-gost/x/config/parsing/selector"
 	tls_util "github.com/go-gost/x/internal/util/tls"
+	xtraffic "github.com/go-gost/x/limiter/traffic"
 	cache_limiter "github.com/go-gost/x/limiter/traffic/cache"
 	"github.com/go-gost/x/metadata"
 	mdutil "github.com/go-gost/x/metadata/util"
@@ -183,6 +184,10 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 		)
 	}
 
+	serviceLimiter := registry.TrafficLimiterRegistry().Get(cfg.Limiter)
+	if cfg.Handler.Metadata["cnix.remoteResolution"] == true {
+		serviceLimiter = xtraffic.PerService(serviceLimiter)
+	}
 	listenOpts := []listener.Option{
 		listener.AddrOption(cfg.Addr),
 		listener.RouterOption(xchain.NewRouter(routerOpts...)),
@@ -192,7 +197,7 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 		listener.AdmissionOption(xadmission.AdmissionGroup(admissions...)),
 		listener.TrafficLimiterOption(
 			cache_limiter.NewCachedTrafficLimiter(
-				registry.TrafficLimiterRegistry().Get(cfg.Limiter),
+				serviceLimiter,
 				cache_limiter.RefreshIntervalOption(limiterRefreshInterval),
 				cache_limiter.CleanupIntervalOption(limiterCleanupInterval),
 				cache_limiter.ScopeOption(limiterScope),
@@ -313,9 +318,14 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 	}
 
 	var h handler.Handler
+	serviceRouter := xchain.NewRouter(routerOpts...)
+	if cfg.Handler.Metadata["cnix.remoteResolution"] == true {
+		serviceRouter.RemoteResolution = true
+		serviceRouter.RequireChain = true
+	}
 	if rf := registry.HandlerRegistry().Get(cfg.Handler.Type); rf != nil {
 		h = rf(
-			handler.RouterOption(xchain.NewRouter(routerOpts...)),
+			handler.RouterOption(serviceRouter),
 			handler.AutherOption(auther),
 			handler.AuthOption(auth_parser.Info(cfg.Handler.Auth)),
 			handler.BypassOption(xbypass.BypassGroup(bypass_parser.List(cfg.Bypass, cfg.Bypasses...)...)),
@@ -343,7 +353,11 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 	if cfg.Handler.Metadata == nil {
 		cfg.Handler.Metadata = make(map[string]any)
 	}
-	handlerLogger.Debugf("metadata: %v", cfg.Handler.Metadata)
+	if cfg.Handler.Metadata["cnix.shared"] == true {
+		handlerLogger.Debug("shared relay metadata: credentials redacted")
+	} else {
+		handlerLogger.Debugf("metadata: %v", cfg.Handler.Metadata)
+	}
 	if err := h.Init(metadata.NewMetadata(cfg.Handler.Metadata)); err != nil {
 		handlerLogger.Error("init: ", err)
 		return nil, err

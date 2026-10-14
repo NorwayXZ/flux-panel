@@ -15,7 +15,9 @@ import (
 )
 
 type Router struct {
-	options chain.RouterOptions
+	options          chain.RouterOptions
+	RemoteResolution bool
+	RequireChain     bool
 }
 
 func NewRouter(opts ...chain.RouterOption) *Router {
@@ -102,7 +104,10 @@ func (r *Router) dial(ctx context.Context, network, address string, log logger.L
 		}
 
 		var ipAddr string
-		ipAddr, err = xnet.Resolve(ctx, "ip", address, r.options.Resolver, r.options.HostMapper, log)
+		ipAddr = address
+		if !r.RemoteResolution {
+			ipAddr, err = xnet.Resolve(ctx, "ip", address, r.options.Resolver, r.options.HostMapper, log)
+		}
 		if err != nil {
 			log.Error(err)
 			break
@@ -127,7 +132,13 @@ func (r *Router) dial(ctx context.Context, network, address string, log logger.L
 		log.Debugf("route(retry=%d) %s", i, buf.String())
 
 		if route == nil {
+			if r.RequireChain {
+				return nil, fmt.Errorf("required shared relay chain is unavailable")
+			}
 			route = DefaultRoute
+		}
+		if r.RequireChain && len(route.Nodes()) == 0 {
+			return nil, fmt.Errorf("required shared relay route is empty")
 		}
 		conn, err = route.Dial(ctx, network, ipAddr,
 			chain.InterfaceDialOption(r.options.IfceName),
