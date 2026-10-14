@@ -2201,10 +2201,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 markRouteProbeFailure(route, "隧道不存在");
                 continue;
             }
+            List<String> healthyBefore = route.getHealthyTargets() == null
+                    ? Collections.emptyList() : new ArrayList<>(route.getHealthyTargets());
             RouteProbeResult probe = probeRoute(forward, route, tunnel);
             applyRouteProbeResult(route, probe);
             targetHealthByRoute.put(route.getTunnelId(), probe.getTargetHealth());
-            updateRouteTargetPool(forward, route, tunnel);
+            // 只在健康目标变化时更新出口节点的服务；每轮都下发会让出口节点每分钟重建一次服务
+            if (targetPoolChanged(healthyBefore, route.getHealthyTargets())) {
+                updateRouteTargetPool(forward, route, tunnel);
+            }
         }
 
         long now = System.currentTimeMillis();
@@ -2561,6 +2566,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         } catch (Exception e) {
             log.warn("清理转发 {} 线路切换记录失败：{}", forwardId, e.getMessage());
         }
+    }
+
+    static boolean targetPoolChanged(List<String> before, List<String> after) {
+        List<String> current = after == null ? Collections.emptyList() : after;
+        return !Objects.equals(before == null ? Collections.emptyList() : before, current);
     }
 
     private void updateRouteTargetPool(Forward forward, ForwardRouteDto route, Tunnel tunnel) {
