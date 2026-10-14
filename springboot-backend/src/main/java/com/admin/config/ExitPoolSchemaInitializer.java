@@ -56,6 +56,9 @@ public class ExitPoolSchemaInitializer {
             SchemaSupport.ensureColumn(jdbcTemplate, "exit_ip_info", "abuse_score", "int DEFAULT NULL");
             SchemaSupport.ensureColumn(jdbcTemplate, "exit_ip_info", "reputation_json", "text DEFAULT NULL");
             SchemaSupport.ensureColumn(jdbcTemplate, "exit_ip_info", "reputation_at", "bigint DEFAULT NULL");
+            // 出口池全局设置：只选用欺诈分不高于上限的出口
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS exit_pool_setting (id int NOT NULL, max_fraud_score int DEFAULT NULL, "
+                    + "updated_time bigint NOT NULL, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             // 手动指定的出口；它失效后清空，恢复自动选择
             SchemaSupport.ensureColumn(jdbcTemplate, "exit_group", "preferred_candidate_id", "bigint DEFAULT NULL");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS exit_event ("

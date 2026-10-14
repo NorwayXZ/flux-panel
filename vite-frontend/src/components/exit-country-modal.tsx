@@ -15,6 +15,7 @@ import { ScanSearch } from "lucide-react";
 import toast from "react-hot-toast";
 
 import {
+  checkExitCountry,
   checkExitReputation,
   getExitCountryCandidates,
   preferExit,
@@ -99,6 +100,28 @@ export default function ExitCountryModal({
   };
 
   const home = candidates.filter((item) => item.kind === "home").length;
+  const unchecked = candidates.filter(
+    (item) => item.kind === "home" && item.reputationAt == null,
+  ).length;
+  const [batchRunning, setBatchRunning] = useState(false);
+
+  const checkAll = async () => {
+    if (!country) return;
+    if (
+      !window.confirm(
+        `将对 ${unchecked} 个还没检测过的家宽候选做深度检测，每个消耗一次情报源额度，在后台进行，约需 ${Math.ceil((unchecked * 2) / 60)} 分钟。继续吗？`,
+      )
+    )
+      return;
+    setBatchRunning(true);
+    const response = await checkExitCountry(country.code);
+
+    setBatchRunning(false);
+    if (response.code !== 0) return toast.error(response.msg || "检测失败");
+    toast.success(
+      `已开始检测 ${response.data?.queued ?? 0} 个候选，稍后重新打开列表查看结果`,
+    );
+  };
 
   return (
     <Modal
@@ -114,6 +137,22 @@ export default function ExitCountryModal({
           {country ? `${country.name}的全部候选 IP` : "候选 IP"}
         </ModalHeader>
         <ModalBody>
+          {unchecked > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-default-50 px-3 py-2 text-sm">
+              <span className="text-default-600">
+                还有 {unchecked} 个家宽候选没有做过深度检测
+              </span>
+              <Button
+                isLoading={batchRunning}
+                size="sm"
+                startContent={!batchRunning && <ScanSearch size={14} />}
+                variant="flat"
+                onPress={checkAll}
+              >
+                全部检测
+              </Button>
+            </div>
+          )}
           <p className="text-sm text-default-500">
             列表共 {candidates.length} 个，其中家宽 {home} 个。纯净度依据 IP
             库给出的网络类型和是否已被标记为代理；点“深度检测”会再查询风险情报评分（需要先在“IP

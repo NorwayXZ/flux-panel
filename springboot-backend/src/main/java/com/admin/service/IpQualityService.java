@@ -127,6 +127,12 @@ public class IpQualityService {
         }
     }
 
+    /** 是否配置了任一风险情报源的密钥。不发起查询。 */
+    public boolean reputationConfigured() {
+        Map<String, Object> status = providerStatus();
+        return Boolean.TRUE.equals(status.get("ipqsConfigured")) || Boolean.TRUE.equals(status.get("abuseipdbConfigured"));
+    }
+
     /** 查询单个 IP 的风险情报，供家宽出口评估候选使用。两个情报源都没有配置密钥时 configured 为 false。 */
     public JSONObject reputation(String ip) {
         JSONObject sources = new JSONObject();

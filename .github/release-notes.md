@@ -1,3 +1,16 @@
+## 2.61.0 Daily backups, a forward fix and exit risk controls
+
+- Fixes tunnel forwards rebuilding their out-node services every minute. The forward health check pushed the relay service of every tunnel route to its out node on every run, about once a minute, even when nothing had changed. It now pushes only when a route's set of healthy targets changes. Reported from node logs showing the same `UpdateService` arriving every minute.
+- Daily database backups. The panel manager gains `flux-panel-manager backup`, and installing or updating the panel schedules it daily around 04:30. Each backup is a gzip of `mysqldump` plus a copy of `flux-panel.env` in `/var/backups/flux-panel`; incomplete exports are discarded and the newest 14 are kept. `FLUX_PANEL_BACKUP_REMOTE` copies each backup to another host with scp; `FLUX_PANEL_BACKUP_KEEP`, `FLUX_PANEL_BACKUP_DIR` and `FLUX_PANEL_BACKUP_DISABLED` can be set in the environment or in `flux-panel.env`. The timer appears after the panel is updated to this release.
+- Purity now has three levels once risk scores exist: 干净 (fraud score under 30, abuse score under 25 and not flagged as a proxy), 一般, and 风险高 (fraud 75 or more, or abuse 50 or more). Previously a fraud score of 65 was shown as clean.
+- Low-risk-only exits. An option on the exit pool page restricts automatic selection, failover and manual switches to exits whose IPQualityScore fraud score is known and at or below a chosen limit. Exits in use that exceed it are replaced at once. New exits without a score are checked once when they connect. It requires an IPQualityScore key and is refused without one. Country tiles show how many candidates meet the limit.
+- 全部检测 in a country's candidate list checks every home candidate without a score in the background, one every 1.5 seconds, up to 60 at a time.
+- Customers can switch the exit of their own proxies. The 换一个出口 button and a 切换链接 button that copies the remote switch link now appear for the owner of a proxy with a residential exit, not only for administrators. Creating proxies with a residential exit stays with administrators, including when granting a proxy to a customer.
+- Each exit group on the pool page shows the accumulated traffic of the proxies using it. All traffic of a proxy with a residential exit goes through that exit.
+- Panel-only change. Agents stay at 2.58.2. Database: adds the `exit_pool_setting` table.
+- The forward fix and the purity and low-risk rules are covered by unit tests. The backup command was tested with a mocked Docker for rotation, incomplete exports, permissions and remote copy, not yet on a live panel host. Low-risk selection was checked on a test panel with simulated scores; real IPQualityScore lookups were not exercised.
+- 2.60.1 remains available for rollback.
+
 ## 2.60.1 Faster exit switching that prefers low latency
 
 - Each exit in use now keeps two standbys instead of one. A manual switch therefore still leaves a standby to switch to next, and there is a choice to rank. When standbys are missing, two more candidates are tried at once.

@@ -90,17 +90,30 @@ export const exitPurity = (
       color: "danger",
       reason: "风险情报评分高，容易被网站拦截",
     };
+  if (fraud !== null || abuse !== null) {
+    const low =
+      (fraud === null || fraud < 30) && (abuse === null || abuse < 25);
+
+    if (low && !signals.flaggedProxy)
+      return {
+        label: "干净",
+        color: "success",
+        reason: "未被标记为代理，风险情报评分低",
+      };
+
+    return {
+      label: "一般",
+      color: "warning",
+      reason: low
+        ? "风险评分低，但 IP 库已把它标记为代理"
+        : "风险评分中等（欺诈 30–74 或滥用 25–49），部分网站可能要求验证",
+    };
+  }
   if (signals.flaggedProxy)
     return {
       label: "已被标记",
       color: "warning",
       reason: "IP 库已把它标记为代理，敏感网站可能识别",
-    };
-  if (fraud !== null || abuse !== null)
-    return {
-      label: "干净",
-      color: "success",
-      reason: "未被标记为代理，风险情报评分低",
     };
 
   return {

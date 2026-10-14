@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
+import { Input } from "@heroui/input";
 import { Spinner } from "@heroui/spinner";
+import { Switch } from "@heroui/switch";
 import {
   ArrowLeftRight,
   Ban,
@@ -17,6 +19,7 @@ import {
   blockExitMember,
   getExitPoolOverview,
   refreshExitPool,
+  saveExitPoolSettings,
   switchExit,
   type ExitGroup,
   type ExitMember,
@@ -82,6 +85,40 @@ export default function ExitPoolPage() {
     groupId: number;
     title: string;
   } | null>(null);
+
+  const [lowRiskOn, setLowRiskOn] = useState(false);
+  const [lowRiskLimit, setLowRiskLimit] = useState("50");
+  const [savingRisk, setSavingRisk] = useState(false);
+
+  useEffect(() => {
+    if (!overview) return;
+    setLowRiskOn(overview.maxFraudScore != null);
+    if (overview.maxFraudScore != null)
+      setLowRiskLimit(String(overview.maxFraudScore));
+  }, [overview?.maxFraudScore]);
+
+  const saveRisk = async (enabled: boolean) => {
+    const limit = Number(lowRiskLimit);
+
+    if (enabled && (!Number.isInteger(limit) || limit < 0 || limit > 100))
+      return toast.error("欺诈分上限应为 0 到 100");
+    if (
+      enabled &&
+      !window.confirm(
+        `开启后只使用欺诈分不高于 ${limit} 的出口。正在使用但不符合的出口会立即被换掉，符合条件的出口很少时代理可能暂时断开。确认开启吗？`,
+      )
+    )
+      return;
+    setSavingRisk(true);
+    const response = await saveExitPoolSettings(enabled ? limit : null);
+
+    setSavingRisk(false);
+    if (response.code !== 0) return toast.error(response.msg || "保存失败");
+    toast.success(
+      enabled ? `已开启：只用欺诈分 ≤ ${limit} 的出口` : "已关闭低风险限制",
+    );
+    void load();
+  };
 
   const load = async () => {
     try {
@@ -186,10 +223,52 @@ export default function ExitPoolPage() {
             </div>
           )}
 
+          <section className="flex flex-col gap-3 rounded-lg border border-divider px-5 py-4 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">只用低风险出口</div>
+              <p className="mt-0.5 text-xs text-default-500">
+                开启后，自动选择、自动切换和手动切换都只使用做过深度检测、欺诈分不高于上限的家宽出口。需要先在“IP
+                质量检测”页面配置 IPQualityScore
+                密钥；新连上的出口会自动检测一次，消耗一次额度。
+              </p>
+            </div>
+            <div className="flex flex-none items-center gap-3">
+              <Input
+                aria-label="欺诈分上限"
+                className="w-28"
+                endContent={
+                  <span className="text-xs text-default-400">分</span>
+                }
+                isDisabled={savingRisk}
+                size="sm"
+                type="number"
+                value={lowRiskLimit}
+                onValueChange={setLowRiskLimit}
+              />
+              {lowRiskOn && (
+                <Button
+                  isLoading={savingRisk}
+                  size="sm"
+                  variant="flat"
+                  onPress={() => saveRisk(true)}
+                >
+                  保存上限
+                </Button>
+              )}
+              <Switch
+                isDisabled={savingRisk}
+                isSelected={lowRiskOn}
+                onValueChange={(value) => saveRisk(value)}
+              />
+            </div>
+          </section>
+
           <section className="rounded-lg border border-divider">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-divider px-5 py-3">
               <h2 className="text-sm font-medium">
-                各国当前可用的家宽候选数量
+                {overview?.maxFraudScore != null
+                  ? `各国可用的低风险家宽数量（欺诈分 ≤ ${overview.maxFraudScore}）`
+                  : "各国当前可用的家宽候选数量"}
               </h2>
               <span className="text-xs text-default-500">
                 {overview?.lastRefreshAt
@@ -223,7 +302,10 @@ export default function ExitPoolPage() {
                       {country.available}
                     </div>
                     <div className="mt-0.5 text-xs text-default-500">
-                      列表共 {country.total} 个 · 点击查看
+                      {overview?.maxFraudScore != null
+                        ? `家宽 ${country.home ?? 0} 个 · 共 ${country.total} 个`
+                        : `列表共 ${country.total} 个`}{" "}
+                      · 点击查看
                     </div>
                   </button>
                 ))}
@@ -260,6 +342,11 @@ export default function ExitPoolPage() {
                         <Chip size="sm" variant="flat">
                           {group.proxyCount} 个代理在用
                         </Chip>
+                        {group.proxyTraffic ? (
+                          <Chip size="sm" variant="flat">
+                            代理累计流量 {formatBytes(group.proxyTraffic)}
+                          </Chip>
+                        ) : null}
                       </div>
                       <p className="mt-1 break-all text-sm text-default-500">
                         {exitSummary(group)}

@@ -39,7 +39,7 @@ import {
   deletePrivateProxy,
   getExitCountries,
   getExitSwitchToken,
-  switchExit,
+  switchOwnExit,
   getNodeList,
   getPrivateProxies,
   getPrivateProxyClientConfig,
@@ -488,7 +488,7 @@ export default function PrivateProxyPage() {
   const changeExit = async (item: PrivateProxyItem) => {
     if (!item.exit?.groupId) return toast.error("出口还在准备，请稍后再试");
     setSwitchingExit(item.id);
-    const response = await switchExit(item.exit.groupId);
+    const response = await switchOwnExit(item.id);
 
     setSwitchingExit(null);
     if (response.code !== 0) return toast.error(response.msg || "切换失败");
@@ -506,6 +506,17 @@ export default function PrivateProxyPage() {
       `${window.location.origin}/api/v1/open_api/exit-switch?token=${response.data.token}`,
     );
     if (reset) toast.success("链接已重置");
+  };
+
+  const copySwitchLink = async (item: PrivateProxyItem) => {
+    const response = await getExitSwitchToken(item.id);
+
+    if (response.code !== 0 || !response.data)
+      return toast.error(response.msg || "读取链接失败");
+    await copyText(
+      `${window.location.origin}/api/v1/open_api/exit-switch?token=${response.data.token}`,
+      "远程切换链接",
+    );
   };
 
   const showEvents = (item: PrivateProxyItem) => {
@@ -899,7 +910,7 @@ export default function PrivateProxyPage() {
                               ? ` · 今日切换 ${item.exit.switchesToday} 次`
                               : ""}
                           </span>
-                          {isAdmin && (
+                          {item.state === "active" && (
                             <Button
                               className="ml-auto h-7 min-w-0 px-2 text-xs"
                               isDisabled={!item.exit.standbyReady}
@@ -919,6 +930,18 @@ export default function PrivateProxyPage() {
                               onPress={() => changeExit(item)}
                             >
                               换一个出口
+                            </Button>
+                          )}
+                          {!isAdmin && item.state === "active" && (
+                            <Button
+                              className="h-7 min-w-0 px-2 text-xs"
+                              size="sm"
+                              startContent={<Link2 size={14} />}
+                              title="复制远程切换链接：不用登录面板，打开链接就换一个出口"
+                              variant="light"
+                              onPress={() => copySwitchLink(item)}
+                            >
+                              切换链接
                             </Button>
                           )}
                           {isAdmin && (

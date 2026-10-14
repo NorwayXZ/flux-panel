@@ -435,9 +435,8 @@ public class PrivateProxyService {
 
     /** 远程切换链接使用的令牌。只有管理员可以查看和重置。 */
     public R exitSwitchToken(Long id, boolean reset) {
-        if (!isAdmin()) return R.err("只有管理员可以管理远程切换链接");
-        PrivateProxy proxy = id == null ? null : proxyMapper.selectById(id);
-        if (proxy == null || "deleted".equals(proxy.getState())) return R.err("代理不存在");
+        PrivateProxy proxy = id == null ? null : owned(id);
+        if (proxy == null) return R.err("代理不存在或无权访问");
         if (!"residential".equals(proxy.getExitType())) return R.err("这个代理没有使用家宽出口");
         if (reset || StringUtils.isBlank(proxy.getExitSwitchToken())) {
             byte[] bytes = new byte[24];
@@ -447,6 +446,18 @@ public class PrivateProxyService {
                     .set("exit_switch_token", proxy.getExitSwitchToken()));
         }
         return R.ok(Map.of("token", proxy.getExitSwitchToken()));
+    }
+
+    /** 代理的使用者自己换一个出口。 */
+    public R switchOwnExit(Long id) {
+        PrivateProxy proxy = id == null ? null : owned(id);
+        if (proxy == null) return R.err("代理不存在或无权访问");
+        if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
+            return R.err("这个代理当前没有使用家宽出口");
+        }
+        Long groupId = exitPoolService.groupId(proxy.getNodeId(), proxy.getExitCountry());
+        if (groupId == null) return R.err("出口还没有准备好，请稍后再试");
+        return exitPoolService.switchExit(groupId, null, isAdmin() ? "手动切换" : "用户切换");
     }
 
     /** 凭令牌换一个出口，供不登录面板时使用。 */

@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -129,6 +130,7 @@ public class ExitPoolService {
     @PreDestroy
     public void shutdown() {
         worker.shutdownNow();
+        checker.shutdownNow();
     }
 
     @Scheduled(initialDelay = 25_000L, fixedDelay = 20_000L)
@@ -188,6 +190,8 @@ public class ExitPoolService {
             view.put("id", groupId);
             view.put("nodeId", group.get("node_id"));
             view.put("nodeName", node == null ? "节点已删除" : node.getName());
+            view.put("proxyTraffic", jdbc.queryForObject("SELECT COALESCE(SUM(in_flow + out_flow), 0) FROM private_proxy WHERE node_id=? "
+                    + "AND exit_type='residential' AND UPPER(exit_country)=? AND state <> 'deleted'", Long.class, group.get("node_id"), group.get("country")));
             view.put("proxyCount", jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE node_id=? AND exit_type='residential' "
                     + "AND UPPER(exit_country)=? AND state IN ('provisioning','active')", Long.class, group.get("node_id"), group.get("country")));
             view.put("members", jdbc.queryForList("SELECT m.id, m.state, m.exit_ip AS exitIp, m.exit_owner AS exitOwner, m.exit_kind AS exitKind, "
@@ -205,6 +209,8 @@ public class ExitPoolService {
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("minAgentVersion", MIN_AGENT_VERSION);
+        result.put("maxFraudScore", maxFraudScore());
+        result.put("reputationChecking", checking.get());
         result.put("countries", countryRows());
         result.put("groups", groups);
         result.put("lastRefreshAt", lastRefreshAt == 0 ? null : lastRefreshAt);
@@ -335,6 +341,76 @@ public class ExitPoolService {
         return R.ok(reputation);
     }
 
+    private final ExecutorService checker = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "exit-reputation");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicBoolean checking = new AtomicBoolean(false);
+
+    /** “只用低风险出口”的欺诈分上限；未开启时为 null。 */
+    Integer maxFraudScore() {
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT max_fraud_score FROM exit_pool_setting WHERE id = 1");
+        return rows.isEmpty() || rows.get(0).get("max_fraud_score") == null ? null : (int) longValue(rows.get(0).get("max_fraud_score"));
+    }
+
+    public R settings() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("maxFraudScore", maxFraudScore());
+        result.put("checking", checking.get());
+        return R.ok(result);
+    }
+
+    /** 设置或关闭“只用低风险出口”。已在使用但超过上限的出口会在下一轮调度里被换掉。 */
+    public R saveSettings(Integer maxFraudScore) {
+        if (maxFraudScore != null && (maxFraudScore < 0 || maxFraudScore > 100)) return R.err("欺诈分上限应为 0 到 100");
+        if (maxFraudScore != null && !ipQualityService.reputationConfigured()) {
+            return R.err("“只用低风险出口”需要欺诈分，请先在“IP 质量检测”页面配置 IPQualityScore 密钥");
+        }
+        jdbc.update("INSERT INTO exit_pool_setting (id,max_fraud_score,updated_time) VALUES (1,?,?) "
+                + "ON DUPLICATE KEY UPDATE max_fraud_score=VALUES(max_fraud_score), updated_time=VALUES(updated_time)",
+                maxFraudScore, System.currentTimeMillis());
+        if (maxFraudScore != null) {
+            // 已批准但不再符合的出口取消批准，节点会切到符合条件的备用
+            jdbc.update("UPDATE exit_member m JOIN exit_ip_info i ON i.ip = m.exit_ip SET m.approved = 0, m.state = 'idle', "
+                    + "m.error = '高于欺诈分上限', m.retry_after = ? WHERE m.state = 'up' AND (i.ipqs_score IS NULL OR i.ipqs_score > ?)",
+                    System.currentTimeMillis() + REJECT_COOLDOWN_MS, maxFraudScore);
+        }
+        requestReconcile();
+        return settings();
+    }
+
+    /** 在后台为某个国家所有还没有欺诈分的家宽候选做深度检测。 */
+    public R checkCountry(String country) {
+        String code = normalizeCountry(country);
+        List<String> ips = jdbc.queryForList("SELECT c.host FROM exit_candidate c LEFT JOIN exit_ip_info i ON i.ip = c.host "
+                + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? AND i.reputation_at IS NULL ORDER BY c.list_score DESC LIMIT 60",
+                String.class, code, KIND_HOME, System.currentTimeMillis() - CANDIDATE_FRESH_MS);
+        if (ips.isEmpty()) return R.ok(Map.of("queued", 0));
+        if (!ipQualityService.reputationConfigured()) {
+            return R.err("还没有配置 IPQualityScore 或 AbuseIPDB 的密钥，可以在“IP 质量检测”页面配置后再检测");
+        }
+        if (!checking.compareAndSet(false, true)) return R.err("上一批检测还没有完成，请稍后再试");
+        checker.execute(() -> {
+            try {
+                for (String ip : ips) {
+                    try {
+                        reputation(ip);
+                        Thread.sleep(1_500L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (Exception e) {
+                        log.warn("Exit reputation check {} failed: {}", ip, e.getMessage());
+                    }
+                }
+            } finally {
+                checking.set(false);
+            }
+        });
+        return R.ok(Map.of("queued", ips.size()));
+    }
+
     public Long groupId(Long nodeId, String country) {
         List<Long> ids = jdbc.queryForList("SELECT id FROM exit_group WHERE node_id = ? AND country = ?", Long.class,
                 nodeId, normalizeCountry(country));
@@ -422,8 +498,11 @@ public class ExitPoolService {
     /** 某个国家当前是否有可用的家宽候选。 */
     public boolean hasCandidates(String country) {
         // 只读数据库：调用方持有端口分配锁，不能在这里等待外部网络
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM exit_candidate WHERE country = ? AND ip_kind = ? AND last_seen >= ?",
-                Long.class, normalizeCountry(country), KIND_HOME, System.currentTimeMillis() - CANDIDATE_FRESH_MS);
+        Integer maxScore = maxFraudScore();
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM exit_candidate c LEFT JOIN exit_ip_info i ON i.ip = c.host "
+                        + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? "
+                        + "AND (? IS NULL OR (i.ipqs_score IS NOT NULL AND i.ipqs_score <= ?))",
+                Long.class, normalizeCountry(country), KIND_HOME, System.currentTimeMillis() - CANDIDATE_FRESH_MS, maxScore, maxScore);
         return count != null && count > 0;
     }
 
@@ -468,12 +547,16 @@ public class ExitPoolService {
     }
 
     private List<Map<String, Object>> countryRows() {
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT country, COUNT(*) AS total, SUM(ip_kind = 'home') AS available "
-                + "FROM exit_candidate WHERE last_seen >= ? GROUP BY country ORDER BY available DESC, total DESC",
-                System.currentTimeMillis() - CANDIDATE_FRESH_MS);
+        Integer maxScore = maxFraudScore();
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT c.country, COUNT(*) AS total, SUM(c.ip_kind = 'home') AS home, "
+                + "SUM(c.ip_kind = 'home' AND (? IS NULL OR (i.ipqs_score IS NOT NULL AND i.ipqs_score <= ?))) AS available "
+                + "FROM exit_candidate c LEFT JOIN exit_ip_info i ON i.ip = c.host WHERE c.last_seen >= ? "
+                + "GROUP BY c.country ORDER BY available DESC, total DESC",
+                maxScore, maxScore, System.currentTimeMillis() - CANDIDATE_FRESH_MS);
         for (Map<String, Object> row : rows) {
             row.put("name", countryName(string(row.get("country"))));
             row.put("available", longValue(row.get("available")));
+            row.put("home", longValue(row.get("home")));
             row.put("total", longValue(row.get("total")));
         }
         return rows;
@@ -542,7 +625,8 @@ public class ExitPoolService {
         if (!cached.isEmpty()) {
             Map<String, Object> row = cached.get(0);
             return new IpInfo(string(row.get("country")), string(row.get("owner")), string(row.get("asn")),
-                    string(row.get("kind")), longValue(row.get("flagged_proxy")) == 1);
+                    string(row.get("kind")), longValue(row.get("flagged_proxy")) == 1,
+                    row.get("ipqs_score") == null ? null : (int) longValue(row.get("ipqs_score")));
         }
         // 归属查询的免费额度有限：同一个 IP 查询失败后等半分钟，两次查询之间至少隔几秒
         Long retryAt = lookupRetryAt.get(ip);
@@ -601,7 +685,13 @@ public class ExitPoolService {
     }
 
     static boolean acceptable(IpInfo info, String country) {
-        return info != null && KIND_HOME.equals(info.kind) && StringUtils.equalsIgnoreCase(info.country, country);
+        return acceptable(info, country, null);
+    }
+
+    /** maxFraudScore 非空时，还要求已知欺诈分且不高于上限。 */
+    static boolean acceptable(IpInfo info, String country, Integer maxFraudScore) {
+        if (info == null || !KIND_HOME.equals(info.kind) || !StringUtils.equalsIgnoreCase(info.country, country)) return false;
+        return maxFraudScore == null || (info.fraudScore != null && info.fraudScore <= maxFraudScore);
     }
 
     private void cleanupIfDue(long now) {
@@ -759,12 +849,19 @@ public class ExitPoolService {
             }
             String exitIp = member.getString("exitIp");
             IpInfo info = StringUtils.isBlank(exitIp) ? null : classifyIp(exitIp, now);
-            if (info != null && !acceptable(info, country)) {
+            Integer maxScore = maxFraudScore();
+            if (info != null && maxScore != null && info.fraudScore == null && acceptable(info, country)) {
+                // 开启了“只用低风险出口”而这个出口还没有欺诈分：查一次
+                reputation(exitIp);
+                info = classifyIp(exitIp, now);
+            }
+            if (info != null && !acceptable(info, country, maxScore)) {
+                String reason = rejectionReason(info, country, maxScore);
                 jdbc.update("UPDATE exit_member SET state='rejected', approved=0, exit_ip=?, exit_owner=?, exit_kind=?, exit_country=?, "
                                 + "exit_flagged=?, error=?, retry_after=?, updated_time=? WHERE id=?",
-                        exitIp, info.owner, info.kind, info.country, info.flaggedProxy ? 1 : 0, rejectionReason(info, country),
+                        exitIp, info.owner, info.kind, info.country, info.flaggedProxy ? 1 : 0, reason,
                         now + REJECT_COOLDOWN_MS, now, memberId);
-                event(groupId, nodeId, country, "reject", exitIp, null, "出口 " + exitIp + " 已排除：" + rejectionReason(info, country));
+                event(groupId, nodeId, country, "reject", exitIp, null, "出口 " + exitIp + " 已排除：" + reason);
                 continue;
             }
             boolean firstUp = !"up".equals(row.get("state"));
@@ -811,14 +908,16 @@ public class ExitPoolService {
         if (missing <= 0) return;
         List<Map<String, Object>> picks = jdbc.queryForList("SELECT c.id FROM exit_candidate c "
                         + "LEFT JOIN exit_member m ON m.candidate_id = c.id AND m.group_id = ? "
+                        + "LEFT JOIN exit_ip_info i ON i.ip = c.host "
                         + "WHERE c.country = ? AND c.ip_kind = ? AND c.last_seen >= ? "
+                        + "AND (? IS NULL OR (i.ipqs_score IS NOT NULL AND i.ipqs_score <= ?)) "
                         // 手动切换时放掉的出口本身是好的：平时先冷却，避免马上又换回去；一个可用出口都没有时立刻拿回来用
                         + "AND (m.id IS NULL OR (m.state NOT IN ('connecting','up') AND (m.retry_after IS NULL OR m.retry_after <= ? "
                         + "OR (m.state = 'idle' AND ? = 1)))) "
                         // 优先选以前在这台节点上连成功过的，其中延迟低的排前面；没试过的排在后面
                         + "ORDER BY (COALESCE(m.success_count, 0) > 0) DESC, COALESCE(m.latency_ms, 999999) ASC, "
                         + "c.flagged_proxy ASC, c.list_score DESC LIMIT ?",
-                groupId, country, KIND_HOME, now - CANDIDATE_FRESH_MS, now, ready == 0 ? 1 : 0, missing);
+                groupId, country, KIND_HOME, now - CANDIDATE_FRESH_MS, maxFraudScore(), maxFraudScore(), now, ready == 0 ? 1 : 0, missing);
         for (Map<String, Object> pick : picks) {
             // attempt 每次加一：节点据此知道这是一次新的连接请求，而不是它已经试过的那一次
             jdbc.update("INSERT INTO exit_member (group_id,candidate_id,state,attempt,created_time,updated_time) VALUES (?,?,?,1,?,?) "
@@ -949,6 +1048,14 @@ public class ExitPoolService {
         return Math.min(delay, REJECT_COOLDOWN_MS);
     }
 
+    static String rejectionReason(IpInfo info, String country, Integer maxFraudScore) {
+        if (StringUtils.equalsIgnoreCase(info.country, country) && KIND_HOME.equals(info.kind) && maxFraudScore != null) {
+            return info.fraudScore == null ? "无法取得欺诈分，已开启“只用低风险出口”"
+                    : "欺诈分 " + info.fraudScore + " 高于设定的上限 " + maxFraudScore;
+        }
+        return rejectionReason(info, country);
+    }
+
     static String rejectionReason(IpInfo info, String country) {
         if (!StringUtils.equalsIgnoreCase(info.country, country)) {
             return "出口 IP 位于" + countryName(info.country) + "，不是" + countryName(country);
@@ -1057,13 +1164,19 @@ public class ExitPoolService {
         final String asn;
         final String kind;
         final boolean flaggedProxy;
+        final Integer fraudScore;
 
         IpInfo(String country, String owner, String asn, String kind, boolean flaggedProxy) {
+            this(country, owner, asn, kind, flaggedProxy, null);
+        }
+
+        IpInfo(String country, String owner, String asn, String kind, boolean flaggedProxy, Integer fraudScore) {
             this.country = country;
             this.owner = owner;
             this.asn = asn;
             this.kind = kind;
             this.flaggedProxy = flaggedProxy;
+            this.fraudScore = fraudScore;
         }
     }
 }

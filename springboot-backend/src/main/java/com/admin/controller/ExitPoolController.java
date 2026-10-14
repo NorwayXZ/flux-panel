@@ -41,6 +41,19 @@ public class ExitPoolController {
         return service.reputation(body == null || body.get("ip") == null ? null : body.get("ip").toString());
     }
 
+    @RequireRole @PostMapping("/settings") public R settings() { return service.settings(); }
+    @RequireRole @LogAnnotation @PostMapping("/settings/save") public R saveSettings(@RequestBody Map<String, Object> body) {
+        Object value = body == null ? null : body.get("maxFraudScore");
+        try {
+            return service.saveSettings(value == null || value.toString().isBlank() ? null : Integer.valueOf(value.toString()));
+        } catch (NumberFormatException e) {
+            return R.err("欺诈分上限应为 0 到 100");
+        }
+    }
+    @RequireRole @LogAnnotation @PostMapping("/check-country") public R checkCountry(@RequestBody Map<String, Object> body) {
+        return service.checkCountry(body == null || body.get("country") == null ? null : body.get("country").toString());
+    }
+
     private static Long id(Map<String, Object> body, String key) {
         Object value = body == null ? null : body.get(key);
         try {

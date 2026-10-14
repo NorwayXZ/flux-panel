@@ -119,11 +119,13 @@ describe("exitPurity", () => {
       "已被标记",
     );
     expect(exitPurity({ kind: "home", ipqsScore: 10 }).label).toBe("干净");
+    expect(exitPurity({ kind: "home", ipqsScore: 65 }).label).toBe("一般");
+    expect(exitPurity({ kind: "home", abuseScore: 30 }).label).toBe("一般");
     expect(exitPurity({ kind: "home", ipqsScore: 90 }).label).toBe("风险高");
     expect(exitPurity({ kind: "home", abuseScore: 60 }).label).toBe("风险高");
     expect(
       exitPurity({ kind: "home", flaggedProxy: 1, ipqsScore: 20 }).label,
-    ).toBe("已被标记");
+    ).toBe("一般");
   });
 
   it("marks addresses that are not home broadband", async () => {

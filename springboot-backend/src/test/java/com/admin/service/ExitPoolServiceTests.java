@@ -74,6 +74,19 @@ class ExitPoolServiceTests {
         assertEquals("something new", ExitPoolService.translate("something new"));
     }
 
+    @Test
+    void lowRiskOnlyRequiresAKnownScoreAtOrBelowTheLimit() {
+        ExitPoolService.IpInfo clean = new ExitPoolService.IpInfo("JP", "x", "AS1", ExitPoolService.KIND_HOME, false, 20);
+        ExitPoolService.IpInfo risky = new ExitPoolService.IpInfo("JP", "x", "AS1", ExitPoolService.KIND_HOME, false, 90);
+        ExitPoolService.IpInfo unknown = new ExitPoolService.IpInfo("JP", "x", "AS1", ExitPoolService.KIND_HOME, false, null);
+        assertTrue(ExitPoolService.acceptable(clean, "JP", 50));
+        assertTrue(ExitPoolService.acceptable(clean, "JP", 20));
+        assertFalse(ExitPoolService.acceptable(risky, "JP", 50));
+        assertFalse(ExitPoolService.acceptable(unknown, "JP", 50), "without a score the exit cannot be shown to be low risk");
+        assertTrue(ExitPoolService.acceptable(risky, "JP", null), "the limit is off by default");
+        assertEquals("欺诈分 90 高于设定的上限 50", ExitPoolService.rejectionReason(risky, "JP", 50));
+    }
+
     private static ExitPoolService.IpInfo info(String country, String kind) {
         return new ExitPoolService.IpInfo(country, "Example ISP", "AS1", kind, false);
     }

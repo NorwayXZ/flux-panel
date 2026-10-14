@@ -787,6 +787,9 @@ export interface ExitCountry {
   country: string;
   name: string;
   total: number;
+  /** 家宽候选数量 */
+  home?: number;
+  /** 可以选用的数量；开启“只用低风险出口”时只计算符合上限的 */
   available: number;
 }
 
@@ -825,6 +828,7 @@ export interface ExitMember {
 
 export interface ExitGroup extends ExitStatusView {
   id: number;
+  proxyTraffic?: number;
   nodeId: number;
   nodeName: string;
   proxyCount: number;
@@ -833,6 +837,8 @@ export interface ExitGroup extends ExitStatusView {
 
 export interface ExitPoolOverview {
   minAgentVersion: string;
+  maxFraudScore?: number | null;
+  reputationChecking?: boolean;
   countries: ExitCountry[];
   groups: ExitGroup[];
   lastRefreshAt?: number;
@@ -959,6 +965,22 @@ export const getExitPoolEvents = (groupId: number) =>
 export const refreshExitPool = () => Network.post("/exit-pool/refresh", {});
 export const blockExitMember = (memberId: number) =>
   Network.post("/exit-pool/block", { memberId });
+export const switchOwnExit = (id: number) =>
+  Network.mutate<ExitStatusView>("/private-proxy/exit-switch", { id }, [
+    "/private-proxy/list",
+  ]);
+export interface ExitPoolSettings {
+  maxFraudScore?: number | null;
+  checking?: boolean;
+}
+export const getExitPoolSettings = () =>
+  Network.post<ExitPoolSettings>("/exit-pool/settings", {});
+export const saveExitPoolSettings = (maxFraudScore: number | null) =>
+  Network.post<ExitPoolSettings>("/exit-pool/settings/save", {
+    maxFraudScore,
+  });
+export const checkExitCountry = (country: string) =>
+  Network.post<{ queued: number }>("/exit-pool/check-country", { country });
 export const switchExit = (groupId: number, memberId?: number) =>
   Network.mutate<ExitStatusView>("/exit-pool/switch", { groupId, memberId }, [
     "/private-proxy/list",
