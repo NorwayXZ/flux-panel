@@ -645,12 +645,21 @@ export const deleteAggregation = (id: number) =>
 export type PrivateProxyType =
   | "socks5"
   | "http"
+  | "mixed"
   | "shadowsocks"
+  | "shadowsocks2022"
   | "vless_reality"
+  | "vless_xhttp"
+  | "vless"
+  | "vmess"
   | "trojan"
+  | "anytls"
   | "hysteria2"
   | "tuic"
+  | "shadowtls"
   | "wireguard";
+
+export type PrivateProxyTransport = "tcp" | "ws" | "grpc" | "httpupgrade";
 
 export interface PrivateProxyItem {
   id: number;
@@ -694,6 +703,17 @@ export interface PrivateProxyItem {
   exitType?: PrivateProxyExitType;
   exitCountry?: string;
   exit?: ExitStatusView;
+  connectHost?: string;
+  transport?: PrivateProxyTransport;
+  /** 分享链接无法固定证书、会跳过证书校验 */
+  linkSkipsCertCheck?: boolean;
+  lastCheckAt?: number;
+  lastCheckOk?: number;
+  lastCheckIp?: string;
+  lastCheckLatency?: number;
+  lastCheckError?: string;
+  checkFailures?: number;
+  lastActiveAt?: number;
   createdTime: number;
 }
 
@@ -869,6 +889,13 @@ export interface PrivateProxyCreateRequest {
   permanent: boolean;
   exitType?: PrivateProxyExitType;
   exitCountry?: string;
+  method?: string;
+  transport?: PrivateProxyTransport;
+  tls?: boolean;
+  serverName?: string;
+  obfs?: boolean;
+  handshakeServer?: string;
+  connectHost?: string;
 }
 
 export interface PrivateProxyClientConfig {
@@ -876,7 +903,20 @@ export interface PrivateProxyClientConfig {
   name: string;
   host: string;
   port: number;
-  uri: string;
+  /** 没有通用分享链接的协议（ShadowTLS）为空 */
+  uri?: string;
+  /** Clash（mihomo）的代理条目 */
+  clash?: string;
+  linkSkipsCertCheck?: boolean;
+  certSha256?: string;
+  publicKeySha256?: string;
+  transport?: PrivateProxyTransport;
+  path?: string;
+  tls?: boolean;
+  method?: string;
+  obfsPassword?: string;
+  handshakeServer?: string;
+  innerPassword?: string;
   username?: string;
   password?: string;
   cipher?: string;
@@ -944,6 +984,55 @@ export const resetPrivateProxyGrantFlow = (id: number) =>
   Network.mutate<PrivateProxyItem>("/private-proxy/grant-reset", { id }, [
     "/private-proxy/list",
   ]);
+export interface PrivateProxyUpdateRequest {
+  id: number;
+  name?: string;
+  connectHost?: string;
+  listenPort?: number;
+  allowedCidrs?: string;
+  resetCredentials?: boolean;
+  renewHours?: number;
+  permanent?: boolean;
+}
+
+export interface PrivateProxyCheckResult {
+  ok: boolean;
+  ip?: string;
+  location?: string;
+  latencyMs?: number;
+  error?: string;
+  checkedAt: number;
+}
+
+export interface PrivateProxyTrafficPoint {
+  time: number;
+  inFlow: number;
+  outFlow: number;
+}
+
+export interface PrivateProxyTraffic {
+  range: "24h" | "7d" | "30d";
+  points: PrivateProxyTrafficPoint[];
+  totalIn: number;
+  totalOut: number;
+  lastActiveAt?: number;
+}
+
+export const updatePrivateProxy = (data: PrivateProxyUpdateRequest) =>
+  Network.mutate<PrivateProxyItem>("/private-proxy/update", data, [
+    "/private-proxy/list",
+  ]);
+export const testPrivateProxy = (id: number) =>
+  Network.mutate<PrivateProxyCheckResult>("/private-proxy/test", { id }, [
+    "/private-proxy/list",
+  ]);
+export const getPrivateProxyTraffic = (
+  id: number,
+  range: "24h" | "7d" | "30d",
+) => Network.post<PrivateProxyTraffic>("/private-proxy/traffic", { id, range });
+export const getPrivateProxySubscription = (reset = false) =>
+  Network.post<{ token: string }>("/private-proxy/subscription", { reset });
+
 export const updatePrivateProxyExit = (
   id: number,
   exitType: PrivateProxyExitType,
@@ -2728,7 +2817,8 @@ export type MonitoringResourceType =
   | "forward"
   | "certificate"
   | "dynamic_dns"
-  | "exit_group";
+  | "exit_group"
+  | "private_proxy";
 export type MonitoringStatus =
   "healthy" | "degraded" | "offline" | "paused" | "unknown";
 

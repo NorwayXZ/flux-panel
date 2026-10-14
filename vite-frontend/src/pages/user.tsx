@@ -184,15 +184,38 @@ type GrantRealityPreset = "www.cloudflare.com" | "www.google.com" | "custom";
 const grantProxyLabels: Record<GrantProxyType, string> = {
   socks5: "SOCKS5",
   http: "HTTP",
+  mixed: "SOCKS5+HTTP",
   shadowsocks: "Shadowsocks",
+  shadowsocks2022: "Shadowsocks 2022",
   vless_reality: "VLESS + REALITY",
+  vless_xhttp: "VLESS + XHTTP + REALITY",
+  vless: "VLESS（WebSocket）",
+  vmess: "VMess（WebSocket）",
   trojan: "Trojan",
+  anytls: "AnyTLS",
   hysteria2: "Hysteria2",
   tuic: "TUIC v5",
+  shadowtls: "ShadowTLS",
   wireguard: "WireGuard",
 };
 const isAdvancedGrantProxy = (proxyType: GrantProxyType) =>
-  ["trojan", "hysteria2", "tuic", "wireguard"].includes(proxyType);
+  [
+    "trojan",
+    "hysteria2",
+    "tuic",
+    "wireguard",
+    "anytls",
+    "shadowsocks2022",
+    "vmess",
+    "vless",
+    "shadowtls",
+  ].includes(proxyType);
+const grantUsesAccount = (proxyType: GrantProxyType) =>
+  proxyType === "socks5" || proxyType === "http" || proxyType === "mixed";
+const grantUsesSecret = (proxyType: GrantProxyType) =>
+  ["trojan", "hysteria2", "tuic", "anytls", "shadowtls"].includes(proxyType);
+const grantIsReality = (proxyType: GrantProxyType) =>
+  proxyType === "vless_reality" || proxyType === "vless_xhttp";
 const supportsGrantSpeedLimit = (proxyType: GrantProxyType) =>
   !isAdvancedGrantProxy(proxyType);
 
@@ -1151,8 +1174,7 @@ export default function UserPage() {
         return toast.error("请填写代理名称、节点和有效端口");
       }
       if (
-        (proxyGrantEditor.proxyType === "socks5" ||
-          proxyGrantEditor.proxyType === "http") &&
+        grantUsesAccount(proxyGrantEditor.proxyType) &&
         (proxyGrantEditor.authUsername.trim().length < 3 ||
           proxyGrantEditor.authPassword.length < 8)
       ) {
@@ -1165,14 +1187,15 @@ export default function UserPage() {
         return toast.error("Shadowsocks 密码至少 8 位");
       }
       if (
-        isAdvancedGrantProxy(proxyGrantEditor.proxyType) &&
+        (grantUsesSecret(proxyGrantEditor.proxyType) ||
+          proxyGrantEditor.proxyType === "wireguard") &&
         proxyGrantEditor.authPassword.length < 8
       ) {
         return toast.error(
           `${grantProxyLabels[proxyGrantEditor.proxyType]} 密钥至少 8 位`,
         );
       }
-      if (proxyGrantEditor.proxyType === "vless_reality") {
+      if (grantIsReality(proxyGrantEditor.proxyType)) {
         const serverName = proxyGrantEditor.realityServerName.trim();
 
         if (
@@ -1212,6 +1235,9 @@ export default function UserPage() {
             authPassword: proxyGrantEditor.authPassword,
             cipher: proxyGrantEditor.cipher,
             realityServerName: proxyGrantEditor.realityServerName.trim(),
+            transport: ["vmess", "vless"].includes(proxyGrantEditor.proxyType)
+              ? "ws"
+              : undefined,
             permanent: proxyGrantEditor.permanent,
             expiresAt: proxyGrantEditor.expiresAt?.getTime(),
             flowLimit: proxyGrantEditor.flowLimit,
@@ -2531,13 +2557,16 @@ export default function UserPage() {
                               ? {
                                   ...prev,
                                   proxyType,
-                                  authUsername:
-                                    proxyType === "socks5" ||
-                                    proxyType === "http"
-                                      ? prev.authUsername
-                                      : "",
+                                  authUsername: grantUsesAccount(proxyType)
+                                    ? prev.authUsername
+                                    : "",
                                   authPassword:
-                                    proxyType === "vless_reality"
+                                    grantIsReality(proxyType) ||
+                                    [
+                                      "vmess",
+                                      "vless",
+                                      "shadowsocks2022",
+                                    ].includes(proxyType)
                                       ? ""
                                       : randomProxySecret(),
                                   speedUnlimited: isAdvancedGrantProxy(
@@ -2572,8 +2601,7 @@ export default function UserPage() {
                           )
                         }
                       />
-                      {(proxyGrantEditor.proxyType === "socks5" ||
-                        proxyGrantEditor.proxyType === "http") && (
+                      {grantUsesAccount(proxyGrantEditor.proxyType) && (
                         <>
                           <Input
                             label="代理用户名"
@@ -2678,7 +2706,7 @@ export default function UserPage() {
                           />
                         </>
                       )}
-                      {proxyGrantEditor.proxyType === "vless_reality" && (
+                      {grantIsReality(proxyGrantEditor.proxyType) && (
                         <>
                           <Select
                             className="md:col-span-2"
@@ -2726,9 +2754,7 @@ export default function UserPage() {
                           )}
                         </>
                       )}
-                      {["trojan", "hysteria2", "tuic"].includes(
-                        proxyGrantEditor.proxyType,
-                      ) && (
+                      {grantUsesSecret(proxyGrantEditor.proxyType) && (
                         <Input
                           className="md:col-span-2"
                           description={
@@ -2768,6 +2794,16 @@ export default function UserPage() {
                             )
                           }
                         />
+                      )}
+                      {["shadowsocks2022", "vmess", "vless"].includes(
+                        proxyGrantEditor.proxyType,
+                      ) && (
+                        <div className="md:col-span-2 border-y border-divider py-3 text-sm text-default-600">
+                          {proxyGrantEditor.proxyType === "shadowsocks2022"
+                            ? "密钥由面板随机生成，创建后用户在私人代理页面查看连接信息。"
+                            : "使用 WebSocket 传输、不开 TLS，UUID 由面板生成；需要其他传输方式时，可在私人代理页面自己创建。"}
+                          节点 Agent 需为 2.62.0 或更高版本。
+                        </div>
                       )}
                       {proxyGrantEditor.proxyType === "wireguard" && (
                         <div className="md:col-span-2 border-y border-divider py-3 text-sm text-default-600">

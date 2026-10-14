@@ -346,6 +346,7 @@ public class TelegramNotificationService {
             case "forward" -> settings.forwardEnabled();
             case "certificate" -> settings.forwardEnabled();
             case "exit_group" -> settings.forwardEnabled();
+            case "private_proxy" -> settings.forwardEnabled();
             default -> false;
         };
     }
@@ -354,7 +355,7 @@ public class TelegramNotificationService {
         return switch (type) {
             case "node" -> settings.nodeRepeatLimit();
             case "tunnel" -> settings.tunnelRepeatLimit();
-            case "forward" -> settings.forwardRepeatLimit();
+            case "forward", "exit_group", "private_proxy" -> settings.forwardRepeatLimit();
             default -> 0;
         };
     }
@@ -413,6 +414,7 @@ public class TelegramNotificationService {
             case "certificate" -> "证书";
             case "dynamic_dns" -> "动态 DNS";
             case "exit_group" -> "家宽出口";
+            case "private_proxy" -> "私人代理";
             default -> "资源";
         };
     }

@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -43,6 +45,31 @@ type privateProxyRuntimeRequest struct {
 	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
 	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
 	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
+
+	privateProxyRuntimeOptions
+	// Source addresses allowed to use the proxy. Empty allows everyone.
+	AllowedCIDRs []string `json:"allowedCidrs,omitempty"`
+}
+
+// privateProxyRuntimeOptions are the protocol settings that clients must
+// match. Changing any of them requires a new runtime.
+type privateProxyRuntimeOptions struct {
+	// Client UUID for VMess, VLESS and TUIC. Generated when empty.
+	ClientID string `json:"clientId,omitempty"`
+	// VMess/VLESS transport: tcp, ws, grpc or httpupgrade.
+	Transport string `json:"transport,omitempty"`
+	// VMess/VLESS over TLS. The other TLS protocols always use it.
+	TLS bool `json:"tls,omitempty"`
+	// WebSocket/HTTPUpgrade path or gRPC service name.
+	Path string `json:"path,omitempty"`
+	// Shadowsocks 2022 method, also used inside ShadowTLS.
+	Method string `json:"method,omitempty"`
+	// Hysteria2 salamander obfuscation password. Empty disables it.
+	ObfsPassword string `json:"obfsPassword,omitempty"`
+	// ShadowTLS handshake server, a real TLS site.
+	HandshakeServer string `json:"handshakeServer,omitempty"`
+	// ShadowTLS inner Shadowsocks 2022 key.
+	InnerPassword string `json:"innerPassword,omitempty"`
 }
 
 type privateProxyRuntimeResponse struct {
@@ -53,6 +80,13 @@ type privateProxyRuntimeResponse struct {
 	ServerPublicKey  string `json:"serverPublicKey,omitempty"`
 	ServerAddress    string `json:"serverAddress,omitempty"`
 	ServerName       string `json:"serverName,omitempty"`
+	// SHA-256 of the self-signed certificate (hex) and of its public key
+	// (base64), so clients can pin it instead of skipping verification.
+	CertSHA256      string `json:"certSha256,omitempty"`
+	PublicKeySHA256 string `json:"publicKeySha256,omitempty"`
+	Transport       string `json:"transport,omitempty"`
+	Path            string `json:"path,omitempty"`
+	Method          string `json:"method,omitempty"`
 }
 
 type privateProxyRuntimeTraffic struct {
@@ -79,6 +113,16 @@ type privateProxyRuntimeState struct {
 	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
 	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
 	OutboundProxyPassword string `json:"outboundProxyPassword,omitempty"`
+
+	Transport       string   `json:"transport,omitempty"`
+	TLS             bool     `json:"tls,omitempty"`
+	Path            string   `json:"path,omitempty"`
+	Method          string   `json:"method,omitempty"`
+	ObfsPassword    string   `json:"obfsPassword,omitempty"`
+	HandshakeServer string   `json:"handshakeServer,omitempty"`
+	InnerPassword   string   `json:"innerPassword,omitempty"`
+	InnerPort       int      `json:"innerPort,omitempty"`
+	AllowedCIDRs    []string `json:"allowedCidrs,omitempty"`
 }
 
 type privateProxyRuntimeManager struct {
@@ -125,8 +169,11 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 	if !supportedAdvancedProxyType(request.ProxyType) {
 		return privateProxyRuntimeResponse{}, errors.New("unsupported private proxy runtime type")
 	}
-	if request.ListenPort < 1 || request.ListenPort > 65535 || len(request.Password) < 8 {
+	if request.ListenPort < 1 || request.ListenPort > 65535 {
 		return privateProxyRuntimeResponse{}, errors.New("invalid private proxy runtime settings")
+	}
+	if err := normalizeRuntimeOptions(&request); err != nil {
+		return privateProxyRuntimeResponse{}, err
 	}
 	if request.BindIP != "" && net.ParseIP(request.BindIP) == nil {
 		return privateProxyRuntimeResponse{}, errors.New("invalid private proxy bind IP")
@@ -152,15 +199,16 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 		return privateProxyRuntimeResponse{}, fmt.Errorf("create private proxy runtime directory: %w", err)
 	}
 	if existing, err := m.readState(request.Name); err == nil {
-		if existing.ProxyType != request.ProxyType || existing.BindIP != request.BindIP || existing.ListenPort != request.ListenPort || existing.Password != request.Password {
+		if !existing.matches(request) {
 			return privateProxyRuntimeResponse{}, errors.New("private proxy runtime already exists with different settings")
 		}
 		if existing.OutboundProxyPort != request.OutboundProxyPort || existing.OutboundProxyUsername != request.OutboundProxyUsername ||
-			existing.OutboundProxyPassword != request.OutboundProxyPassword {
-			// Only where traffic leaves changes; certificates and client
-			// credentials are kept.
+			existing.OutboundProxyPassword != request.OutboundProxyPassword || !sameStrings(existing.AllowedCIDRs, request.AllowedCIDRs) {
+			// Only where traffic leaves or who may connect changes;
+			// certificates and client credentials are kept.
 			existing.OutboundProxyPort = request.OutboundProxyPort
 			existing.OutboundProxyUsername, existing.OutboundProxyPassword = request.OutboundProxyUsername, request.OutboundProxyPassword
+			existing.AllowedCIDRs = request.AllowedCIDRs
 			if err := m.writeStateAndConfig(existing); err != nil {
 				return privateProxyRuntimeResponse{}, err
 			}
@@ -169,7 +217,7 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 		if err := m.ensureRunning(existing); err != nil {
 			return privateProxyRuntimeResponse{}, err
 		}
-		return existing.response(), nil
+		return m.response(existing), nil
 	}
 	if err := m.ensureBinary(); err != nil {
 		return privateProxyRuntimeResponse{}, err
@@ -184,6 +232,11 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 			return privateProxyRuntimeResponse{}, err
 		}
 	}
+	if state.ProxyType == "shadowtls" {
+		if state.InnerPort, err = availableLocalPort(); err != nil {
+			return privateProxyRuntimeResponse{}, err
+		}
+	}
 	if err := m.writeStateAndConfig(state); err != nil {
 		return privateProxyRuntimeResponse{}, err
 	}
@@ -191,7 +244,7 @@ func (m *privateProxyRuntimeManager) add(request privateProxyRuntimeRequest) (pr
 		m.removeFiles(state.Name)
 		return privateProxyRuntimeResponse{}, err
 	}
-	return state.response(), nil
+	return m.response(state), nil
 }
 
 func (m *privateProxyRuntimeManager) delete(name string) error {
@@ -288,6 +341,15 @@ func (m *privateProxyRuntimeManager) restore() {
 			fmt.Printf("private proxy runtime restore %s failed: %v\n", name, err)
 			continue
 		}
+		if state.ProxyType != "wireguard" {
+			// Regenerate the configuration from the saved state so runtimes
+			// created by an older Agent pick up fixes; keys and certificates
+			// are kept.
+			if err := m.writeStateAndConfig(state); err != nil {
+				fmt.Printf("private proxy runtime restore %s failed: %v\n", name, err)
+				continue
+			}
+		}
 		if err := m.ensureRunning(state); err != nil {
 			fmt.Printf("private proxy runtime restore %s failed: %v\n", name, err)
 		}
@@ -368,10 +430,10 @@ func (m *privateProxyRuntimeManager) ensureRunning(state privateProxyRuntimeStat
 	delete(m.stopping, state.Name)
 	m.mu.Unlock()
 	go m.watch(state.Name, cmd)
-	if state.ProxyType == "trojan" {
-		if err := waitForTCP(state.ListenPort, 4*time.Second); err != nil {
+	if !udpRuntimeType(state.ProxyType) {
+		if err := waitForListener(state.BindIP, state.ListenPort, 4*time.Second); err != nil {
 			_ = cmd.Process.Kill()
-			return fmt.Errorf("Trojan runtime did not become ready: %w", err)
+			return fmt.Errorf("%s runtime did not become ready: %w", state.ProxyType, err)
 		}
 	} else {
 		time.Sleep(400 * time.Millisecond)
@@ -445,8 +507,11 @@ func newPrivateProxyRuntimeState(request privateProxyRuntimeRequest) (privatePro
 		Password: request.Password, ServerName: request.ServerName, Version: singBoxRuntimeVersion,
 		OutboundProxyPort: request.OutboundProxyPort, OutboundProxyUsername: request.OutboundProxyUsername,
 		OutboundProxyPassword: request.OutboundProxyPassword,
+		ClientID:              request.ClientID, Transport: request.Transport, TLS: request.TLS, Path: request.Path,
+		Method: request.Method, ObfsPassword: request.ObfsPassword, HandshakeServer: request.HandshakeServer,
+		InnerPassword: request.InnerPassword, AllowedCIDRs: request.AllowedCIDRs,
 	}
-	if request.ProxyType == "tuic" {
+	if (request.ProxyType == "tuic" || request.ProxyType == "vmess" || request.ProxyType == "vless") && state.ClientID == "" {
 		id, err := randomRuntimeUUID()
 		if err != nil {
 			return state, err
@@ -500,17 +565,53 @@ func (m *privateProxyRuntimeManager) runtimeConfig(state privateProxyRuntimeStat
 	if listen == "" {
 		listen = "0.0.0.0"
 	}
-	tls := map[string]interface{}{"enabled": true, "certificate_path": m.certPath(state.Name), "key_path": m.keyPath(state.Name)}
-	inbound := map[string]interface{}{"type": state.ProxyType, "tag": state.Name, "listen": listen, "listen_port": state.ListenPort, "tls": tls}
+	inbound := map[string]interface{}{"type": state.ProxyType, "tag": state.Name, "listen": listen, "listen_port": state.ListenPort}
+	if state.usesTLS() {
+		tls := map[string]interface{}{"enabled": true, "certificate_path": m.certPath(state.Name), "key_path": m.keyPath(state.Name)}
+		if state.ProxyType == "tuic" {
+			// QUIC needs an application protocol; Clash/mihomo clients refuse
+			// servers that do not select one.
+			tls["alpn"] = []string{"h3"}
+		}
+		inbound["tls"] = tls
+	}
+	inbounds := []interface{}{inbound}
 	switch state.ProxyType {
 	case "trojan":
 		inbound["users"] = []interface{}{map[string]interface{}{"password": state.Password}}
 	case "hysteria2":
 		inbound["users"] = []interface{}{map[string]interface{}{"password": state.Password}}
 		inbound["masquerade"] = "https://www.cloudflare.com/"
+		if state.ObfsPassword != "" {
+			inbound["obfs"] = map[string]interface{}{"type": "salamander", "password": state.ObfsPassword}
+		}
 	case "tuic":
 		inbound["users"] = []interface{}{map[string]interface{}{"uuid": state.ClientID, "password": state.Password}}
 		inbound["congestion_control"] = "bbr"
+	case "anytls":
+		inbound["users"] = []interface{}{map[string]interface{}{"name": "cloudnest", "password": state.Password}}
+	case "shadowsocks2022":
+		inbound["type"] = "shadowsocks"
+		inbound["method"] = state.Method
+		inbound["password"] = state.Password
+	case "vmess":
+		inbound["users"] = []interface{}{map[string]interface{}{"uuid": state.ClientID, "alterId": 0}}
+	case "vless":
+		inbound["users"] = []interface{}{map[string]interface{}{"uuid": state.ClientID}}
+	case "shadowtls":
+		inner := state.Name + "-ss"
+		inbound["version"] = 3
+		inbound["users"] = []interface{}{map[string]interface{}{"name": "cloudnest", "password": state.Password}}
+		inbound["handshake"] = map[string]interface{}{"server": state.HandshakeServer, "server_port": 443}
+		inbound["strict_mode"] = true
+		inbound["detour"] = inner
+		inbounds = append(inbounds, map[string]interface{}{
+			"type": "shadowsocks", "tag": inner, "listen": "127.0.0.1", "listen_port": state.InnerPort,
+			"method": state.Method, "password": state.InnerPassword,
+		})
+	}
+	if transport := runtimeTransport(state.Transport, state.Path); transport != nil {
+		inbound["transport"] = transport
 	}
 	outbound := map[string]interface{}{"type": "direct", "tag": "direct"}
 	if state.OutboundProxyPort > 0 {
@@ -523,8 +624,16 @@ func (m *privateProxyRuntimeManager) runtimeConfig(state privateProxyRuntimeStat
 	}
 	config := map[string]interface{}{
 		"log":       map[string]interface{}{"level": "warn"},
-		"inbounds":  []interface{}{inbound},
+		"inbounds":  inbounds,
 		"outbounds": []interface{}{outbound},
+	}
+	if len(state.AllowedCIDRs) > 0 {
+		// Connections from other addresses are refused once they arrive.
+		// Loopback stays allowed so the node can test its own proxy.
+		allowed := append(append([]string{}, state.AllowedCIDRs...), "127.0.0.0/8", "::1/128")
+		config["route"] = map[string]interface{}{"rules": []interface{}{map[string]interface{}{
+			"source_ip_cidr": allowed, "invert": true, "action": "reject",
+		}}}
 	}
 	if state.ControllerPort > 0 {
 		config["experimental"] = map[string]interface{}{
@@ -662,9 +771,216 @@ func (m *privateProxyRuntimeManager) removeFiles(name string) error {
 	return firstErr
 }
 
-func (s privateProxyRuntimeState) response() privateProxyRuntimeResponse {
-	return privateProxyRuntimeResponse{Version: s.Version, ClientID: s.ClientID, ClientPrivateKey: s.ClientPrivateKey,
-		ClientAddress: s.ClientAddress, ServerPublicKey: s.ServerPublicKey, ServerAddress: s.ServerAddress, ServerName: s.ServerName}
+func (m *privateProxyRuntimeManager) response(s privateProxyRuntimeState) privateProxyRuntimeResponse {
+	response := privateProxyRuntimeResponse{Version: s.Version, ClientID: s.ClientID, ClientPrivateKey: s.ClientPrivateKey,
+		ClientAddress: s.ClientAddress, ServerPublicKey: s.ServerPublicKey, ServerAddress: s.ServerAddress, ServerName: s.ServerName,
+		Transport: s.Transport, Path: s.Path, Method: s.Method}
+	if s.usesTLS() {
+		response.CertSHA256, response.PublicKeySHA256 = certificatePins(m.certPath(s.Name))
+	}
+	return response
+}
+
+// matches reports whether a request describes this runtime, ignoring the
+// settings that can change in place (outbound route and allowed sources).
+func (s privateProxyRuntimeState) matches(r privateProxyRuntimeRequest) bool {
+	if s.ProxyType != r.ProxyType || s.BindIP != r.BindIP || s.ListenPort != r.ListenPort || s.Password != r.Password {
+		return false
+	}
+	if r.ClientID != "" && s.ClientID != r.ClientID {
+		return false
+	}
+	return s.Transport == r.Transport && s.TLS == r.TLS && s.Path == r.Path && s.Method == r.Method &&
+		s.ObfsPassword == r.ObfsPassword && s.HandshakeServer == r.HandshakeServer && s.InnerPassword == r.InnerPassword
+}
+
+func (s privateProxyRuntimeState) usesTLS() bool {
+	switch s.ProxyType {
+	case "trojan", "hysteria2", "tuic", "anytls":
+		return true
+	case "vmess", "vless":
+		return s.TLS
+	}
+	return false
+}
+
+// certificatePins returns the certificate's SHA-256 in hex and its public
+// key's SHA-256 in base64, the two forms clients use for pinning.
+func certificatePins(path string) (string, string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return "", ""
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", ""
+	}
+	certSum := sha256.Sum256(certificate.Raw)
+	keySum := sha256.Sum256(certificate.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(certSum[:]), base64.StdEncoding.EncodeToString(keySum[:])
+}
+
+var grpcServiceNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// normalizeRuntimeOptions checks the protocol settings and fills defaults.
+func normalizeRuntimeOptions(r *privateProxyRuntimeRequest) error {
+	r.ClientID = strings.ToLower(strings.TrimSpace(r.ClientID))
+	r.Transport = strings.ToLower(strings.TrimSpace(r.Transport))
+	r.Path = strings.TrimSpace(r.Path)
+	r.Method = strings.TrimSpace(r.Method)
+	r.ObfsPassword = strings.TrimSpace(r.ObfsPassword)
+	r.HandshakeServer = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.HandshakeServer), "."))
+	r.InnerPassword = strings.TrimSpace(r.InnerPassword)
+	if r.ClientID != "" && !uuidPattern.MatchString(r.ClientID) {
+		return errors.New("invalid private proxy client id")
+	}
+	switch r.ProxyType {
+	case "vmess", "vless":
+		if r.Transport == "" {
+			r.Transport = "tcp"
+		}
+		switch r.Transport {
+		case "tcp":
+			r.Path = ""
+		case "ws", "httpupgrade":
+			if r.Path == "" {
+				r.Path = "/" + randomRuntimeToken(8)
+			}
+			if !strings.HasPrefix(r.Path, "/") || len(r.Path) > 128 || strings.ContainsAny(r.Path, " \t\r\n?#") {
+				return errors.New("invalid private proxy transport path")
+			}
+		case "grpc":
+			if r.Path == "" {
+				r.Path = randomRuntimeToken(8)
+			}
+			if !grpcServiceNamePattern.MatchString(r.Path) {
+				return errors.New("invalid private proxy gRPC service name")
+			}
+		default:
+			return errors.New("unsupported private proxy transport")
+		}
+	default:
+		r.Transport, r.Path, r.TLS = "", "", false
+		if len(r.Password) < 8 {
+			return errors.New("invalid private proxy runtime settings")
+		}
+	}
+	switch r.ProxyType {
+	case "shadowsocks2022", "shadowtls":
+		if r.Method == "" {
+			r.Method = "2022-blake3-aes-128-gcm"
+		}
+		key := r.Password
+		if r.ProxyType == "shadowtls" {
+			key = r.InnerPassword
+			if r.HandshakeServer == "" || !serverNamePattern.MatchString(r.HandshakeServer) {
+				return errors.New("invalid ShadowTLS handshake server")
+			}
+		}
+		if err := checkShadowsocks2022Key(r.Method, key); err != nil {
+			return err
+		}
+	default:
+		r.Method, r.InnerPassword, r.HandshakeServer = "", "", ""
+	}
+	if r.ProxyType != "hysteria2" {
+		r.ObfsPassword = ""
+	} else if r.ObfsPassword != "" && len(r.ObfsPassword) < 8 {
+		return errors.New("Hysteria2 obfuscation password must have at least 8 characters")
+	}
+	cidrs := make([]string, 0, len(r.AllowedCIDRs))
+	for _, value := range r.AllowedCIDRs {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(value)
+		if err != nil {
+			return fmt.Errorf("invalid allowed source %q", value)
+		}
+		cidrs = append(cidrs, network.String())
+	}
+	if len(cidrs) > 0 && r.ProxyType == "wireguard" {
+		return errors.New("WireGuard does not support allowed sources")
+	}
+	r.AllowedCIDRs = cidrs
+	return nil
+}
+
+func checkShadowsocks2022Key(method, key string) error {
+	size := 0
+	switch method {
+	case "2022-blake3-aes-128-gcm":
+		size = 16
+	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		size = 32
+	default:
+		return errors.New("unsupported Shadowsocks 2022 method")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(decoded) != size {
+		return fmt.Errorf("Shadowsocks 2022 key must be %d bytes in base64", size)
+	}
+	return nil
+}
+
+func runtimeTransport(transport, path string) map[string]interface{} {
+	switch transport {
+	case "ws", "httpupgrade":
+		return map[string]interface{}{"type": transport, "path": path}
+	case "grpc":
+		return map[string]interface{}{"type": "grpc", "service_name": path}
+	}
+	return nil
+}
+
+func udpRuntimeType(proxyType string) bool {
+	return proxyType == "hysteria2" || proxyType == "tuic" || proxyType == "wireguard"
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func randomRuntimeToken(size int) string {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil {
+		return "cloudnest"
+	}
+	return hex.EncodeToString(value)
+}
+
+// waitForListener waits until the runtime accepts TCP connections on its
+// listen address; a specific bind address is not reachable on loopback.
+func waitForListener(bindIP string, port int, timeout time.Duration) error {
+	host := "127.0.0.1"
+	if ip := net.ParseIP(bindIP); ip != nil && !ip.IsUnspecified() {
+		host = ip.String()
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("local listener timeout")
 }
 
 func (m *privateProxyRuntimeManager) statePath(name string) string {
@@ -684,7 +1000,11 @@ func (m *privateProxyRuntimeManager) keyPath(name string) string {
 }
 
 func supportedAdvancedProxyType(value string) bool {
-	return value == "trojan" || value == "hysteria2" || value == "tuic" || value == "wireguard"
+	switch value {
+	case "trojan", "hysteria2", "tuic", "wireguard", "anytls", "shadowsocks2022", "vmess", "vless", "shadowtls":
+		return true
+	}
+	return false
 }
 
 func singBoxAssetName() (string, error) {

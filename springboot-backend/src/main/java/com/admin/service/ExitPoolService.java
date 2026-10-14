@@ -58,11 +58,13 @@ public class ExitPoolService {
     public static final String MIN_AGENT_VERSION = "2.57.0";
     /** 由独立运行时承载、经本机出口通道使用家宽出口的协议，需要更高的 Agent 版本。 */
     public static final String MIN_ROUTED_AGENT_VERSION = "2.58.0";
-    public static final Set<String> ROUTED_PROXY_TYPES = Set.of("vless_reality", "trojan", "hysteria2", "tuic");
-    public static final Set<String> SUPPORTED_PROXY_TYPES = Set.of("socks5", "http", "shadowsocks",
-            "vless_reality", "trojan", "hysteria2", "tuic");
+    public static final Set<String> ROUTED_PROXY_TYPES = Set.of("vless_reality", "vless_xhttp", "trojan", "hysteria2", "tuic",
+            "anytls", "shadowsocks2022", "vmess", "vless", "shadowtls");
+    public static final Set<String> SUPPORTED_PROXY_TYPES = Set.of("socks5", "http", "mixed", "shadowsocks",
+            "vless_reality", "vless_xhttp", "trojan", "hysteria2", "tuic", "anytls", "shadowsocks2022", "vmess", "vless", "shadowtls");
 
     public static String minAgentVersion(String proxyType) {
+        if (PrivateProxyService.NEW_PROTOCOL_TYPES.contains(proxyType)) return PrivateProxyService.MIN_PROTOCOL_AGENT_VERSION;
         return ROUTED_PROXY_TYPES.contains(proxyType) ? MIN_ROUTED_AGENT_VERSION : MIN_AGENT_VERSION;
     }
 

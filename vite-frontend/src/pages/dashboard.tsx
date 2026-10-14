@@ -148,10 +148,17 @@ const proxyProtocolLabel: Record<PrivateProxyItem["proxyType"], string> = {
   socks5: "SOCKS5",
   http: "HTTP",
   shadowsocks: "Shadowsocks",
+  mixed: "SOCKS5+HTTP",
+  shadowsocks2022: "Shadowsocks 2022",
   vless_reality: "VLESS + REALITY",
+  vless_xhttp: "VLESS + XHTTP",
+  vless: "VLESS",
+  vmess: "VMess",
   trojan: "Trojan",
+  anytls: "AnyTLS",
   hysteria2: "Hysteria2",
   tuic: "TUIC v5",
+  shadowtls: "ShadowTLS",
   wireguard: "WireGuard",
 };
 

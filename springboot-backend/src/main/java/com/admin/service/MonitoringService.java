@@ -101,6 +101,7 @@ public class MonitoringService {
         states.addAll(certificateStates.values());
         states.addAll(dynamicDnsStates.values());
         states.addAll(evaluateExitGroups(now).values());
+        states.addAll(evaluatePrivateProxies().values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -221,7 +222,7 @@ public class MonitoringService {
             where.append(" AND a.status = ?");
             args.add(status);
         }
-        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group").contains(resourceType)) {
+        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group", "private_proxy").contains(resourceType)) {
             where.append(" AND a.resource_type = ?");
             args.add(resourceType);
         }
@@ -531,6 +532,39 @@ public class MonitoringService {
                 detail = stringValue(row.get("detail"));
             }
             states.put(id, new ResourceState("exit_group", id, name, 1, status, detail));
+        }
+        return states;
+    }
+
+    /** 私人代理：节点每 10 分钟自检一次，连续两次失败（自动修复后仍失败）时告警。WireGuard 不做定时自检，不在这里显示。 */
+    private Map<Long, ResourceState> evaluatePrivateProxies() {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList(
+                    "SELECT p.id,p.name,p.user_id,p.last_check_ok,p.last_check_ip,p.last_check_latency,p.last_check_error,"
+                            + "p.check_failures,n.name AS node_name FROM private_proxy p JOIN node n ON n.id=p.node_id "
+                            + "WHERE p.state='active' AND p.proxy_type<>'wireguard' AND p.last_check_at IS NOT NULL ORDER BY p.id");
+        } catch (org.springframework.dao.DataAccessException e) {
+            return states;
+        }
+        if (rows == null) return states;
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("id"));
+            String name = stringValue(row.get("node_name")) + " · " + stringValue(row.get("name"));
+            String status;
+            String detail;
+            if (longValue(row.get("last_check_ok")) == 1L) {
+                status = HEALTHY;
+                detail = "出口 IP " + stringValue(row.get("last_check_ip")) + "，打开测试页用时 " + longValue(row.get("last_check_latency")) + " ms";
+            } else if (longValue(row.get("check_failures")) >= 2L) {
+                status = OFFLINE;
+                detail = stringValue(row.get("last_check_error"));
+            } else {
+                status = UNKNOWN;
+                detail = stringValue(row.get("last_check_error"));
+            }
+            states.put(id, new ResourceState("private_proxy", id, name, (int) longValue(row.get("user_id")), status, detail));
         }
         return states;
     }
@@ -890,6 +924,7 @@ public class MonitoringService {
             case "certificate" -> "证书";
             case "dynamic_dns" -> "动态 DNS";
             case "exit_group" -> "家宽出口";
+            case "private_proxy" -> "私人代理";
             default -> "资源";
         };
     }

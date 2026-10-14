@@ -15,13 +15,17 @@ import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
 import { Tab, Tabs } from "@heroui/tabs";
 import {
+  BarChart3,
   Clock3,
   Copy,
   Globe2,
   History,
   Home,
   Link2,
+  Pencil,
+  QrCode,
   RefreshCw,
+  Rss,
   Shuffle,
   KeyRound,
   Pause,
@@ -29,6 +33,7 @@ import {
   Plus,
   Server,
   ShieldCheck,
+  Stethoscope,
   Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -45,14 +50,20 @@ import {
   getPrivateProxyClientConfig,
   pausePrivateProxy,
   resumePrivateProxy,
+  testPrivateProxy,
   updatePrivateProxyExit,
   type ExitCountriesResponse,
   type PrivateProxyClientConfig,
   type PrivateProxyItem,
+  type PrivateProxyTransport,
   type PrivateProxyType,
 } from "@/api";
 import ExitEventsModal from "@/components/exit-events-modal";
 import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
+import ProxyEditModal from "@/components/proxy-edit-modal";
+import ProxyQr from "@/components/proxy-qr";
+import ProxySubscriptionModal from "@/components/proxy-subscription-modal";
+import ProxyTrafficModal from "@/components/proxy-traffic-modal";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import {
   agentSupportsExit,
@@ -74,7 +85,11 @@ interface NodeOption {
 
 type Cipher = "aes-128-gcm" | "aes-256-gcm" | "chacha20-ietf-poly1305";
 type RealityPreset = "www.cloudflare.com" | "www.google.com" | "custom";
-type ProxyGroup = "general" | "encrypted" | "quic" | "vpn";
+type ProxyGroup = "general" | "encrypted" | "cdn" | "quic" | "vpn";
+type Ss2022Method =
+  | "2022-blake3-aes-128-gcm"
+  | "2022-blake3-aes-256-gcm"
+  | "2022-blake3-chacha20-poly1305";
 
 const DEFAULT_REALITY_SERVER = "www.cloudflare.com";
 
@@ -94,23 +109,53 @@ interface ProxyForm {
   leaseHours: string;
   exitType: ExitChoice["exitType"];
   exitCountry: string;
+  method: Ss2022Method;
+  transport: PrivateProxyTransport;
+  tls: boolean;
+  serverName: string;
+  obfs: boolean;
+  handshakeServer: string;
+  connectHost: string;
 }
 
 const EXIT_PROXY_TYPES: PrivateProxyType[] = [
   "socks5",
   "http",
+  "mixed",
   "shadowsocks",
+  "shadowsocks2022",
   "vless_reality",
+  "vless_xhttp",
+  "vless",
+  "vmess",
   "trojan",
+  "anytls",
   "hysteria2",
   "tuic",
+  "shadowtls",
 ];
 // 由独立运行时承载的协议经节点本机的出口通道使用家宽出口，需要更高的 Agent 版本
 const ROUTED_EXIT_PROXY_TYPES: PrivateProxyType[] = [
   "vless_reality",
+  "vless_xhttp",
+  "vless",
+  "vmess",
   "trojan",
+  "anytls",
   "hysteria2",
   "tuic",
+  "shadowsocks2022",
+  "shadowtls",
+];
+// 这些协议、自检、修改端口和重置密钥需要的 Agent 版本
+const PROTOCOL_AGENT_VERSION = "2.62.0";
+const NEW_PROTOCOLS: PrivateProxyType[] = [
+  "shadowsocks2022",
+  "vless_xhttp",
+  "vless",
+  "vmess",
+  "anytls",
+  "shadowtls",
 ];
 const DEFAULT_EXIT_AGENT_VERSION = "2.57.0";
 const DEFAULT_ROUTED_EXIT_AGENT_VERSION = "2.58.0";
@@ -139,6 +184,13 @@ const initialForm = (): ProxyForm => ({
   leaseHours: "24",
   exitType: "node",
   exitCountry: "",
+  method: "2022-blake3-aes-128-gcm",
+  transport: "ws",
+  tls: false,
+  serverName: "",
+  obfs: false,
+  handshakeServer: "www.microsoft.com",
+  connectHost: "",
 });
 
 const protocolMeta: Record<
@@ -147,28 +199,95 @@ const protocolMeta: Record<
 > = {
   socks5: { label: "SOCKS5", access: "用户名 / 密码" },
   http: { label: "HTTP", access: "用户名 / 密码" },
+  mixed: { label: "SOCKS5+HTTP", access: "同一端口 / 用户名密码" },
   shadowsocks: { label: "Shadowsocks", access: "TCP + UDP" },
+  shadowsocks2022: { label: "SS 2022", access: "TCP + UDP / 密钥" },
   vless_reality: { label: "VLESS + REALITY", access: "UUID / Reality" },
+  vless_xhttp: { label: "VLESS + XHTTP", access: "UUID / Reality" },
+  vless: { label: "VLESS", access: "UUID / 可走 CDN" },
+  vmess: { label: "VMess", access: "UUID / 可走 CDN" },
   trojan: { label: "Trojan", access: "TLS 密钥" },
+  anytls: { label: "AnyTLS", access: "TLS 密钥" },
   hysteria2: { label: "Hysteria2", access: "QUIC / UDP" },
   tuic: { label: "TUIC v5", access: "QUIC / UUID" },
+  shadowtls: { label: "ShadowTLS", access: "伪装 TLS / 密钥" },
   wireguard: { label: "WireGuard", access: "设备 VPN 配置" },
+};
+
+const protocolHints: Partial<Record<PrivateProxyType, string>> = {
+  mixed: "一个端口同时接受 SOCKS5 和 HTTP 代理，适合浏览器和各种软件。",
+  shadowsocks2022:
+    "新版 Shadowsocks，抗重放、更难识别；密钥由面板生成，客户端需支持 SS 2022。",
+  vless_xhttp:
+    "VLESS 走 XHTTP 传输并使用 REALITY 伪装，Xray 新推荐的组合；需要 Xray 内核的客户端（v2rayN、Shadowrocket 等）。",
+  vless:
+    "选 WebSocket / gRPC / HTTPUpgrade 并关闭 TLS，再把你的域名接入 Cloudflare 等 CDN，可以经 CDN 中转。",
+  vmess: "兼容老客户端；搭配 WebSocket 可以经 CDN 中转。",
+  anytls:
+    "基于 TLS、能减少流量特征的新协议；客户端需支持 AnyTLS（mihomo、sing-box、Shadowrocket）。",
+  shadowtls:
+    "握手时借用真实网站的 TLS，内部是 SS 2022；没有通用链接，请用 Clash 或 sing-box 订阅导入。",
 };
 
 const protocolGroups: Record<
   ProxyGroup,
   { label: string; protocols: PrivateProxyType[] }
 > = {
-  general: { label: "通用代理", protocols: ["socks5", "http", "shadowsocks"] },
-  encrypted: { label: "加密代理", protocols: ["vless_reality", "trojan"] },
+  general: {
+    label: "通用代理",
+    protocols: ["socks5", "http", "mixed", "shadowsocks", "shadowsocks2022"],
+  },
+  encrypted: {
+    label: "加密代理",
+    protocols: [
+      "vless_reality",
+      "vless_xhttp",
+      "trojan",
+      "anytls",
+      "shadowtls",
+    ],
+  },
+  cdn: { label: "CDN 中转", protocols: ["vless", "vmess"] },
   quic: { label: "QUIC 加速", protocols: ["hysteria2", "tuic"] },
   vpn: { label: "设备组网", protocols: ["wireguard"] },
 };
 
 const usesSecret = (proxyType: PrivateProxyType) =>
-  ["shadowsocks", "trojan", "hysteria2", "tuic"].includes(proxyType);
+  [
+    "shadowsocks",
+    "trojan",
+    "hysteria2",
+    "tuic",
+    "anytls",
+    "shadowtls",
+  ].includes(proxyType);
+const usesAccount = (proxyType: PrivateProxyType) =>
+  proxyType === "socks5" || proxyType === "http" || proxyType === "mixed";
+const isReality = (proxyType: PrivateProxyType) =>
+  proxyType === "vless_reality" || proxyType === "vless_xhttp";
 const isAdvancedRuntime = (proxyType: PrivateProxyType) =>
-  ["trojan", "hysteria2", "tuic", "wireguard"].includes(proxyType);
+  [
+    "trojan",
+    "hysteria2",
+    "tuic",
+    "wireguard",
+    "anytls",
+    "shadowsocks2022",
+    "vmess",
+    "vless",
+    "shadowtls",
+  ].includes(proxyType);
+const transportLabel = (proxyType: PrivateProxyType) => {
+  if (["hysteria2", "tuic", "wireguard"].includes(proxyType)) return "UDP";
+  if (proxyType === "shadowsocks" || proxyType === "shadowsocks2022")
+    return "TCP + UDP";
+
+  return "TCP";
+};
+
+/** 比较 Agent 版本号，a >= b 时返回 true。 */
+const versionAtLeast = (a: string | undefined, b: string) =>
+  agentSupportsExit(a, b);
 
 const stateMeta: Record<
   PrivateProxyItem["state"],
@@ -225,6 +344,13 @@ export default function PrivateProxyPage() {
     groupId: number;
     title: string;
   } | null>(null);
+  const [editTarget, setEditTarget] = useState<PrivateProxyItem | null>(null);
+  const [trafficTarget, setTrafficTarget] = useState<PrivateProxyItem | null>(
+    null,
+  );
+  const [subscriptionOpen, setSubscriptionOpen] = useState(false);
+  const [testing, setTesting] = useState<number | null>(null);
+  const [showQr, setShowQr] = useState(false);
 
   const minExitAgentVersion =
     exitInfo?.minAgentVersion || DEFAULT_EXIT_AGENT_VERSION;
@@ -251,9 +377,11 @@ export default function PrivateProxyPage() {
   ) => {
     if (!EXIT_PROXY_TYPES.includes(proxyType))
       return "家宽出口暂不支持 WireGuard。";
-    const requiredVersion = ROUTED_EXIT_PROXY_TYPES.includes(proxyType)
-      ? exitInfo?.minRoutedAgentVersion || DEFAULT_ROUTED_EXIT_AGENT_VERSION
-      : minExitAgentVersion;
+    const requiredVersion = NEW_PROTOCOLS.includes(proxyType)
+      ? PROTOCOL_AGENT_VERSION
+      : ROUTED_EXIT_PROXY_TYPES.includes(proxyType)
+        ? exitInfo?.minRoutedAgentVersion || DEFAULT_ROUTED_EXIT_AGENT_VERSION
+        : minExitAgentVersion;
     const node = nodes.find((item) => String(item.id) === String(nodeId));
 
     if (node && !agentSupportsExit(node.version, requiredVersion))
@@ -368,38 +496,48 @@ export default function PrivateProxyPage() {
       exitType: EXIT_PROXY_TYPES.includes(proxyType)
         ? current.exitType
         : "node",
-      authUsername:
-        proxyType === "socks5" || proxyType === "http"
-          ? current.authUsername
-          : "",
+      authUsername: usesAccount(proxyType) ? current.authUsername : "",
       authPassword:
-        proxyType === "vless_reality"
+        isReality(proxyType) ||
+        ["vmess", "vless", "shadowsocks2022"].includes(proxyType)
           ? ""
           : current.authPassword || randomSecret(),
-      realityPreset:
-        proxyType === "vless_reality"
-          ? current.realityPreset
-          : DEFAULT_REALITY_SERVER,
-      realityServerName:
-        proxyType === "vless_reality"
-          ? current.realityServerName || DEFAULT_REALITY_SERVER
-          : DEFAULT_REALITY_SERVER,
+      realityPreset: isReality(proxyType)
+        ? current.realityPreset
+        : DEFAULT_REALITY_SERVER,
+      realityServerName: isReality(proxyType)
+        ? current.realityServerName || DEFAULT_REALITY_SERVER
+        : DEFAULT_REALITY_SERVER,
     }));
+  };
+
+  /** 新协议在旧版本 Agent 上不能创建时返回原因。 */
+  const protocolBlockedReason = () => {
+    if (!NEW_PROTOCOLS.includes(form.proxyType) || !form.nodeId) return "";
+    const node = nodes.find((item) => String(item.id) === form.nodeId);
+
+    if (node && !versionAtLeast(node.version, PROTOCOL_AGENT_VERSION))
+      return `该节点的 Agent 版本是 ${node.version || "未知"}，${protocolMeta[form.proxyType].label} 需要升级到 ${PROTOCOL_AGENT_VERSION} 或更高。`;
+
+    return "";
   };
 
   const submit = async () => {
     if (!form.name.trim() || !form.nodeId || !form.listenPort)
       return toast.error("请填写名称、节点和监听端口");
     if (
-      (form.proxyType === "socks5" || form.proxyType === "http") &&
-      (!form.authUsername.trim() || form.authPassword.length < 8)
+      usesAccount(form.proxyType) &&
+      (form.authUsername.trim().length < 3 || form.authPassword.length < 8)
     ) {
-      return toast.error("用户名不能为空，密码至少 8 位");
+      return toast.error("用户名至少 3 位，密码至少 8 位");
     }
     if (usesSecret(form.proxyType) && form.authPassword.length < 8)
       return toast.error(`${protocolMeta[form.proxyType].label} 密钥至少 8 位`);
-    if (form.proxyType === "vless_reality" && !form.realityServerName.trim())
+    if (isReality(form.proxyType) && !form.realityServerName.trim())
       return toast.error("请填写 REALITY 伪装域名");
+    const blockedProtocol = protocolBlockedReason();
+
+    if (blockedProtocol) return toast.error(blockedProtocol);
     const port = Number(form.listenPort);
 
     if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -428,11 +566,25 @@ export default function PrivateProxyPage() {
       leaseHours: form.permanent ? undefined : Number(form.leaseHours),
       exitType: residentialExit ? "residential" : "node",
       exitCountry: residentialExit ? form.exitCountry : undefined,
+      method: form.proxyType === "shadowsocks2022" ? form.method : undefined,
+      transport: ["vmess", "vless"].includes(form.proxyType)
+        ? form.transport
+        : undefined,
+      tls: ["vmess", "vless"].includes(form.proxyType) ? form.tls : undefined,
+      serverName: form.serverName.trim() || undefined,
+      obfs: form.proxyType === "hysteria2" ? form.obfs : undefined,
+      handshakeServer:
+        form.proxyType === "shadowtls"
+          ? form.handshakeServer.trim()
+          : undefined,
+      connectHost: form.connectHost.trim() || undefined,
     });
 
     setSubmitting(false);
     if (response.code !== 0) return toast.error(response.msg || "创建代理失败");
-    toast.success(`${protocolMeta[form.proxyType].label} 已创建`);
+    toast.success(
+      `${protocolMeta[form.proxyType].label} 已创建，正在从节点自检`,
+    );
     setModalOpen(false);
     setForm(initialForm());
     setProtocolGroup("general");
@@ -446,7 +598,23 @@ export default function PrivateProxyPage() {
     setConfigLoading(false);
     if (response.code !== 0 || !response.data)
       return toast.error(response.msg || "读取连接信息失败");
+    setShowQr(false);
     setClientConfig(response.data);
+  };
+
+  const runTest = async (item: PrivateProxyItem) => {
+    setTesting(item.id);
+    const response = await testPrivateProxy(item.id);
+
+    setTesting(null);
+    if (response.code !== 0 || !response.data)
+      return toast.error(response.msg || "自检失败");
+    if (response.data.ok)
+      toast.success(
+        `代理可用：出口 ${response.data.ip}，用时 ${response.data.latencyMs} ms`,
+      );
+    else toast.error(response.data.error || "代理不可用");
+    void load();
   };
 
   const openExitSettings = (item: PrivateProxyItem) => {
@@ -567,9 +735,41 @@ export default function PrivateProxyPage() {
           : []),
         ...(clientConfig.shortId ? [["Short ID", clientConfig.shortId]] : []),
         ...(clientConfig.serverName
-          ? [["伪装域名", clientConfig.serverName]]
+          ? [
+              [
+                isReality(clientConfig.proxyType) ? "伪装域名" : "SNI / Host",
+                clientConfig.serverName,
+              ],
+            ]
           : []),
         ...(clientConfig.flow ? [["流控", clientConfig.flow]] : []),
+        ...(clientConfig.method ? [["加密方式", clientConfig.method]] : []),
+        ...(clientConfig.transport
+          ? [["传输方式", clientConfig.transport]]
+          : []),
+        ...(clientConfig.path
+          ? [
+              [
+                clientConfig.transport === "grpc" ? "gRPC 服务名" : "路径",
+                clientConfig.path,
+              ],
+            ]
+          : []),
+        ...(clientConfig.transport
+          ? [["TLS", clientConfig.tls ? "开启" : "关闭"]]
+          : []),
+        ...(clientConfig.obfsPassword
+          ? [["混淆密码", clientConfig.obfsPassword]]
+          : []),
+        ...(clientConfig.handshakeServer
+          ? [["握手网站", clientConfig.handshakeServer]]
+          : []),
+        ...(clientConfig.innerPassword
+          ? [["SS 2022 密钥", clientConfig.innerPassword]]
+          : []),
+        ...(clientConfig.certSha256
+          ? [["证书指纹 SHA-256", clientConfig.certSha256]]
+          : []),
         ...(clientConfig.clientPrivateKey
           ? [["客户端私钥", clientConfig.clientPrivateKey]]
           : []),
@@ -599,6 +799,13 @@ export default function PrivateProxyPage() {
               家宽出口池
             </Button>
           )}
+          <Button
+            startContent={<Rss size={17} />}
+            variant="flat"
+            onPress={() => setSubscriptionOpen(true)}
+          >
+            订阅链接
+          </Button>
           <Button
             color="primary"
             startContent={<Plus size={18} />}
@@ -747,11 +954,7 @@ export default function PrivateProxyPage() {
                           {isAdmin ? ` · ${item.ownerUserName}` : ""}
                         </div>
                         <div className="mt-1 break-words text-xs text-default-500">
-                          {isAdmin &&
-                          isAdvancedRuntime(item.proxyType) &&
-                          !item.granted
-                            ? "管理员自有高级代理不计入用户额度"
-                            : `上传 ${formatBytes(item.outFlow)} · 下载 ${formatBytes(item.inFlow)}`}
+                          {`上传 ${formatBytes(item.inFlow)} · 下载 ${formatBytes(item.outFlow)}`}
                         </div>
                         {item.granted && (
                           <div className="mt-1 break-words text-xs text-default-500">
@@ -767,14 +970,14 @@ export default function PrivateProxyPage() {
                       </div>
                       <div className="min-w-0">
                         <div className="break-all font-mono text-sm">
-                          {item.publicHost || "未设置"}:{item.listenPort}
+                          {item.connectHost || item.publicHost || "未设置"}:
+                          {item.listenPort}
                         </div>
                         <div className="mt-1 text-xs text-default-500">
-                          {["hysteria2", "tuic", "wireguard"].includes(
-                            item.proxyType,
-                          )
-                            ? "UDP"
-                            : "TCP"}
+                          {transportLabel(item.proxyType)}
+                          {item.transport && item.transport !== "tcp"
+                            ? ` · ${item.transport}`
+                            : ""}
                         </div>
                       </div>
                       {isAdmin ? (
@@ -833,6 +1036,39 @@ export default function PrivateProxyPage() {
                           onPress={() => showClientConfig(item)}
                         >
                           <KeyRound size={17} />
+                        </Button>
+                        {item.state === "active" && (
+                          <Button
+                            isIconOnly
+                            aria-label={`自检 ${item.name}`}
+                            isLoading={testing === item.id}
+                            size="sm"
+                            title="自检：节点经这个代理打开测试页面，确认能用并显示出口 IP"
+                            variant="light"
+                            onPress={() => runTest(item)}
+                          >
+                            <Stethoscope size={17} />
+                          </Button>
+                        )}
+                        <Button
+                          isIconOnly
+                          aria-label={`修改 ${item.name}`}
+                          size="sm"
+                          title="修改：名称、连接地址、端口、白名单、续期、重置密钥"
+                          variant="light"
+                          onPress={() => setEditTarget(item)}
+                        >
+                          <Pencil size={17} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          aria-label={`${item.name} 的流量`}
+                          size="sm"
+                          title="流量记录"
+                          variant="light"
+                          onPress={() => setTrafficTarget(item)}
+                        >
+                          <BarChart3 size={17} />
                         </Button>
                         {isAdmin &&
                           item.state === "active" &&
@@ -957,6 +1193,19 @@ export default function PrivateProxyPage() {
                           )}
                         </div>
                       )}
+                      {item.state === "active" && item.lastCheckAt && (
+                        <div
+                          className={`text-xs lg:col-span-5 ${item.lastCheckOk ? "text-default-500" : "text-danger"}`}
+                        >
+                          {item.lastCheckOk
+                            ? `自检正常 · 出口 ${item.lastCheckIp} · 用时 ${item.lastCheckLatency} ms`
+                            : `自检失败：${item.lastCheckError || "原因未知"}`}
+                          {` · ${new Date(item.lastCheckAt).toLocaleString()}`}
+                          {item.lastActiveAt
+                            ? ` · 最近使用 ${new Date(item.lastActiveAt).toLocaleString()}`
+                            : ""}
+                        </div>
+                      )}
                       {(item.unavailableReason || item.lastError) && (
                         <div className="text-xs text-danger lg:col-span-5">
                           {item.unavailableReason || item.lastError}
@@ -1050,7 +1299,7 @@ export default function PrivateProxyPage() {
                 value={form.bindIp}
                 onValueChange={(value) => setForm({ ...form, bindIp: value })}
               />
-              {(form.proxyType === "socks5" || form.proxyType === "http") && (
+              {usesAccount(form.proxyType) && (
                 <>
                   <Input
                     label="代理用户名"
@@ -1114,12 +1363,18 @@ export default function PrivateProxyPage() {
               {usesSecret(form.proxyType) &&
                 form.proxyType !== "shadowsocks" && (
                   <Input
-                    className={form.proxyType === "tuic" ? "md:col-span-2" : ""}
+                    className={
+                      form.proxyType === "tuic" || form.proxyType === "anytls"
+                        ? "md:col-span-2"
+                        : ""
+                    }
                     description={
                       form.proxyType === "hysteria2" ||
                       form.proxyType === "tuic"
                         ? "QUIC 使用 UDP；请确认节点防火墙和云厂商安全组已放行该端口。"
-                        : "自动使用节点生成的 TLS 证书，导入客户端时已附带必要参数。"
+                        : form.proxyType === "shadowtls"
+                          ? "ShadowTLS 外层的密码；内层 SS 2022 密钥由面板生成。"
+                          : "自动使用节点生成的 TLS 证书，订阅和连接信息里附带证书指纹。"
                     }
                     endContent={
                       <Button
@@ -1135,13 +1390,7 @@ export default function PrivateProxyPage() {
                         <KeyRound size={16} />
                       </Button>
                     }
-                    label={
-                      form.proxyType === "trojan"
-                        ? "Trojan 密钥"
-                        : form.proxyType === "hysteria2"
-                          ? "Hysteria2 密钥"
-                          : "TUIC 密钥"
-                    }
+                    label={`${protocolMeta[form.proxyType].label} 密钥`}
                     type="password"
                     value={form.authPassword}
                     onValueChange={(value) =>
@@ -1149,6 +1398,105 @@ export default function PrivateProxyPage() {
                     }
                   />
                 )}
+              {form.proxyType === "shadowsocks2022" && (
+                <Select
+                  className="md:col-span-2"
+                  description="密钥由面板随机生成，创建后在连接信息里查看。"
+                  label="加密方式"
+                  selectedKeys={[form.method]}
+                  onSelectionChange={(keys) =>
+                    setForm({
+                      ...form,
+                      method: String(Array.from(keys)[0]) as Ss2022Method,
+                    })
+                  }
+                >
+                  <SelectItem key="2022-blake3-aes-128-gcm">
+                    2022-blake3-aes-128-gcm（推荐）
+                  </SelectItem>
+                  <SelectItem key="2022-blake3-aes-256-gcm">
+                    2022-blake3-aes-256-gcm
+                  </SelectItem>
+                  <SelectItem key="2022-blake3-chacha20-poly1305">
+                    2022-blake3-chacha20-poly1305
+                  </SelectItem>
+                </Select>
+              )}
+              {(form.proxyType === "vmess" || form.proxyType === "vless") && (
+                <>
+                  <Select
+                    label="传输方式"
+                    selectedKeys={[form.transport]}
+                    onSelectionChange={(keys) =>
+                      setForm({
+                        ...form,
+                        transport: String(
+                          Array.from(keys)[0],
+                        ) as PrivateProxyTransport,
+                      })
+                    }
+                  >
+                    <SelectItem key="ws">WebSocket（可走 CDN）</SelectItem>
+                    <SelectItem key="grpc">gRPC（可走 CDN）</SelectItem>
+                    <SelectItem key="httpupgrade">
+                      HTTPUpgrade（可走 CDN）
+                    </SelectItem>
+                    <SelectItem key="tcp">TCP（直连）</SelectItem>
+                  </Select>
+                  <Input
+                    description={
+                      form.tls
+                        ? "TLS 证书域名，留空为 cloudnest.local（自签证书）"
+                        : "走 CDN 时填写接入 CDN 的域名，作为请求的 Host"
+                    }
+                    label="域名（可选）"
+                    placeholder="proxy.example.com"
+                    value={form.serverName}
+                    onValueChange={(value) =>
+                      setForm({ ...form, serverName: value })
+                    }
+                  />
+                  <Switch
+                    className="md:col-span-2"
+                    isSelected={form.tls}
+                    onValueChange={(value) => setForm({ ...form, tls: value })}
+                  >
+                    使用 TLS（节点自签证书；经 Cloudflare 等 CDN
+                    中转时一般关闭，由 CDN 提供 HTTPS）
+                  </Switch>
+                </>
+              )}
+              {form.proxyType === "shadowtls" && (
+                <Input
+                  className="md:col-span-2"
+                  description="握手时借用这个网站的 TLS，需要支持 TLS 1.3，例如 www.microsoft.com"
+                  label="握手网站"
+                  value={form.handshakeServer}
+                  onValueChange={(value) =>
+                    setForm({ ...form, handshakeServer: value })
+                  }
+                />
+              )}
+              {form.proxyType === "hysteria2" && (
+                <Switch
+                  className="md:col-span-2"
+                  isSelected={form.obfs}
+                  onValueChange={(value) => setForm({ ...form, obfs: value })}
+                >
+                  开启 salamander 混淆（QUIC
+                  被限速或干扰时使用，客户端需同时开启）
+                </Switch>
+              )}
+              {protocolHints[form.proxyType] && (
+                <div className="rounded-md border border-divider bg-default-50 px-3 py-3 text-sm text-default-600 md:col-span-2">
+                  {protocolHints[form.proxyType]}
+                </div>
+              )}
+              {protocolBlockedReason() && (
+                <div className="rounded-md bg-warning-50 px-3 py-3 text-sm text-warning-700 dark:bg-warning-500/10 dark:text-warning-400 md:col-span-2">
+                  {protocolBlockedReason()}
+                </div>
+              )}
               {form.proxyType === "wireguard" && (
                 <div className="rounded-md border border-divider bg-default-50 px-3 py-3 text-sm text-default-600 md:col-span-2">
                   创建后生成独立的 WireGuard 客户端配置。请使用 WireGuard
@@ -1156,7 +1504,7 @@ export default function PrivateProxyPage() {
                   2.38.0+，该协议使用 UDP。
                 </div>
               )}
-              {form.proxyType === "vless_reality" && (
+              {isReality(form.proxyType) && (
                 <>
                   <Select
                     className="md:col-span-2"
@@ -1196,8 +1544,22 @@ export default function PrivateProxyPage() {
                 </>
               )}
             </div>
-            {!isAdvancedRuntime(form.proxyType) ? (
+            <Input
+              description="域名指向节点、或节点有多个公网地址时填写；导入链接和订阅会使用这个地址。留空使用节点地址。"
+              label="连接地址（可选）"
+              placeholder="proxy.example.com"
+              value={form.connectHost}
+              onValueChange={(value) =>
+                setForm({ ...form, connectHost: value })
+              }
+            />
+            {form.proxyType !== "wireguard" ? (
               <Textarea
+                description={
+                  isAdvancedRuntime(form.proxyType)
+                    ? `需要节点 Agent ${PROTOCOL_AGENT_VERSION} 或更高版本。`
+                    : undefined
+                }
                 label="来源 IP 白名单（可选）"
                 minRows={2}
                 placeholder="203.0.113.10/32, 2001:db8::/64"
@@ -1208,9 +1570,8 @@ export default function PrivateProxyPage() {
               />
             ) : (
               <div className="rounded-md border border-divider bg-default-50 px-3 py-3 text-sm text-default-600">
-                该协议由节点独立运行时管理，仅支持 Linux 节点 Agent
-                2.38.0+。当前版本支持创建、暂停、恢复、删除与客户端配置导出；来源
-                IP 白名单暂不适用于此类协议。
+                WireGuard 由节点独立运行时管理，仅支持 Linux 节点 Agent
+                2.38.0+；来源 IP 白名单不适用于 WireGuard。
               </div>
             )}
             {isAdmin && (
@@ -1352,6 +1713,24 @@ export default function PrivateProxyPage() {
         onClose={() => setEventsTarget(null)}
       />
 
+      <ProxyEditModal
+        canManage={Boolean(editTarget && (isAdmin || !editTarget.granted))}
+        target={editTarget}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => {
+          setEditTarget(null);
+          void load();
+        }}
+      />
+      <ProxyTrafficModal
+        target={trafficTarget}
+        onClose={() => setTrafficTarget(null)}
+      />
+      <ProxySubscriptionModal
+        isOpen={subscriptionOpen}
+        onClose={() => setSubscriptionOpen(false)}
+      />
+
       <Modal
         isOpen={Boolean(clientConfig)}
         scrollBehavior="inside"
@@ -1388,25 +1767,77 @@ export default function PrivateProxyPage() {
                 </div>
               ))}
             </div>
-            {clientConfig && (
+            {clientConfig?.uri && (
               <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium">
                     {clientConfig.proxyType === "wireguard"
                       ? "WireGuard 配置文件"
                       : "一键导入链接"}
+                  </span>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      startContent={<QrCode size={15} />}
+                      variant={showQr ? "solid" : "light"}
+                      onPress={() => setShowQr(!showQr)}
+                    >
+                      二维码
+                    </Button>
+                    <Button
+                      size="sm"
+                      startContent={<Copy size={15} />}
+                      variant="flat"
+                      onPress={() =>
+                        copyText(
+                          clientConfig.uri || "",
+                          clientConfig.proxyType === "wireguard"
+                            ? "WireGuard 配置"
+                            : "导入链接",
+                        )
+                      }
+                    >
+                      复制
+                    </Button>
+                  </div>
+                </div>
+                {showQr && (
+                  <ProxyQr label="导入二维码" value={clientConfig.uri} />
+                )}
+                <Textarea
+                  isReadOnly
+                  classNames={{ input: "font-mono text-xs break-all" }}
+                  minRows={clientConfig.proxyType === "wireguard" ? 9 : 3}
+                  value={clientConfig.uri}
+                />
+              </div>
+            )}
+            {clientConfig && !clientConfig.uri && (
+              <p className="rounded-md bg-default-50 px-3 py-2 text-xs leading-5 text-default-600">
+                {protocolMeta[clientConfig.proxyType].label}
+                没有通用的导入链接。请复制下面的 Clash 配置，或在“订阅链接”里用
+                Clash / sing-box 订阅导入。
+              </p>
+            )}
+            {clientConfig?.linkSkipsCertCheck && (
+              <p className="rounded-md bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400">
+                节点使用自签证书，这种导入链接无法固定证书，客户端会跳过证书校验。
+                更安全的做法是用 Clash 或 sing-box
+                订阅导入，订阅里写入了证书指纹，只认这一张证书。
+              </p>
+            )}
+            {clientConfig?.clash && (
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">
+                    Clash / mihomo 配置
                   </span>
                   <Button
                     size="sm"
                     startContent={<Copy size={15} />}
                     variant="flat"
                     onPress={() =>
-                      copyText(
-                        clientConfig.uri,
-                        clientConfig.proxyType === "wireguard"
-                          ? "WireGuard 配置"
-                          : "导入链接",
-                      )
+                      copyText(clientConfig.clash || "", "Clash 配置")
                     }
                   >
                     复制
@@ -1414,9 +1845,10 @@ export default function PrivateProxyPage() {
                 </div>
                 <Textarea
                   isReadOnly
-                  classNames={{ input: "font-mono text-xs break-all" }}
-                  minRows={clientConfig.proxyType === "wireguard" ? 9 : 3}
-                  value={clientConfig.uri}
+                  classNames={{ input: "font-mono text-xs" }}
+                  maxRows={12}
+                  minRows={4}
+                  value={clientConfig.clash}
                 />
               </div>
             )}

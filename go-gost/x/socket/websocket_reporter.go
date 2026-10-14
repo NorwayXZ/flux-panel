@@ -624,6 +624,11 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		w.routeTerminalCommand(cmd)
 		return
 	}
+	if cmd.Type == "PrivateProxyProbe" {
+		// A test takes several seconds; run it beside the message loop.
+		go w.runPrivateProxyProbe(cmd)
+		return
+	}
 	if strings.HasPrefix(cmd.Type, "ExitPool") {
 		// 出口池指令按固定周期下发且带有证书，只记录类型
 		fmt.Println("🔔 收到命令: ", cmd.Type)
@@ -2170,4 +2175,21 @@ func (w *WebSocketReporter) processDurationInData(data interface{}) interface{} 
 	default:
 		return v
 	}
+}
+
+func (w *WebSocketReporter) runPrivateProxyProbe(cmd CommandMessage) {
+	response := CommandResponse{Type: "PrivateProxyProbeResponse", RequestId: cmd.RequestId}
+	var request privateProxyProbeRequest
+	err := decodeCommandData(cmd.Data, &request)
+	if err == nil {
+		var result privateProxyProbeResponse
+		result, err = (&probeRunner{singBox: w.proxyManager, xray: w.realityManager}).probe(request)
+		response.Data = result
+	}
+	if err != nil {
+		response.Message = err.Error()
+	} else {
+		response.Success, response.Message = true, "OK"
+	}
+	w.sendResponse(response)
 }

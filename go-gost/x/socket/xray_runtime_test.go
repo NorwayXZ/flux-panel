@@ -277,3 +277,31 @@ func TestRealityRuntimeIntegration(t *testing.T) {
 		t.Fatalf("REALITY config was not removed: %v", err)
 	}
 }
+
+func TestRealityXHTTPServerConfig(t *testing.T) {
+	manager := &realityRuntimeManager{directory: t.TempDir()}
+	state, err := newRealityState(realityRuntimeRequest{Name: "x", ServerName: "www.cloudflare.com", Network: "xhttp", Path: "/p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.realityNetwork() != "xhttp" {
+		t.Fatalf("state must record XHTTP: %#v", state)
+	}
+	config := manager.runtimeConfig(state)
+	inbound := config.Inbounds[0].(map[string]interface{})
+	stream := inbound["streamSettings"].(map[string]interface{})
+	if stream["network"] != "xhttp" || stream["security"] != "reality" || inbound["listen"] != "127.0.0.1" {
+		t.Fatalf("unexpected stream %v", stream)
+	}
+	client := inbound["settings"].(map[string]interface{})["clients"].([]interface{})[0].(map[string]interface{})
+	if _, ok := client["flow"]; ok {
+		t.Fatal("XHTTP does not use the Vision flow")
+	}
+	if response := state.response(); response.Network != "xhttp" || response.Path != "/p" {
+		t.Fatalf("response must report the transport: %#v", response)
+	}
+	raw, _ := newRealityState(realityRuntimeRequest{Name: "r", ServerName: "www.cloudflare.com"})
+	if raw.realityNetwork() != "" || manager.runtimeConfig(raw).Inbounds[0].(map[string]interface{})["streamSettings"].(map[string]interface{})["network"] != "raw" {
+		t.Fatal("plain REALITY keeps raw TCP")
+	}
+}

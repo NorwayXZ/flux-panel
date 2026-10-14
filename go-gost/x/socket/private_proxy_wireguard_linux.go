@@ -51,7 +51,7 @@ func (m *privateProxyRuntimeManager) addWireGuard(request privateProxyRuntimeReq
 		if err := m.ensureWireGuardRunning(existing); err != nil {
 			return privateProxyRuntimeResponse{}, err
 		}
-		return existing.response(), nil
+		return m.response(existing), nil
 	}
 	state, err := newPrivateProxyRuntimeState(request)
 	if err != nil {
@@ -64,7 +64,7 @@ func (m *privateProxyRuntimeManager) addWireGuard(request privateProxyRuntimeReq
 		_ = m.removeFiles(state.Name)
 		return privateProxyRuntimeResponse{}, err
 	}
-	return state.response(), nil
+	return m.response(state), nil
 }
 
 func (m *privateProxyRuntimeManager) ensureWireGuardRunning(state privateProxyRuntimeState) error {

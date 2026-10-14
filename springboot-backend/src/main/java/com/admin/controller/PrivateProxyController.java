@@ -5,6 +5,7 @@ import com.admin.common.annotation.RequireRole;
 import com.admin.common.dto.PrivateProxyCreateDto;
 import com.admin.common.dto.PrivateProxyGrantDto;
 import com.admin.common.dto.PrivateProxyGrantUpdateDto;
+import com.admin.common.dto.PrivateProxyUpdateDto;
 import com.admin.common.lang.R;
 import com.admin.service.PrivateProxyService;
 import org.springframework.validation.annotation.Validated;
@@ -30,6 +31,15 @@ public class PrivateProxyController {
     @RequireRole @LogAnnotation @PostMapping("/grant-update") public R updateGrant(@Validated @RequestBody PrivateProxyGrantUpdateDto dto) { return service.updateGrant(dto); }
     @RequireRole @LogAnnotation @PostMapping("/grant-reset") public R resetGrant(@RequestBody Map<String, Long> body) { return service.resetGrantFlow(body.get("id")); }
     @PostMapping("/list") public R list() { return service.list(); }
+    @LogAnnotation @PostMapping("/update") public R update(@Validated @RequestBody PrivateProxyUpdateDto dto) { return service.update(dto); }
+    @PostMapping("/test") public R test(@RequestBody Map<String, Long> body) { return service.test(body.get("id")); }
+    @PostMapping("/traffic") public R traffic(@RequestBody Map<String, Object> body) {
+        Object id = body.get("id");
+        return service.traffic(id == null ? null : Long.valueOf(id.toString()), body.get("range") == null ? null : body.get("range").toString());
+    }
+    @LogAnnotation @PostMapping("/subscription") public R subscription(@RequestBody(required = false) Map<String, Object> body) {
+        return service.subscription(body != null && Boolean.TRUE.equals(body.get("reset")));
+    }
     @PostMapping("/client-config") public R clientConfig(@RequestBody Map<String, Long> body) { return service.clientConfig(body.get("id")); }
     @RequireRole @LogAnnotation @PostMapping("/exit") public R updateExit(@RequestBody Map<String, Object> body) {
         Object id = body.get("id");

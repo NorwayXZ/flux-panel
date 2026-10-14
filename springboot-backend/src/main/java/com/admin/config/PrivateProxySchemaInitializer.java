@@ -43,6 +43,23 @@ public class PrivateProxySchemaInitializer {
             ensureColumn("exit_country", "varchar(8) DEFAULT NULL");
             ensureColumn("exit_route_port", "int DEFAULT NULL");
             ensureColumn("exit_switch_token", "varchar(64) DEFAULT NULL");
+            // 连接地址、自检结果和最近使用时间。都允许为空或有默认值，版本可以回退。
+            ensureColumn("connect_host", "varchar(253) DEFAULT NULL");
+            ensureColumn("last_check_at", "bigint DEFAULT NULL");
+            ensureColumn("last_check_ok", "tinyint DEFAULT NULL");
+            ensureColumn("last_check_ip", "varchar(64) DEFAULT NULL");
+            ensureColumn("last_check_latency", "int DEFAULT NULL");
+            ensureColumn("last_check_error", "varchar(500) DEFAULT NULL");
+            ensureColumn("check_failures", "int NOT NULL DEFAULT 0");
+            ensureColumn("last_active_at", "bigint DEFAULT NULL");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS private_proxy_traffic ("
+                    + "proxy_id bigint NOT NULL, hour_at bigint NOT NULL, in_flow bigint NOT NULL DEFAULT 0, "
+                    + "out_flow bigint NOT NULL DEFAULT 0, PRIMARY KEY (proxy_id,hour_at), KEY idx_private_proxy_traffic_hour (hour_at)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS private_proxy_subscription ("
+                    + "user_id int NOT NULL, token varchar(64) NOT NULL, created_time bigint NOT NULL, "
+                    + "PRIMARY KEY (user_id), UNIQUE KEY uk_private_proxy_subscription_token (token)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

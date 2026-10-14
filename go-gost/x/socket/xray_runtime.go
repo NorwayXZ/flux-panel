@@ -29,8 +29,11 @@ var runtimeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,120}$`)
 var serverNamePattern = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
 
 type realityRuntimeRequest struct {
-	Name                  string `json:"name"`
-	ServerName            string `json:"serverName"`
+	Name       string `json:"name"`
+	ServerName string `json:"serverName"`
+	// "xhttp" carries VLESS over XHTTP instead of raw TCP with Vision.
+	Network               string `json:"network,omitempty"`
+	Path                  string `json:"path,omitempty"`
 	OutboundProxyHost     string `json:"outboundProxyHost,omitempty"`
 	OutboundProxyPort     int    `json:"outboundProxyPort,omitempty"`
 	OutboundProxyUsername string `json:"outboundProxyUsername,omitempty"`
@@ -82,6 +85,8 @@ type realityRuntimeResponse struct {
 	ShortID    string `json:"shortId"`
 	ServerName string `json:"serverName"`
 	Version    string `json:"version"`
+	Network    string `json:"network,omitempty"`
+	Path       string `json:"path,omitempty"`
 }
 
 type xhttpRuntimeResponse struct {
@@ -162,6 +167,21 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 	if !serverNamePattern.MatchString(request.ServerName) {
 		return realityRuntimeResponse{}, errors.New("invalid REALITY server name")
 	}
+	request.Network = strings.ToLower(strings.TrimSpace(request.Network))
+	request.Path = strings.TrimSpace(request.Path)
+	switch request.Network {
+	case "", "raw", "tcp":
+		request.Network, request.Path = "", ""
+	case "xhttp":
+		if request.Path == "" {
+			request.Path = "/" + randomRuntimeToken(8)
+		}
+		if !strings.HasPrefix(request.Path, "/") || len(request.Path) > 128 || strings.ContainsAny(request.Path, " \t\r\n?#") {
+			return realityRuntimeResponse{}, errors.New("invalid REALITY XHTTP path")
+		}
+	default:
+		return realityRuntimeResponse{}, errors.New("unsupported REALITY transport")
+	}
 	if request.OutboundProxyPort > 0 {
 		if request.OutboundProxyHost == "" {
 			request.OutboundProxyHost = "127.0.0.1"
@@ -180,7 +200,8 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
 	}
 	if state, err := m.readState(request.Name); err == nil {
-		if state.Mode != "server" || state.ServerName != request.ServerName {
+		if state.Mode != "server" || state.ServerName != request.ServerName || state.realityNetwork() != request.Network ||
+			(request.Network == "xhttp" && state.Path != request.Path) {
 			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
 		}
 		if state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
@@ -606,8 +627,24 @@ func newRealityState(request realityRuntimeRequest) (realityRuntimeState, error)
 		ShortID:    hex.EncodeToString(shortBytes), ServerName: request.ServerName,
 		OutboundProxyHost: request.OutboundProxyHost, OutboundProxyPort: request.OutboundProxyPort,
 		OutboundProxyUsername: request.OutboundProxyUsername, OutboundProxyPassword: request.OutboundProxyPassword,
-		Version: xrayRuntimeVersion,
+		Version: xrayRuntimeVersion, Network: request.Network, Path: request.Path, Security: realitySecurity(request.Network),
 	}, nil
+}
+
+func realitySecurity(network string) string {
+	if network == "xhttp" {
+		return "reality"
+	}
+	return ""
+}
+
+// realityNetwork is "xhttp" for VLESS over XHTTP with REALITY and empty for
+// raw TCP with Vision.
+func (s realityRuntimeState) realityNetwork() string {
+	if s.Network == "xhttp" && s.Security == "reality" {
+		return "xhttp"
+	}
+	return ""
 }
 
 func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) error {
@@ -630,6 +667,27 @@ func (m *realityRuntimeManager) writeStateAndConfig(state realityRuntimeState) e
 }
 
 func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayConfig {
+	if state.realityNetwork() == "xhttp" && state.Mode != "client" {
+		return xrayConfig{
+			Log: map[string]interface{}{"loglevel": "warning"},
+			Inbounds: []interface{}{map[string]interface{}{
+				"listen": "127.0.0.1", "port": state.Port, "protocol": "vless",
+				"settings": map[string]interface{}{
+					"clients":    []interface{}{map[string]interface{}{"id": state.ClientID, "email": state.Name}},
+					"decryption": "none",
+				},
+				"streamSettings": map[string]interface{}{
+					"network": "xhttp", "security": "reality",
+					"xhttpSettings": map[string]interface{}{"path": state.Path, "mode": "auto"},
+					"realitySettings": map[string]interface{}{
+						"show": false, "target": state.ServerName + ":443", "xver": 0,
+						"serverNames": []string{state.ServerName}, "privateKey": state.PrivateKey, "shortIds": []string{state.ShortID},
+					},
+				},
+			}},
+			Outbounds: []interface{}{m.serverOutbound(state)},
+		}
+	}
 	if state.Network == "xhttp" {
 		if state.Mode == "client" {
 			stream := map[string]interface{}{"network": "xhttp", "security": state.Security, "xhttpSettings": map[string]interface{}{
@@ -687,18 +745,7 @@ func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayCon
 			}},
 		}
 	}
-	outbound := map[string]interface{}{"protocol": "freedom", "tag": "direct"}
-	if state.OutboundProxyPort > 0 {
-		outbound = map[string]interface{}{
-			"protocol": "socks", "tag": "routed",
-			"settings": map[string]interface{}{"servers": []interface{}{map[string]interface{}{
-				"address": state.OutboundProxyHost, "port": state.OutboundProxyPort,
-				"users": []interface{}{map[string]interface{}{
-					"user": state.OutboundProxyUsername, "pass": state.OutboundProxyPassword,
-				}},
-			}}},
-		}
-	}
+	outbound := m.serverOutbound(state)
 	return xrayConfig{
 		Log: map[string]interface{}{"loglevel": "warning"},
 		Inbounds: []interface{}{map[string]interface{}{
@@ -719,6 +766,23 @@ func (m *realityRuntimeManager) runtimeConfig(state realityRuntimeState) xrayCon
 	}
 }
 
+// serverOutbound sends traffic directly, or only through the local exit route
+// when one is set.
+func (m *realityRuntimeManager) serverOutbound(state realityRuntimeState) map[string]interface{} {
+	if state.OutboundProxyPort <= 0 {
+		return map[string]interface{}{"protocol": "freedom", "tag": "direct"}
+	}
+	return map[string]interface{}{
+		"protocol": "socks", "tag": "routed",
+		"settings": map[string]interface{}{"servers": []interface{}{map[string]interface{}{
+			"address": state.OutboundProxyHost, "port": state.OutboundProxyPort,
+			"users": []interface{}{map[string]interface{}{
+				"user": state.OutboundProxyUsername, "pass": state.OutboundProxyPassword,
+			}},
+		}}},
+	}
+}
+
 func (m *realityRuntimeManager) readState(name string) (realityRuntimeState, error) {
 	data, err := os.ReadFile(m.statePath(name))
 	if err != nil {
@@ -736,7 +800,7 @@ func (m *realityRuntimeManager) readState(name string) (realityRuntimeState, err
 
 func (s realityRuntimeState) response() realityRuntimeResponse {
 	return realityRuntimeResponse{Port: s.Port, ClientID: s.ClientID, PublicKey: s.PublicKey,
-		ShortID: s.ShortID, ServerName: s.ServerName, Version: s.Version}
+		ShortID: s.ShortID, ServerName: s.ServerName, Version: s.Version, Network: s.realityNetwork(), Path: s.Path}
 }
 
 func (s realityRuntimeState) xhttpResponse() xhttpRuntimeResponse {

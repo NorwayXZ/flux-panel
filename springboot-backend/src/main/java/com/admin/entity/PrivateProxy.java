@@ -41,6 +41,14 @@ public class PrivateProxy implements Serializable {
     private String exitCountry;
     private Integer exitRoutePort;
     private String exitSwitchToken;
+    private String connectHost;
+    private Long lastCheckAt;
+    private Integer lastCheckOk;
+    private String lastCheckIp;
+    private Integer lastCheckLatency;
+    private String lastCheckError;
+    private Integer checkFailures;
+    private Long lastActiveAt;
     private Long createdTime;
     private Long updatedTime;
 
@@ -56,4 +64,7 @@ public class PrivateProxy implements Serializable {
     @TableField(exist = false) private Long remainingTime;
     @TableField(exist = false) private Boolean speedLimitSupported;
     @TableField(exist = false) private Map<String, Object> exit;
+    /** 分享链接不校验证书时为 true（自签证书且该链接格式无法固定证书） */
+    @TableField(exist = false) private Boolean linkSkipsCertCheck;
+    @TableField(exist = false) private String transport;
 }

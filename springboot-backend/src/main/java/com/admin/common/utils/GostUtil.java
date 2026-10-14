@@ -164,6 +164,13 @@ public class GostUtil {
 
     public static GostDto AddRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,
                                               Integer runtimePort, String admissionName, String limiterName) {
+        return SendRealityFrontend(nodeId, serviceName, bindIp, port, runtimePort, admissionName, limiterName, "AddService");
+    }
+
+    /** command 为 AddService 或 UpdateService。 */
+    public static GostDto SendRealityFrontend(Long nodeId, String serviceName, String bindIp, Integer port,
+                                              Integer runtimePort, String admissionName, String limiterName,
+                                              String command) {
         JSONObject service = new JSONObject();
         service.put("name", serviceName);
         service.put("addr", (StringUtils.isBlank(bindIp) ? "" : bindIp) + ":" + port);
@@ -178,7 +185,7 @@ public class GostUtil {
         service.put("forwarder", createForwarder("127.0.0.1:" + runtimePort, "fifo"));
         JSONArray services = new JSONArray();
         services.add(service);
-        return WebSocketServer.send_msg(nodeId, services, "AddService");
+        return WebSocketServer.send_msg(nodeId, services, command);
     }
 
     private static JSONObject createAuthenticatedService(String name, String bindIp, Integer port,
@@ -212,6 +219,19 @@ public class GostUtil {
                                             String outboundProxyUsername, String outboundProxyPassword) {
         JSONObject data = createRealityRuntimeData(runtimeName, serverName, outboundProxyHost,
                 outboundProxyPort, outboundProxyUsername, outboundProxyPassword);
+        return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
+    }
+
+    /** network 为 xhttp 时创建 VLESS + XHTTP + REALITY，否则为 VLESS + Vision + REALITY。 */
+    public static GostDto AddRealityRuntime(Long nodeId, String runtimeName, String serverName, String network,
+                                            String path, String outboundProxyHost, Integer outboundProxyPort,
+                                            String outboundProxyUsername, String outboundProxyPassword) {
+        JSONObject data = createRealityRuntimeData(runtimeName, serverName, outboundProxyHost,
+                outboundProxyPort, outboundProxyUsername, outboundProxyPassword);
+        if (StringUtils.isNotBlank(network)) {
+            data.put("network", network);
+            data.put("path", path);
+        }
         return WebSocketServer.send_msg(nodeId, data, "AddRealityRuntime", 120);
     }
 
@@ -323,6 +343,30 @@ public class GostUtil {
         data.put("listenPort", port);
         data.put("password", password);
         return WebSocketServer.send_msg(nodeId, data, "AddPrivateProxyRuntime", 120);
+    }
+
+    /** options 是协议设置（传输方式、证书名、白名单等），原样交给 Agent。 */
+    public static GostDto AddPrivateProxyRuntime(Long nodeId, String runtimeName, String proxyType, String bindIp,
+                                                 Integer port, String password, Integer outboundPort,
+                                                 String outboundUsername, String outboundPassword, JSONObject options) {
+        JSONObject data = new JSONObject();
+        if (options != null) data.putAll(options);
+        if (outboundPort != null) {
+            data.put("outboundProxyPort", outboundPort);
+            data.put("outboundProxyUsername", outboundUsername);
+            data.put("outboundProxyPassword", outboundPassword);
+        }
+        data.put("name", runtimeName);
+        data.put("proxyType", proxyType);
+        data.put("bindIp", StringUtils.defaultString(bindIp));
+        data.put("listenPort", port);
+        data.put("password", password);
+        return WebSocketServer.send_msg(nodeId, data, "AddPrivateProxyRuntime", 120);
+    }
+
+    /** 让节点运行一次代理的客户端，经代理打开测试页面，返回看到的出口 IP 和用时。 */
+    public static GostDto ProbePrivateProxy(Long nodeId, JSONObject request) {
+        return WebSocketServer.send_msg(nodeId, request, "PrivateProxyProbe", 60);
     }
 
     public static GostDto DeletePrivateProxyRuntime(Long nodeId, String runtimeName) {
