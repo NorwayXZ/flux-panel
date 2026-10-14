@@ -29,4 +29,10 @@ public class PrivateProxyUpdateDto {
     private Integer renewHours;
     /** 改为永久有效 */
     private Boolean permanent;
+    /** 更换 REALITY 伪装站；auto 表示在节点上测速后自动选择 */
+    @Size(max = 253)
+    private String realityServerName;
+    /** 更换 ShadowTLS 握手网站；auto 表示自动选择 */
+    @Size(max = 253)
+    private String handshakeServer;
 }

@@ -150,6 +150,8 @@ public class PrivateProxyService {
         Spec spec = new Spec();
         R specCheck = fillSpec(spec, dto, proxyType);
         if (specCheck.getCode() != 0) return specCheck;
+        R camouflage = settleCamouflage(spec, node, proxyType);
+        if (camouflage.getCode() != 0) return camouflage;
         if ("hysteria2".equals(proxyType) && spec.obfsPassword != null
                 && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_PROTOCOL_AGENT_VERSION)) {
             return R.err("Hysteria2 混淆需要节点 Agent " + MIN_PROTOCOL_AGENT_VERSION + " 或更高版本");
@@ -266,7 +268,7 @@ public class PrivateProxyService {
                 return R.ok();
             case "vless_reality":
             case "vless_xhttp":
-                spec.serverName = normalizeServerName(StringUtils.defaultIfBlank(dto.getRealityServerName(), DEFAULT_REALITY_SERVER_NAME));
+                spec.serverName = camouflageInput(dto.getRealityServerName());
                 if (spec.serverName == null) return R.err("请填写有效的 REALITY 伪装域名，不要包含协议或路径");
                 if ("vless_xhttp".equals(proxyType)) spec.path = "/" + randomHex(8);
                 return R.ok();
@@ -286,7 +288,7 @@ public class PrivateProxyService {
             case "shadowtls":
                 spec.password = password;
                 if (password.length() < 8) return R.err("ShadowTLS 密码至少 8 位");
-                spec.handshakeServer = normalizeServerName(StringUtils.defaultIfBlank(dto.getHandshakeServer(), DEFAULT_SHADOWTLS_SERVER));
+                spec.handshakeServer = camouflageInput(dto.getHandshakeServer());
                 if (spec.handshakeServer == null) return R.err("请填写有效的握手网站域名");
                 spec.method = "2022-blake3-aes-128-gcm";
                 spec.innerPassword = randomKey(16);
@@ -304,6 +306,139 @@ public class PrivateProxyService {
                 if ("hysteria2".equals(proxyType) && Boolean.TRUE.equals(dto.getObfs())) spec.obfsPassword = randomPassword(16);
                 return R.ok();
         }
+    }
+
+    // ---------------------------------------------------------------- 伪装站
+
+    /** 选择伪装站时自动从节点测速 */
+    static final String AUTO_CAMOUFLAGE = "auto";
+    /** 检测伪装站需要的 Agent 版本 */
+    static final String MIN_TARGET_PROBE_AGENT_VERSION = "2.63.0";
+    /**
+     * 自动选择时检测的网站：大型网站、在中国大陆没有被封锁，通常支持 TLS 1.3、X25519 和 HTTP/2。
+     * 不放 Google、YouTube 等被封锁的网站：设备发出的连接里带着这个域名，会在国内被直接拦截。
+     */
+    static final List<String> CAMOUFLAGE_CANDIDATES = List.of(
+            "www.microsoft.com", "learn.microsoft.com", "www.bing.com", "www.apple.com", "swdist.apple.com",
+            "gateway.icloud.com", "www.amazon.com", "aws.amazon.com", "www.cloudflare.com", "www.nvidia.com",
+            "www.amd.com", "www.intel.com", "www.samsung.com", "www.tesla.com", "www.yahoo.com",
+            "addons.mozilla.org", "www.mozilla.org", "www.oracle.com", "www.cisco.com", "www.dell.com",
+            "www.sony.com", "www.speedtest.net", "www.lovelive-anime.jp", "www.logitech.com");
+
+    /** 留空或 auto 表示自动选择；否则返回规范化后的域名，格式不对返回 null。 */
+    private String camouflageInput(String value) {
+        String text = StringUtils.trimToEmpty(value).toLowerCase(Locale.ROOT);
+        if (text.isEmpty() || AUTO_CAMOUFLAGE.equals(text)) return AUTO_CAMOUFLAGE;
+        return normalizeServerName(text);
+    }
+
+    /**
+     * 确定伪装站：自动选择时在节点上检测候选网站，选可用且握手最快的；手动填写的先检测，不可用就拒绝创建。
+     * 节点 Agent 不支持检测时，自动选择使用默认网站，手动填写的不检测。
+     */
+    private R settleCamouflage(Spec spec, Node node, String proxyType) {
+        boolean shadowTls = "shadowtls".equals(proxyType);
+        if (!shadowTls && !isRealityType(proxyType)) return R.ok();
+        String target = shadowTls ? spec.handshakeServer : spec.serverName;
+        R chosen = chooseCamouflage(node, target, shadowTls ? DEFAULT_SHADOWTLS_SERVER : DEFAULT_REALITY_SERVER_NAME);
+        if (chosen.getCode() != 0) return chosen;
+        if (shadowTls) spec.handshakeServer = (String) chosen.getData();
+        else spec.serverName = (String) chosen.getData();
+        return R.ok();
+    }
+
+    /** 返回选定的域名（R.data）。 */
+    private R chooseCamouflage(Node node, String target, String fallback) {
+        if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_TARGET_PROBE_AGENT_VERSION)) {
+            return R.ok(AUTO_CAMOUFLAGE.equals(target) ? fallback : target);
+        }
+        boolean auto = AUTO_CAMOUFLAGE.equals(target);
+        List<JSONObject> results = probeCamouflage(node, auto ? CAMOUFLAGE_CANDIDATES : List.of(target));
+        if (results == null) return R.err("检测伪装站失败：节点没有响应，请稍后再试");
+        for (JSONObject result : results) {
+            if (result.getBooleanValue("ok")) return R.ok(result.getString("domain"));
+        }
+        if (auto) return R.err("节点连不上任何候选伪装站，请检查节点的网络或 DNS");
+        return R.err("伪装站 " + target + " 在节点上检测不通过（" + describeCamouflageError(results.isEmpty() ? null : results.get(0).getString("error"))
+                + "），请换一个，或选择“自动选择”");
+    }
+
+    private List<JSONObject> probeCamouflage(Node node, List<String> domains) {
+        GostDto result = GostUtil.ProbeRealityTargets(node.getId(), domains);
+        if (!gostSuccess(result) || result.getData() == null) return null;
+        JSONObject data = JSONObject.parseObject(JSONObject.toJSONString(result.getData()));
+        com.alibaba.fastjson.JSONArray array = data == null ? null : data.getJSONArray("results");
+        List<JSONObject> rows = new java.util.ArrayList<>();
+        for (int i = 0; array != null && i < array.size(); i++) rows.add(array.getJSONObject(i));
+        return rows;
+    }
+
+    static String describeCamouflageError(String error) {
+        String text = StringUtils.removeStart(StringUtils.defaultString(error), "TLS handshake failed: ");
+        switch (text) {
+            case "DNS lookup failed": return "节点解析不了这个域名";
+            case "timeout": return "节点连接超时";
+            case "connection refused": return "443 端口拒绝连接";
+            case "connection reset": return "连接被重置，可能被拦截";
+            case "unreachable": return "节点无法到达这个网站";
+            case "does not support TLS 1.3": return "不支持 TLS 1.3";
+            case "TLS 1.3 with X25519 refused": return "不支持 TLS 1.3 或 X25519 密钥交换";
+            case "certificate does not match the name": return "网站证书与域名不符";
+            case "does not support HTTP/2": return "不支持 HTTP/2";
+            default: return text.isEmpty() ? "原因未知" : text;
+        }
+    }
+
+    /** 在节点上检测伪装站，返回每个网站能否使用和握手用时。domains 为空时检测内置候选。 */
+    public R camouflageTargets(Long nodeId, List<String> domains) {
+        Node node = nodeId == null ? null : nodeMapper.selectById(nodeId);
+        if (node == null) return R.err("节点不存在");
+        if (!isAdmin() && userQuotaService.checkNodeQuota(JwtUtil.getUserIdFromToken(), node, null).getCode() != 0) {
+            return R.err("无权使用该节点");
+        }
+        if (!WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法检测");
+        if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_TARGET_PROBE_AGENT_VERSION)) {
+            return R.err("检测伪装站需要节点 Agent " + MIN_TARGET_PROBE_AGENT_VERSION + " 或更高版本，请先升级该节点");
+        }
+        List<String> list = new java.util.ArrayList<>();
+        if (domains != null) {
+            for (String domain : domains) {
+                String normalized = normalizeServerName(domain);
+                if (normalized == null) return R.err("域名格式不正确：" + domain);
+                if (!list.contains(normalized)) list.add(normalized);
+            }
+        }
+        if (list.isEmpty()) list.addAll(CAMOUFLAGE_CANDIDATES);
+        if (list.size() > 40) return R.err("一次最多检测 40 个网站");
+        List<JSONObject> results = probeCamouflage(node, list);
+        if (results == null) return R.err("检测失败：节点没有响应，请稍后再试");
+        for (JSONObject result : results) {
+            if (!result.getBooleanValue("ok")) result.put("reason", describeCamouflageError(result.getString("error")));
+        }
+        return R.ok(results);
+    }
+
+    /** 更换 REALITY 伪装站：保留密钥和 UUID，客户端只需更新 SNI。 */
+    private R changeRealityTarget(PrivateProxy proxy, Node node, String requested) {
+        Spec spec = specOf(proxy);
+        R chosen = chooseCamouflage(node, requested, DEFAULT_REALITY_SERVER_NAME);
+        if (chosen.getCode() != 0) return chosen;
+        String serverName = (String) chosen.getData();
+        if (serverName.equals(spec.serverName)) return R.ok(serverName);
+        boolean residentialExit = "residential".equals(proxy.getExitType()) && StringUtils.isNotBlank(proxy.getExitCountry());
+        Integer routePort = residentialExit ? openExitRoute(proxy, node, ExitPoolService.interfaceName(proxy.getExitCountry())) : null;
+        GostDto runtime = GostUtil.AddRealityRuntime(node.getId(), realityRuntimeName(proxy), serverName,
+                "vless_xhttp".equals(proxy.getProxyType()) ? "xhttp" : null, spec.path,
+                routePort == null ? null : "127.0.0.1", routePort,
+                routePort == null ? null : EXIT_ROUTE_USER, routePort == null ? null : exitRoutePassword(proxy));
+        if (!gostSuccess(runtime)) return R.err("更换伪装站失败：" + gostMessage(runtime));
+        JSONObject config = storedClientConfig(proxy);
+        config.put("serverName", serverName);
+        proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
+                .set("client_config", crypto.encrypt(JSONObject.toJSONString(config)))
+                .set("exit_route_port", proxy.getExitRoutePort())
+                .set("updated_time", System.currentTimeMillis()));
+        return R.ok(serverName);
     }
 
     /** 从已保存的代理还原协议设置。 */
@@ -1186,8 +1321,19 @@ public class PrivateProxyService {
             if (Objects.equals(newCidrs, current == null ? List.of() : current)) newCidrs = null;
         }
         boolean reset = Boolean.TRUE.equals(dto.getResetCredentials());
+        String realityTarget = isRealityType(proxy.getProxyType()) && StringUtils.isNotBlank(dto.getRealityServerName())
+                ? camouflageInput(dto.getRealityServerName()) : null;
+        String handshakeTarget = "shadowtls".equals(proxy.getProxyType()) && StringUtils.isNotBlank(dto.getHandshakeServer())
+                ? camouflageInput(dto.getHandshakeServer()) : null;
+        if (StringUtils.isNotBlank(dto.getRealityServerName()) && isRealityType(proxy.getProxyType()) && realityTarget == null
+                || StringUtils.isNotBlank(dto.getHandshakeServer()) && "shadowtls".equals(proxy.getProxyType()) && handshakeTarget == null) {
+            return R.err("伪装站域名格式不正确，不要包含协议或路径");
+        }
+        JSONObject storedConfig = storedClientConfig(proxy);
+        if (realityTarget != null && realityTarget.equals(storedConfig.getString("serverName"))) realityTarget = null;
+        if (handshakeTarget != null && handshakeTarget.equals(storedConfig.getString("handshakeServer"))) handshakeTarget = null;
         if ((newPort != null || newCidrs != null) && !manage) return R.err("该代理由管理员授权，端口和白名单请联系管理员调整");
-        if (newPort == null && newCidrs == null && !reset) {
+        if (newPort == null && newCidrs == null && !reset && realityTarget == null && handshakeTarget == null) {
             if (simpleChange) {
                 simple.set("updated_time", now);
                 proxyMapper.update(null, simple);
@@ -1195,9 +1341,32 @@ public class PrivateProxyService {
             return R.ok(view(proxyMapper.selectById(proxy.getId())));
         }
 
-        if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以修改端口、白名单或重置密钥");
+        if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以修改端口、白名单、伪装站或重置密钥");
         Node node = nodeMapper.selectById(proxy.getNodeId());
         if (node == null || !WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法修改代理");
+        if ((realityTarget != null || handshakeTarget != null)
+                && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_TARGET_PROBE_AGENT_VERSION)) {
+            return R.err("更换伪装站需要节点 Agent " + MIN_TARGET_PROBE_AGENT_VERSION + " 或更高版本，请先升级该节点");
+        }
+        if (realityTarget != null) {
+            if (simpleChange) {
+                simple.set("updated_time", now);
+                proxyMapper.update(null, simple);
+                simpleChange = false;
+            }
+            R changed = changeRealityTarget(proxy, node, realityTarget);
+            if (changed.getCode() != 0) return changed;
+            proxy = proxyMapper.selectById(proxy.getId());
+            if (newPort == null && newCidrs == null && !reset) {
+                checkAfterCommit(proxy.getId());
+                return R.ok(view(proxy));
+            }
+        }
+        if (handshakeTarget != null) {
+            R chosen = chooseCamouflage(node, handshakeTarget, DEFAULT_SHADOWTLS_SERVER);
+            if (chosen.getCode() != 0) return chosen;
+            handshakeTarget = (String) chosen.getData();
+        }
         if (!AgentVersionUtil.isAtLeast(node.getVersion(), MIN_PROTOCOL_AGENT_VERSION)) {
             return R.err("修改端口、白名单或重置密钥需要节点 Agent " + MIN_PROTOCOL_AGENT_VERSION + " 或更高版本，请先升级该节点");
         }
@@ -1225,6 +1394,7 @@ public class PrivateProxyService {
         }
         Spec next = specOf(proxy);
         if (reset) withNewCredentials(proxy.getProxyType(), next);
+        if (handshakeTarget != null) next.handshakeServer = handshakeTarget;
         return reprovision(proxy, node, previous, next, newPort, newCidrs);
     }
 
@@ -1705,6 +1875,8 @@ public class PrivateProxyService {
             if (config != null) {
                 proxy.setLinkSkipsCertCheck(PrivateProxyClientFormats.uriSkipsCertificateCheck(proxy.getProxyType(), config));
                 proxy.setTransport(config.getString("transport"));
+                if (isRealityType(proxy.getProxyType())) proxy.setCamouflage(config.getString("serverName"));
+                if ("shadowtls".equals(proxy.getProxyType())) proxy.setCamouflage(config.getString("handshakeServer"));
             }
         } catch (Exception ignored) {
             // 解密失败时列表照常显示，连接信息接口会给出错误

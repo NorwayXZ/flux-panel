@@ -200,14 +200,15 @@ func (m *realityRuntimeManager) add(request realityRuntimeRequest) (realityRunti
 		return realityRuntimeResponse{}, fmt.Errorf("create REALITY runtime directory: %w", err)
 	}
 	if state, err := m.readState(request.Name); err == nil {
-		if state.Mode != "server" || state.ServerName != request.ServerName || state.realityNetwork() != request.Network ||
+		if state.Mode != "server" || state.realityNetwork() != request.Network ||
 			(request.Network == "xhttp" && state.Path != request.Path) {
 			return realityRuntimeResponse{}, errors.New("REALITY runtime already exists with different settings")
 		}
-		if state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
+		if state.ServerName != request.ServerName || state.OutboundProxyHost != request.OutboundProxyHost || state.OutboundProxyPort != request.OutboundProxyPort ||
 			state.OutboundProxyUsername != request.OutboundProxyUsername || state.OutboundProxyPassword != request.OutboundProxyPassword {
-			// Only where traffic leaves changes. The keys and client ID are kept,
-			// so devices keep working with the configuration they already have.
+			// Only the camouflage site or where traffic leaves changes. The keys
+			// and client ID are kept; a new site only changes the client's SNI.
+			state.ServerName = request.ServerName
 			state.OutboundProxyHost, state.OutboundProxyPort = request.OutboundProxyHost, request.OutboundProxyPort
 			state.OutboundProxyUsername, state.OutboundProxyPassword = request.OutboundProxyUsername, request.OutboundProxyPassword
 			if err := m.writeStateAndConfig(state); err != nil {

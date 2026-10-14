@@ -67,4 +67,6 @@ public class PrivateProxy implements Serializable {
     /** 分享链接不校验证书时为 true（自签证书且该链接格式无法固定证书） */
     @TableField(exist = false) private Boolean linkSkipsCertCheck;
     @TableField(exist = false) private String transport;
+    /** REALITY 伪装站或 ShadowTLS 握手网站 */
+    @TableField(exist = false) private String camouflage;
 }

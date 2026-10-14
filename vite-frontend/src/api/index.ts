@@ -705,6 +705,8 @@ export interface PrivateProxyItem {
   exit?: ExitStatusView;
   connectHost?: string;
   transport?: PrivateProxyTransport;
+  /** REALITY 伪装站或 ShadowTLS 握手网站 */
+  camouflage?: string;
   /** 分享链接无法固定证书、会跳过证书校验 */
   linkSkipsCertCheck?: boolean;
   lastCheckAt?: number;
@@ -993,6 +995,8 @@ export interface PrivateProxyUpdateRequest {
   resetCredentials?: boolean;
   renewHours?: number;
   permanent?: boolean;
+  realityServerName?: string;
+  handshakeServer?: string;
 }
 
 export interface PrivateProxyCheckResult {
@@ -1030,6 +1034,21 @@ export const getPrivateProxyTraffic = (
   id: number,
   range: "24h" | "7d" | "30d",
 ) => Network.post<PrivateProxyTraffic>("/private-proxy/traffic", { id, range });
+export interface CamouflageTarget {
+  domain: string;
+  ok: boolean;
+  latencyMs?: number;
+  address?: string;
+  h2?: boolean;
+  error?: string;
+  /** 不可用的原因（中文） */
+  reason?: string;
+}
+export const getCamouflageTargets = (nodeId: number, domains?: string[]) =>
+  Network.post<CamouflageTarget[]>("/private-proxy/camouflage-targets", {
+    nodeId,
+    domains: domains || [],
+  });
 export const getPrivateProxySubscription = (reset = false) =>
   Network.post<{ token: string }>("/private-proxy/subscription", { reset });
 

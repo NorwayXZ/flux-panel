@@ -59,6 +59,9 @@ import {
   type PrivateProxyType,
 } from "@/api";
 import ExitEventsModal from "@/components/exit-events-modal";
+import CamouflagePicker, {
+  AUTO_CAMOUFLAGE,
+} from "@/components/camouflage-picker";
 import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
 import ProxyEditModal from "@/components/proxy-edit-modal";
 import ProxyQr from "@/components/proxy-qr";
@@ -84,14 +87,11 @@ interface NodeOption {
 }
 
 type Cipher = "aes-128-gcm" | "aes-256-gcm" | "chacha20-ietf-poly1305";
-type RealityPreset = "www.cloudflare.com" | "www.google.com" | "custom";
 type ProxyGroup = "general" | "encrypted" | "cdn" | "quic" | "vpn";
 type Ss2022Method =
   | "2022-blake3-aes-128-gcm"
   | "2022-blake3-aes-256-gcm"
   | "2022-blake3-chacha20-poly1305";
-
-const DEFAULT_REALITY_SERVER = "www.cloudflare.com";
 
 interface ProxyForm {
   name: string;
@@ -102,7 +102,6 @@ interface ProxyForm {
   authUsername: string;
   authPassword: string;
   cipher: Cipher;
-  realityPreset: RealityPreset;
   realityServerName: string;
   allowedCidrs: string;
   permanent: boolean;
@@ -177,8 +176,7 @@ const initialForm = (): ProxyForm => ({
   authUsername: "",
   authPassword: "",
   cipher: "aes-256-gcm",
-  realityPreset: DEFAULT_REALITY_SERVER,
-  realityServerName: DEFAULT_REALITY_SERVER,
+  realityServerName: AUTO_CAMOUFLAGE,
   allowedCidrs: "",
   permanent: true,
   leaseHours: "24",
@@ -189,7 +187,7 @@ const initialForm = (): ProxyForm => ({
   tls: false,
   serverName: "",
   obfs: false,
-  handshakeServer: "www.microsoft.com",
+  handshakeServer: AUTO_CAMOUFLAGE,
   connectHost: "",
 });
 
@@ -502,12 +500,9 @@ export default function PrivateProxyPage() {
         ["vmess", "vless", "shadowsocks2022"].includes(proxyType)
           ? ""
           : current.authPassword || randomSecret(),
-      realityPreset: isReality(proxyType)
-        ? current.realityPreset
-        : DEFAULT_REALITY_SERVER,
       realityServerName: isReality(proxyType)
-        ? current.realityServerName || DEFAULT_REALITY_SERVER
-        : DEFAULT_REALITY_SERVER,
+        ? current.realityServerName || AUTO_CAMOUFLAGE
+        : AUTO_CAMOUFLAGE,
     }));
   };
 
@@ -535,6 +530,8 @@ export default function PrivateProxyPage() {
       return toast.error(`${protocolMeta[form.proxyType].label} 密钥至少 8 位`);
     if (isReality(form.proxyType) && !form.realityServerName.trim())
       return toast.error("请填写 REALITY 伪装域名");
+    if (form.proxyType === "shadowtls" && !form.handshakeServer.trim())
+      return toast.error("请填写握手网站");
     const blockedProtocol = protocolBlockedReason();
 
     if (blockedProtocol) return toast.error(blockedProtocol);
@@ -1467,12 +1464,12 @@ export default function PrivateProxyPage() {
                 </>
               )}
               {form.proxyType === "shadowtls" && (
-                <Input
+                <CamouflagePicker
                   className="md:col-span-2"
-                  description="握手时借用这个网站的 TLS，需要支持 TLS 1.3，例如 www.microsoft.com"
                   label="握手网站"
+                  nodeId={form.nodeId ? Number(form.nodeId) : undefined}
                   value={form.handshakeServer}
-                  onValueChange={(value) =>
+                  onChange={(value) =>
                     setForm({ ...form, handshakeServer: value })
                   }
                 />
@@ -1505,43 +1502,15 @@ export default function PrivateProxyPage() {
                 </div>
               )}
               {isReality(form.proxyType) && (
-                <>
-                  <Select
-                    className="md:col-span-2"
-                    description="推荐站点已经过真实握手验证；节点 Agent 需为 2.20.0 或更高版本。"
-                    label="REALITY 伪装站"
-                    selectedKeys={[form.realityPreset]}
-                    onSelectionChange={(keys) => {
-                      const preset = String(
-                        Array.from(keys)[0] || DEFAULT_REALITY_SERVER,
-                      ) as RealityPreset;
-
-                      setForm({
-                        ...form,
-                        realityPreset: preset,
-                        realityServerName: preset === "custom" ? "" : preset,
-                      });
-                    }}
-                  >
-                    <SelectItem key="www.cloudflare.com">
-                      Cloudflare（推荐）
-                    </SelectItem>
-                    <SelectItem key="www.google.com">Google</SelectItem>
-                    <SelectItem key="custom">自定义域名</SelectItem>
-                  </Select>
-                  {form.realityPreset === "custom" && (
-                    <Input
-                      className="md:col-span-2"
-                      description="部分 HTTPS 站点不兼容 REALITY；创建后请验证客户端连接。"
-                      label="自定义伪装域名"
-                      placeholder="仅填写支持 TLS 1.3 的域名"
-                      value={form.realityServerName}
-                      onValueChange={(value) =>
-                        setForm({ ...form, realityServerName: value })
-                      }
-                    />
-                  )}
-                </>
+                <CamouflagePicker
+                  className="md:col-span-2"
+                  label="REALITY 伪装站"
+                  nodeId={form.nodeId ? Number(form.nodeId) : undefined}
+                  value={form.realityServerName}
+                  onChange={(value) =>
+                    setForm({ ...form, realityServerName: value })
+                  }
+                />
               )}
             </div>
             <Input

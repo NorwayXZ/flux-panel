@@ -15,6 +15,7 @@ import { Select, SelectItem } from "@heroui/select";
 import toast from "react-hot-toast";
 
 import { updatePrivateProxy } from "@/api";
+import CamouflagePicker from "@/components/camouflage-picker";
 
 interface ProxyEditModalProps {
   target: PrivateProxyItem | null;
@@ -39,6 +40,7 @@ export default function ProxyEditModal({
   const [cidrs, setCidrs] = useState("");
   const [renewal, setRenewal] = useState<Renewal>("");
   const [reset, setReset] = useState(false);
+  const [camouflage, setCamouflage] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -49,6 +51,7 @@ export default function ProxyEditModal({
     setCidrs(target.allowedCidrs || "");
     setRenewal("");
     setReset(false);
+    setCamouflage(target.camouflage || "");
   }, [target]);
 
   if (!target) return null;
@@ -60,6 +63,12 @@ export default function ProxyEditModal({
   const supportsCidrs = target.proxyType !== "wireguard";
   const portChanged = port.trim() !== String(target.listenPort);
   const cidrsChanged = cidrs.trim() !== (target.allowedCidrs || "");
+  const hasCamouflage =
+    target.proxyType === "vless_reality" ||
+    target.proxyType === "vless_xhttp" ||
+    target.proxyType === "shadowtls";
+  const camouflageChanged =
+    hasCamouflage && camouflage.trim() !== (target.camouflage || "");
   const rebuilds = reset || portChanged || cidrsChanged;
 
   const save = async () => {
@@ -79,6 +88,12 @@ export default function ProxyEditModal({
     if (renewal === "permanent") request.permanent = true;
     else if (renewal) request.renewHours = Number(renewal);
     if (reset) request.resetCredentials = true;
+    if (camouflageChanged) {
+      if (!camouflage.trim()) return toast.error("请填写伪装站域名");
+      if (target.proxyType === "shadowtls")
+        request.handshakeServer = camouflage.trim();
+      else request.realityServerName = camouflage.trim();
+    }
     if (Object.keys(request).length === 1) return onClose();
     if (
       rebuilds &&
@@ -94,7 +109,11 @@ export default function ProxyEditModal({
 
     setSaving(false);
     if (response.code !== 0) return toast.error(response.msg || "保存失败");
-    toast.success(rebuilds ? "已保存，请重新导入连接信息或更新订阅" : "已保存");
+    toast.success(
+      rebuilds || camouflageChanged
+        ? "已保存，请重新导入连接信息或更新订阅"
+        : "已保存",
+    );
     onSaved();
   };
 
@@ -152,6 +171,22 @@ export default function ProxyEditModal({
               value={cidrs}
               onValueChange={setCidrs}
             />
+          )}
+          {canManage && hasCamouflage && active && (
+            <CamouflagePicker
+              label={
+                target.proxyType === "shadowtls" ? "握手网站" : "REALITY 伪装站"
+              }
+              nodeId={target.nodeId}
+              value={camouflage}
+              onChange={setCamouflage}
+            />
+          )}
+          {camouflageChanged && target.proxyType !== "shadowtls" && (
+            <p className="text-xs text-default-500">
+              更换伪装站会保留原来的 UUID 和密钥，只是客户端里的 SNI
+              要改成新网站；用订阅的更新一下即可。
+            </p>
           )}
           <Checkbox
             isDisabled={!active}

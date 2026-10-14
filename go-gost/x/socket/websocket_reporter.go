@@ -629,6 +629,10 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		go w.runPrivateProxyProbe(cmd)
 		return
 	}
+	if cmd.Type == "RealityTargetProbe" {
+		go w.runRealityTargetProbe(cmd)
+		return
+	}
 	if strings.HasPrefix(cmd.Type, "ExitPool") {
 		// 出口池指令按固定周期下发且带有证书，只记录类型
 		fmt.Println("🔔 收到命令: ", cmd.Type)
@@ -2185,6 +2189,24 @@ func (w *WebSocketReporter) runPrivateProxyProbe(cmd CommandMessage) {
 		var result privateProxyProbeResponse
 		result, err = (&probeRunner{singBox: w.proxyManager, xray: w.realityManager}).probe(request)
 		response.Data = result
+	}
+	if err != nil {
+		response.Message = err.Error()
+	} else {
+		response.Success, response.Message = true, "OK"
+	}
+	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) runRealityTargetProbe(cmd CommandMessage) {
+	response := CommandResponse{Type: "RealityTargetProbeResponse", RequestId: cmd.RequestId}
+	var request realityTargetProbeRequest
+	err := decodeCommandData(cmd.Data, &request)
+	if err == nil {
+		var results []realityTargetResult
+		results, err = probeRealityTargets(request)
+		// The panel reads command data as an object.
+		response.Data = map[string]interface{}{"results": results}
 	}
 	if err != nil {
 		response.Message = err.Error()

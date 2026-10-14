@@ -33,6 +33,13 @@ public class PrivateProxyController {
     @PostMapping("/list") public R list() { return service.list(); }
     @LogAnnotation @PostMapping("/update") public R update(@Validated @RequestBody PrivateProxyUpdateDto dto) { return service.update(dto); }
     @PostMapping("/test") public R test(@RequestBody Map<String, Long> body) { return service.test(body.get("id")); }
+    @PostMapping("/camouflage-targets") public R camouflageTargets(@RequestBody Map<String, Object> body) {
+        Object nodeId = body.get("nodeId");
+        Object domains = body.get("domains");
+        java.util.List<String> list = new java.util.ArrayList<>();
+        if (domains instanceof java.util.List) for (Object domain : (java.util.List<?>) domains) list.add(String.valueOf(domain));
+        return service.camouflageTargets(nodeId == null ? null : Long.valueOf(nodeId.toString()), list);
+    }
     @PostMapping("/traffic") public R traffic(@RequestBody Map<String, Object> body) {
         Object id = body.get("id");
         return service.traffic(id == null ? null : Long.valueOf(id.toString()), body.get("range") == null ? null : body.get("range").toString());

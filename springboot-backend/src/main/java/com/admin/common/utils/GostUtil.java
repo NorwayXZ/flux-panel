@@ -365,6 +365,13 @@ public class GostUtil {
     }
 
     /** 让节点运行一次代理的客户端，经代理打开测试页面，返回看到的出口 IP 和用时。 */
+    /** 在节点上检测伪装站：TLS 1.3、X25519、HTTP/2、证书与域名一致，并测握手用时。 */
+    public static GostDto ProbeRealityTargets(Long nodeId, List<String> domains) {
+        JSONObject data = new JSONObject();
+        data.put("domains", domains);
+        return WebSocketServer.send_msg(nodeId, data, "RealityTargetProbe", 45);
+    }
+
     public static GostDto ProbePrivateProxy(Long nodeId, JSONObject request) {
         return WebSocketServer.send_msg(nodeId, request, "PrivateProxyProbe", 60);
     }

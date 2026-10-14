@@ -184,4 +184,14 @@ class PrivateProxyClientFormatsTests {
         assertEquals(20, PrivateProxyService.randomPassword(20).length());
         assertEquals(16, PrivateProxyService.randomHex(8).length());
     }
+
+    @Test
+    void camouflageErrorsAreExplainedAndCandidatesAvoidBlockedSites() {
+        assertEquals("不支持 TLS 1.3", PrivateProxyService.describeCamouflageError("does not support TLS 1.3"));
+        assertEquals("节点连接超时", PrivateProxyService.describeCamouflageError("timeout"));
+        assertEquals("原因未知", PrivateProxyService.describeCamouflageError(null));
+        assertEquals("连接被重置，可能被拦截", PrivateProxyService.describeCamouflageError("TLS handshake failed: connection reset"));
+        assertTrue(PrivateProxyService.CAMOUFLAGE_CANDIDATES.size() <= 40);
+        assertTrue(PrivateProxyService.CAMOUFLAGE_CANDIDATES.stream().noneMatch(d -> d.contains("google") || d.contains("youtube")));
+    }
 }

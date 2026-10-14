@@ -76,6 +76,9 @@ import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from "@/components/icons";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import CamouflagePicker, {
+  AUTO_CAMOUFLAGE,
+} from "@/components/camouflage-picker";
 
 // 工具函数
 const formatFlow = (value: number, unit: string = "bytes"): string => {
@@ -125,7 +128,7 @@ const authorizedEntryLabel = (grant: AuthorizedEntryGrant) =>
     ? "待配置"
     : grant.state === "active"
       ? "使用中"
-    : authorizedEntryStateLabel[grant.state] || grant.state;
+      : authorizedEntryStateLabel[grant.state] || grant.state;
 
 // 获取用户状态（根据status字段）
 const getUserStatus = (user: User) => {
@@ -179,7 +182,6 @@ interface PortEditorState {
 }
 
 type GrantProxyType = PrivateProxyType;
-type GrantRealityPreset = "www.cloudflare.com" | "www.google.com" | "custom";
 
 const grantProxyLabels: Record<GrantProxyType, string> = {
   socks5: "SOCKS5",
@@ -228,7 +230,6 @@ interface ProxyGrantEditorState {
   authUsername: string;
   authPassword: string;
   cipher: "aes-128-gcm" | "aes-256-gcm" | "chacha20-ietf-poly1305";
-  realityPreset: GrantRealityPreset;
   realityServerName: string;
   flowLimit: number;
   flowUnlimited: boolean;
@@ -247,8 +248,7 @@ const emptyProxyGrant = (): ProxyGrantEditorState => ({
   authUsername: "",
   authPassword: "",
   cipher: "aes-256-gcm",
-  realityPreset: "www.cloudflare.com",
-  realityServerName: "www.cloudflare.com",
+  realityServerName: AUTO_CAMOUFLAGE,
   flowLimit: 100,
   flowUnlimited: false,
   flowResetDay: 0,
@@ -319,7 +319,9 @@ export default function UserPage() {
   const [proxyGrantEditor, setProxyGrantEditor] =
     useState<ProxyGrantEditorState | null>(null);
   const [proxyGrantSaving, setProxyGrantSaving] = useState(false);
-  const [authorizedEntryGrants, setAuthorizedEntryGrants] = useState<AuthorizedEntryGrant[]>([]);
+  const [authorizedEntryGrants, setAuthorizedEntryGrants] = useState<
+    AuthorizedEntryGrant[]
+  >([]);
 
   // 隧道权限管理相关状态
   const { isOpen: isTunnelModalOpen, onClose: onTunnelModalClose } =
@@ -534,14 +536,19 @@ export default function UserPage() {
     let authorizedEntryResponse: any;
 
     try {
-      [tunnelResponse, nodeResponse, portResponse, proxyResponse, authorizedEntryResponse] =
-        await Promise.all([
-          getUserTunnelList({ userId: user.id }),
-          getUserNodeList(user.id),
-          getPublishingPortGrants(user.id),
-          getPrivateProxyGrants(user.id),
-          getAuthorizedEntryGrants(user.id),
-        ]);
+      [
+        tunnelResponse,
+        nodeResponse,
+        portResponse,
+        proxyResponse,
+        authorizedEntryResponse,
+      ] = await Promise.all([
+        getUserTunnelList({ userId: user.id }),
+        getUserNodeList(user.id),
+        getPublishingPortGrants(user.id),
+        getPrivateProxyGrants(user.id),
+        getAuthorizedEntryGrants(user.id),
+      ]);
     } catch {
       toast.error("加载用户资源权限失败，请重试");
 
@@ -551,8 +558,8 @@ export default function UserPage() {
       tunnelResponse.code !== 0 ||
       nodeResponse.code !== 0 ||
       portResponse.code !== 0 ||
-      proxyResponse.code !== 0
-      || authorizedEntryResponse.code !== 0
+      proxyResponse.code !== 0 ||
+      authorizedEntryResponse.code !== 0
     ) {
       toast.error(
         tunnelResponse.msg ||
@@ -935,7 +942,8 @@ export default function UserPage() {
     userForm.tunnelPermissions.reduce((sum, item) => sum + item.flow, 0) +
     userForm.nodePermissions.reduce((sum, item) => sum + item.flow, 0);
   const authorizedEntryQuota = authorizedEntryGrants.reduce(
-    (sum, grant) => sum + (grant.flowLimitBytes > 0 ? grant.flowLimitBytes / (1024 ** 3) : 0),
+    (sum, grant) =>
+      sum + (grant.flowLimitBytes > 0 ? grant.flowLimitBytes / 1024 ** 3 : 0),
     0,
   );
   const authorizedEntryUnlimited = authorizedEntryGrants.some(
@@ -1140,8 +1148,7 @@ export default function UserPage() {
       authUsername: "",
       authPassword: "",
       cipher: "aes-256-gcm",
-      realityPreset: "www.cloudflare.com",
-      realityServerName: "www.cloudflare.com",
+      realityServerName: AUTO_CAMOUFLAGE,
       flowLimit: proxy.flowLimit || 0,
       flowUnlimited: proxy.flowUnlimited === 1,
       flowResetDay: proxy.flowResetDay || 0,
@@ -1199,6 +1206,7 @@ export default function UserPage() {
         const serverName = proxyGrantEditor.realityServerName.trim();
 
         if (
+          serverName !== AUTO_CAMOUFLAGE &&
           !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(
             serverName,
           )
@@ -1333,7 +1341,7 @@ export default function UserPage() {
         </div>
       ) : users.length === 0 ? (
         <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
-            <CardBody className="text-center py-10">
+          <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
                 <UserIcon className="w-8 h-8 text-default-400" />
@@ -1783,7 +1791,8 @@ export default function UserPage() {
                       <div>
                         <h3 className="text-sm font-semibold">授权入口</h3>
                         <p className="mt-1 text-xs text-default-500">
-                          {authorizedEntryGrants.length} 个授权套餐 · 入口模板属于线路资源
+                          {authorizedEntryGrants.length} 个授权套餐 ·
+                          入口模板属于线路资源
                         </p>
                       </div>
                       <Button
@@ -1824,11 +1833,18 @@ export default function UserPage() {
                                   {grant.name}
                                 </p>
                                 <p className="mt-1 truncate font-mono text-xs text-default-500">
-                                  {grant.accessHost} · {grant.ports.length}/{grant.maxPorts} 个端口
+                                  {grant.accessHost} · {grant.ports.length}/
+                                  {grant.maxPorts} 个端口
                                 </p>
                               </div>
                               <Chip
-                                color={grant.state === "active" ? "success" : grant.state === "provisioning" ? "warning" : "danger"}
+                                color={
+                                  grant.state === "active"
+                                    ? "success"
+                                    : grant.state === "provisioning"
+                                      ? "warning"
+                                      : "danger"
+                                }
                                 size="sm"
                                 variant="flat"
                               >
@@ -1847,30 +1863,39 @@ export default function UserPage() {
                               <div>
                                 <p className="text-default-500">重置</p>
                                 <p className="mt-1 font-medium">
-                                  {grant.flowResetDay ? `每月 ${grant.flowResetDay} 日` : "不重置"}
+                                  {grant.flowResetDay
+                                    ? `每月 ${grant.flowResetDay} 日`
+                                    : "不重置"}
                                 </p>
                               </div>
                               <div className="sm:col-span-2">
                                 <p className="text-default-500">到期</p>
                                 <p className="mt-1 font-medium">
-                                  {grant.expiresAt ? formatDate(grant.expiresAt) : "永久"}
+                                  {grant.expiresAt
+                                    ? formatDate(grant.expiresAt)
+                                    : "永久"}
                                 </p>
                               </div>
                             </div>
                             {grant.ports.length > 0 && (
                               <div className="mt-3 space-y-1 border-t border-divider pt-2 text-xs text-default-500">
                                 {grant.ports.map((port) => (
-                                  <p key={port.id} className="truncate font-mono">
-                                    {grant.accessHost}:{port.port} → {port.targetHost}:{port.targetPort}
+                                  <p
+                                    key={port.id}
+                                    className="truncate font-mono"
+                                  >
+                                    {grant.accessHost}:{port.port} →{" "}
+                                    {port.targetHost}:{port.targetPort}
                                   </p>
                                 ))}
                               </div>
                             )}
-                            {grant.state === "active" && grant.ports.length === 0 && (
-                              <p className="mt-3 border-t border-divider pt-2 text-xs text-default-500">
-                                授权已发放，等待用户添加落地；当前不占用实际转发端口。
-                              </p>
-                            )}
+                            {grant.state === "active" &&
+                              grant.ports.length === 0 && (
+                                <p className="mt-3 border-t border-divider pt-2 text-xs text-default-500">
+                                  授权已发放，等待用户添加落地；当前不占用实际转发端口。
+                                </p>
+                              )}
                           </div>
                         ))}
                       </div>
@@ -2037,7 +2062,6 @@ export default function UserPage() {
                       </div>
                     )}
                   </section>
-
                 </div>
               </Tab>
 
@@ -2707,52 +2731,19 @@ export default function UserPage() {
                         </>
                       )}
                       {grantIsReality(proxyGrantEditor.proxyType) && (
-                        <>
-                          <Select
-                            className="md:col-span-2"
-                            description="推荐站点已经过真实握手验证；也可以填写自己的 TLS 1.3 站点。"
-                            label="REALITY 伪装站"
-                            selectedKeys={[proxyGrantEditor.realityPreset]}
-                            onSelectionChange={(keys) => {
-                              const preset = String(
-                                Array.from(keys)[0] || "www.cloudflare.com",
-                              ) as GrantRealityPreset;
-
-                              setProxyGrantEditor((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      realityPreset: preset,
-                                      realityServerName:
-                                        preset === "custom" ? "" : preset,
-                                    }
-                                  : prev,
-                              );
-                            }}
-                          >
-                            <SelectItem key="www.cloudflare.com">
-                              Cloudflare（推荐）
-                            </SelectItem>
-                            <SelectItem key="www.google.com">Google</SelectItem>
-                            <SelectItem key="custom">自定义域名</SelectItem>
-                          </Select>
-                          {proxyGrantEditor.realityPreset === "custom" && (
-                            <Input
-                              className="md:col-span-2"
-                              description="不要填写 https://、端口或路径；部分 HTTPS 站点不兼容 REALITY，创建后请验证连接。"
-                              label="自定义伪装域名"
-                              placeholder="仅填写支持 TLS 1.3 的域名"
-                              value={proxyGrantEditor.realityServerName}
-                              onValueChange={(value) =>
-                                setProxyGrantEditor((prev) =>
-                                  prev
-                                    ? { ...prev, realityServerName: value }
-                                    : prev,
-                                )
-                              }
-                            />
-                          )}
-                        </>
+                        <CamouflagePicker
+                          className="md:col-span-2"
+                          label="REALITY 伪装站"
+                          nodeId={proxyGrantEditor.nodeId || undefined}
+                          value={proxyGrantEditor.realityServerName}
+                          onChange={(value) =>
+                            setProxyGrantEditor((prev) =>
+                              prev
+                                ? { ...prev, realityServerName: value }
+                                : prev,
+                            )
+                          }
+                        />
                       )}
                       {grantUsesSecret(proxyGrantEditor.proxyType) && (
                         <Input
