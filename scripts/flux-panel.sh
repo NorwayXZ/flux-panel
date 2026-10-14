@@ -17,6 +17,9 @@ UPDATER_PATH="flux-panel-updater.path"
 AUTO_UPDATE_SERVICE="flux-panel-auto-update.service"
 AUTO_UPDATE_TIMER="flux-panel-auto-update.timer"
 UPDATE_LOCK_FILE="${FLUX_PANEL_UPDATE_LOCK_FILE:-/run/flux-panel-update.lock}"
+BACKUP_SERVICE="flux-panel-backup.service"
+BACKUP_TIMER="flux-panel-backup.timer"
+BACKUP_DIR="${FLUX_PANEL_BACKUP_DIR:-/var/backups/flux-panel}"
 
 log() {
   printf '[flux-panel] %s\n' "$*"
@@ -411,6 +414,115 @@ EOF
   fi
 }
 
+# 每天自动备份数据库和面板配置。FLUX_PANEL_BACKUP_DISABLED=1 时不安装定时任务。
+# 备份设置可以写在环境变量里，也可以写在 flux-panel.env 里
+backup_setting() {
+  local name="$1" fallback="$2" value="${!1:-}"
+  if [[ -z "${value}" && -f "${ENV_FILE}" ]]; then
+    value="$(read_env_value "${name}" || true)"
+  fi
+  printf '%s\n' "${value:-${fallback}}"
+}
+
+install_backup_timer() {
+  BACKUP_DIR="$(backup_setting FLUX_PANEL_BACKUP_DIR "${BACKUP_DIR}")"
+  if [[ "$(backup_setting FLUX_PANEL_BACKUP_DISABLED 0)" == "1" ]]; then
+    log "daily backups are disabled by configuration"
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]] || [[ ! -x "${MANAGER_BIN}" ]]; then
+    log "systemd is unavailable; run 'flux-panel-manager backup' manually to back up the database"
+    return 0
+  fi
+  cat > "/etc/systemd/system/${BACKUP_SERVICE}" <<EOF
+[Unit]
+Description=Back up the Flux Panel database
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=${MANAGER_BIN} backup
+Environment="FLUX_PANEL_DIR=${INSTALL_DIR}"
+Environment="FLUX_PANEL_CONFIG_DIR=${CONFIG_DIR}"
+Environment="FLUX_PANEL_BACKUP_DIR=${BACKUP_DIR}"
+Nice=10
+EOF
+  cat > "/etc/systemd/system/${BACKUP_TIMER}" <<EOF
+[Unit]
+Description=Daily Flux Panel database backup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=${BACKUP_SERVICE}
+
+[Install]
+WantedBy=timers.target
+EOF
+  if systemctl daemon-reload && systemctl enable --now "${BACKUP_TIMER}" >/dev/null 2>&1; then
+    log "daily database backup is scheduled; files are kept in ${BACKUP_DIR}"
+  else
+    log "daily backup timer could not be installed; run 'flux-panel-manager backup' manually"
+  fi
+}
+
+remove_backup_timer() {
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    systemctl disable --now "${BACKUP_TIMER}" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${BACKUP_SERVICE}" "/etc/systemd/system/${BACKUP_TIMER}"
+    systemctl daemon-reload || true
+  fi
+}
+
+# 导出数据库并保存配置文件。保留最近 FLUX_PANEL_BACKUP_KEEP 份（默认 14）；
+# 设置 FLUX_PANEL_BACKUP_REMOTE（例如 user@host:/path）时再用 scp 复制一份到另一台机器。
+backup_panel() {
+  check_host
+  [[ -f "${ENV_FILE}" ]] || fail "configuration not found: ${ENV_FILE}"
+  COMPOSE_FILE="$(installed_compose_file)"
+  [[ -n "${COMPOSE_FILE}" ]] || fail "installation not found: ${INSTALL_DIR}"
+  BACKUP_DIR="$(backup_setting FLUX_PANEL_BACKUP_DIR "${BACKUP_DIR}")"
+  local keep remote
+  keep="$(backup_setting FLUX_PANEL_BACKUP_KEEP 14)"
+  remote="$(backup_setting FLUX_PANEL_BACKUP_REMOTE "")"
+  [[ "${keep}" =~ ^[0-9]+$ && "${keep}" -ge 1 ]] || fail "FLUX_PANEL_BACKUP_KEEP must be a positive number"
+  mkdir -p "${BACKUP_DIR}"
+  chmod 700 "${BACKUP_DIR}"
+  local stamp name partial
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  name="flux-panel-${stamp}"
+  partial="${BACKUP_DIR}/.${name}.sql.gz.partial"
+  if ! compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --routines --triggers --no-tablespaces "$MYSQL_DATABASE"' \
+      | gzip -c > "${partial}"; then
+    rm -f "${partial}"
+    fail "database export failed; check that the mysql container is running"
+  fi
+  # 导出不完整时 mysqldump 不会写结尾标记
+  if ! gzip -dc "${partial}" | tail -n 5 | grep -q "Dump completed"; then
+    rm -f "${partial}"
+    fail "database export is incomplete; the previous backups were kept"
+  fi
+  mv -f "${partial}" "${BACKUP_DIR}/${name}.sql.gz"
+  install -m 600 "${ENV_FILE}" "${BACKUP_DIR}/${name}.env"
+  chmod 600 "${BACKUP_DIR}/${name}.sql.gz"
+  log "backup written: ${BACKUP_DIR}/${name}.sql.gz ($(du -h "${BACKUP_DIR}/${name}.sql.gz" | cut -f1))"
+
+  local old
+  while IFS= read -r old; do
+    rm -f "${old}" "${old%.sql.gz}.env"
+  done < <(ls -1t "${BACKUP_DIR}"/flux-panel-*.sql.gz 2>/dev/null | tail -n +"$((keep + 1))")
+
+  if [[ -n "${remote}" ]]; then
+    if scp -q -o BatchMode=yes -o ConnectTimeout=20 "${BACKUP_DIR}/${name}.sql.gz" "${BACKUP_DIR}/${name}.env" "${remote}/"; then
+      log "backup copied to ${remote}"
+    else
+      fail "backup was saved locally but copying to ${remote} failed"
+    fi
+  fi
+}
+
 remove_update_service() {
   local remove_state="${1:-0}"
   rm -f "${UPDATER_STATE_DIR}/enabled" "${UPDATER_STATE_DIR}/update.request"
@@ -511,6 +623,7 @@ install_panel() {
   trap - EXIT
 
   install_update_service
+  install_backup_timer
 
   log "downloading prebuilt Flux Panel ${panel_version} images"
   deploy_release || fail "services did not become healthy; run: docker logs springboot-backend"
@@ -563,6 +676,7 @@ update_panel() {
   set_env_value PANEL_VERSION "${target_version}"
 
   install_update_service
+  install_backup_timer
 
   if ! deploy_release; then
     log "update failed or services did not become healthy; restoring the previous release"
@@ -573,6 +687,7 @@ update_panel() {
       set_env_value PANEL_VERSION "${previous_version}"
     fi
     install_update_service
+    install_backup_timer
     if [[ "${previous_compose}" == "${SOURCE_COMPOSE_FILE}" ]]; then
       compose up -d --build
     else
@@ -698,6 +813,7 @@ rollback_panel() {
 uninstall_panel() {
   check_host
   remove_update_service 0
+  remove_backup_timer
   COMPOSE_FILE="$(installed_compose_file)"
   if [[ -n "${COMPOSE_FILE}" && -f "${ENV_FILE}" ]]; then
     log "stopping and removing application containers"
@@ -723,6 +839,7 @@ purge_panel() {
   docker volume rm mysql_data backend_logs >/dev/null 2>&1 || true
   docker network rm gost-network >/dev/null 2>&1 || true
   remove_update_service 1
+  remove_backup_timer
   rm -rf "${INSTALL_DIR}" "${INSTALL_DIR}.previous" "${CONFIG_DIR}"
   log "Flux Panel containers, source, configuration, and database volumes were permanently deleted"
 }
@@ -739,7 +856,7 @@ show_status() {
 
 usage() {
   cat <<'EOF'
-Usage: flux-panel.sh <install|update|rollback [--force]|uninstall|purge|status>
+Usage: flux-panel.sh <install|update|rollback [--force]|backup|uninstall|purge|status>
 
 Environment variables:
   FLUX_PANEL_FRONTEND_PORT  Public web port, default: 6366
@@ -750,6 +867,10 @@ Environment variables:
   FLUX_PANEL_DISABLE_ONLINE_UPDATES=1  Skip systemd update service installation
   AUTO_UPDATE_ENABLED=0  Keep the request watcher but disable periodic release checks
   FLUX_PANEL_PURGE=1        Required confirmation for permanent deletion
+  FLUX_PANEL_BACKUP_DIR     Backup directory, default: /var/backups/flux-panel
+  FLUX_PANEL_BACKUP_KEEP    Number of daily backups to keep, default: 14
+  FLUX_PANEL_BACKUP_REMOTE  Optional scp target for a second copy, e.g. user@host:/path
+  FLUX_PANEL_BACKUP_DISABLED=1  Do not install the daily backup timer
 EOF
 }
 
@@ -759,6 +880,7 @@ main() {
     install) install_panel ;;
     update) update_panel ;;
     rollback) rollback_panel "${2:-}" ;;
+    backup) backup_panel ;;
     uninstall) uninstall_panel ;;
     purge) purge_panel ;;
     status) show_status ;;

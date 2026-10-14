@@ -1017,6 +1017,34 @@ docker logs -f --tail 200 gost-mysql
 
 ## 备份与恢复
 
+### 自动备份
+
+面板安装或更新后会启用每日自动备份（每天 04:30 前后），把数据库导出为 `/var/backups/flux-panel/flux-panel-时间.sql.gz`，并同时保存当时的 `flux-panel.env`，默认保留最近 14 份。导出不完整时会放弃这一份并保留旧备份。
+
+立即备份一次：
+
+```bash
+sudo /usr/local/sbin/flux-panel-manager backup
+```
+
+查看自动备份是否在运行：
+
+```bash
+systemctl list-timers flux-panel-backup.timer
+```
+
+可在 `/etc/flux-panel/flux-panel.env` 中设置：`FLUX_PANEL_BACKUP_KEEP`（保留份数）、`FLUX_PANEL_BACKUP_DIR`（目录）、`FLUX_PANEL_BACKUP_REMOTE`（再用 scp 复制一份到另一台机器，例如 `backup@203.0.113.5:/srv/flux-backups`，需要先配置免密登录；远端不会自动清理旧文件）、`FLUX_PANEL_BACKUP_DISABLED=1`（不启用）。备份只保存在本机时，服务器整机损坏会连同备份一起丢失，建议配置异地复制。
+
+从自动备份恢复：
+
+```bash
+sudo bash -c 'set -a; source /etc/flux-panel/flux-panel.env; set +a; \
+  gzip -dc /var/backups/flux-panel/flux-panel-时间.sql.gz | \
+  docker exec -i gost-mysql mysql -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME"'
+```
+
+### 手动备份
+
 读取数据库配置：
 
 ```bash
