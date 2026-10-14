@@ -206,3 +206,19 @@ jobs:
             --verify-tag \
             --title "Flux Panel ${VERSION}" \
             --notes-file "${release_notes}"
+          # 节点和接入端的安装脚本按 Agent 版本号去下载程序。Agent 版本与面板版本不同且还没有对应发布时，
+          # 用同一批文件补一个 Agent 发布，不标记为最新，面板的“检查更新”仍然指向面板版本。
+          agent_version="$(tr -d '[:space:]' < AGENT_VERSION)"
+          if [ "${agent_version}" != "${VERSION}" ] && ! gh release view "${agent_version}" >/dev/null 2>&1; then
+            gh release create "${agent_version}" \
+              gost-amd64 gost-arm64 \
+              gost-windows-amd64.exe gost-windows-arm64.exe \
+              gost-darwin-amd64 gost-darwin-arm64 \
+              flux-openwrt-dns-amd64 flux-openwrt-dns-arm64 flux-openwrt-dns-armv7 flux-openwrt-dns-mips flux-openwrt-dns-mipsle \
+              SHA256SUMS install.sh install-connector.ps1 install-connector-macos.sh install-openwrt-dns-agent.sh \
+              --target "${GITHUB_SHA}" \
+              --latest=false \
+              --title "Agent ${agent_version}" \
+              --notes "Agent ${agent_version} 程序，与面板 ${VERSION} 发布中的文件相同。这不是面板版本。"
+          fi
+          curl -fsSIL -o /dev/null "https://github.com/${GITHUB_REPOSITORY}/releases/download/${agent_version}/gost-amd64"
