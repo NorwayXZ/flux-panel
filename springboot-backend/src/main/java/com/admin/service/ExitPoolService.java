@@ -80,10 +80,11 @@ public class ExitPoolService {
     private static final long REJECT_COOLDOWN_MS = 6 * 3_600_000L;
     private static final long BLOCK_COOLDOWN_MS = 30 * 86_400_000L;
     private static final long EVENT_RETENTION_MS = 14 * 86_400_000L;
-    private static final int READY_TARGET = 2;
+    /** 一个在用加两个备用：手动换出口后仍有备用可换，也能在备用里挑延迟低的。 */
+    private static final int READY_TARGET = 3;
     private static final int SEARCH_PARALLEL = 6;
     private static final int STANDBY_SEARCH_PARALLEL = 3;
-    private static final long FAST_RETRY_SECONDS = 5L;
+    private static final long FAST_RETRY_SECONDS = 2L;
     private static final long LOOKUP_SPACING_MS = 4_000L;
     private static final long LOOKUP_RETRY_MS = 30_000L;
     private static final Map<String, String> COUNTRY_NAMES = Map.ofEntries(
@@ -803,7 +804,9 @@ public class ExitPoolService {
                     .forEach(row -> jdbc.update("UPDATE exit_member SET state='idle', approved=0, updated_time=? WHERE id=?", now, row.get("id")));
             return;
         }
-        int target = setupFailed ? 1 : ready >= READY_TARGET ? READY_TARGET : ready == 0 ? SEARCH_PARALLEL : STANDBY_SEARCH_PARALLEL;
+        // 备用不够时同时多试两个，凑齐得更快
+        int target = setupFailed ? 1 : ready >= READY_TARGET ? READY_TARGET
+                : ready == 0 ? SEARCH_PARALLEL : (int) Math.min(SEARCH_PARALLEL, Math.max(STANDBY_SEARCH_PARALLEL, ready + 2));
         int missing = target - live.size();
         if (missing <= 0) return;
         List<Map<String, Object>> picks = jdbc.queryForList("SELECT c.id FROM exit_candidate c "
@@ -812,7 +815,9 @@ public class ExitPoolService {
                         // 手动切换时放掉的出口本身是好的：平时先冷却，避免马上又换回去；一个可用出口都没有时立刻拿回来用
                         + "AND (m.id IS NULL OR (m.state NOT IN ('connecting','up') AND (m.retry_after IS NULL OR m.retry_after <= ? "
                         + "OR (m.state = 'idle' AND ? = 1)))) "
-                        + "ORDER BY COALESCE(m.success_count, 0) DESC, c.flagged_proxy ASC, c.list_score DESC LIMIT ?",
+                        // 优先选以前在这台节点上连成功过的，其中延迟低的排前面；没试过的排在后面
+                        + "ORDER BY (COALESCE(m.success_count, 0) > 0) DESC, COALESCE(m.latency_ms, 999999) ASC, "
+                        + "c.flagged_proxy ASC, c.list_score DESC LIMIT ?",
                 groupId, country, KIND_HOME, now - CANDIDATE_FRESH_MS, now, ready == 0 ? 1 : 0, missing);
         for (Map<String, Object> pick : picks) {
             // attempt 每次加一：节点据此知道这是一次新的连接请求，而不是它已经试过的那一次

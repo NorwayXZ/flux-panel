@@ -1,3 +1,14 @@
+## 2.60.1 Faster exit switching that prefers low latency
+
+- Each exit in use now keeps two standbys instead of one. A manual switch therefore still leaves a standby to switch to next, and there is a choice to rank. When standbys are missing, two more candidates are tried at once.
+- 换一个出口, the remote link and the node's own failover go to the ready standby with the lowest measured latency. Latency is the time for a connection from the node through the exit to a public address, so it reflects both the node-to-exit path and the exit's own line.
+- New candidates are tried in a better order: exits that connected from this node before come first, lowest latency first, then untried ones.
+- While exits are being found or standbys replenished, the panel re-checks every two seconds instead of five.
+- Agent 2.58.2 measures an exit's latency as soon as it connects, instead of at the first periodic check ten seconds later, and gives up on an unreachable candidate after eight seconds instead of ten. Panel 2.60.1 works with Agent 2.58.1; a new standby's latency is then unknown for its first ten seconds and it ranks last during that time.
+- One more OpenVPN connection per exit in use. No database change.
+- Verified in a Linux VM against live exits: with two standbys ready, a switch went to the lower-latency one and completed in under a tenth of a second, and a second switch followed without waiting. How quickly standbys are replaced depends on how many candidates are reachable from the node.
+- Agents move to 2.58.2. 2.60.0 remains available for rollback.
+
 ## 2.60.0 Browse every candidate IP of a country with a purity rating
 
 - On the 家宽出口池 page, clicking a country now opens the full list of that country's current candidates: address, provider, purity, risk scores, how many people share it and how long it has been online. Addresses that are not home broadband (data centre, mobile, VPN Gate's own servers, wrong country) are listed too, greyed out, so the gap between the list total and the usable count is visible.

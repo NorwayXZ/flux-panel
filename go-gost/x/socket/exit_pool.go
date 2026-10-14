@@ -391,10 +391,16 @@ func (m *exitPoolManager) run(ctx context.Context, group string, member *exitMem
 		m.fail(group, member, fmt.Errorf("exit carried no traffic: %w", err))
 		return
 	}
+	// Measure once right away so the panel can rank a new exit by latency
+	// without waiting for the first periodic check.
+	checkCtx, cancelCheck := context.WithTimeout(ctx, 6*time.Second)
+	firstLatency, _ := session.check(checkCtx)
+	cancelCheck()
 	m.update(group, member, "exit connected", func() {
 		member.state = exitStateUp
 		member.session = session
 		member.exitIP = exitIP
+		member.latency = firstLatency
 		member.connectedAt = m.now()
 		member.lastOkAt = member.connectedAt
 	})
@@ -666,8 +672,8 @@ func exitTunnelConfig(spec exitMemberSpec, device, managementSocket string, vers
 		"nobind",
 		"resolv-retry 0",
 		"connect-retry-max 1",
-		"connect-timeout 10",
-		"server-poll-timeout 10",
+		"connect-timeout 8",
+		"server-poll-timeout 8",
 		"remap-usr1 SIGTERM",
 		"route-nopull",
 		"route-noexec",
