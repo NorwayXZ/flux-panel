@@ -7,6 +7,7 @@ import { Switch } from "@heroui/switch";
 import {
   ArrowLeftRight,
   Ban,
+  Globe2,
   History,
   Home,
   MousePointerClick,
@@ -34,6 +35,9 @@ import {
   exitSummary,
 } from "@/utils/exit-display";
 import { formatBytes, formatDateTime } from "@/utils/format";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 
 const kindLabels: Record<string, string> = {
   home: "家庭宽带",
@@ -191,7 +195,7 @@ export default function ExitPoolPage() {
   const groups = overview?.groups || [];
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">私人代理</p>
@@ -281,33 +285,26 @@ export default function ExitPoolPage() {
                 还没有读取到候选。点击右上角“刷新候选列表”试一次。
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-px bg-divider sm:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-6">
                 {countries.map((country) => (
-                  <button
+                  <StatsCard
                     key={country.country}
-                    className="bg-background px-5 py-4 text-left transition-colors hover:bg-default-50"
-                    title={`查看${country.name}的全部候选 IP`}
-                    type="button"
-                    onClick={() =>
+                    color={country.available > 0 ? "success" : "default"}
+                    hint={`${
+                      overview?.maxFraudScore != null
+                        ? `家宽 ${country.home ?? 0} · 共 ${country.total}`
+                        : `列表共 ${country.total} 个`
+                    } · 点击查看`}
+                    icon={<Globe2 className="h-5 w-5" />}
+                    title={country.name}
+                    value={country.available}
+                    onPress={() =>
                       setCountryTarget({
                         code: country.country,
                         name: country.name,
                       })
                     }
-                  >
-                    <div className="text-sm font-medium">{country.name}</div>
-                    <div
-                      className={`mt-1 text-2xl font-semibold ${country.available > 0 ? "" : "text-default-300"}`}
-                    >
-                      {country.available}
-                    </div>
-                    <div className="mt-0.5 text-xs text-default-500">
-                      {overview?.maxFraudScore != null
-                        ? `家宽 ${country.home ?? 0} 个 · 共 ${country.total} 个`
-                        : `列表共 ${country.total} 个`}{" "}
-                      · 点击查看
-                    </div>
-                  </button>
+                  />
                 ))}
               </div>
             )}
@@ -321,107 +318,108 @@ export default function ExitPoolPage() {
               </span>
             </div>
           ) : (
-            groups.map((group) => {
-              const meta = exitStatusMeta(group.status);
-              const { shown, hidden } = visibleMembers(group.members);
+            <ResourceCardGrid>
+              {groups.map((group) => {
+                const meta = exitStatusMeta(group.status);
+                const { shown, hidden } = visibleMembers(group.members);
+                const listed =
+                  group.members.length > 0 && membersCurrent(group);
 
-              return (
-                <section
-                  key={group.id}
-                  className="overflow-hidden rounded-lg border border-divider"
-                >
-                  <div className="flex flex-col gap-3 border-b border-divider px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-semibold">
-                          {group.countryName}家宽 · {group.nodeName}
-                        </h2>
-                        <Chip color={meta.color} size="sm" variant="flat">
-                          {meta.label}
-                        </Chip>
-                        <Chip size="sm" variant="flat">
-                          {group.proxyCount} 个代理在用
-                        </Chip>
-                        {group.proxyTraffic ? (
-                          <Chip size="sm" variant="flat">
-                            代理累计流量 {formatBytes(group.proxyTraffic)}
-                          </Chip>
-                        ) : null}
-                      </div>
-                      <p className="mt-1 break-all text-sm text-default-500">
-                        {exitSummary(group)}
-                        {group.status === "ok"
-                          ? ` · 今日切换 ${group.switchesToday ?? 0} 次`
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        isDisabled={!group.standbyReady}
-                        isLoading={switching === group.id}
-                        size="sm"
-                        startContent={
-                          switching !== group.id && <Shuffle size={15} />
-                        }
-                        title={
-                          group.standbyReady
-                            ? "换到已就绪的备用出口"
-                            : "备用出口还没有就绪，稍后再试"
-                        }
-                        variant="flat"
-                        onPress={() => change(group)}
-                      >
-                        换一个出口
-                      </Button>
-                      <Button
-                        size="sm"
-                        startContent={<MousePointerClick size={15} />}
-                        variant="flat"
-                        onPress={() =>
+                return (
+                  <ResourceCard
+                    key={group.id}
+                    actions={[
+                      {
+                        label: "换出口",
+                        icon: <Shuffle size={14} />,
+                        color: "primary",
+                        isDisabled: !group.standbyReady,
+                        isLoading: switching === group.id,
+                        onPress: () => change(group),
+                      },
+                      {
+                        label: "指定",
+                        icon: <MousePointerClick size={14} />,
+                        color: "warning",
+                        onPress: () =>
                           setCandidateTarget({
                             groupId: group.id,
                             title: `为 ${group.countryName}家宽 · ${group.nodeName} 指定出口`,
-                          })
-                        }
-                      >
-                        指定出口
-                      </Button>
-                      <Button
-                        size="sm"
-                        startContent={<History size={15} />}
-                        variant="flat"
-                        onPress={() =>
+                          }),
+                      },
+                      {
+                        label: "记录",
+                        icon: <History size={14} />,
+                        onPress: () =>
                           setEventsTarget({
                             groupId: group.id,
                             title: `${group.countryName}家宽 · ${group.nodeName} 的切换记录`,
-                          })
-                        }
-                      >
-                        切换记录
-                      </Button>
-                    </div>
-                  </div>
-                  {group.members.length === 0 || !membersCurrent(group) ? (
-                    <p className="px-5 py-6 text-sm text-default-500">
-                      {group.detail || "正在挑选候选出口"}
-                    </p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[760px] text-sm">
-                        <thead>
-                          <tr className="bg-default-50 text-left text-xs text-default-500">
-                            <th className="px-5 py-2.5 font-normal">出口 IP</th>
-                            <th className="px-3 py-2.5 font-normal">运营商</th>
-                            <th className="px-3 py-2.5 font-normal">类型</th>
-                            <th className="px-3 py-2.5 font-normal">延迟</th>
-                            <th className="px-3 py-2.5 font-normal">流量</th>
-                            <th className="px-3 py-2.5 font-normal">状态</th>
-                            <th className="px-5 py-2.5 text-right font-normal">
-                              操作
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
+                          }),
+                      },
+                    ]}
+                    blocks={[
+                      {
+                        label: "当前出口",
+                        status: { text: meta.label, color: meta.color },
+                        danger: [
+                          "no_exit",
+                          "node_offline",
+                          "agent_error",
+                          "setup_failed",
+                        ].includes(group.status),
+                        rows: [{ value: exitSummary(group), mono: false }],
+                      },
+                    ]}
+                    chips={[
+                      {
+                        text: `${group.proxyCount} 个代理在用`,
+                        color: "primary",
+                      },
+                      ...(group.proxyTraffic
+                        ? [
+                            {
+                              text: `↕${formatBytes(group.proxyTraffic)}`,
+                              color: "success" as const,
+                            },
+                          ]
+                        : []),
+                    ]}
+                    danger={[
+                      "no_exit",
+                      "node_offline",
+                      "agent_error",
+                      "setup_failed",
+                    ].includes(group.status)}
+                    facts={[
+                      {
+                        label: "今日切换",
+                        value:
+                          group.status === "ok"
+                            ? `${group.switchesToday ?? 0} 次`
+                            : "-",
+                      },
+                      {
+                        label: "备用出口",
+                        value: group.standbyReady
+                          ? `${group.standbyReady} 个就绪`
+                          : "未就绪",
+                        tone: group.standbyReady ? "success" : "warning",
+                      },
+                    ]}
+                    status={{ text: meta.label, color: meta.color }}
+                    subtitles={[group.nodeName]}
+                    title={`${group.countryName}家宽`}
+                  >
+                    <div className="rounded border border-default-200 bg-default-50 px-2 py-1.5 dark:border-default-300 dark:bg-default-100/50">
+                      <div className="mb-1 text-xs font-medium text-default-600">
+                        候选出口
+                      </div>
+                      {!listed ? (
+                        <p className="text-xs text-default-500">
+                          {group.detail || "正在挑选候选出口"}
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
                           {shown.map((member) => {
                             const memberMeta = exitMemberMeta(member);
                             const live =
@@ -430,95 +428,73 @@ export default function ExitPoolPage() {
                             const note = memberNote(member);
 
                             return (
-                              <tr
+                              <div
                                 key={member.id}
-                                className={`border-t border-divider ${live ? "" : "text-default-400"}`}
+                                className={`flex items-center gap-1.5 text-xs ${live ? "" : "text-default-400"}`}
+                                title={note || undefined}
                               >
-                                <td className="px-5 py-3 font-mono">
+                                <Chip
+                                  className="h-5 shrink-0 text-[10px]"
+                                  color={memberMeta.color}
+                                  size="sm"
+                                  variant="flat"
+                                >
+                                  {memberMeta.label}
+                                </Chip>
+                                <span className="min-w-0 flex-1 truncate font-mono">
                                   {member.exitIp || member.host}
-                                </td>
-                                <td className="px-3 py-3">
-                                  {member.exitOwner || member.owner || "-"}
-                                </td>
-                                <td className="px-3 py-3">
-                                  {member.exitKind
-                                    ? kindLabels[member.exitKind] ||
-                                      member.exitKind
-                                    : "-"}
-                                </td>
-                                <td className="px-3 py-3">
+                                </span>
+                                <span className="shrink-0 text-default-500">
                                   {member.state === "up" && member.latencyMs
                                     ? `${member.latencyMs} ms`
-                                    : "-"}
-                                </td>
-                                <td className="px-3 py-3">
-                                  {member.state === "up"
-                                    ? formatBytes(
-                                        (member.rxBytes || 0) +
-                                          (member.txBytes || 0),
-                                      )
-                                    : "-"}
-                                </td>
-                                <td className="px-3 py-3">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <Chip
-                                      color={memberMeta.color}
-                                      size="sm"
-                                      variant="flat"
-                                    >
-                                      {memberMeta.label}
-                                    </Chip>
-                                    {note && (
-                                      <span className="text-xs text-default-500">
-                                        {note}
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="px-5 py-3 text-right">
-                                  {member.state === "up" &&
+                                    : member.exitKind
+                                      ? kindLabels[member.exitKind] ||
+                                        member.exitKind
+                                      : ""}
+                                </span>
+                                {member.state === "up" &&
                                   member.approved &&
-                                  !member.active ? (
+                                  !member.active && (
                                     <Button
                                       isIconOnly
                                       aria-label={`切换到出口 ${member.exitIp || member.host}`}
+                                      className="h-6 w-6 min-w-6"
                                       size="sm"
                                       title="切换到这个出口"
                                       variant="light"
                                       onPress={() => change(group, member)}
                                     >
-                                      <ArrowLeftRight size={16} />
-                                    </Button>
-                                  ) : null}
-                                  {live && (
-                                    <Button
-                                      isIconOnly
-                                      aria-label={`排除出口 ${member.exitIp || member.host}`}
-                                      size="sm"
-                                      title="排除这个出口"
-                                      variant="light"
-                                      onPress={() => block(member)}
-                                    >
-                                      <Ban size={16} />
+                                      <ArrowLeftRight size={13} />
                                     </Button>
                                   )}
-                                </td>
-                              </tr>
+                                {live && (
+                                  <Button
+                                    isIconOnly
+                                    aria-label={`排除出口 ${member.exitIp || member.host}`}
+                                    className="h-6 w-6 min-w-6"
+                                    size="sm"
+                                    title="排除这个出口"
+                                    variant="light"
+                                    onPress={() => block(member)}
+                                  >
+                                    <Ban size={13} />
+                                  </Button>
+                                )}
+                              </div>
                             );
                           })}
-                        </tbody>
-                      </table>
-                      {hidden > 0 && (
-                        <p className="border-t border-divider px-5 py-2.5 text-xs text-default-500">
-                          近一小时内另有 {hidden}{" "}
-                          个候选连不上或被排除，未逐一列出。
-                        </p>
+                          {hidden > 0 && (
+                            <p className="text-[11px] text-default-500">
+                              近一小时内另有 {hidden} 个候选连不上或被排除
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </section>
-              );
-            })
+                  </ResourceCard>
+                );
+              })}
+            </ResourceCardGrid>
           )}
 
           <section className="rounded-lg border border-divider px-5 py-4 text-sm text-default-600">
@@ -559,6 +535,6 @@ export default function ExitPoolPage() {
         target={eventsTarget}
         onClose={() => setEventsTarget(null)}
       />
-    </div>
+    </PageShell>
   );
 }

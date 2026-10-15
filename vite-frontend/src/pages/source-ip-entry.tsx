@@ -496,7 +496,7 @@ export default function SourceIpEntryPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatsCard
           color="primary"
           icon={<RadioTower className="h-5 w-5" />}

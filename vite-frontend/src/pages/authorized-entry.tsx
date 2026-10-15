@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Checkbox } from "@heroui/checkbox";
 import { Button } from "@heroui/button";
-import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Input, Textarea } from "@heroui/input";
 import { Switch } from "@heroui/switch";
@@ -38,6 +37,10 @@ import {
 } from "@/api";
 import { isAdmin } from "@/utils/auth";
 import PageShell from "@/components/page-shell";
+import ResourceCard, {
+  ResourceCardGrid,
+  type ChipColor,
+} from "@/components/resource-card";
 import { useAuthorizedEntryResources } from "@/hooks/use-api";
 import { useSimpleBatchSelection } from "@/hooks/use-batch-selection";
 import { BatchOperationBar } from "@/components/batch-operation-bar";
@@ -343,195 +346,172 @@ export default function AuthorizedEntryPage() {
       grant.flowLimitBytes > 0
         ? Math.min(100, (grant.usedBytes / grant.flowLimitBytes) * 100)
         : 0;
+    const active = grant.state === "active";
+    const canAddPort = active && grant.ports.length < grant.maxPorts;
+    const openAddPort = () => {
+      setEditingPort(undefined);
+      setPortForm({ targetHost: "", targetPort: "" });
+      setPortGrant(grant);
+    };
 
     return (
-      <Card
+      <ResourceCard
         key={grant.id}
-        radius="sm"
-        shadow="none"
-        className="border border-divider"
-      >
-        <CardHeader className="flex justify-between gap-3">
-          {admin && (
+        actions={[
+          ...(canAddPort
+            ? [
+                {
+                  label: "添加落地",
+                  icon: <Plus size={14} />,
+                  color: "primary" as const,
+                  onPress: openAddPort,
+                },
+              ]
+            : []),
+          ...(admin
+            ? [
+                {
+                  label: "编辑",
+                  icon: <Pencil size={14} />,
+                  onPress: () => openGrantEditor(grant),
+                },
+                {
+                  label: active ? "暂停" : "恢复",
+                  icon: active ? <Pause size={14} /> : <Play size={14} />,
+                  color: active ? ("warning" as const) : ("success" as const),
+                  onPress: () => void changeGrantState(grant, !active),
+                },
+                {
+                  label: "撤销",
+                  icon: <Trash2 size={14} />,
+                  color: "danger" as const,
+                  onPress: () => void revokeGrant(grant),
+                },
+              ]
+            : []),
+        ]}
+        danger={stateColor(grant.state) === "danger"}
+        facts={[
+          {
+            label: "端口额度",
+            value: `${grant.ports.length} / ${grant.maxPorts}`,
+          },
+          {
+            label: "流量额度",
+            value:
+              grant.flowLimitBytes > 0
+                ? `${formatBytes(grant.usedBytes)} / ${formatBytes(grant.flowLimitBytes)}`
+                : "不限量",
+            tone: percent >= 90 ? "danger" : "default",
+          },
+          {
+            label: "每月重置",
+            value: grant.flowResetDay
+              ? `每月 ${grant.flowResetDay} 日`
+              : "不重置",
+          },
+          {
+            label: "到期时间",
+            value: (
+              <span title={formatDate(grant.expiresAt)}>
+                {formatDate(grant.expiresAt)}
+              </span>
+            ),
+          },
+        ]}
+        headerExtra={
+          admin ? (
             <Checkbox
               aria-label={`选择授权 ${grant.name}`}
-              isSelected={selection.isSelected(grant.id)}
               isDisabled={batchBusy}
+              isSelected={selection.isSelected(grant.id)}
+              size="sm"
               onValueChange={() => selection.toggle(grant.id)}
             />
-          )}
-          <div className="min-w-0">
-            <h2 className="truncate font-semibold">{grant.name}</h2>
-            <p className="mt-1 truncate text-sm text-default-500">
-              {grant.accessHost}
-            </p>
+          ) : undefined
+        }
+        status={{
+          text: grantLabel(grant),
+          color: stateColor(grant.state) as ChipColor,
+        }}
+        subtitles={[grant.accessHost]}
+        title={grant.name}
+      >
+        {grant.flowLimitBytes > 0 && (
+          <div className="h-1.5 overflow-hidden rounded-full bg-default-100">
+            <div
+              className={`h-full rounded-full ${percent >= 90 ? "bg-danger" : "bg-primary"}`}
+              style={{ width: `${percent}%` }}
+            />
           </div>
-          <div className="flex items-center gap-1">
-            <Chip
-              color={stateColor(grant.state) as any}
-              size="sm"
-              variant="flat"
-            >
-              {grantLabel(grant)}
-            </Chip>
-            {admin && (
-              <>
-                <Button
-                  isIconOnly
-                  aria-label="编辑授权"
-                  size="sm"
-                  variant="light"
-                  onPress={() => openGrantEditor(grant)}
+        )}
+        {active && grant.ports.length === 0 ? (
+          <p className="border-t border-divider pt-2 text-xs text-default-500">
+            授权已发放，等待添加落地；当前不占用转发端口，也不会产生流量。
+          </p>
+        ) : (
+          grant.ports.length > 0 && (
+            <div className="space-y-1">
+              {grant.ports.map((port) => (
+                <div
+                  key={port.id}
+                  className="rounded border border-default-200 bg-default-50 px-2 py-1.5 dark:border-default-300 dark:bg-default-100/50"
                 >
-                  <Pencil size={15} />
-                </Button>
-                <Button
-                  isIconOnly
-                  aria-label={
-                    grant.state === "active" ? "暂停授权" : "恢复授权"
-                  }
-                  size="sm"
-                  variant="light"
-                  onPress={() =>
-                    void changeGrantState(grant, grant.state !== "active")
-                  }
-                >
-                  {grant.state === "active" ? (
-                    <Pause size={15} />
-                  ) : (
-                    <Play size={15} />
-                  )}
-                </Button>
-                <Button
-                  isIconOnly
-                  aria-label="撤销授权"
-                  color="danger"
-                  size="sm"
-                  variant="light"
-                  onPress={() => void revokeGrant(grant)}
-                >
-                  <Trash2 size={15} />
-                </Button>
-              </>
-            )}
-          </div>
-        </CardHeader>
-        <CardBody className="gap-4 pt-0">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-default-500">端口额度</p>
-              <p className="mt-1 font-medium">
-                {grant.ports.length} / {grant.maxPorts}
-              </p>
-            </div>
-            <div>
-              <p className="text-default-500">流量额度</p>
-              <p className="mt-1 font-medium">
-                {grant.flowLimitBytes > 0
-                  ? `${formatBytes(grant.usedBytes)} / ${formatBytes(grant.flowLimitBytes)}`
-                  : "不限量"}
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-default-500">每月重置</p>
-              <p className="mt-1 font-medium">
-                {grant.flowResetDay
-                  ? `每月 ${grant.flowResetDay} 日`
-                  : "不重置"}
-              </p>
-            </div>
-            <div>
-              <p className="text-default-500">到期时间</p>
-              <p
-                className="mt-1 truncate font-medium"
-                title={formatDate(grant.expiresAt)}
-              >
-                {formatDate(grant.expiresAt)}
-              </p>
-            </div>
-          </div>
-          {grant.flowLimitBytes > 0 && (
-            <div className="h-1.5 overflow-hidden bg-default-100">
-              <div
-                className="h-full bg-primary"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          )}
-          {grant.state === "active" && grant.ports.length === 0 && (
-            <p className="border-t border-divider pt-3 text-xs text-default-500">
-              授权已发放，等待用户添加落地；当前不占用实际转发端口，也不会产生流量。
-            </p>
-          )}
-          <div className="space-y-2 border-t border-divider pt-3">
-            {grant.ports.map((port) => (
-              <div
-                key={port.id}
-                className="flex flex-wrap items-center justify-between gap-2 text-sm"
-              >
-                <div>
-                  <span className="font-mono font-medium">
-                    {grant.accessHost}:{port.port}
-                  </span>
-                  <span className="text-default-500">
-                    {" "}
+                  <div className="flex items-center justify-between gap-1">
+                    <span
+                      className="truncate font-mono text-xs font-medium"
+                      title={`${grant.accessHost}:${port.port}`}
+                    >
+                      端口 {port.port}
+                    </span>
+                    <div className="flex flex-shrink-0 items-center">
+                      <Chip
+                        className="text-xs"
+                        color={stateColor(port.state) as ChipColor}
+                        size="sm"
+                        variant="flat"
+                      >
+                        {stateLabel[port.state] || port.state}
+                      </Chip>
+                      <Button
+                        isIconOnly
+                        aria-label="编辑落地"
+                        className="h-6 w-6 min-w-6"
+                        size="sm"
+                        variant="light"
+                        onPress={() => {
+                          setPortGrant(grant);
+                          setEditingPort(port.id);
+                          setPortForm({
+                            targetHost: port.targetHost,
+                            targetPort: String(port.targetPort),
+                          });
+                        }}
+                      >
+                        <Pencil size={13} />
+                      </Button>
+                      <Button
+                        isIconOnly
+                        aria-label="删除授权端口"
+                        className="h-6 w-6 min-w-6"
+                        color="danger"
+                        size="sm"
+                        variant="light"
+                        onPress={() => void removePort(port.id)}
+                      >
+                        <Trash2 size={13} />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="truncate font-mono text-xs text-default-500">
                     → {port.targetHost}:{port.targetPort}
-                  </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Chip
-                    color={stateColor(port.state) as any}
-                    size="sm"
-                    variant="flat"
-                  >
-                    {stateLabel[port.state] || port.state}
-                  </Chip>
-                  <Button
-                    isIconOnly
-                    aria-label="编辑落地"
-                    size="sm"
-                    variant="light"
-                    onPress={() => {
-                      setPortGrant(grant);
-                      setEditingPort(port.id);
-                      setPortForm({
-                        targetHost: port.targetHost,
-                        targetPort: String(port.targetPort),
-                      });
-                    }}
-                  >
-                    <Pencil size={15} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除授权端口"
-                    size="sm"
-                    variant="light"
-                    onPress={() => void removePort(port.id)}
-                  >
-                    <Trash2 size={15} />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          {grant.state === "active" && grant.ports.length < grant.maxPorts && (
-            <Button
-              startContent={<Plus size={16} />}
-              variant="flat"
-              onPress={() => {
-                setEditingPort(undefined);
-                setPortForm({ targetHost: "", targetPort: "" });
-                setPortGrant(grant);
-              }}
-            >
-              添加落地端口
-            </Button>
-          )}
-        </CardBody>
-      </Card>
+              ))}
+            </div>
+          )
+        )}
+      </ResourceCard>
     );
   };
 
@@ -625,14 +605,12 @@ export default function AuthorizedEntryPage() {
           items={visibleGrants}
           renderItem={renderGrant}
           getItemKey={(grant) => grant.id}
-          estimatedItemHeight={420}
+          estimatedItemHeight={360}
           height="min(70vh, 800px)"
           minCardWidth={320}
         />
       ) : (
-        <section className="grid items-start gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-          {visibleGrants.map(renderGrant)}
-        </section>
+        <ResourceCardGrid>{visibleGrants.map(renderGrant)}</ResourceCardGrid>
       )}
       {admin && (
         <BatchOperationBar

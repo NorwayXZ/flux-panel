@@ -1,3 +1,12 @@
+## 2.71.0 Unified cards, batch 2: exit pool, home access, service publishing, Docker and authorized entry
+
+- 家宽出口池: country tiles use the dashboard stat cards and open the country list; exit groups are standard cards with the candidate exits, their switches and block buttons inside.
+- 家庭设备访问: each route is a card with its public address and egress blocks, access and health facts, the smart-NAT status with path history, and copy, detect and delete buttons.
+- 服务发布: services, domain routes, certificates and connectors are cards. Domain routes stay grouped by domain, and the duplicate list of all routes below the groups is gone.
+- Docker 应用中心: nodes and apps are cards. App cards show access and container blocks, node and update time, the latest error or backup, and upgrade, backup, rollback and delete buttons; start/stop, manual command and events sit in the card header.
+- 授权入口: grants are cards with port and traffic quota, reset day, expiry, a usage bar and each landing port with its own edit and delete buttons; add landing, edit, pause/resume and revoke are the card's buttons.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.70.0 remains available for rollback.
+
 ## 2.70.0 Unified cards, batch 1: nftables, source IP, multi-line and private proxies
 
 - A shared resource card, modelled on the forward card, now shows list items across the panel: title and subtitle, an on/off switch and status chip, boxed address blocks, a two-column fact grid, a status line, traffic chips and edit/action/delete buttons.

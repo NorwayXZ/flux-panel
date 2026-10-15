@@ -22,7 +22,9 @@ import {
   RotateCcw,
   Search,
   Square,
+  Server,
   Trash2,
+  TriangleAlert,
   UploadCloud,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -41,6 +43,9 @@ import {
   type DockerContainerInfo,
   type DnsZoneOption,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
 const empty: DockerAppOverview = {
@@ -258,7 +263,7 @@ export default function DockerAppsPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">接入与发布</p>
@@ -289,26 +294,36 @@ export default function DockerAppsPage() {
         </div>
       </header>
       {loadError && (
-        <div className="border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
+        <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
           {loadError}；已保留上一次可用内容。
         </div>
       )}
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          ["应用数量", data.summary.apps],
-          ["运行中", data.summary.active],
-          ["异常", data.summary.errors],
-          ["可部署节点", data.summary.dockerReadyNodes],
-        ].map(([label, value]) => (
-          <div
-            key={String(label)}
-            className="border border-divider bg-content1 p-4"
-          >
-            <p className="text-sm text-default-500">{label}</p>
-            <p className="mt-2 text-2xl font-semibold">{value}</p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<Boxes size={20} />}
+          title="应用数量"
+          value={data.summary.apps}
+        />
+        <StatsCard
+          color="success"
+          icon={<Play size={20} />}
+          title="运行中"
+          value={data.summary.active}
+        />
+        <StatsCard
+          color="danger"
+          icon={<TriangleAlert size={20} />}
+          title="异常"
+          value={data.summary.errors}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<Server size={20} />}
+          title="可部署节点"
+          value={data.summary.dockerReadyNodes}
+        />
       </section>
 
       <section className="space-y-5">
@@ -327,50 +342,45 @@ export default function DockerAppsPage() {
               {data.nodes.length} 个节点
             </Chip>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <ResourceCardGrid>
             {data.nodes.map((node) => (
-              <div
+              <ResourceCard
                 key={node.id}
-                className="border border-divider bg-content1 p-4"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="truncate font-medium">{node.name}</h3>
-                      <Chip
-                        color={node.online ? "success" : "default"}
-                        size="sm"
-                        variant="flat"
-                      >
-                        {node.online ? "在线" : "离线"}
-                      </Chip>
-                    </div>
-                    <p className="mt-1 truncate text-xs text-default-400">
-                      Agent {node.version || "-"} · 要求{" "}
-                      {data.minimumAgentVersion}+
-                    </p>
-                  </div>
-                  <Button
-                    isIconOnly
-                    isDisabled={!node.online}
-                    isLoading={busy === `inspect-${node.id}`}
-                    size="sm"
-                    title="识别 Docker"
-                    variant="light"
-                    onPress={() => void inspect(node.id)}
-                  >
-                    <Search size={16} />
-                  </Button>
-                </div>
-                {!node.compatible && (
-                  <p className="mt-3 border-t border-divider pt-3 text-xs text-warning-600">
-                    需要升级 Agent 后才能直接执行 Docker
-                    应用动作；页面仍会提供手动命令。
-                  </p>
-                )}
-              </div>
+                actions={[
+                  {
+                    label: "识别 Docker",
+                    icon: <Search size={14} />,
+                    isDisabled: !node.online,
+                    isLoading: busy === `inspect-${node.id}`,
+                    onPress: () => void inspect(node.id),
+                  },
+                ]}
+                facts={[
+                  { label: "Agent 版本", value: node.version || "-" },
+                  {
+                    label: "最低要求",
+                    value: `${data.minimumAgentVersion}+`,
+                  },
+                ]}
+                notice={
+                  node.compatible
+                    ? undefined
+                    : {
+                        icon: <TriangleAlert size={14} />,
+                        label: "需要升级 Agent",
+                        value: "升级后才能直接执行应用动作，现可使用手动命令",
+                        tone: "warning",
+                      }
+                }
+                status={
+                  node.online
+                    ? { text: "在线", color: "success" }
+                    : { text: "离线", color: "default" }
+                }
+                title={node.name}
+              />
             ))}
-          </div>
+          </ResourceCardGrid>
         </section>
 
         <section className="space-y-3">
@@ -389,153 +399,144 @@ export default function DockerAppsPage() {
             </Chip>
           </div>
           {data.apps.length === 0 ? (
-            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border border-dashed border-divider bg-content1 text-default-400">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider bg-content1 text-default-400">
               <Boxes size={32} />
               <p>还没有 Docker 应用</p>
             </div>
           ) : (
-            <div className="grid gap-3 lg:grid-cols-2">
+            <ResourceCardGrid>
               {data.apps.map((app) => {
                 const meta = stateMeta(app.state);
+                const running = app.state === "active";
+                const toggleAction = running ? "stop" : "start";
 
                 return (
-                  <article
+                  <ResourceCard
                     key={app.id}
-                    className="border border-divider bg-content1 p-4"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-semibold">{app.name}</h3>
-                          <Chip color={meta.color} size="sm" variant="flat">
-                            {meta.label}
-                          </Chip>
-                          <Chip size="sm" variant="flat">
-                            {app.templateId}
-                          </Chip>
-                        </div>
-                        <p className="mt-1 break-all text-xs text-default-400">
-                          {app.nodeName || app.nodeId} · {app.containerName}
-                        </p>
+                    actions={[
+                      {
+                        label: "升级",
+                        icon: <UploadCloud size={14} />,
+                        isLoading: busy === `upgrade-${app.id}`,
+                        onPress: () => void action(app, "upgrade"),
+                      },
+                      {
+                        label: "备份",
+                        icon: <Archive size={14} />,
+                        isLoading: busy === `backup-${app.id}`,
+                        onPress: () => void action(app, "backup"),
+                      },
+                      {
+                        label: "回退",
+                        icon: <RotateCcw size={14} />,
+                        isLoading: busy === `rollback-${app.id}`,
+                        onPress: () => void action(app, "rollback"),
+                      },
+                      {
+                        label: "删除",
+                        icon: <Trash2 size={14} />,
+                        color: "danger",
+                        isLoading: busy === `remove-${app.id}`,
+                        onPress: () => void action(app, "remove"),
+                      },
+                    ]}
+                    blocks={[
+                      {
+                        label: "访问",
+                        rows: [
+                          {
+                            label: "端口",
+                            value: `${app.hostPort}:${app.containerPort}`,
+                          },
+                          {
+                            label: "域名",
+                            value: app.domain || "未绑定",
+                            title: app.domain || undefined,
+                          },
+                        ],
+                      },
+                      {
+                        label: "容器",
+                        danger: app.state === "error",
+                        rows: [
+                          {
+                            label: "镜像",
+                            value: app.image,
+                            title: app.image,
+                          },
+                          { label: "名称", value: app.containerName },
+                        ],
+                      },
+                    ]}
+                    chips={[{ text: app.templateId, color: "primary" }]}
+                    danger={app.state === "error"}
+                    facts={[
+                      { label: "节点", value: app.nodeName || app.nodeId },
+                      { label: "最近更新", value: timeText(app.updatedTime) },
+                    ]}
+                    headerExtra={
+                      <div className="flex items-center">
+                        <Button
+                          isIconOnly
+                          isLoading={busy === `${toggleAction}-${app.id}`}
+                          size="sm"
+                          title={running ? "停止" : "启动"}
+                          variant="light"
+                          onPress={() => void action(app, toggleAction)}
+                        >
+                          {running ? <Square size={14} /> : <Play size={15} />}
+                        </Button>
+                        <Button
+                          isIconOnly
+                          isLoading={busy === `cmd-${app.id}`}
+                          size="sm"
+                          title="手动命令"
+                          variant="light"
+                          onPress={() => void showCommand(app, "upgrade")}
+                        >
+                          <Copy size={15} />
+                        </Button>
+                        <Button
+                          isIconOnly
+                          isLoading={busy === `events-${app.id}`}
+                          size="sm"
+                          title="事件"
+                          variant="light"
+                          onPress={() => void showEvents(app)}
+                        >
+                          <ExternalLink size={15} />
+                        </Button>
                       </div>
-                      <Button
-                        isIconOnly
-                        isLoading={busy === `events-${app.id}`}
-                        size="sm"
-                        title="事件"
-                        variant="light"
-                        onPress={() => void showEvents(app)}
-                      >
-                        <ExternalLink size={16} />
-                      </Button>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
-                      <div>
-                        <p className="text-xs text-default-500">镜像</p>
-                        <p className="mt-1 truncate">{app.image}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-default-500">访问端口</p>
-                        <p className="mt-1 font-mono">
-                          {app.hostPort}:{app.containerPort}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-default-500">绑定域名</p>
-                        <p className="mt-1 truncate">
-                          {app.domain || "未绑定"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-default-500">最近更新</p>
-                        <p className="mt-1">{timeText(app.updatedTime)}</p>
-                      </div>
-                    </div>
-                    {app.lastError && (
-                      <p className="mt-3 text-xs text-danger">
-                        {app.lastError}
-                      </p>
-                    )}
-                    {app.backupPath && (
-                      <p className="mt-3 break-all text-xs text-default-500">
-                        最近备份：{app.backupPath}
-                      </p>
-                    )}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button
-                        isLoading={busy === `upgrade-${app.id}`}
-                        size="sm"
-                        startContent={<UploadCloud size={15} />}
-                        variant="flat"
-                        onPress={() => void action(app, "upgrade")}
-                      >
-                        升级
-                      </Button>
-                      <Button
-                        isLoading={busy === `backup-${app.id}`}
-                        size="sm"
-                        startContent={<Archive size={15} />}
-                        variant="flat"
-                        onPress={() => void action(app, "backup")}
-                      >
-                        备份
-                      </Button>
-                      <Button
-                        isLoading={
-                          busy ===
-                          `${app.state === "active" ? "stop" : "start"}-${app.id}`
-                        }
-                        size="sm"
-                        startContent={
-                          app.state === "active" ? (
-                            <Square size={14} />
-                          ) : (
-                            <Play size={15} />
-                          )
-                        }
-                        variant="flat"
-                        onPress={() =>
-                          void action(
-                            app,
-                            app.state === "active" ? "stop" : "start",
-                          )
-                        }
-                      >
-                        {app.state === "active" ? "停止" : "启动"}
-                      </Button>
-                      <Button
-                        isLoading={busy === `rollback-${app.id}`}
-                        size="sm"
-                        startContent={<RotateCcw size={15} />}
-                        variant="flat"
-                        onPress={() => void action(app, "rollback")}
-                      >
-                        回退
-                      </Button>
-                      <Button
-                        isLoading={busy === `cmd-${app.id}`}
-                        size="sm"
-                        startContent={<Copy size={15} />}
-                        variant="flat"
-                        onPress={() => void showCommand(app, "upgrade")}
-                      >
-                        命令
-                      </Button>
-                      <Button
-                        color="danger"
-                        isLoading={busy === `remove-${app.id}`}
-                        size="sm"
-                        startContent={<Trash2 size={15} />}
-                        variant="flat"
-                        onPress={() => void action(app, "remove")}
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </article>
+                    }
+                    notice={
+                      app.lastError
+                        ? {
+                            icon: <TriangleAlert size={14} />,
+                            label: "最近错误",
+                            value: (
+                              <span title={app.lastError}>{app.lastError}</span>
+                            ),
+                            tone: "danger",
+                          }
+                        : app.backupPath
+                          ? {
+                              icon: <Archive size={14} />,
+                              label: "最近备份",
+                              value: (
+                                <span title={app.backupPath}>
+                                  {app.backupPath}
+                                </span>
+                              ),
+                              tone: "success",
+                            }
+                          : undefined
+                    }
+                    status={{ text: meta.label, color: meta.color }}
+                    title={app.name}
+                  />
                 );
               })}
-            </div>
+            </ResourceCardGrid>
           )}
         </section>
       </section>
@@ -821,6 +822,6 @@ export default function DockerAppsPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

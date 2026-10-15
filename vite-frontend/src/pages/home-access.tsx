@@ -18,6 +18,7 @@ import {
   BookOpen,
   Copy,
   Globe2,
+  History,
   Home,
   Laptop,
   Plus,
@@ -26,7 +27,9 @@ import {
   ShieldAlert,
   Terminal,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
+import { Tooltip } from "@heroui/tooltip";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
@@ -50,6 +53,9 @@ import {
 } from "@/api";
 import { isAdmin } from "@/utils/auth";
 import { formatDateTime } from "@/utils/format";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 
 const stateMeta: Record<
   HomeProxyRoute["state"],
@@ -475,7 +481,7 @@ export default function HomeAccessPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">接入与发布</p>
@@ -504,25 +510,37 @@ export default function HomeAccessPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
-        {[
-          ["运行中", activeCount],
-          [
-            "在线中转设备",
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatsCard
+          color="success"
+          icon={<Activity className="h-5 w-5" />}
+          title="运行中"
+          value={activeCount}
+        />
+        <StatsCard
+          color="primary"
+          icon={<Laptop className="h-5 w-5" />}
+          title="在线中转设备"
+          value={
             new Set(
               routes
                 .filter((item) => item.connectorOnline)
                 .map((item) => item.connectorId),
-            ).size,
-          ],
-          ["中转链路", routes.length],
-          ["智能直连", smartCount],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-content1 px-4 py-4">
-            <div className="text-xs text-default-500">{label}</div>
-            <div className="mt-1 text-xl font-semibold">{value}</div>
-          </div>
-        ))}
+            ).size
+          }
+        />
+        <StatsCard
+          color="secondary"
+          icon={<Route className="h-5 w-5" />}
+          title="中转链路"
+          value={routes.length}
+        />
+        <StatsCard
+          color="warning"
+          icon={<Home className="h-5 w-5" />}
+          title="智能直连"
+          value={smartCount}
+        />
       </section>
 
       <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm leading-6 text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
@@ -540,7 +558,7 @@ export default function HomeAccessPage() {
           <span>暂无家庭网络中转</span>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <ResourceCardGrid>
           {routes.map((route) => {
             const meta = stateMeta[route.state] || stateMeta.error;
             const endpoint = endpointText(route);
@@ -556,344 +574,248 @@ export default function HomeAccessPage() {
               attempts > 0
                 ? Math.round(((route.directSuccessCount || 0) / attempts) * 100)
                 : 0;
+            const transportText =
+              route.transportMode === "vless_reality"
+                ? "VLESS + REALITY"
+                : route.transportMode === "socks5"
+                  ? "SOCKS5"
+                  : "标准 TCP · 旧版";
+            const egressText = adminMode
+              ? route.egressMode === "tunnel"
+                ? (route.egressPathNodeDetails || []).length > 0
+                  ? (route.egressPathNodeDetails || [])
+                      .map((node) => node.name)
+                      .join(" → ")
+                  : route.egressTunnelName || "隧道已删除"
+                : route.egressNodeName || route.egressPoolName || "出口已删除"
+              : route.egressMode === "tunnel"
+                ? "已配置多跳出口"
+                : "已配置出口";
+            const ipv6Warning = isIpv6VerificationWarning(route);
+            const canCopy =
+              route.state === "active" &&
+              (smart || Boolean(route.publicHost && route.publicPort));
 
             return (
-              <article
+              <ResourceCard
                 key={route.id}
-                className="rounded-lg border border-divider bg-content1 p-5"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-lg font-semibold">
-                      {route.name}
-                    </h2>
-                    <p className="mt-1 text-sm text-default-500">
-                      {route.connectorName || "家庭设备"} ·{" "}
-                      {route.proxyType.toUpperCase()}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Chip
-                      color={
-                        route.transportMode === "vless_reality"
-                          ? "secondary"
-                          : "default"
+                actions={[
+                  ...(canCopy
+                    ? [
+                        {
+                          label: "复制",
+                          icon: <Copy size={14} />,
+                          color: "primary" as const,
+                          onPress: () =>
+                            copy(endpoint, smart ? "本地代理地址" : "代理地址"),
+                        },
+                      ]
+                    : []),
+                  ...(direct || smart
+                    ? [
+                        {
+                          label: direct ? "检测" : "探测",
+                          icon: <RefreshCw size={14} />,
+                          color: "warning" as const,
+                          isLoading: refreshingId === route.id,
+                          onPress: () =>
+                            direct
+                              ? refreshPublicAddress(route.id)
+                              : retryNat(route.id),
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    onPress: () => remove(route.id),
+                  },
+                ]}
+                blocks={[
+                  {
+                    label: smart ? "本地 SOCKS5 地址" : "代理访问地址",
+                    status: {
+                      text: accessLabel(route.accessMode),
+                      color: direct || smart ? "primary" : "default",
+                    },
+                    rows: [{ label: "地址", value: endpoint }],
+                  },
+                  {
+                    label:
+                      route.egressMode === "tunnel" ? "出口路径" : "出口服务器",
+                    status: {
+                      text: route.connectorOnline ? "家庭在线" : "家庭离线",
+                      color: route.connectorOnline ? "success" : "danger",
+                    },
+                    danger: !route.connectorOnline,
+                    rows: [{ value: egressText, mono: false }],
+                  },
+                ]}
+                chips={[
+                  {
+                    text: transportText,
+                    color:
+                      route.transportMode === "vless_reality"
+                        ? "secondary"
+                        : "default",
+                  },
+                  ...(smart
+                    ? [
+                        {
+                          text: `直连 ↕${formatBytes((route.directRxBytes || 0) + (route.directTxBytes || 0))}`,
+                          color: "success" as const,
+                        },
+                        {
+                          text: `中继 ↕${formatBytes((route.relayRxBytes || 0) + (route.relayTxBytes || 0))}`,
+                          color: "primary" as const,
+                        },
+                      ]
+                    : []),
+                ]}
+                danger={route.state === "error" && !ipv6Warning}
+                facts={[
+                  {
+                    label: direct
+                      ? `家庭公网 ${ipv6Direct ? "IPv6" : "IPv4"}`
+                      : smart
+                        ? "失败回退入口"
+                        : "访问入口",
+                    value: direct
+                      ? directAddress || "等待检测"
+                      : adminMode
+                        ? route.ingressPoolName || "未知"
+                        : "已配置",
+                  },
+                  smart
+                    ? {
+                        label: "公司接入设备",
+                        value: `${route.sourceConnectorName || "设备已删除"} · ${route.sourceConnectorOnline ? "在线" : "离线"}`,
+                        tone: route.sourceConnectorOnline
+                          ? "success"
+                          : "danger",
                       }
-                      size="sm"
-                      variant="flat"
-                    >
-                      {route.transportMode === "vless_reality"
-                        ? "VLESS + REALITY"
-                        : route.transportMode === "socks5"
-                          ? "SOCKS5"
-                          : "标准 TCP · 旧版"}
-                    </Chip>
-                    <Chip
-                      color={direct || smart ? "primary" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {accessLabel(route.accessMode)}
-                    </Chip>
-                    <Chip color={meta.color} size="sm" variant="flat">
-                      {meta.label}
-                    </Chip>
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <div className="mb-1 text-xs text-default-500">
-                    {smart ? "公司设备本地 SOCKS5 地址" : "代理访问地址"}
-                  </div>
-                  <div className="rounded-md bg-default-100 px-3 py-3 font-mono text-sm">
-                    {endpoint}
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-                  <div>
-                    <div className="text-default-500">
-                      {direct
-                        ? `家庭公网 ${ipv6Direct ? "IPv6" : "IPv4"}`
-                        : smart
-                          ? "失败回退入口"
-                          : "访问入口"}
-                    </div>
-                    <div className="mt-1 break-all font-medium">
-                      {direct
-                        ? directAddress || "等待检测"
-                        : adminMode
-                          ? route.ingressPoolName || "未知"
-                          : "已配置"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-default-500">
-                      {route.egressMode === "tunnel"
-                        ? "出口路径"
-                        : "出口服务器"}
-                    </div>
-                    <div className="mt-1 font-medium">
-                      {adminMode
-                        ? route.egressMode === "tunnel"
-                          ? route.egressTunnelName || "隧道已删除"
-                          : route.egressNodeName ||
-                            route.egressPoolName ||
-                            "出口已删除"
-                        : route.egressMode === "tunnel"
-                          ? "已配置多跳出口"
-                          : "已配置出口"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-default-500">家庭设备状态</div>
-                    <div
-                      className={`mt-1 font-medium ${route.connectorOnline ? "text-success" : "text-danger"}`}
-                    >
-                      {route.connectorOnline ? "在线" : "离线"}
-                    </div>
-                  </div>
-                  {smart && (
-                    <div>
-                      <div className="text-default-500">公司接入设备</div>
-                      <div
-                        className={`mt-1 font-medium ${route.sourceConnectorOnline ? "text-success" : "text-danger"}`}
+                    : {
+                        label: direct ? "最近检测" : "客户端认证",
+                        value: direct
+                          ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt)
+                          : route.authEnabled
+                            ? "已启用"
+                            : "未启用",
+                      },
+                  ...(smart
+                    ? [
+                        {
+                          label: "直连成功率",
+                          value: attempts
+                            ? `${successRate}% · ${attempts} 次`
+                            : "暂无结果",
+                        },
+                        {
+                          label: "最近切换",
+                          value: formatTime(route.lastPathSwitchAt),
+                        },
+                      ]
+                    : []),
+                  ...(direct
+                    ? [
+                        {
+                          label: "动态 DNS",
+                          value: route.publicDomain || "未绑定，使用裸 IP",
+                        },
+                      ]
+                    : []),
+                  ...(route.transportMode === "vless_reality"
+                    ? [
+                        {
+                          label: "伪装域名",
+                          value:
+                            route.realityServerName || "www.cloudflare.com",
+                        },
+                      ]
+                    : []),
+                  ...(route.authEnabled === 1
+                    ? [
+                        { label: "用户名", value: route.authUsername },
+                        {
+                          label: "密码",
+                          value: route.authPassword || "仅创建时显示",
+                        },
+                      ]
+                    : []),
+                ]}
+                headerExtra={
+                  direct ? (
+                    <Tooltip content="公网接入说明">
+                      <Button
+                        isIconOnly
+                        aria-label="公网接入说明"
+                        className="h-6 w-6 min-w-6"
+                        size="sm"
+                        variant="light"
+                        onPress={() => setGuideRoute(route)}
                       >
-                        {route.sourceConnectorName || "设备已删除"} ·{" "}
-                        {route.sourceConnectorOnline ? "在线" : "离线"}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    <div className="text-default-500">
-                      {direct ? "公网地址最近检测" : "客户端认证"}
-                    </div>
-                    <div className="mt-1 font-medium">
-                      {direct
-                        ? formatTime(route.ipCheckedAt || route.ipv6CheckedAt)
-                        : route.authEnabled
-                          ? "已启用"
-                          : "未启用"}
-                    </div>
-                  </div>
-                  {direct && (
-                    <div className="md:col-span-2">
-                      <div className="text-default-500">动态 DNS</div>
-                      <div className="mt-1 break-all font-medium">
-                        {route.publicDomain
-                          ? `${route.publicDomain} · 已绑定`
-                          : "未绑定，使用裸 IP 地址"}
-                      </div>
-                    </div>
-                  )}
-                  {route.transportMode === "vless_reality" && (
-                    <div className="md:col-span-2">
-                      <div className="text-default-500">家庭到首个出口</div>
-                      <div className="mt-1 font-medium">
-                        VLESS + REALITY · 伪装域名{" "}
-                        {route.realityServerName || "www.cloudflare.com"}
-                      </div>
-                    </div>
-                  )}
-                  {adminMode && route.egressMode === "tunnel" && (
-                    <div className="md:col-span-2">
-                      <div className="text-default-500">出口隧道</div>
-                      <div className="mt-1 font-medium">
-                        {route.egressTunnelName || "隧道已删除"}
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        {(route.egressPathNodeDetails || []).map(
-                          (node, index) => (
-                            <span key={node.nodeId} className="contents">
-                              {index > 0 && (
-                                <span className="text-default-400">→</span>
-                              )}
-                              <Chip
-                                color={
-                                  node.status === 1
-                                    ? index ===
-                                      (route.egressPathNodeDetails?.length ||
-                                        0) -
-                                        1
-                                      ? "success"
-                                      : "default"
-                                    : "danger"
-                                }
-                                size="sm"
-                                variant="flat"
-                              >
-                                {node.name}
-                                {index ===
-                                (route.egressPathNodeDetails?.length || 0) - 1
-                                  ? " · 落地"
-                                  : ""}
-                              </Chip>
-                            </span>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {smart && (
-                  <section className="mt-4 border-y border-divider py-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-xs text-default-500">
-                          当前访问路径
-                        </div>
-                        <div
-                          className={`mt-1 font-semibold ${route.activeAccessPath === "udp_direct" ? "text-success" : "text-warning"}`}
-                        >
-                          {natPathLabel(route)}
-                        </div>
-                      </div>
-                      <Chip
-                        color={
+                        <BookOpen size={14} />
+                      </Button>
+                    </Tooltip>
+                  ) : undefined
+                }
+                notice={
+                  smart
+                    ? {
+                        icon: <Activity size={15} />,
+                        label: route.lastNatError
+                          ? `当前路径 · ${route.natType || "NAT 待检测"}`
+                          : "当前访问路径",
+                        value: (
+                          <span title={route.lastNatError || undefined}>
+                            {natPathLabel(route)}
+                            {route.lastNatError
+                              ? ` · ${route.lastNatError}`
+                              : ""}
+                          </span>
+                        ),
+                        tone:
                           route.activeAccessPath === "udp_direct"
                             ? "success"
-                            : "warning"
+                            : "warning",
+                        trailing: (
+                          <Tooltip content="路径记录">
+                            <Button
+                              isIconOnly
+                              aria-label="路径记录"
+                              className="h-7 w-7 min-w-7"
+                              size="sm"
+                              variant="light"
+                              onPress={() => showNatEvents(route)}
+                            >
+                              <History size={15} />
+                            </Button>
+                          </Tooltip>
+                        ),
+                      }
+                    : route.lastError
+                      ? {
+                          icon: <TriangleAlert size={15} />,
+                          label: ipv6Warning ? "提示" : "最近错误",
+                          value: (
+                            <span title={route.lastError}>
+                              {route.lastError}
+                            </span>
+                          ),
+                          tone: ipv6Warning ? "warning" : "danger",
                         }
-                        size="sm"
-                        variant="flat"
-                      >
-                        {route.natType || "NAT 类型待检测"}
-                      </Chip>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-sm sm:grid-cols-4">
-                      <div>
-                        <div className="text-default-500">直连成功率</div>
-                        <div className="mt-1 font-medium">
-                          {attempts
-                            ? `${successRate}% · ${attempts} 次`
-                            : "暂无结果"}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-default-500">直连流量</div>
-                        <div className="mt-1 font-medium">
-                          {formatBytes(
-                            (route.directRxBytes || 0) +
-                              (route.directTxBytes || 0),
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-default-500">中继流量</div>
-                        <div className="mt-1 font-medium">
-                          {formatBytes(
-                            (route.relayRxBytes || 0) +
-                              (route.relayTxBytes || 0),
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-default-500">最近切换</div>
-                        <div className="mt-1 font-medium">
-                          {formatTime(route.lastPathSwitchAt)}
-                        </div>
-                      </div>
-                    </div>
-                    {route.lastNatError && (
-                      <div className="mt-3 text-xs leading-5 text-warning-700 dark:text-warning-300">
-                        {route.lastNatError}
-                      </div>
-                    )}
-                  </section>
-                )}
-                {route.authEnabled === 1 && (
-                  <div className="mt-4 rounded-md border border-divider px-3 py-3 text-sm">
-                    <div>
-                      用户名：
-                      <span className="font-mono">{route.authUsername}</span>
-                    </div>
-                    <div className="mt-1">
-                      密码：
-                      <span className="font-mono">
-                        {route.authPassword || "仅创建时显示"}
-                      </span>
-                    </div>
-                  </div>
-                )}
-                {route.lastError && (
-                  <div
-                    className={`mt-4 rounded-md px-3 py-3 text-sm ${
-                      isIpv6VerificationWarning(route)
-                        ? "bg-warning-50 text-warning-800 dark:bg-warning-500/10 dark:text-warning-300"
-                        : "bg-danger-50 text-danger-700 dark:bg-danger-500/10 dark:text-danger-300"
-                    }`}
-                  >
-                    {route.lastError}
-                  </div>
-                )}
-                <div className="mt-5 flex flex-wrap justify-end gap-2">
-                  {direct && (
-                    <Button
-                      isLoading={refreshingId === route.id}
-                      size="sm"
-                      startContent={<RefreshCw size={15} />}
-                      variant="flat"
-                      onPress={() => refreshPublicAddress(route.id)}
-                    >
-                      检测地址
-                    </Button>
-                  )}
-                  {direct && (
-                    <Button
-                      size="sm"
-                      startContent={<BookOpen size={15} />}
-                      variant="flat"
-                      onPress={() => setGuideRoute(route)}
-                    >
-                      公网接入
-                    </Button>
-                  )}
-                  {smart && (
-                    <Button
-                      size="sm"
-                      startContent={<Activity size={15} />}
-                      variant="flat"
-                      onPress={() => showNatEvents(route)}
-                    >
-                      路径记录
-                    </Button>
-                  )}
-                  {smart && (
-                    <Button
-                      isLoading={refreshingId === route.id}
-                      size="sm"
-                      startContent={<RefreshCw size={15} />}
-                      variant="flat"
-                      onPress={() => retryNat(route.id)}
-                    >
-                      重新探测
-                    </Button>
-                  )}
-                  {route.state === "active" &&
-                    (smart || (route.publicHost && route.publicPort)) && (
-                      <Button
-                        size="sm"
-                        startContent={<Copy size={15} />}
-                        variant="flat"
-                        onPress={() =>
-                          copy(endpoint, smart ? "本地代理地址" : "代理地址")
-                        }
-                      >
-                        复制地址
-                      </Button>
-                    )}
-                  <Button
-                    color="danger"
-                    size="sm"
-                    startContent={<Trash2 size={15} />}
-                    variant="flat"
-                    onPress={() => remove(route.id)}
-                  >
-                    删除
-                  </Button>
-                </div>
-              </article>
+                      : undefined
+                }
+                status={{ text: meta.label, color: meta.color }}
+                subtitles={[
+                  `${route.connectorName || "家庭设备"} · ${route.proxyType.toUpperCase()}`,
+                ]}
+                title={route.name}
+              />
             );
           })}
-        </div>
+        </ResourceCardGrid>
       )}
 
       <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
@@ -1643,6 +1565,6 @@ export default function HomeAccessPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

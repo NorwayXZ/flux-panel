@@ -16,6 +16,7 @@ import {
   Clock3,
   Activity,
   ArrowDown,
+  BarChart3,
   ArrowUp,
   Copy,
   Database,
@@ -24,6 +25,7 @@ import {
   Gamepad2,
   Globe2,
   HardDrive,
+  Infinity as InfinityIcon,
   LockKeyhole,
   Layers3,
   Monitor,
@@ -36,6 +38,7 @@ import {
   ServerCog,
   SquareTerminal,
   Trash2,
+  TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -73,6 +76,10 @@ import {
 } from "@/api";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import { formatBytesCompact, formatDateTime } from "@/utils/format";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
+import { Tooltip } from "@heroui/tooltip";
 
 interface EntryNodeOption {
   id: number;
@@ -1155,8 +1162,153 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
+  const renderDomainRouteCard = (route: (typeof domainRoutes)[number]) => {
+    const routeStatus = domainRouteStatus(route);
+    const stats = telemetry[`domain:${route.id}`];
+    const managedRoute = route.ingressMode === "managed_https";
+    const url = `https://${route.domain}${route.listenPort === 443 ? "" : `:${route.listenPort}`}${managedRoute ? route.pathPrefix || "/" : ""}`;
+    const editable = route.state !== "delete_pending";
+
+    return (
+      <ResourceCard
+        key={route.id}
+        actions={[
+          ...(editable && managedRoute
+            ? [
+                {
+                  label: "后端池",
+                  icon: <Layers3 size={14} />,
+                  color: "primary" as const,
+                  onPress: () => openBackendPool(route),
+                },
+              ]
+            : []),
+          ...(editable && route.backendType === "direct"
+            ? [
+                {
+                  label: "编辑",
+                  icon: <Pencil size={14} />,
+                  color: "warning" as const,
+                  onPress: () => editDomainBackend(route),
+                },
+              ]
+            : []),
+          ...(editable
+            ? [
+                {
+                  label: "删除",
+                  icon: <Trash2 size={14} />,
+                  color: "danger" as const,
+                  onPress: () => removeDomainRoute(route.id),
+                },
+              ]
+            : []),
+        ]}
+        blocks={[
+          {
+            label: "访问地址",
+            status: {
+              text: managedRoute ? "托管 HTTPS" : "TLS 透传",
+              color: managedRoute ? "success" : "primary",
+            },
+            rows: [
+              {
+                value: (
+                  <a
+                    className="inline-flex items-center gap-1 text-primary hover:underline"
+                    href={url}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {route.domain}
+                    {route.listenPort === 443 ? "" : `:${route.listenPort}`}
+                    {managedRoute ? route.pathPrefix || "/" : ""}
+                    <ExternalLink size={12} />
+                  </a>
+                ),
+              },
+            ],
+          },
+          {
+            label: "后端服务",
+            status: {
+              text: route.backendType === "direct" ? "本机" : "映射",
+              color: route.backendType === "direct" ? "secondary" : "default",
+            },
+            rows: [
+              {
+                value: isAdmin
+                  ? route.backendType === "direct"
+                    ? `${route.backendScheme || "http"}://${route.backendHost}:${route.backendPort}${route.backendPath || "/"}`
+                    : `${route.mappingPublicHost || "映射地址不可用"}:${route.mappingPublicPort}`
+                  : route.backendType === "direct"
+                    ? "节点后端已配置"
+                    : "映射后端已配置",
+              },
+            ],
+          },
+        ]}
+        danger={routeStatus.color === "danger"}
+        facts={[
+          {
+            label: "后端",
+            value:
+              route.backendType === "direct"
+                ? route.backendNodeName || "节点本机服务"
+                : route.mappingName,
+          },
+          {
+            label: "DNS",
+            value: isAdmin ? route.publicHost || "未配置" : "已配置",
+          },
+          { label: "当前连接", value: stats?.currentConnections || 0 },
+          {
+            label: "实时速率",
+            value: `↑${formatSpeed(stats?.uploadSpeed)} ↓${formatSpeed(stats?.downloadSpeed)}`,
+          },
+        ]}
+        notice={{
+          icon: <Activity size={15} />,
+          label: "状态说明",
+          value: (
+            <span title={routeStatus.detail}>
+              {routeStatus.detail || routeStatus.label}
+            </span>
+          ),
+          tone:
+            routeStatus.color === "danger"
+              ? "danger"
+              : routeStatus.color === "success"
+                ? "success"
+                : "default",
+          trailing: (
+            <Tooltip content="流量详情">
+              <Button
+                isIconOnly
+                aria-label="流量详情"
+                className="h-7 w-7 min-w-7"
+                size="sm"
+                variant="light"
+                onPress={() => openTelemetry("domain", route.id)}
+              >
+                <BarChart3 size={15} />
+              </Button>
+            </Tooltip>
+          ),
+        }}
+        status={{ text: routeStatus.label, color: routeStatus.color }}
+        subtitles={[
+          isAdmin
+            ? `${route.name} · ${route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : "管理员"}`
+            : route.name,
+        ]}
+        title={route.domain}
+      />
+    );
+  };
+
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">内网穿透</p>
@@ -1188,18 +1340,31 @@ export default function ServicePublishingPage() {
         </Button>
       </header>
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-divider bg-divider md:grid-cols-4">
-        {[
-          ["运行映射", activeCount],
-          ["域名直达", domainRoutes.length],
-          ["HTTPS 证书", certificates.length],
-          ["在线接入端", onlineConnectors],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-content1 px-4 py-4">
-            <div className="text-xs text-default-500">{label}</div>
-            <div className="mt-1 text-xl font-semibold">{value}</div>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatsCard
+          color="success"
+          icon={<RadioTower className="h-5 w-5" />}
+          title="运行映射"
+          value={activeCount}
+        />
+        <StatsCard
+          color="primary"
+          icon={<Globe2 className="h-5 w-5" />}
+          title="域名直达"
+          value={domainRoutes.length}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<FileKey2 className="h-5 w-5" />}
+          title="HTTPS 证书"
+          value={certificates.length}
+        />
+        <StatsCard
+          color="warning"
+          icon={<ServerCog className="h-5 w-5" />}
+          title="在线接入端"
+          value={onlineConnectors}
+        />
       </section>
 
       <Tabs
@@ -1219,168 +1384,184 @@ export default function ServicePublishingPage() {
               <span>暂无内网映射</span>
             </div>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+            <ResourceCardGrid>
               {services.map((service) => {
                 const meta = stateMeta[service.state] || {
                   label: service.state,
                   color: "default" as const,
                 };
                 const stats = telemetry[`service:${service.id}`];
+                const live = service.state === "active";
+                const removable = ![
+                  "released",
+                  "expired",
+                  "delete_pending",
+                ].includes(service.state);
 
                 return (
-                  <article
+                  <ResourceCard
                     key={service.id}
-                    className="rounded-lg border border-divider bg-content1 p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-base font-semibold">
-                          {service.name}
-                        </h2>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-default-500">
-                          {isAdmin && (
-                            <span>
-                              {service.ownerRoleId === 1
-                                ? `普通用户 · ${service.ownerUserName}`
-                                : "管理员"}
-                            </span>
-                          )}
-                          <Chip size="sm" variant="flat">
-                            {service.protocol?.toUpperCase() || "TCP"}
-                          </Chip>
-                          {service.grantId && (
-                            <Chip color="secondary" size="sm" variant="flat">
-                              {isAdmin ? "共享端口" : "授权端口"}
-                            </Chip>
-                          )}
-                        </div>
-                      </div>
-                      <Chip color={meta.color} size="sm" variant="flat">
-                        {meta.label}
-                      </Chip>
-                    </div>
-                    <div className="mt-4 rounded-md bg-default-100 px-3 py-3 font-mono text-sm">
-                      {service.publicHost}:{service.publicPort}
-                      <span className="mx-2 text-default-400">→</span>
-                      {service.targetHost}:{service.targetPort}
-                    </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <dt className="text-default-500">端口资源</dt>
-                        <dd className="mt-1 truncate">
-                          {isAdmin
-                            ? `${service.poolName}${service.grantStartPort ? ` · ${service.grantStartPort}-${service.grantEndPort}` : ""}`
-                            : service.grantId
-                              ? "已授权端口"
-                              : "已分配端口"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-default-500">内网接入端</dt>
-                        <dd className="mt-1 flex items-center gap-2">
-                          <span
-                            className={`h-2 w-2 rounded-full ${service.connectorOnline ? "bg-success" : "bg-danger"}`}
-                          />
-                          {service.connectorName}
-                        </dd>
-                      </div>
-                      <div className="col-span-2">
-                        <dt className="text-default-500">有效期</dt>
-                        <dd className="mt-1">
-                          {service.permanent
-                            ? "永久有效"
-                            : formatTime(service.expiresAt)}
-                        </dd>
-                      </div>
-                    </dl>
-                    <div className="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-divider bg-divider text-sm">
-                      <div className="min-w-0 bg-default-50 px-3 py-2">
-                        <div className="text-xs text-default-500">当前连接</div>
-                        <div className="mt-1 truncate font-medium">
-                          {stats?.currentConnections || 0}
-                        </div>
-                      </div>
-                      <div className="min-w-0 bg-default-50 px-3 py-2">
-                        <div className="text-xs text-default-500">实时速率</div>
-                        <div
-                          className="mt-1 truncate font-medium"
-                          title={`上传 ${formatSpeed(stats?.uploadSpeed)} · 下载 ${formatSpeed(stats?.downloadSpeed)}`}
-                        >
-                          ↑ {formatSpeed(stats?.uploadSpeed)} · ↓{" "}
-                          {formatSpeed(stats?.downloadSpeed)}
-                        </div>
-                      </div>
-                      <div className="min-w-0 bg-default-50 px-3 py-2">
-                        <div className="text-xs text-default-500">今日双向</div>
-                        <div className="mt-1 truncate font-medium">
-                          {formatBytes(stats?.todayTotal)}
-                        </div>
-                      </div>
-                    </div>
-                    {service.lastError && (
-                      <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">
-                        {service.lastError}
-                      </div>
-                    )}
-                    <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-divider pt-3">
-                      <Button
-                        size="sm"
-                        startContent={<Activity size={15} />}
-                        variant="light"
-                        onPress={() => openTelemetry("service", service.id)}
-                      >
-                        流量详情
-                      </Button>
-                      {service.state === "active" && (
-                        <Button
-                          color="primary"
-                          size="sm"
-                          startContent={<Globe2 size={15} />}
-                          variant="flat"
-                          onPress={() => bindDomain(service)}
-                        >
-                          绑定域名
-                        </Button>
-                      )}
-                      {service.state === "active" && !service.permanent && (
-                        <Button
-                          size="sm"
-                          startContent={<Clock3 size={15} />}
-                          variant="flat"
-                          onPress={() => renew(service.id)}
-                        >
-                          续期 24 小时
-                        </Button>
-                      )}
-                      {service.state === "active" && !service.permanent && (
-                        <Button
-                          color="primary"
-                          size="sm"
-                          variant="light"
-                          onPress={() => makePermanent(service.id)}
-                        >
-                          改为永久
-                        </Button>
-                      )}
-                      {!["released", "expired", "delete_pending"].includes(
-                        service.state,
-                      ) && (
-                        <Button
-                          isIconOnly
-                          aria-label="删除映射"
-                          color="danger"
-                          size="sm"
-                          variant="light"
-                          onPress={() => removeService(service.id)}
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      )}
-                    </div>
-                  </article>
+                    actions={[
+                      ...(live
+                        ? [
+                            {
+                              label: "域名",
+                              icon: <Globe2 size={14} />,
+                              color: "primary" as const,
+                              onPress: () => bindDomain(service),
+                            },
+                          ]
+                        : []),
+                      ...(live && !service.permanent
+                        ? [
+                            {
+                              label: "续期",
+                              icon: <Clock3 size={14} />,
+                              color: "warning" as const,
+                              onPress: () => renew(service.id),
+                            },
+                          ]
+                        : []),
+                      ...(removable
+                        ? [
+                            {
+                              label: "删除",
+                              icon: <Trash2 size={14} />,
+                              color: "danger" as const,
+                              onPress: () => removeService(service.id),
+                            },
+                          ]
+                        : []),
+                    ]}
+                    blocks={[
+                      {
+                        label: "公网入口",
+                        status: {
+                          text: service.protocol?.toUpperCase() || "TCP",
+                          color: "primary",
+                        },
+                        rows: [
+                          {
+                            label: "入口",
+                            value: `${service.publicHost}:${service.publicPort}`,
+                          },
+                        ],
+                      },
+                      {
+                        label: "内网目标",
+                        status: {
+                          text: service.connectorOnline ? "在线" : "离线",
+                          color: service.connectorOnline ? "success" : "danger",
+                        },
+                        danger: !service.connectorOnline,
+                        rows: [
+                          {
+                            label: "目标",
+                            value: `${service.targetHost}:${service.targetPort}`,
+                          },
+                        ],
+                      },
+                    ]}
+                    chips={[
+                      ...(service.grantId
+                        ? [
+                            {
+                              text: isAdmin ? "共享端口" : "授权端口",
+                              color: "secondary" as const,
+                            },
+                          ]
+                        : []),
+                      {
+                        text: `今日 ${formatBytes(stats?.todayTotal)}`,
+                        color: "success",
+                      },
+                    ]}
+                    danger={Boolean(service.lastError)}
+                    facts={[
+                      {
+                        label: "端口资源",
+                        value: isAdmin
+                          ? `${service.poolName}${service.grantStartPort ? ` · ${service.grantStartPort}-${service.grantEndPort}` : ""}`
+                          : service.grantId
+                            ? "已授权端口"
+                            : "已分配端口",
+                      },
+                      { label: "内网接入端", value: service.connectorName },
+                      {
+                        label: "有效期",
+                        value: service.permanent
+                          ? "永久有效"
+                          : formatTime(service.expiresAt),
+                      },
+                      {
+                        label: "当前连接",
+                        value: stats?.currentConnections || 0,
+                      },
+                    ]}
+                    headerExtra={
+                      live && !service.permanent ? (
+                        <Tooltip content="改为永久">
+                          <Button
+                            isIconOnly
+                            aria-label="改为永久"
+                            className="h-6 w-6 min-w-6"
+                            size="sm"
+                            variant="light"
+                            onPress={() => makePermanent(service.id)}
+                          >
+                            <InfinityIcon size={14} />
+                          </Button>
+                        </Tooltip>
+                      ) : undefined
+                    }
+                    notice={
+                      service.lastError
+                        ? {
+                            icon: <TriangleAlert size={15} />,
+                            label: "最近错误",
+                            value: (
+                              <span title={service.lastError}>
+                                {service.lastError}
+                              </span>
+                            ),
+                            tone: "danger",
+                          }
+                        : {
+                            icon: <Activity size={15} />,
+                            label: "实时速率",
+                            value: `↑ ${formatSpeed(stats?.uploadSpeed)} · ↓ ${formatSpeed(stats?.downloadSpeed)}`,
+                            tone: live ? "success" : "default",
+                            trailing: (
+                              <Tooltip content="流量详情">
+                                <Button
+                                  isIconOnly
+                                  aria-label="流量详情"
+                                  className="h-7 w-7 min-w-7"
+                                  size="sm"
+                                  variant="light"
+                                  onPress={() =>
+                                    openTelemetry("service", service.id)
+                                  }
+                                >
+                                  <BarChart3 size={15} />
+                                </Button>
+                              </Tooltip>
+                            ),
+                          }
+                    }
+                    status={{ text: meta.label, color: meta.color }}
+                    subtitles={[
+                      isAdmin
+                        ? service.ownerRoleId === 1
+                          ? `普通用户 · ${service.ownerUserName}`
+                          : "管理员"
+                        : service.connectorName,
+                    ]}
+                    title={service.name}
+                  />
                 );
               })}
-            </div>
+            </ResourceCardGrid>
           )}
         </Tab>
         <Tab key="domains" title={`域名直达 ${domainRoutes.length}`}>
@@ -1483,332 +1664,17 @@ export default function ServicePublishingPage() {
                           </div>
                         </div>
                       </summary>
-                      <div className="border-t border-divider">
-                        <div className="hidden grid-cols-[1.15fr_1.15fr_1.25fr_1fr_auto] gap-4 bg-default-100 px-4 py-2.5 text-xs text-default-500 lg:grid">
-                          <span>域名与路径</span>
-                          <span>后端服务</span>
-                          <span>访问情况</span>
-                          <span>状态</span>
-                          <span>操作</span>
-                        </div>
-                        {group.routes.map((route) => {
-                          const routeStatus = domainRouteStatus(route);
-                          const stats = telemetry[`domain:${route.id}`];
-                          const managedRoute =
-                            route.ingressMode === "managed_https";
-
-                          return (
-                            <div
-                              key={route.id}
-                              className="grid gap-3 border-t border-divider px-4 py-3 first:border-t-0 lg:grid-cols-[1.15fr_1.15fr_1.25fr_1fr_auto] lg:items-center"
-                            >
-                              <div className="min-w-0">
-                                <a
-                                  className="flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline"
-                                  href={`https://${route.domain}${route.listenPort === 443 ? "" : `:${route.listenPort}`}${managedRoute ? route.pathPrefix || "/" : ""}`}
-                                  rel="noreferrer"
-                                  target="_blank"
-                                >
-                                  <span className="truncate">
-                                    {route.domain}
-                                    {managedRoute
-                                      ? route.pathPrefix || "/"
-                                      : ""}
-                                  </span>
-                                  <ExternalLink
-                                    className="shrink-0"
-                                    size={13}
-                                  />
-                                </a>
-                                <div className="mt-1 truncate text-xs text-default-500">
-                                  {isAdmin
-                                    ? `${route.name} · ${route.ownerRoleId === 1 ? `普通用户 · ${route.ownerUserName}` : "管理员"}`
-                                    : route.name}
-                                </div>
-                              </div>
-                              <div className="min-w-0 text-sm">
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <span className="truncate">
-                                    {route.backendType === "direct"
-                                      ? route.backendNodeName || "节点本机服务"
-                                      : route.mappingName}
-                                  </span>
-                                  <Chip
-                                    color={
-                                      route.backendType === "direct"
-                                        ? "secondary"
-                                        : "default"
-                                    }
-                                    size="sm"
-                                    variant="flat"
-                                  >
-                                    {route.backendType === "direct"
-                                      ? "本机"
-                                      : "映射"}
-                                  </Chip>
-                                </div>
-                                <div className="mt-1 truncate font-mono text-xs text-default-500">
-                                  {isAdmin
-                                    ? route.backendType === "direct"
-                                      ? `${route.backendScheme || "http"}://${route.backendHost}:${route.backendPort}${route.backendPath || "/"}`
-                                      : `${route.mappingPublicHost || "映射地址不可用"}:${route.mappingPublicPort}`
-                                    : route.backendType === "direct"
-                                      ? "节点后端已配置"
-                                      : "映射后端已配置"}
-                                </div>
-                              </div>
-                              <div className="min-w-0 text-sm">
-                                <div>
-                                  {stats?.currentConnections || 0} 个连接
-                                </div>
-                                <div className="mt-1 truncate text-xs text-default-500">
-                                  ↑ {formatSpeed(stats?.uploadSpeed)} · ↓{" "}
-                                  {formatSpeed(stats?.downloadSpeed)}
-                                </div>
-                              </div>
-                              <div className="min-w-0">
-                                <Chip
-                                  color={routeStatus.color}
-                                  size="sm"
-                                  variant="flat"
-                                >
-                                  {routeStatus.label}
-                                </Chip>
-                                <div className="mt-1 truncate text-xs text-default-500">
-                                  {routeStatus.detail}
-                                </div>
-                              </div>
-                              <div className="flex justify-end gap-1">
-                                <Button
-                                  isIconOnly
-                                  aria-label="流量详情"
-                                  size="sm"
-                                  title="流量详情"
-                                  variant="light"
-                                  onPress={() =>
-                                    openTelemetry("domain", route.id)
-                                  }
-                                >
-                                  <Activity size={16} />
-                                </Button>
-                                {managedRoute &&
-                                  route.state !== "delete_pending" && (
-                                    <Button
-                                      isIconOnly
-                                      aria-label="管理后端池"
-                                      size="sm"
-                                      title="管理后端池"
-                                      variant="light"
-                                      onPress={() => openBackendPool(route)}
-                                    >
-                                      <Layers3 size={16} />
-                                    </Button>
-                                  )}
-                                {route.backendType === "direct" &&
-                                  route.state !== "delete_pending" && (
-                                    <Button
-                                      isIconOnly
-                                      aria-label="编辑默认后端"
-                                      size="sm"
-                                      title="编辑默认后端"
-                                      variant="light"
-                                      onPress={() => editDomainBackend(route)}
-                                    >
-                                      <Pencil size={16} />
-                                    </Button>
-                                  )}
-                                {route.state !== "delete_pending" && (
-                                  <Button
-                                    isIconOnly
-                                    aria-label="删除域名入口"
-                                    color="danger"
-                                    size="sm"
-                                    variant="light"
-                                    onPress={() => removeDomainRoute(route.id)}
-                                  >
-                                    <Trash2 size={16} />
-                                  </Button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                      <div className="border-t border-divider p-4">
+                        <ResourceCardGrid>
+                          {group.routes.map((route) =>
+                            renderDomainRouteCard(route),
+                          )}
+                        </ResourceCardGrid>
                       </div>
                     </details>
                   );
                 })}
               </div>
-              <details className="overflow-hidden rounded-lg border border-divider bg-content1">
-                <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
-                  全部域名规则{" "}
-                  <span className="ml-2 text-xs font-normal text-default-500">
-                    用于逐条查看、编辑和删除
-                  </span>
-                </summary>
-                <div className="border-t border-divider">
-                  <div className="hidden grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
-                    <span>域名</span>
-                    <span>公网入口</span>
-                    <span>后端映射</span>
-                    <span>实时访问</span>
-                    <span>状态</span>
-                    <span>操作</span>
-                  </div>
-                  {domainRoutes.map((route) => {
-                    const managedHttps = route.ingressMode === "managed_https";
-                    const stats = telemetry[`domain:${route.id}`];
-                    const status = domainRouteStatus(route);
-
-                    return (
-                      <article
-                        key={route.id}
-                        className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_1fr_1.2fr_1fr_1fr_auto] lg:items-center"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate font-medium">
-                              {route.name}
-                            </span>
-                            <Chip
-                              color={managedHttps ? "success" : "primary"}
-                              size="sm"
-                              variant="flat"
-                            >
-                              {managedHttps ? "托管 HTTPS" : "TLS 透传"}
-                            </Chip>
-                          </div>
-                          <a
-                            className="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm text-primary hover:underline"
-                            href={`https://${route.domain}${route.listenPort === 443 ? "" : `:${route.listenPort}`}${managedHttps ? route.pathPrefix || "/" : ""}`}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            <span className="truncate">
-                              {route.domain}
-                              {route.listenPort === 443
-                                ? ""
-                                : `:${route.listenPort}`}
-                              {managedHttps ? route.pathPrefix || "/" : ""}
-                            </span>
-                            <ExternalLink className="shrink-0" size={13} />
-                          </a>
-                          {isAdmin && (
-                            <div className="mt-1 text-xs text-default-500">
-                              {route.ownerRoleId === 1
-                                ? `普通用户 · ${route.ownerUserName}`
-                                : "管理员"}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 text-sm">
-                          <div className="truncate font-mono">
-                            {route.domain}:{route.listenPort}
-                          </div>
-                          <div className="mt-1 truncate text-xs text-default-500">
-                            {isAdmin
-                              ? `DNS → ${route.publicHost || "未配置"}`
-                              : "入口已配置"}
-                          </div>
-                        </div>
-                        <div className="min-w-0 text-sm">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="truncate">
-                              {route.backendType === "direct"
-                                ? route.backendNodeName || "节点本机服务"
-                                : route.mappingName}
-                            </span>
-                            <Chip
-                              color={
-                                route.backendType === "direct"
-                                  ? "secondary"
-                                  : "default"
-                              }
-                              size="sm"
-                              variant="flat"
-                            >
-                              {route.backendType === "direct" ? "本机" : "映射"}
-                            </Chip>
-                          </div>
-                          <div className="mt-1 truncate font-mono text-xs text-default-500">
-                            {isAdmin
-                              ? route.backendType === "direct"
-                                ? `${route.backendScheme || "http"}://${route.backendHost}:${route.backendPort}${route.backendPath || "/"}`
-                                : `${route.mappingPublicHost || "映射地址不可用"}:${route.mappingPublicPort}`
-                              : route.backendType === "direct"
-                                ? "节点后端已配置"
-                                : "映射后端已配置"}
-                          </div>
-                        </div>
-                        <div className="min-w-0 text-sm">
-                          <div>{stats?.currentConnections || 0} 个连接</div>
-                          <div className="mt-1 truncate text-xs text-default-500">
-                            ↑ {formatSpeed(stats?.uploadSpeed)} · ↓{" "}
-                            {formatSpeed(stats?.downloadSpeed)}
-                          </div>
-                        </div>
-                        <div className="min-w-0">
-                          <Chip color={status.color} size="sm" variant="flat">
-                            {status.label}
-                          </Chip>
-                          <div className="mt-1 truncate text-xs text-default-500">
-                            {status.detail}
-                          </div>
-                        </div>
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            isIconOnly
-                            aria-label="流量详情"
-                            size="sm"
-                            title="流量详情"
-                            variant="light"
-                            onPress={() => openTelemetry("domain", route.id)}
-                          >
-                            <Activity size={16} />
-                          </Button>
-                          {route.ingressMode === "managed_https" &&
-                            route.state !== "delete_pending" && (
-                              <Button
-                                isIconOnly
-                                aria-label="管理后端池"
-                                size="sm"
-                                title="管理后端池"
-                                variant="light"
-                                onPress={() => openBackendPool(route)}
-                              >
-                                <Layers3 size={16} />
-                              </Button>
-                            )}
-                          {route.backendType === "direct" &&
-                            route.state !== "delete_pending" && (
-                              <Button
-                                isIconOnly
-                                aria-label="编辑默认后端"
-                                size="sm"
-                                title="编辑默认后端"
-                                variant="light"
-                                onPress={() => editDomainBackend(route)}
-                              >
-                                <Pencil size={16} />
-                              </Button>
-                            )}
-                          {route.state !== "delete_pending" && (
-                            <Button
-                              isIconOnly
-                              aria-label="删除域名入口"
-                              color="danger"
-                              size="sm"
-                              variant="light"
-                              onPress={() => removeDomainRoute(route.id)}
-                            >
-                              <Trash2 size={16} />
-                            </Button>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </details>
             </div>
           )}
         </Tab>
@@ -1824,14 +1690,7 @@ export default function ServicePublishingPage() {
                 <span>暂无托管证书</span>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-divider">
-                <div className="hidden grid-cols-[1.3fr_1fr_1fr_1.1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 lg:grid">
-                  <span>域名</span>
-                  <span>DNS 配置</span>
-                  <span>使用情况</span>
-                  <span>有效期</span>
-                  <span>操作</span>
-                </div>
+              <ResourceCardGrid>
                 {certificates.map((certificate) => {
                   const failed = [
                     "failed",
@@ -1840,17 +1699,17 @@ export default function ServicePublishingPage() {
                   ].includes(certificate.state);
                   const active = certificate.state === "active";
                   const status = active
-                    ? { label: "有效", color: "success" as const }
+                    ? { text: "有效", color: "success" as const }
                     : failed
                       ? {
-                          label:
+                          text:
                             certificate.state === "renewal_failed"
                               ? "续签失败"
                               : "申请失败",
                           color: "danger" as const,
                         }
                       : {
-                          label:
+                          text:
                             certificate.state === "dns_propagating"
                               ? "DNS 同步中"
                               : certificate.state === "renewing"
@@ -1860,67 +1719,67 @@ export default function ServicePublishingPage() {
                         };
 
                   return (
-                    <article
+                    <ResourceCard
                       key={certificate.id}
-                      className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:grid-cols-[1.3fr_1fr_1fr_1.1fr_auto] lg:items-center"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-mono font-medium">
-                            {certificate.domain}
-                          </span>
-                          <Chip color={status.color} size="sm" variant="flat">
-                            {status.label}
-                          </Chip>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-default-500">
-                          {certificate.issuer || "等待签发机构"}
-                        </div>
-                      </div>
-                      <div className="min-w-0 text-sm">
-                        <div className="truncate">{certificate.zoneName}</div>
-                        <div className="mt-1 truncate text-xs text-default-500">
-                          {certificate.accountName}
-                        </div>
-                      </div>
-                      <div className="text-sm">
-                        <div>{certificate.routeCount} 条路径规则</div>
-                        <div className="mt-1 text-xs text-default-500">
-                          部署到 {certificate.ingressCount} 个 HTTPS 入口
-                        </div>
-                      </div>
-                      <div className="min-w-0 text-sm">
-                        <div>
-                          {certificate.expiresAt
+                      actions={[
+                        {
+                          label: failed ? "重新申请" : "续签",
+                          icon: <RefreshCw size={14} />,
+                          color: failed ? "danger" : "primary",
+                          onPress: () => retryCertificate(certificate.id),
+                        },
+                      ]}
+                      blocks={[
+                        {
+                          label: "证书域名",
+                          status,
+                          danger: failed,
+                          rows: [{ value: certificate.domain }],
+                        },
+                      ]}
+                      danger={failed}
+                      facts={[
+                        { label: "DNS 区域", value: certificate.zoneName },
+                        { label: "DNS 账号", value: certificate.accountName },
+                        {
+                          label: "使用情况",
+                          value: `${certificate.routeCount} 条路径 · ${certificate.ingressCount} 个入口`,
+                        },
+                        {
+                          label: "到期时间",
+                          value: certificate.expiresAt
                             ? formatTime(certificate.expiresAt)
-                            : "尚未签发"}
-                        </div>
-                        <div className="mt-1 truncate text-xs text-default-500">
-                          {certificate.lastAttemptAt
-                            ? `上次处理 ${formatTime(certificate.lastAttemptAt)}`
-                            : "等待首次处理"}
-                        </div>
-                      </div>
-                      <Button
-                        isIconOnly
-                        aria-label="重新申请或续签证书"
-                        color={failed ? "danger" : "primary"}
-                        size="sm"
-                        title="重新申请或续签"
-                        variant="light"
-                        onPress={() => retryCertificate(certificate.id)}
-                      >
-                        <RefreshCw size={16} />
-                      </Button>
-                      {certificate.lastError && (
-                        <div className="rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger lg:col-span-5">
-                          {certificate.lastError}
-                        </div>
-                      )}
-                    </article>
+                            : "尚未签发",
+                        },
+                      ]}
+                      notice={
+                        certificate.lastError
+                          ? {
+                              icon: <TriangleAlert size={15} />,
+                              label: "最近错误",
+                              value: (
+                                <span title={certificate.lastError}>
+                                  {certificate.lastError}
+                                </span>
+                              ),
+                              tone: "danger",
+                            }
+                          : {
+                              icon: <FileKey2 size={15} />,
+                              label: "上次处理",
+                              value: certificate.lastAttemptAt
+                                ? formatTime(certificate.lastAttemptAt)
+                                : "等待首次处理",
+                              tone: active ? "success" : "default",
+                            }
+                      }
+                      status={status}
+                      subtitles={[certificate.issuer || "等待签发机构"]}
+                      title={certificate.domain}
+                    />
                   );
                 })}
-              </div>
+              </ResourceCardGrid>
             )}
           </Tab>
         ) : null}
@@ -1929,78 +1788,58 @@ export default function ServicePublishingPage() {
             <div className="flex min-h-40 items-center justify-center">
               <Spinner />
             </div>
-          ) : (
-            <div className="overflow-hidden rounded-lg border border-divider">
-              <div className="hidden grid-cols-[1.2fr_1fr_1fr_auto] gap-4 bg-default-100 px-4 py-3 text-xs text-default-500 md:grid">
-                <span>名称</span>
-                <span>连接状态</span>
-                <span>最近地址</span>
-                <span>操作</span>
-              </div>
-              {connectors.length === 0 ? (
-                <div className="py-16 text-center text-default-500">
-                  暂无内网接入端
-                </div>
-              ) : (
-                connectors.map((connector) => (
-                  <div
-                    key={connector.id}
-                    className="grid gap-3 border-t border-divider px-4 py-4 first:border-t-0 md:grid-cols-[1.2fr_1fr_1fr_auto] md:items-center"
-                  >
-                    <div>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-medium">
-                          {connector.name}
-                        </span>
-                        <Chip size="sm" variant="flat">
-                          {platformMeta[connector.platform || "linux"].label}
-                        </Chip>
-                      </div>
-                      {isAdmin && (
-                        <div className="mt-1 text-xs text-default-500">
-                          {connector.ownerUserName}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <span
-                        className={`h-2 w-2 rounded-full ${connector.online ? "bg-success" : "bg-default-400"}`}
-                      />
-                      {connector.online ? "在线" : "离线"}
-                    </div>
-                    <div className="text-sm text-default-500">
-                      {connector.remoteIp || "尚未连接"}
-                    </div>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        isIconOnly
-                        aria-label="安装命令"
-                        size="sm"
-                        variant="light"
-                        onPress={() =>
-                          showInstall(
-                            connector.id,
-                            connector.platform || "linux",
-                          )
-                        }
-                      >
-                        <ServerCog size={17} />
-                      </Button>
-                      <Button
-                        isIconOnly
-                        aria-label="删除接入端"
-                        color="danger"
-                        size="sm"
-                        variant="light"
-                        onPress={() => removeConnector(connector.id)}
-                      >
-                        <Trash2 size={17} />
-                      </Button>
-                    </div>
-                  </div>
-                ))
-              )}
+          ) : connectors.length === 0 ? (
+            <div className="py-16 text-center text-default-500">
+              暂无内网接入端
             </div>
+          ) : (
+            <ResourceCardGrid>
+              {connectors.map((connector) => (
+                <ResourceCard
+                  key={connector.id}
+                  actions={[
+                    {
+                      label: "安装命令",
+                      icon: <ServerCog size={14} />,
+                      color: "primary",
+                      onPress: () =>
+                        showInstall(
+                          connector.id,
+                          connector.platform || "linux",
+                        ),
+                    },
+                    {
+                      label: "删除",
+                      icon: <Trash2 size={14} />,
+                      color: "danger",
+                      onPress: () => removeConnector(connector.id),
+                    },
+                  ]}
+                  blocks={[
+                    {
+                      label: "最近连接地址",
+                      status: {
+                        text: connector.online ? "在线" : "离线",
+                        color: connector.online ? "success" : "default",
+                      },
+                      rows: [{ value: connector.remoteIp || "尚未连接" }],
+                    },
+                  ]}
+                  chips={[
+                    {
+                      text: platformMeta[connector.platform || "linux"].label,
+                      color: "primary",
+                    },
+                  ]}
+                  status={{
+                    text: connector.online ? "在线" : "离线",
+                    color: connector.online ? "success" : "default",
+                  }}
+                  subtitles={[isAdmin ? connector.ownerUserName : "内网接入端"]}
+                  title={connector.name}
+                />
+              ))}
+            </ResourceCardGrid>
           )}
         </Tab>
       </Tabs>
@@ -3180,6 +3019,6 @@ export default function ServicePublishingPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
