@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { useEffect, useMemo, useState } from "react";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import { Button } from "@heroui/button";
@@ -16,7 +18,6 @@ import { Switch } from "@heroui/switch";
 import { Tab, Tabs } from "@heroui/tabs";
 import {
   BarChart3,
-  Clock3,
   Copy,
   Globe2,
   History,
@@ -35,7 +36,9 @@ import {
   ShieldCheck,
   Stethoscope,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
+import { Tooltip } from "@heroui/tooltip";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
@@ -59,6 +62,12 @@ import {
   type PrivateProxyType,
 } from "@/api";
 import ExitEventsModal from "@/components/exit-events-modal";
+import PageShell from "@/components/page-shell";
+import ResourceCard, {
+  type ChipColor,
+  ResourceCardGrid,
+} from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import CamouflagePicker, {
   AUTO_CAMOUFLAGE,
 } from "@/components/camouflage-picker";
@@ -783,7 +792,7 @@ export default function PrivateProxyPage() {
     : [];
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">独立服务</p>
@@ -816,23 +825,25 @@ export default function PrivateProxyPage() {
         </div>
       </header>
 
-      <section className="grid overflow-hidden rounded-lg border border-divider sm:grid-cols-3">
-        <div className="border-b border-divider px-5 py-4 sm:border-b-0 sm:border-r">
-          <div className="text-xs text-default-500">运行中</div>
-          <div className="mt-1 text-2xl font-semibold text-success">
-            {summary.active}
-          </div>
-        </div>
-        <div className="border-b border-divider px-5 py-4 sm:border-b-0 sm:border-r">
-          <div className="text-xs text-default-500">已暂停</div>
-          <div className="mt-1 text-2xl font-semibold">{summary.paused}</div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-default-500">需要处理</div>
-          <div className="mt-1 text-2xl font-semibold text-danger">
-            {summary.attention}
-          </div>
-        </div>
+      <section className="grid grid-cols-3 gap-4">
+        <StatsCard
+          color="success"
+          icon={<Play className="h-5 w-5" />}
+          title="运行中"
+          value={summary.active}
+        />
+        <StatsCard
+          color="default"
+          icon={<Pause className="h-5 w-5" />}
+          title="已暂停"
+          value={summary.paused}
+        />
+        <StatsCard
+          color={summary.attention ? "danger" : "default"}
+          icon={<TriangleAlert className="h-5 w-5" />}
+          title="需要处理"
+          value={summary.attention}
+        />
       </section>
 
       {loading ? (
@@ -907,313 +918,298 @@ export default function PrivateProxyPage() {
                 </div>
               }
             >
-              <div className="min-w-0 overflow-hidden border-t border-divider">
-                <div
-                  className={`hidden gap-4 bg-default-50 px-4 py-3 text-xs text-default-500 lg:grid ${isAdmin ? "grid-cols-[1.3fr_1fr_1.1fr_1fr_auto]" : "grid-cols-[1.35fr_1fr_1.35fr_1fr_auto]"}`}
-                >
-                  <span>代理</span>
-                  <span>连接地址</span>
-                  <span>{isAdmin ? "访问控制" : "流量额度"}</span>
-                  <span>有效期</span>
-                  <span>操作</span>
-                </div>
-                {group.proxies.map((item) => {
-                  const meta = stateMeta[item.state];
-                  const protocol = protocolMeta[item.proxyType];
-                  const usedFlow = (item.inFlow || 0) + (item.outFlow || 0);
+              <div className="border-t border-divider px-1 py-4">
+                <ResourceCardGrid>
+                  {group.proxies.map((item) => {
+                    const meta = stateMeta[item.state];
+                    const protocol = protocolMeta[item.proxyType];
+                    const usedFlow = (item.inFlow || 0) + (item.outFlow || 0);
+                    const canControl = isAdmin || !item.granted;
+                    const problem = item.unavailableReason || item.lastError;
+                    const smallIcon = (
+                      label: string,
+                      icon: ReactNode,
+                      onPress: () => void,
+                    ) => (
+                      <Tooltip content={label}>
+                        <Button
+                          isIconOnly
+                          aria-label={label}
+                          className="h-6 w-6 min-w-6"
+                          size="sm"
+                          variant="light"
+                          onPress={onPress}
+                        >
+                          {icon}
+                        </Button>
+                      </Tooltip>
+                    );
 
-                  return (
-                    <div
-                      key={item.id}
-                      className={`grid min-w-0 gap-3 border-t border-divider px-4 py-4 first:border-t-0 lg:items-center ${isAdmin ? "lg:grid-cols-[1.3fr_1fr_1.1fr_1fr_auto]" : "lg:grid-cols-[1.35fr_1fr_1.35fr_1fr_auto]"}`}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2 font-medium">
-                          <span className="min-w-0 break-all">{item.name}</span>
-                          <Chip
-                            className="flex-none"
-                            color={meta.color}
-                            size="sm"
-                            variant="flat"
-                          >
-                            {meta.label}
-                          </Chip>
-                          {isAdmin && item.granted && (
-                            <Chip
-                              className="flex-none"
-                              color="secondary"
-                              size="sm"
-                              variant="flat"
-                            >
-                              管理员授权
-                            </Chip>
-                          )}
-                        </div>
-                        <div className="mt-1 break-words text-xs text-default-500">
-                          {protocol.label}
-                          {isAdmin ? ` · ${item.ownerUserName}` : ""}
-                        </div>
-                        <div className="mt-1 break-words text-xs text-default-500">
-                          {`上传 ${formatBytes(item.inFlow)} · 下载 ${formatBytes(item.outFlow)}`}
-                        </div>
-                        {item.granted && (
-                          <div className="mt-1 break-words text-xs text-default-500">
-                            {item.flowUnlimited === 1
-                              ? "流量不限"
-                              : `剩余 ${formatBytes(item.remainingFlow)}`}{" "}
-                            ·{" "}
-                            {item.flowResetDay
-                              ? `每月 ${item.flowResetDay} 日重置`
-                              : "不重置"}
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="break-all font-mono text-sm">
-                          {item.connectHost || item.publicHost || "未设置"}:
-                          {item.listenPort}
-                        </div>
-                        <div className="mt-1 text-xs text-default-500">
-                          {transportLabel(item.proxyType)}
-                          {item.transport && item.transport !== "tcp"
-                            ? ` · ${item.transport}`
-                            : ""}
-                        </div>
-                      </div>
-                      {isAdmin ? (
-                        <div>
-                          <div className="text-sm">{protocol.access}</div>
-                          <div className="mt-1 text-xs text-default-500">
-                            {item.allowedCidrs
-                              ? `白名单 ${item.allowedCidrs.split(",").length} 条`
-                              : "允许任意来源 IP"}
-                          </div>
-                        </div>
-                      ) : (
-                        <div>
-                          <div className="text-sm">
-                            {item.flowUnlimited === 1
-                              ? "流量不限"
-                              : `总额度 ${item.flowLimit || 0} GB`}
-                          </div>
-                          <div className="mt-1 text-xs text-default-500">
-                            已用 {formatBytes(usedFlow)}
-                            {item.flowUnlimited === 1
-                              ? ""
-                              : ` · 剩余 ${formatBytes(item.remainingFlow || 0)}`}
-                          </div>
-                          <div className="mt-1 text-xs text-default-500">
-                            {item.flowResetDay
-                              ? `每月 ${item.flowResetDay} 日重置`
-                              : "不重置"}
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex flex-col gap-1 text-sm">
-                        <span className="flex items-center gap-2">
-                          <Clock3
-                            className="shrink-0 text-default-400"
-                            size={15}
-                          />
-                          {item.expiresAt
-                            ? new Date(item.expiresAt).toLocaleString()
-                            : "永久"}
-                        </span>
-                        {!isAdmin && (
-                          <span className="text-xs text-default-500">
-                            剩余 {formatRemainingTime(item.remainingTime)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-1">
-                        <Button
-                          isIconOnly
-                          aria-label={`查看 ${item.name} 连接信息`}
-                          isLoading={configLoading}
-                          size="sm"
-                          title="连接信息"
-                          variant="light"
-                          onPress={() => showClientConfig(item)}
-                        >
-                          <KeyRound size={17} />
-                        </Button>
-                        {item.state === "active" && (
-                          <Button
-                            isIconOnly
-                            aria-label={`自检 ${item.name}`}
-                            isLoading={testing === item.id}
-                            size="sm"
-                            title="自检：节点经这个代理打开测试页面，确认能用并显示出口 IP"
-                            variant="light"
-                            onPress={() => runTest(item)}
-                          >
-                            <Stethoscope size={17} />
-                          </Button>
-                        )}
-                        <Button
-                          isIconOnly
-                          aria-label={`修改 ${item.name}`}
-                          size="sm"
-                          title="修改：名称、连接地址、端口、白名单、续期、重置密钥"
-                          variant="light"
-                          onPress={() => setEditTarget(item)}
-                        >
-                          <Pencil size={17} />
-                        </Button>
-                        <Button
-                          isIconOnly
-                          aria-label={`${item.name} 的流量`}
-                          size="sm"
-                          title="流量记录"
-                          variant="light"
-                          onPress={() => setTrafficTarget(item)}
-                        >
-                          <BarChart3 size={17} />
-                        </Button>
-                        {isAdmin &&
-                          item.state === "active" &&
-                          EXIT_PROXY_TYPES.includes(item.proxyType) && (
-                            <Button
-                              isIconOnly
-                              aria-label={`设置 ${item.name} 的出口`}
-                              size="sm"
-                              title="出口设置"
-                              variant="light"
-                              onPress={() => openExitSettings(item)}
-                            >
-                              <Home size={17} />
-                            </Button>
-                          )}
-                        {(isAdmin || !item.granted) &&
+                    return (
+                      <ResourceCard
+                        key={item.id}
+                        actions={[
+                          {
+                            label: "连接",
+                            icon: <KeyRound size={14} />,
+                            color: "primary",
+                            isLoading: configLoading,
+                            onPress: () => showClientConfig(item),
+                          },
+                          {
+                            label: "修改",
+                            icon: <Pencil size={14} />,
+                            color: "warning",
+                            onPress: () => setEditTarget(item),
+                          },
+                          ...(canControl
+                            ? [
+                                {
+                                  label: "删除",
+                                  icon: <Trash2 size={14} />,
+                                  color: "danger" as const,
+                                  onPress: () => control(item, "delete"),
+                                },
+                              ]
+                            : []),
+                        ]}
+                        blocks={[
+                          {
+                            label: "连接地址",
+                            status: {
+                              text: transportLabel(item.proxyType),
+                              color: "primary",
+                            },
+                            rows: [
+                              {
+                                label: "地址",
+                                value: `${item.connectHost || item.publicHost || "未设置"}:${item.listenPort}`,
+                              },
+                              ...(item.transport && item.transport !== "tcp"
+                                ? [{ label: "传输", value: item.transport }]
+                                : []),
+                            ],
+                          },
+                          ...(item.exitType === "residential" && item.exit
+                            ? [
+                                {
+                                  label: `出口 · ${item.exit.countryName}家宽`,
+                                  status: {
+                                    text: exitStatusMeta(item.exit.status)
+                                      .label,
+                                    color: exitStatusMeta(item.exit.status)
+                                      .color as ChipColor,
+                                  },
+                                  danger: [
+                                    "no_exit",
+                                    "node_offline",
+                                    "agent_error",
+                                    "setup_failed",
+                                  ].includes(item.exit.status),
+                                  rows: [
+                                    {
+                                      value: `${exitSummary(item.exit)}${
+                                        item.exit.status === "ok" &&
+                                        item.exit.switchesToday !== undefined
+                                          ? ` · 今日切换 ${item.exit.switchesToday} 次`
+                                          : ""
+                                      }`,
+                                      mono: false,
+                                    },
+                                  ],
+                                },
+                              ]
+                            : []),
+                        ]}
+                        chips={[
+                          {
+                            text: `↑${formatBytes(item.inFlow)}`,
+                            color: "primary",
+                          },
+                          {
+                            text: `↓${formatBytes(item.outFlow)}`,
+                            color: "success",
+                          },
+                          ...(isAdmin && item.granted
+                            ? [
+                                {
+                                  text: "管理员授权",
+                                  color: "secondary" as const,
+                                },
+                              ]
+                            : []),
+                        ]}
+                        danger={Boolean(problem) || item.state === "error"}
+                        facts={[
+                          ...(isAdmin
+                            ? [
+                                { label: "访问控制", value: protocol.access },
+                                {
+                                  label: "来源白名单",
+                                  value: item.allowedCidrs
+                                    ? `${item.allowedCidrs.split(",").length} 条`
+                                    : "任意来源",
+                                },
+                              ]
+                            : [
+                                {
+                                  label: "流量额度",
+                                  value:
+                                    item.flowUnlimited === 1
+                                      ? "不限"
+                                      : `${item.flowLimit || 0} GB`,
+                                },
+                                {
+                                  label: "已用 / 剩余",
+                                  value:
+                                    item.flowUnlimited === 1
+                                      ? formatBytes(usedFlow)
+                                      : `${formatBytes(usedFlow)} / ${formatBytes(item.remainingFlow || 0)}`,
+                                },
+                              ]),
+                          {
+                            label: "有效期",
+                            value: item.expiresAt
+                              ? new Date(item.expiresAt).toLocaleDateString()
+                              : "永久",
+                          },
+                          isAdmin
+                            ? {
+                                label: "最近使用",
+                                value: item.lastActiveAt
+                                  ? new Date(item.lastActiveAt).toLocaleString()
+                                  : "-",
+                              }
+                            : {
+                                label: "剩余时间",
+                                value: formatRemainingTime(item.remainingTime),
+                              },
+                        ]}
+                        headerExtra={
+                          <>
+                            {smallIcon(
+                              "流量记录",
+                              <BarChart3 size={14} />,
+                              () => setTrafficTarget(item),
+                            )}
+                            {isAdmin &&
+                              item.state === "active" &&
+                              EXIT_PROXY_TYPES.includes(item.proxyType) &&
+                              smallIcon("出口设置", <Home size={14} />, () =>
+                                openExitSettings(item),
+                              )}
+                          </>
+                        }
+                        notice={
+                          problem
+                            ? {
+                                icon: <TriangleAlert size={15} />,
+                                label: "需要处理",
+                                value: <span title={problem}>{problem}</span>,
+                                tone: "danger",
+                              }
+                            : item.state === "active"
+                              ? {
+                                  icon: <Stethoscope size={15} />,
+                                  label: "自检",
+                                  value: !item.lastCheckAt
+                                    ? "尚未自检"
+                                    : item.lastCheckOk
+                                      ? `正常 · 出口 ${item.lastCheckIp} · ${item.lastCheckLatency} ms`
+                                      : `失败：${item.lastCheckError || "原因未知"}`,
+                                  tone: !item.lastCheckAt
+                                    ? "default"
+                                    : item.lastCheckOk
+                                      ? "success"
+                                      : "danger",
+                                  trailing: (
+                                    <Tooltip content="立即自检">
+                                      <Button
+                                        isIconOnly
+                                        aria-label={`自检 ${item.name}`}
+                                        className="h-7 w-7 min-w-7"
+                                        isLoading={testing === item.id}
+                                        size="sm"
+                                        variant="light"
+                                        onPress={() => runTest(item)}
+                                      >
+                                        <RefreshCw size={15} />
+                                      </Button>
+                                    </Tooltip>
+                                  ),
+                                }
+                              : undefined
+                        }
+                        status={{ text: meta.label, color: meta.color }}
+                        subtitles={[
+                          `${protocol.label}${isAdmin ? ` · ${item.ownerUserName}` : ""}`,
+                        ]}
+                        title={item.name}
+                        toggle={
+                          canControl &&
+                          (item.state === "active" || item.state === "paused")
+                            ? {
+                                isSelected: item.state === "active",
+                                label:
+                                  item.state === "active" ? "暂停" : "恢复",
+                                onChange: () =>
+                                  control(
+                                    item,
+                                    item.state === "active"
+                                      ? "pause"
+                                      : "resume",
+                                  ),
+                              }
+                            : undefined
+                        }
+                      >
+                        {item.exitType === "residential" &&
+                          item.exit &&
                           item.state === "active" && (
-                            <Button
-                              isIconOnly
-                              aria-label={`暂停 ${item.name}`}
-                              size="sm"
-                              title="暂停代理"
-                              variant="light"
-                              onPress={() => control(item, "pause")}
-                            >
-                              <Pause size={17} />
-                            </Button>
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                className="h-7 min-w-0 px-2 text-xs"
+                                isDisabled={!item.exit.standbyReady}
+                                isLoading={switchingExit === item.id}
+                                size="sm"
+                                startContent={
+                                  switchingExit !== item.id && (
+                                    <Shuffle size={13} />
+                                  )
+                                }
+                                variant="flat"
+                                onPress={() => changeExit(item)}
+                              >
+                                换一个出口
+                              </Button>
+                              {!isAdmin && (
+                                <Button
+                                  className="h-7 min-w-0 px-2 text-xs"
+                                  size="sm"
+                                  startContent={<Link2 size={13} />}
+                                  variant="flat"
+                                  onPress={() => copySwitchLink(item)}
+                                >
+                                  切换链接
+                                </Button>
+                              )}
+                              {isAdmin && (
+                                <Button
+                                  className="h-7 min-w-0 px-2 text-xs"
+                                  size="sm"
+                                  startContent={<History size={13} />}
+                                  variant="flat"
+                                  onPress={() => showEvents(item)}
+                                >
+                                  切换记录
+                                </Button>
+                              )}
+                            </div>
                           )}
-                        {(isAdmin || !item.granted) &&
-                          item.state === "paused" && (
-                            <Button
-                              isIconOnly
-                              aria-label={`恢复 ${item.name}`}
-                              color="success"
-                              size="sm"
-                              title="恢复代理"
-                              variant="light"
-                              onPress={() => control(item, "resume")}
-                            >
-                              <Play size={17} />
-                            </Button>
-                          )}
-                        {(isAdmin || !item.granted) && (
-                          <Button
-                            isIconOnly
-                            aria-label={`删除 ${item.name}`}
-                            color="danger"
-                            size="sm"
-                            title="删除代理"
-                            variant="light"
-                            onPress={() => control(item, "delete")}
-                          >
-                            <Trash2 size={17} />
-                          </Button>
-                        )}
-                      </div>
-                      {item.exitType === "residential" && item.exit && (
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-default-50 px-3 py-2 text-xs lg:col-span-5">
-                          <span className="flex items-center gap-1.5 font-medium text-default-700">
-                            <Home size={14} />
-                            出口 · {item.exit.countryName}家宽
-                          </span>
-                          <Chip
-                            className="flex-none"
-                            color={exitStatusMeta(item.exit.status).color}
-                            size="sm"
-                            variant="flat"
-                          >
-                            {exitStatusMeta(item.exit.status).label}
-                          </Chip>
-                          <span className="min-w-0 break-all text-default-500">
-                            {exitSummary(item.exit)}
-                            {item.exit.status === "ok" &&
-                            item.exit.switchesToday !== undefined
-                              ? ` · 今日切换 ${item.exit.switchesToday} 次`
-                              : ""}
-                          </span>
-                          {item.state === "active" && (
-                            <Button
-                              className="ml-auto h-7 min-w-0 px-2 text-xs"
-                              isDisabled={!item.exit.standbyReady}
-                              isLoading={switchingExit === item.id}
-                              size="sm"
-                              startContent={
-                                switchingExit !== item.id && (
-                                  <Shuffle size={14} />
-                                )
-                              }
-                              title={
-                                item.exit.standbyReady
-                                  ? "换到已就绪的备用出口"
-                                  : "备用出口还没有就绪，稍后再试"
-                              }
-                              variant="light"
-                              onPress={() => changeExit(item)}
-                            >
-                              换一个出口
-                            </Button>
-                          )}
-                          {!isAdmin && item.state === "active" && (
-                            <Button
-                              className="h-7 min-w-0 px-2 text-xs"
-                              size="sm"
-                              startContent={<Link2 size={14} />}
-                              title="复制远程切换链接：不用登录面板，打开链接就换一个出口"
-                              variant="light"
-                              onPress={() => copySwitchLink(item)}
-                            >
-                              切换链接
-                            </Button>
-                          )}
-                          {isAdmin && (
-                            <Button
-                              className="h-7 min-w-0 px-2 text-xs"
-                              size="sm"
-                              startContent={<History size={14} />}
-                              variant="light"
-                              onPress={() => showEvents(item)}
-                            >
-                              切换记录
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      {item.state === "active" && item.lastCheckAt && (
-                        <div
-                          className={`text-xs lg:col-span-5 ${item.lastCheckOk ? "text-default-500" : "text-danger"}`}
-                        >
-                          {item.lastCheckOk
-                            ? `自检正常 · 出口 ${item.lastCheckIp} · 用时 ${item.lastCheckLatency} ms`
-                            : `自检失败：${item.lastCheckError || "原因未知"}`}
-                          {` · ${new Date(item.lastCheckAt).toLocaleString()}`}
-                          {item.lastActiveAt
-                            ? ` · 最近使用 ${new Date(item.lastActiveAt).toLocaleString()}`
-                            : ""}
-                        </div>
-                      )}
-                      {(item.unavailableReason || item.lastError) && (
-                        <div className="text-xs text-danger lg:col-span-5">
-                          {item.unavailableReason || item.lastError}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      </ResourceCard>
+                    );
+                  })}
+                </ResourceCardGrid>
               </div>
             </AccordionItem>
           ))}
@@ -1808,6 +1804,6 @@ export default function PrivateProxyPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

@@ -14,7 +14,6 @@ import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
 import { Tooltip } from "@heroui/tooltip";
 import {
-  ArrowRight,
   CircleCheck,
   History,
   Pause,
@@ -48,6 +47,9 @@ import {
   type NftForwardRule,
 } from "@/api";
 import { formatBytesCompact, formatDateTime } from "@/utils/format";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 
 type RuleForm = {
   id?: number;
@@ -296,7 +298,7 @@ export default function NftForwardPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">内核网络</p>
@@ -323,26 +325,37 @@ export default function NftForwardPage() {
         </div>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[
-          ["规则", data.summary.total],
-          ["运行中", data.summary.active],
-          ["已暂停", data.summary.paused],
-          ["异常", data.summary.errors],
-          ["当前计数", formatBytes(data.summary.bytes)],
-        ].map(([label, value], index) => (
-          <div
-            key={String(label)}
-            className="rounded-md border border-divider bg-content1 p-4"
-          >
-            <p className="text-sm text-default-500">{label}</p>
-            <p
-              className={`mt-2 text-2xl font-semibold ${index === 3 && Number(value) ? "text-danger" : ""}`}
-            >
-              {value}
-            </p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+        <StatsCard
+          color="primary"
+          icon={<ShieldCheck className="h-5 w-5" />}
+          title="规则"
+          value={data.summary.total}
+        />
+        <StatsCard
+          color="success"
+          icon={<Play className="h-5 w-5" />}
+          title="运行中"
+          value={data.summary.active}
+        />
+        <StatsCard
+          color="default"
+          icon={<Pause className="h-5 w-5" />}
+          title="已暂停"
+          value={data.summary.paused}
+        />
+        <StatsCard
+          color={data.summary.errors ? "danger" : "default"}
+          icon={<TriangleAlert className="h-5 w-5" />}
+          title="异常"
+          value={data.summary.errors}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<RefreshCw className="h-5 w-5" />}
+          title="当前计数"
+          value={formatBytes(data.summary.bytes)}
+        />
       </section>
 
       <section className="border-y border-divider py-4 text-sm">
@@ -369,155 +382,164 @@ export default function NftForwardPage() {
           <span>尚未创建 nftables 转发规则</span>
         </div>
       ) : (
-        <section className="overflow-hidden rounded-md border border-divider bg-content1">
-          <div className="hidden grid-cols-[minmax(150px,1fr)_minmax(190px,1.2fr)_32px_minmax(180px,1fr)_130px_150px_190px] gap-3 border-b border-divider px-4 py-3 text-xs font-semibold text-default-500 xl:grid">
-            <span>规则 / 节点</span>
-            <span>公网入口</span>
-            <span />
-            <span>转发目标</span>
-            <span>模式</span>
-            <span>状态 / 流量</span>
-            <span className="text-right">操作</span>
-          </div>
-          {rules.map((rule, index) => (
-            <div
-              key={rule.id}
-              className={`grid gap-3 px-4 py-4 xl:grid-cols-[minmax(150px,1fr)_minmax(190px,1.2fr)_32px_minmax(180px,1fr)_130px_150px_190px] xl:items-center ${index ? "border-t border-divider" : ""}`}
-            >
-              <div className="min-w-0">
-                <div className="truncate font-medium">{rule.name}</div>
-                <p className="mt-1 truncate text-xs text-default-500">
-                  {rule.nodeName} · Agent {rule.agentVersion || "未知"}
-                </p>
-              </div>
-              <div className="min-w-0">
-                <p className="truncate font-mono text-sm">
-                  {rule.publicHost || rule.listenAddress}:{rule.listenPort}
-                </p>
-                <p className="mt-1 text-xs text-default-500">
-                  监听 {rule.listenAddress} · {protocolLabel(rule.protocol)}
-                </p>
-              </div>
-              <ArrowRight
-                className="hidden text-default-400 xl:block"
-                size={18}
+        <ResourceCardGrid>
+          {rules.map((rule) => {
+            const failing = rule.state === "error";
+
+            return (
+              <ResourceCard
+                key={rule.id}
+                actions={[
+                  {
+                    label: "编辑",
+                    icon: <Pencil size={14} />,
+                    color: "primary",
+                    onPress: () => openForm(rule),
+                  },
+                  {
+                    label: "检查",
+                    icon: <Stethoscope size={14} />,
+                    color: "warning",
+                    onPress: () => check(rule),
+                    isLoading: busy === rule.id,
+                  },
+                  {
+                    label: "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    onPress: () => remove(rule),
+                  },
+                ]}
+                blocks={[
+                  {
+                    label: "公网入口",
+                    status: {
+                      text: protocolLabel(rule.protocol),
+                      color: "primary",
+                    },
+                    rows: [
+                      {
+                        label: "入口",
+                        value: `${rule.publicHost || rule.listenAddress}:${rule.listenPort}`,
+                      },
+                    ],
+                  },
+                  {
+                    label: "转发目标",
+                    danger: failing,
+                    rows: [
+                      {
+                        label: "目标",
+                        value: `${rule.targetAddress}:${rule.targetPort}`,
+                      },
+                    ],
+                  },
+                ]}
+                chips={[
+                  {
+                    text:
+                      rule.natMode === "masquerade"
+                        ? "标准 NAT"
+                        : "保留来源 IP",
+                    color: "primary",
+                  },
+                  { text: `${rule.packetCount || 0} 包` },
+                  { text: `↓${formatBytes(rule.byteCount)}`, color: "success" },
+                ]}
+                danger={failing}
+                facts={[
+                  { label: "监听地址", value: rule.listenAddress },
+                  {
+                    label: "来源限制",
+                    value: rule.sourceCidrs
+                      ? `${rule.sourceCidrs.split(/\s+/).length} 个网段`
+                      : "允许任意来源",
+                  },
+                  { label: "节点", value: rule.nodeName },
+                  { label: "Agent", value: rule.agentVersion || "未知" },
+                ]}
+                headerExtra={
+                  rule.rollbackAvailable ? (
+                    <Tooltip content="回退到上次成功配置">
+                      <Button
+                        isIconOnly
+                        aria-label="回退"
+                        className="h-6 w-6 min-w-6"
+                        color="warning"
+                        size="sm"
+                        variant="light"
+                        onPress={() => rollback(rule)}
+                      >
+                        <RotateCcw size={14} />
+                      </Button>
+                    </Tooltip>
+                  ) : undefined
+                }
+                notice={
+                  rule.lastError || rule.lastWarning
+                    ? {
+                        icon: <TriangleAlert size={15} />,
+                        label: rule.lastError ? "最近错误" : "提示",
+                        value: (
+                          <span title={rule.lastError || rule.lastWarning}>
+                            {rule.lastError || rule.lastWarning}
+                          </span>
+                        ),
+                        tone: rule.lastError ? "danger" : "warning",
+                        trailing: (
+                          <Tooltip content="事件记录">
+                            <Button
+                              isIconOnly
+                              aria-label="事件记录"
+                              className="h-7 w-7 min-w-7"
+                              size="sm"
+                              variant="light"
+                              onPress={() => showEvents(rule)}
+                            >
+                              <History size={15} />
+                            </Button>
+                          </Tooltip>
+                        ),
+                      }
+                    : {
+                        icon: <CircleCheck size={15} />,
+                        label: "规则状态",
+                        value: stateLabel[rule.state] || rule.state,
+                        tone: rule.state === "active" ? "success" : "default",
+                        trailing: (
+                          <Tooltip content="事件记录">
+                            <Button
+                              isIconOnly
+                              aria-label="事件记录"
+                              className="h-7 w-7 min-w-7"
+                              size="sm"
+                              variant="light"
+                              onPress={() => showEvents(rule)}
+                            >
+                              <History size={15} />
+                            </Button>
+                          </Tooltip>
+                        ),
+                      }
+                }
+                status={{
+                  text: stateLabel[rule.state] || rule.state,
+                  color: stateColor(rule.state),
+                }}
+                subtitles={[
+                  `${rule.nodeName} · ${protocolLabel(rule.protocol)}`,
+                ]}
+                title={rule.name}
+                toggle={{
+                  isSelected: Boolean(rule.enabled),
+                  onChange: () => toggle(rule),
+                  isDisabled: busy === rule.id,
+                  label: rule.enabled ? "暂停" : "恢复",
+                }}
               />
-              <div className="min-w-0">
-                <p className="truncate font-mono text-sm">
-                  {rule.targetAddress}:{rule.targetPort}
-                </p>
-                <p className="mt-1 truncate text-xs text-default-500">
-                  {rule.sourceCidrs
-                    ? `仅允许 ${rule.sourceCidrs.split(/\s+/).length} 个来源网段`
-                    : "允许任意来源"}
-                </p>
-              </div>
-              <div>
-                <Chip size="sm" variant="flat">
-                  {rule.natMode === "masquerade" ? "标准 NAT" : "保留来源 IP"}
-                </Chip>
-              </div>
-              <div>
-                <Chip color={stateColor(rule.state)} size="sm" variant="flat">
-                  {stateLabel[rule.state] || rule.state}
-                </Chip>
-                <p className="mt-1 text-xs text-default-500">
-                  {formatBytes(rule.byteCount)} · {rule.packetCount || 0} 包
-                </p>
-              </div>
-              <div className="flex justify-end gap-1">
-                <Tooltip content="检查状态">
-                  <Button
-                    isIconOnly
-                    aria-label="检查状态"
-                    isLoading={busy === rule.id}
-                    size="sm"
-                    variant="light"
-                    onPress={() => check(rule)}
-                  >
-                    <Stethoscope size={16} />
-                  </Button>
-                </Tooltip>
-                <Tooltip content={rule.enabled ? "暂停" : "恢复"}>
-                  <Button
-                    isIconOnly
-                    aria-label={rule.enabled ? "暂停" : "恢复"}
-                    isDisabled={busy === rule.id}
-                    size="sm"
-                    variant="light"
-                    onPress={() => toggle(rule)}
-                  >
-                    {rule.enabled ? <Pause size={16} /> : <Play size={16} />}
-                  </Button>
-                </Tooltip>
-                <Tooltip content="编辑">
-                  <Button
-                    isIconOnly
-                    aria-label="编辑"
-                    size="sm"
-                    variant="light"
-                    onPress={() => openForm(rule)}
-                  >
-                    <Pencil size={16} />
-                  </Button>
-                </Tooltip>
-                <Tooltip content="事件记录">
-                  <Button
-                    isIconOnly
-                    aria-label="事件记录"
-                    size="sm"
-                    variant="light"
-                    onPress={() => showEvents(rule)}
-                  >
-                    <History size={16} />
-                  </Button>
-                </Tooltip>
-                {rule.rollbackAvailable && (
-                  <Tooltip content="回退到上次成功配置">
-                    <Button
-                      isIconOnly
-                      aria-label="回退"
-                      color="warning"
-                      size="sm"
-                      variant="light"
-                      onPress={() => rollback(rule)}
-                    >
-                      <RotateCcw size={16} />
-                    </Button>
-                  </Tooltip>
-                )}
-                <Tooltip content="删除">
-                  <Button
-                    isIconOnly
-                    aria-label="删除"
-                    color="danger"
-                    size="sm"
-                    variant="light"
-                    onPress={() => remove(rule)}
-                  >
-                    <Trash2 size={16} />
-                  </Button>
-                </Tooltip>
-              </div>
-              {(rule.lastError || rule.lastWarning) && (
-                <div className="xl:col-span-7 border-t border-divider pt-3 text-xs">
-                  {rule.lastError && (
-                    <p className="flex gap-2 text-danger">
-                      <TriangleAlert className="shrink-0" size={14} />
-                      {rule.lastError}
-                    </p>
-                  )}
-                  {rule.lastWarning && (
-                    <p className="mt-1 flex gap-2 text-warning">
-                      <TriangleAlert className="shrink-0" size={14} />
-                      {rule.lastWarning}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </section>
+            );
+          })}
+        </ResourceCardGrid>
       )}
 
       <Modal
@@ -774,6 +796,6 @@ export default function NftForwardPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

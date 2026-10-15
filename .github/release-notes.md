@@ -1,3 +1,12 @@
+## 2.70.0 Unified cards, batch 1: nftables, source IP, multi-line and private proxies
+
+- A shared resource card, modelled on the forward card, now shows list items across the panel: title and subtitle, an on/off switch and status chip, boxed address blocks, a two-column fact grid, a status line, traffic chips and edit/action/delete buttons.
+- nftables 端口转发: each rule is a card with its public entry and target, listen address, source limits, node and Agent, the latest error or rule state with the event log, and a pause switch; summary figures use the dashboard stat cards.
+- 来源 IP 分流: groups are cards with the shared entry, up to four rules and their backends, default line, Agent and last sync; they move above the explanations. The carrier and ASN databases are cards too.
+- 多线路并发调度: groups are cards with the entry, every line with health, weight, bandwidth, latency and loss, capacity and weighting facts, and the last error or schedule state; weight recalculation and line repair sit in the card header.
+- 私人代理: proxies stay grouped by node, each as a card with its address and residential exit, access or quota facts, expiry, the self-test result with a re-test button, exit switching, and a pause switch.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.69.1 remains available for rollback. More pages follow.
+
 ## 2.69.1 Forwards and nodes open as cards again
 
 - 转发管理 and 添加节点 open in the card view again by default. The table view stays available from the switch in the page header and is remembered per browser once chosen.

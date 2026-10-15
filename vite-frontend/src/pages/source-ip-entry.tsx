@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
-import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Input, Textarea } from "@heroui/input";
 import {
@@ -46,6 +45,9 @@ import {
 } from "@/api";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 import { formatDateTime, truthy } from "@/utils/format";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
+import PageShell from "@/components/page-shell";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile" | "custom";
 type RuleType =
@@ -456,7 +458,7 @@ export default function SourceIpEntryPage() {
   const nodes = data?.ingressNodes || [];
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">不依赖 DNS 的入口规则引擎</p>
@@ -493,6 +495,187 @@ export default function SourceIpEntryPage() {
           </Button>
         </div>
       </header>
+
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<RadioTower className="h-5 w-5" />}
+          title="分流组"
+          value={data?.summary.total || 0}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<RadioTower className="h-5 w-5" />}
+          title="运行中"
+          value={data?.summary.enabled || 0}
+        />
+        <StatsCard
+          color="success"
+          icon={<CheckCircle2 className="h-5 w-5" />}
+          title="同步正常"
+          value={data?.summary.healthy || 0}
+        />
+        <StatsCard
+          color={data?.summary.errors ? "warning" : "default"}
+          icon={<CircleAlert className="h-5 w-5" />}
+          title="需要处理"
+          value={data?.summary.errors || 0}
+        />
+      </section>
+
+      <section aria-label="来源 IP 分流策略" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">来源 IP 分流策略</h2>
+            <p className="mt-1 text-xs text-default-500">
+              统一入口、匹配规则和后端线路在这里集中管理
+            </p>
+          </div>
+          <Chip size="sm" variant="flat">
+            {groups.length} 个分流组
+          </Chip>
+        </div>
+        {groups.length === 0 ? (
+          <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-large bg-content1 text-center text-default-500 shadow-small">
+            <RadioTower className="h-9 w-9" />
+            <p>暂无来源 IP 分流</p>
+            <Button
+              size="sm"
+              startContent={<Plus size={16} />}
+              variant="flat"
+              onPress={openCreate}
+            >
+              创建第一组
+            </Button>
+          </div>
+        ) : (
+          <ResourceCardGrid>
+            {groups.map((group) => {
+              const meta = statusMeta(group.state);
+              const defaultRoute = group.routes.find(
+                (route) => route.carrier === "default",
+              );
+              const ruleRoutes = group.routes.filter(
+                (route) => route.carrier !== "default",
+              );
+
+              return (
+                <ResourceCard
+                  key={group.id}
+                  actions={[
+                    {
+                      label: "编辑",
+                      icon: <Pencil size={14} />,
+                      color: "primary",
+                      onPress: () => openEdit(group),
+                    },
+                    {
+                      label: "同步",
+                      icon: <RefreshCw size={14} />,
+                      color: "warning",
+                      onPress: () => check(group.id),
+                      isLoading: checkingId === group.id,
+                    },
+                    {
+                      label: "删除",
+                      icon: <Trash2 size={14} />,
+                      color: "danger",
+                      onPress: () => remove(group),
+                    },
+                  ]}
+                  blocks={[
+                    {
+                      label: "统一入口",
+                      status: {
+                        text: truthy(group.enabled) ? "TCP" : "已停用",
+                        color: truthy(group.enabled) ? "primary" : "default",
+                      },
+                      rows: [
+                        {
+                          label: "入口",
+                          value: `${group.listenHost || "全部地址"}:${group.listenPort}`,
+                        },
+                      ],
+                    },
+                    {
+                      label: `分流规则 · ${ruleRoutes.length} 条`,
+                      danger: group.state === "error",
+                      rows:
+                        ruleRoutes.length > 0
+                          ? ruleRoutes.slice(0, 4).map((route) => {
+                              const backend = backendText(
+                                backendMap.get(String(route.backendForwardId)),
+                              );
+                              const name =
+                                route.ruleName ||
+                                (route.ruleType === "carrier"
+                                  ? carrierText(route.carrier)
+                                  : ruleTypeText(route.ruleType));
+
+                              return {
+                                label: name,
+                                value: backend,
+                                mono: false,
+                                title: `${name} → ${backend}`,
+                              };
+                            })
+                          : [{ value: "仅默认线路", mono: false }],
+                    },
+                  ]}
+                  chips={[
+                    ...Array.from(
+                      new Set(
+                        ruleRoutes.map((route) => ruleTypeText(route.ruleType)),
+                      ),
+                    ).map((text) => ({ text, color: "primary" as const })),
+                    ...(ruleRoutes.length > 4
+                      ? [{ text: `另有 ${ruleRoutes.length - 4} 条规则` }]
+                      : []),
+                  ]}
+                  danger={group.state === "error"}
+                  facts={[
+                    { label: "Agent", value: group.agentVersion || "未知版本" },
+                    { label: "最近同步", value: timeText(group.lastSyncedAt) },
+                    {
+                      label: "默认线路",
+                      value: defaultRoute
+                        ? backendText(
+                            backendMap.get(
+                              String(defaultRoute.backendForwardId),
+                            ),
+                          )
+                        : "未设置",
+                    },
+                    {
+                      label: "质量策略",
+                      value: qualityPolicyText(defaultRoute?.qualityPolicy),
+                    },
+                  ]}
+                  notice={
+                    group.lastError
+                      ? {
+                          icon: <CircleAlert size={15} />,
+                          label: "同步错误",
+                          value: (
+                            <span title={group.lastError}>
+                              {group.lastError}
+                            </span>
+                          ),
+                          tone: "danger",
+                        }
+                      : undefined
+                  }
+                  status={{ text: meta.label, color: meta.color }}
+                  subtitles={[
+                    group.ingressNodeName || `节点 ${group.ingressNodeId}`,
+                  ]}
+                  title={group.name}
+                />
+              );
+            })}
+          </ResourceCardGrid>
+        )}
+      </section>
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)]">
         <article className="border border-primary-200 bg-primary-50/50 p-4 dark:border-primary-500/20 dark:bg-primary-500/5 sm:p-5">
@@ -564,53 +747,6 @@ export default function SourceIpEntryPage() {
               <p className="mt-2 text-xs leading-5 text-default-500">
                 {item.detail}
               </p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section aria-label="来源 IP 分流概况" className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">运行概况</h2>
-            <p className="mt-1 text-xs text-default-500">
-              实时汇总分流组和 Agent 同步状态
-            </p>
-          </div>
-          <span className="text-xs text-default-500">自动同步</span>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            [
-              "分流组",
-              data?.summary.total || 0,
-              <RadioTower key="total" className="text-primary" size={17} />,
-            ],
-            [
-              "运行中",
-              data?.summary.enabled || 0,
-              <RadioTower key="enabled" className="text-primary" size={17} />,
-            ],
-            [
-              "同步正常",
-              data?.summary.healthy || 0,
-              <CheckCircle2 key="healthy" className="text-success" size={17} />,
-            ],
-            [
-              "需要处理",
-              data?.summary.errors || 0,
-              <CircleAlert key="errors" className="text-warning" size={17} />,
-            ],
-          ].map(([label, value, icon]) => (
-            <article
-              key={String(label)}
-              className="border border-divider bg-content1 p-4"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-default-500">{label}</p>
-                {icon}
-              </div>
-              <p className="mt-2 text-2xl font-semibold">{value}</p>
             </article>
           ))}
         </div>
@@ -723,280 +859,107 @@ export default function SourceIpEntryPage() {
         </div>
       </section>
 
-      <section className="border border-divider bg-content1 p-4 sm:p-5">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <RadioTower className="text-primary" size={17} />
-              <h2 className="text-sm font-semibold">运营商 IP 库</h2>
-            </div>
-            <p className="mt-1 text-xs text-default-500">
-              来源：china-operator-ip · 默认每日自动刷新
-            </p>
-          </div>
-          <Chip color="primary" size="sm" variant="flat">
-            运营商
-          </Chip>
+      <section aria-label="IP 库" className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold">IP 库</h2>
+          <p className="mt-1 text-xs text-default-500">
+            运营商库来自 china-operator-ip，默认每日自动刷新；ASN 前缀来自
+            RIPEstat，保存 ASN 规则时自动拉取
+          </p>
         </div>
-        <div className="mt-4 divide-y divide-divider border-y border-divider">
+        <ResourceCardGrid>
           {(["telecom", "unicom", "mobile"] as const).map((carrier) => {
             const item = carrierMap.get(carrier) as
               SourceIpCarrierDatabase | undefined;
 
             return (
-              <div
+              <ResourceCard
                 key={carrier}
-                className="flex items-center justify-between gap-3 py-3 text-sm"
-              >
-                <div>
-                  <p className="font-medium">{carrierLabels[carrier]}</p>
-                  <p className="mt-1 text-xs text-default-500">
-                    {item?.state === "ready"
-                      ? `${item.cidrCount} 条 CIDR · IPv4 ${item.ipv4Count} · IPv6 ${item.ipv6Count}`
-                      : item?.lastError || "尚未同步"}
-                  </p>
-                </div>
-                <Chip
-                  color={
+                danger={item?.state === "error"}
+                facts={[
+                  { label: "CIDR", value: item?.cidrCount ?? "-" },
+                  {
+                    label: "更新时间",
+                    value:
+                      item?.state === "ready"
+                        ? timeText(item.updatedTime)
+                        : "-",
+                  },
+                  { label: "IPv4", value: item?.ipv4Count ?? "-" },
+                  { label: "IPv6", value: item?.ipv6Count ?? "-" },
+                ]}
+                notice={
+                  item?.lastError
+                    ? {
+                        icon: <CircleAlert size={15} />,
+                        label: "同步错误",
+                        value: item.lastError,
+                        tone: "danger",
+                      }
+                    : undefined
+                }
+                status={{
+                  text:
+                    item?.state === "ready"
+                      ? "已同步"
+                      : item?.state === "error"
+                        ? "同步失败"
+                        : "待同步",
+                  color:
                     item?.state === "ready"
                       ? "success"
                       : item?.state === "error"
                         ? "danger"
-                        : "default"
-                  }
-                  size="sm"
-                  variant="flat"
-                >
-                  {item?.state === "ready"
-                    ? timeText(item.updatedTime)
-                    : "待同步"}
-                </Chip>
-              </div>
+                        : "default",
+                }}
+                subtitles={["运营商 IP 库"]}
+                title={carrierLabels[carrier]}
+              />
             );
           })}
-        </div>
-      </section>
-
-      <section className="border border-divider bg-content1 p-4 sm:p-5">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <MapPin className="text-secondary" size={17} />
-              <h2 className="text-sm font-semibold">ASN 前缀库</h2>
-            </div>
-            <p className="mt-1 text-xs text-default-500">
-              来源：RIPEstat · 保存 ASN 规则时自动拉取
-            </p>
-          </div>
-          <Chip color="secondary" size="sm" variant="flat">
-            ASN
-          </Chip>
-        </div>
-        <div className="mt-4 divide-y divide-divider border-y border-divider">
-          {(data?.asns || []).length === 0 ? (
-            <p className="py-6 text-sm text-default-500">
-              暂无 ASN 缓存，创建 ASN 规则后会自动拉取前缀。
-            </p>
-          ) : (
-            (data?.asns || []).map((item: SourceIpAsnDatabase) => (
-              <div
-                key={item.asn}
-                className="flex items-center justify-between gap-3 py-3 text-sm"
-              >
-                <div>
-                  <p className="font-medium">{item.asn}</p>
-                  <p className="mt-1 text-xs text-default-500">
-                    {item.state === "ready"
-                      ? `${item.prefixCount} 条前缀 · IPv4 ${item.ipv4Count} · IPv6 ${item.ipv6Count}`
-                      : item.lastError || "尚未同步"}
-                  </p>
-                </div>
-                <Chip
-                  color={
-                    item.state === "ready"
-                      ? "success"
-                      : item.state === "error"
-                        ? "danger"
-                        : "default"
-                  }
-                  size="sm"
-                  variant="flat"
-                >
-                  {item.state === "ready"
-                    ? timeText(item.updatedTime)
-                    : "待同步"}
-                </Chip>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-
-      <section aria-label="来源 IP 分流策略" className="space-y-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-2">
-              <RadioTower className="text-primary" size={17} />
-              <h2 className="text-sm font-semibold">来源 IP 分流策略</h2>
-            </div>
-            <p className="mt-1 text-xs text-default-500">
-              统一入口、匹配规则和后端线路在这里集中管理
-            </p>
-          </div>
-          <Chip size="sm" variant="flat">
-            {groups.length} 个分流组
-          </Chip>
-        </div>
-        {groups.length === 0 ? (
-          <div className="flex min-h-40 flex-col items-center justify-center gap-3 border border-divider bg-content1 text-center text-default-500">
-            <RadioTower className="h-9 w-9" />
-            <p>暂无来源 IP 分流</p>
-            <Button
-              size="sm"
-              startContent={<Plus size={16} />}
-              variant="flat"
-              onPress={openCreate}
-            >
-              创建第一组
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {groups.map((group) => {
-              const meta = statusMeta(group.state);
-
-              return (
-                <Card
-                  key={group.id}
-                  className="border border-divider bg-content1"
-                  radius="sm"
-                  shadow="none"
-                >
-                  <CardBody className="gap-4 p-4 sm:p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="truncate text-base font-semibold">
-                            {group.name}
-                          </h2>
-                          <Chip color={meta.color} size="sm" variant="flat">
-                            {meta.label}
-                          </Chip>
-                          {truthy(group.enabled) && (
-                            <Chip color="primary" size="sm" variant="flat">
-                              TCP 入口
-                            </Chip>
-                          )}
-                        </div>
-                        <p className="mt-1 truncate text-sm text-default-500">
-                          {group.ingressNodeName ||
-                            `节点 ${group.ingressNodeId}`}{" "}
-                          · {group.listenHost || "全部地址"}:{group.listenPort}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          isIconOnly
-                          aria-label="重新同步"
-                          isLoading={checkingId === group.id}
-                          size="sm"
-                          title="重新同步"
-                          variant="light"
-                          onPress={() => check(group.id)}
-                        >
-                          <RefreshCw size={17} />
-                        </Button>
-                        <Button
-                          isIconOnly
-                          aria-label="编辑"
-                          size="sm"
-                          title="编辑"
-                          variant="light"
-                          onPress={() => openEdit(group)}
-                        >
-                          <Pencil size={17} />
-                        </Button>
-                        <Button
-                          isIconOnly
-                          aria-label="删除"
-                          color="danger"
-                          size="sm"
-                          title="删除"
-                          variant="light"
-                          onPress={() => remove(group)}
-                        >
-                          <Trash2 size={17} />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="grid gap-2 border-y border-divider py-3 text-sm sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs text-default-500">Agent</p>
-                        <p className="mt-1 font-medium">
-                          {group.agentVersion || "未知版本"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-default-500">最近同步</p>
-                        <p className="mt-1 font-medium">
-                          {timeText(group.lastSyncedAt)}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      {group.routes.map((route) => (
-                        <div
-                          key={route.id || route.carrier}
-                          className={`border-l-2 px-3 py-2 ${route.carrier === "default" ? "border-primary bg-primary-50/40 dark:bg-primary-500/5" : "border-divider"}`}
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium">
-                                {route.ruleName ||
-                                  (route.ruleType === "carrier"
-                                    ? carrierText(route.carrier)
-                                    : ruleTypeText(route.ruleType))}
-                              </span>
-                              <Chip size="sm" variant="flat">
-                                {ruleTypeText(route.ruleType)}
-                              </Chip>
-                              <Chip size="sm" variant="flat">
-                                优先级 {route.priority || 100}
-                              </Chip>
-                            </div>
-                            <span className="text-xs text-default-500">
-                              {route.carrier === "default"
-                                ? "未命中时回退"
-                                : `${route.cidrCount || 0} 条 CIDR`}
-                            </span>
-                          </div>
-                          <p className="mt-1 truncate text-xs text-default-500">
-                            {backendText(
-                              backendMap.get(String(route.backendForwardId)),
-                            )}
-                          </p>
-                          <div className="mt-2 flex flex-wrap gap-1 text-xs text-default-500">
-                            <span>
-                              {qualityPolicyText(route.qualityPolicy)}
-                            </span>
-                            {route.region && <span>地区：{route.region}</span>}
-                            {route.asn && <span>ASN：{route.asn}</span>}
-                            {route.tags && <span>标签：{route.tags}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {group.lastError && (
-                      <p className="rounded-md bg-danger-50 px-3 py-2 text-xs leading-5 text-danger dark:bg-danger-500/10">
-                        {group.lastError}
-                      </p>
-                    )}
-                  </CardBody>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+          {(data?.asns || []).map((item: SourceIpAsnDatabase) => (
+            <ResourceCard
+              key={item.asn}
+              danger={item.state === "error"}
+              facts={[
+                { label: "前缀", value: item.prefixCount ?? "-" },
+                {
+                  label: "更新时间",
+                  value:
+                    item.state === "ready" ? timeText(item.updatedTime) : "-",
+                },
+                { label: "IPv4", value: item.ipv4Count ?? "-" },
+                { label: "IPv6", value: item.ipv6Count ?? "-" },
+              ]}
+              notice={
+                item.lastError
+                  ? {
+                      icon: <CircleAlert size={15} />,
+                      label: "同步错误",
+                      value: item.lastError,
+                      tone: "danger",
+                    }
+                  : undefined
+              }
+              status={{
+                text:
+                  item.state === "ready"
+                    ? "已同步"
+                    : item.state === "error"
+                      ? "同步失败"
+                      : "待同步",
+                color:
+                  item.state === "ready"
+                    ? "success"
+                    : item.state === "error"
+                      ? "danger"
+                      : "default",
+              }}
+              subtitles={["ASN 前缀库"]}
+              title={item.asn}
+            />
+          ))}
+        </ResourceCardGrid>
       </section>
 
       <Modal
@@ -1354,6 +1317,6 @@ export default function SourceIpEntryPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
