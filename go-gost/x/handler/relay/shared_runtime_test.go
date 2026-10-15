@@ -343,6 +343,21 @@ func TestCNIXSharedThreeTargetsLifecycle(t *testing.T) {
 		}
 	}
 	values := ingress.call(t, map[string]any{"Action": "stats"})["stats"].(map[string]any)
+	// A client can receive the last bytes before the service's Write wrapper has
+	// returned and added them to its counter. Wait for that observable state;
+	// keep the exact independent totals rather than weakening the assertion.
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		complete := true
+		for _, name := range []string{"businessA", "businessB", "businessC"} {
+			st := values[name].(map[string]any)
+			complete = complete && st["in"].(float64) == 65536 && st["out"].(float64) == 65537
+		}
+		if complete {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+		values = ingress.call(t, map[string]any{"Action": "stats"})["stats"].(map[string]any)
+	}
 	for _, name := range []string{"businessA", "businessB", "businessC"} {
 		st := values[name].(map[string]any)
 		if st["in"].(float64) != 65536 || st["out"].(float64) != 65537 {
