@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { User } from "@/types";
 
 import { Card, CardBody, CardHeader } from "@heroui/card";
@@ -15,6 +14,7 @@ import {
 } from "recharts";
 import { useNavigate } from "react-router-dom";
 import {
+  Activity,
   ArrowRight,
   Boxes,
   CircleCheck,
@@ -31,6 +31,7 @@ import {
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 import {
   getAllUsers,
   getForwardList,
@@ -881,271 +882,159 @@ export default function DashboardPage() {
     <PageShell width="wide" className="space-y-6 py-2 lg:py-4">
       {/* 响应式统计卡片 */}
       <SortableCardGrid
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6 lg:mb-8"
+        className="grid grid-cols-2 gap-4 lg:grid-cols-4"
         getId={(id) => id}
         items={orderedSummaryCards}
         renderItem={(cardId, dragHandle) => {
-          const cardClass =
-            "h-full border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow";
-          const header = (
-            label: string,
-            colorClass: string,
-            icon: ReactNode,
-          ) => (
-            <div className="flex items-center justify-between gap-1">
-              <p className="text-xs lg:text-sm text-default-600 truncate">
-                {label}
-              </p>
-              <div className="flex items-center gap-1">
-                {dragHandle}
-                <div
-                  className={`p-1.5 lg:p-2 rounded-lg flex-shrink-0 ${colorClass}`}
-                >
-                  {icon}
-                </div>
-              </div>
-            </div>
-          );
+          const iconClass = "h-5 w-5 md:h-6 md:w-6";
+          const flowUnlimited =
+            !!userInfo.flowUnlimited || userInfo.flow === 99999;
+          const forwardUnlimited =
+            !!userInfo.forwardUnlimited || userInfo.num === 99999;
 
           if (isAdmin) {
             if (cardId === "admin-flow")
               return (
-                <Card className={cardClass}>
-                  <CardBody className="p-3 lg:p-4">
-                    <div className="flex h-full flex-col justify-between gap-2">
-                      {header(
-                        "24 小时总流量",
-                        "bg-blue-100 dark:bg-blue-500/20",
-                        <Gauge className="h-4 w-4 text-blue-600 dark:text-blue-400 lg:h-5 lg:w-5" />,
-                      )}
-                      <div>
-                        <p className="text-base font-bold text-foreground lg:text-xl">
-                          {formatFlow(total24HourFlow)}
-                        </p>
-                        <p className="mt-1 text-xs text-default-500">
-                          全部用户计费流量
-                        </p>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
+                <StatsCard
+                  action={dragHandle}
+                  color="primary"
+                  hint="全部用户计费流量"
+                  icon={<Gauge className={iconClass} />}
+                  title="24 小时总流量"
+                  value={formatFlow(total24HourFlow)}
+                />
               );
             if (cardId === "admin-nodes")
               return (
-                <Card className={cardClass}>
-                  <CardBody className="p-3 lg:p-4">
-                    <div className="flex h-full flex-col justify-between gap-2">
-                      {header(
-                        "在线节点",
-                        "bg-emerald-100 dark:bg-emerald-500/20",
-                        <Server className="h-4 w-4 text-emerald-600 dark:text-emerald-400 lg:h-5 lg:w-5" />,
-                      )}
-                      <div>
-                        <p className="text-base font-bold text-foreground lg:text-xl">
-                          {nodeHealth.healthy} / {nodeHealth.total}
-                        </p>
-                        <p className="mt-1 text-xs text-default-500">
-                          {nodeHealth.offline + nodeHealth.degraded} 台需要关注
-                        </p>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
+                <StatsCard
+                  action={dragHandle}
+                  color={
+                    nodeHealth.offline + nodeHealth.degraded > 0
+                      ? "warning"
+                      : "success"
+                  }
+                  hint={`${nodeHealth.offline + nodeHealth.degraded} 台需要关注`}
+                  icon={<Server className={iconClass} />}
+                  title="在线节点"
+                  value={`${nodeHealth.healthy} / ${nodeHealth.total}`}
+                  onPress={() => navigate("/node")}
+                />
               );
             if (cardId === "admin-tunnels")
               return (
-                <Card className={cardClass}>
-                  <CardBody className="p-3 lg:p-4">
-                    <div className="flex h-full flex-col justify-between gap-2">
-                      {header(
-                        "健康隧道",
-                        "bg-cyan-100 dark:bg-cyan-500/20",
-                        <Route className="h-4 w-4 text-cyan-700 dark:text-cyan-300 lg:h-5 lg:w-5" />,
-                      )}
-                      <div>
-                        <p className="text-base font-bold text-foreground lg:text-xl">
-                          {tunnelHealth.healthy} / {tunnelHealth.total}
-                        </p>
-                        <p className="mt-1 text-xs text-default-500">
-                          {tunnelHealth.offline + tunnelHealth.degraded}{" "}
-                          条链路异常
-                        </p>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
+                <StatsCard
+                  action={dragHandle}
+                  color={
+                    tunnelHealth.offline + tunnelHealth.degraded > 0
+                      ? "danger"
+                      : "success"
+                  }
+                  hint={`${tunnelHealth.offline + tunnelHealth.degraded} 条链路异常`}
+                  icon={<Route className={iconClass} />}
+                  title="健康隧道"
+                  value={`${tunnelHealth.healthy} / ${tunnelHealth.total}`}
+                  onPress={() => navigate("/tunnel")}
+                />
               );
 
             return (
-              <Card className={cardClass}>
-                <CardBody className="p-3 lg:p-4">
-                  <div className="flex h-full flex-col justify-between gap-2">
-                    {header(
-                      "运行中转发",
-                      "bg-orange-100 dark:bg-orange-500/20",
-                      <Network className="h-4 w-4 text-orange-700 dark:text-orange-300 lg:h-5 lg:w-5" />,
-                    )}
-                    <div>
-                      <p className="text-base font-bold text-foreground lg:text-xl">
-                        {runningForwards} / {adminForwards.length}
-                      </p>
-                      <p className="mt-1 text-xs text-default-500">
-                        {Math.max(0, adminForwards.length - runningForwards)}{" "}
-                        条暂停或异常
-                      </p>
-                    </div>
-                  </div>
-                </CardBody>
-              </Card>
+              <StatsCard
+                action={dragHandle}
+                color="secondary"
+                hint={`${Math.max(0, adminForwards.length - runningForwards)} 条暂停或异常`}
+                icon={<Network className={iconClass} />}
+                title="运行中转发"
+                value={`${runningForwards} / ${adminForwards.length}`}
+                onPress={() => navigate("/forward")}
+              />
             );
           }
 
           if (cardId === "total-flow")
             return (
-              <Card className={cardClass}>
-                <CardBody className="p-3 lg:p-4">
-                  <div className="flex flex-col space-y-2">
-                    {header(
-                      "总流量",
-                      "bg-blue-100 dark:bg-blue-500/20",
-                      <svg
-                        className="w-4 h-4 lg:w-5 lg:h-5 text-blue-600 dark:text-blue-400"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-                      </svg>,
-                    )}
-                    <p className="text-base lg:text-xl font-bold text-foreground truncate">
-                      {userInfo.flowUnlimited
-                        ? "无限制"
-                        : formatFlow(userInfo.flow, "gb")}
-                    </p>
-                  </div>
-                </CardBody>
-              </Card>
+              <StatsCard
+                action={dragHandle}
+                color="primary"
+                icon={<Gauge className={iconClass} />}
+                title="总流量"
+                value={
+                  userInfo.flowUnlimited
+                    ? "无限制"
+                    : formatFlow(userInfo.flow, "gb")
+                }
+              />
             );
           if (cardId === "used-flow")
             return (
-              <Card className={cardClass}>
-                <CardBody className="p-3 lg:p-4">
-                  <div className="flex flex-col space-y-2">
-                    {header(
-                      "已用流量",
-                      "bg-green-100 dark:bg-green-500/20",
-                      <svg
-                        className="w-4 h-4 lg:w-5 lg:h-5 text-green-600 dark:text-green-400"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          clipRule="evenodd"
-                          d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z"
-                          fillRule="evenodd"
-                        />
-                      </svg>,
+              <StatsCard
+                action={dragHandle}
+                color="success"
+                icon={<Activity className={iconClass} />}
+                title="已用流量"
+                value={formatFlow(calculateUserTotalUsedFlow())}
+              >
+                {renderProgressBar(
+                  calculateUsagePercentage("flow"),
+                  "sm",
+                  flowUnlimited,
+                )}
+                <div className="mt-1 flex items-center justify-between">
+                  <p className="truncate text-xs text-default-500">
+                    {flowUnlimited
+                      ? "无限制"
+                      : `${calculateUsagePercentage("flow").toFixed(1)}%`}
+                  </p>
+                  {userInfo.flowResetTime !== undefined &&
+                    userInfo.flowResetTime !== null && (
+                      <span className="truncate text-xs text-default-500">
+                        {formatResetTime(userInfo.flowResetTime)}
+                      </span>
                     )}
-                    <p className="text-base lg:text-xl font-bold text-foreground truncate">
-                      {formatFlow(calculateUserTotalUsedFlow())}
-                    </p>
-                    <div className="mt-1">
-                      {renderProgressBar(
-                        calculateUsagePercentage("flow"),
-                        "sm",
-                        !!userInfo.flowUnlimited || userInfo.flow === 99999,
-                      )}
-                      <div className="flex items-center justify-between mt-1">
-                        <p className="text-xs text-default-500 truncate">
-                          {userInfo.flowUnlimited || userInfo.flow === 99999
-                            ? "无限制"
-                            : `${calculateUsagePercentage("flow").toFixed(1)}%`}
-                        </p>
-                        {userInfo.flowResetTime !== undefined &&
-                          userInfo.flowResetTime !== null && (
-                            <span className="text-xs text-default-500 truncate">
-                              {formatResetTime(userInfo.flowResetTime)}
-                            </span>
-                          )}
-                      </div>
-                    </div>
-                  </div>
-                </CardBody>
-              </Card>
+                </div>
+              </StatsCard>
             );
           if (cardId === "forward-quota")
             return (
-              <Card className={cardClass}>
-                <CardBody className="p-3 lg:p-4">
-                  <div className="flex flex-col space-y-2">
-                    {header(
-                      "转发配额",
-                      "bg-purple-100 dark:bg-purple-500/20",
-                      <svg
-                        className="w-4 h-4 lg:w-5 lg:h-5 text-purple-600 dark:text-purple-400"
-                        fill="currentColor"
-                        viewBox="0 0 20 20"
-                      >
-                        <path
-                          clipRule="evenodd"
-                          d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
-                          fillRule="evenodd"
-                        />
-                      </svg>,
-                    )}
-                    <p className="text-base lg:text-xl font-bold text-foreground truncate">
-                      {userInfo.forwardUnlimited
-                        ? "无限制"
-                        : formatNumber(userInfo.num || 0)}
-                    </p>
-                  </div>
-                </CardBody>
-              </Card>
+              <StatsCard
+                action={dragHandle}
+                color="secondary"
+                icon={<Network className={iconClass} />}
+                title="转发配额"
+                value={
+                  userInfo.forwardUnlimited
+                    ? "无限制"
+                    : formatNumber(userInfo.num || 0)
+                }
+              />
             );
 
           return (
-            <Card className={cardClass}>
-              <CardBody className="p-3 lg:p-4">
-                <div className="flex flex-col space-y-2">
-                  {header(
-                    "已用转发",
-                    "bg-orange-100 dark:bg-orange-500/20",
-                    <svg
-                      className="w-4 h-4 lg:w-5 lg:h-5 text-orange-600 dark:text-orange-400"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        clipRule="evenodd"
-                        d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z"
-                        fillRule="evenodd"
-                      />
-                    </svg>,
-                  )}
-                  <p className="text-base lg:text-xl font-bold text-foreground truncate">
-                    {forwardList.length}
-                  </p>
-                  <div className="mt-1">
-                    {renderProgressBar(
-                      calculateUsagePercentage("forwards"),
-                      "sm",
-                      !!userInfo.forwardUnlimited || userInfo.num === 99999,
-                    )}
-                    <p className="text-xs text-default-500 mt-1 truncate">
-                      {userInfo.forwardUnlimited || userInfo.num === 99999
-                        ? "无限制"
-                        : `${calculateUsagePercentage("forwards").toFixed(1)}%`}
-                    </p>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
+            <StatsCard
+              action={dragHandle}
+              color="warning"
+              icon={<Route className={iconClass} />}
+              title="已用转发"
+              value={forwardList.length}
+              onPress={() => navigate("/forward")}
+            >
+              {renderProgressBar(
+                calculateUsagePercentage("forwards"),
+                "sm",
+                forwardUnlimited,
+              )}
+              <p className="mt-1 truncate text-xs text-default-500">
+                {forwardUnlimited
+                  ? "无限制"
+                  : `${calculateUsagePercentage("forwards").toFixed(1)}%`}
+              </p>
+            </StatsCard>
           );
         }}
         onMove={summaryCardOrder.moveCard}
       />
 
       {/* 24小时流量统计图表 */}
-      <Card className="mb-6 lg:mb-8 border border-gray-200 dark:border-default-200 shadow-md">
+      <Card className="border border-transparent dark:border-default-100">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <svg
@@ -1591,7 +1480,7 @@ export default function DashboardPage() {
       )}
 
       {!isAdmin && (
-        <Card className="mb-6 border border-gray-200 shadow-md dark:border-default-200 lg:mb-8">
+        <Card className="border border-transparent dark:border-default-100">
           <CardHeader className="flex items-center justify-between gap-3 pb-3">
             <div className="flex min-w-0 items-center gap-2">
               <KeyRound className="h-5 w-5 shrink-0 text-secondary" />
@@ -1716,7 +1605,7 @@ export default function DashboardPage() {
       )}
 
       {!isAdmin && (
-        <Card className="mb-6 border border-gray-200 shadow-md dark:border-default-200 lg:mb-8">
+        <Card className="border border-transparent dark:border-default-100">
           <CardHeader className="flex items-center justify-between gap-3 pb-3">
             <div className="flex min-w-0 items-center gap-2">
               <Boxes className="h-5 w-5 shrink-0 text-warning" />
@@ -1806,7 +1695,7 @@ export default function DashboardPage() {
 
       {/* 节点权限 - 管理员不显示 */}
       {!isAdmin && (
-        <Card className="mb-6 lg:mb-8 border border-gray-200 dark:border-default-200 shadow-md">
+        <Card className="border border-transparent dark:border-default-100">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2 min-w-0">
               <svg
@@ -1978,7 +1867,7 @@ export default function DashboardPage() {
 
       {/* 隧道权限 - 管理员不显示 */}
       {!isAdmin && (
-        <Card className="mb-6 lg:mb-8 border border-gray-200 dark:border-default-200 shadow-md">
+        <Card className="border border-transparent dark:border-default-100">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <svg

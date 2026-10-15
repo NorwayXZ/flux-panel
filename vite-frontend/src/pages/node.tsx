@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { useState, useEffect, useRef } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
@@ -15,16 +17,29 @@ import { Switch } from "@heroui/switch";
 import { Spinner } from "@heroui/spinner";
 import { Alert } from "@heroui/alert";
 import { Progress } from "@heroui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableColumn,
+  TableHeader,
+  TableRow,
+} from "@heroui/table";
+import { Tooltip } from "@heroui/tooltip";
 import toast from "react-hot-toast";
 import axios from "axios";
 import {
   ClipboardCopy,
   Container,
   Globe2,
+  LayoutGrid,
+  List,
+  Pencil,
   Radar,
   RefreshCw,
   ServerCog,
   SquareTerminal,
+  Trash2,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -1014,6 +1029,24 @@ export default function NodePage() {
     return (b.id || 0) - (a.id || 0);
   };
 
+  const [layout, setLayout] = useState<"table" | "card">(() => {
+    try {
+      return localStorage.getItem("cloudnest.node.layout") === "card"
+        ? "card"
+        : "table";
+    } catch {
+      return "table";
+    }
+  });
+  const changeLayout = (next: "table" | "card") => {
+    setLayout(next);
+    try {
+      localStorage.setItem("cloudnest.node.layout", next);
+    } catch {
+      // Keep the choice for this page only.
+    }
+  };
+
   const nodeCardOrder = useCardOrder(
     "node-cards",
     nodeList.map((node) => node.id),
@@ -1039,6 +1072,241 @@ export default function NodePage() {
       item.mode !== "manual" &&
       !activeUpgradeStates.has(item.task?.state || ""),
   ).length;
+
+  // 表格视图，样式参考 NodePassDash 的主控列表
+  const renderNodeTable = (nodes: Node[]) => {
+    const iconButton = (
+      label: string,
+      icon: ReactNode,
+      onPress: () => void,
+      color:
+        | "default"
+        | "primary"
+        | "secondary"
+        | "success"
+        | "warning"
+        | "danger" = "default",
+      isDisabled = false,
+      isLoading = false,
+    ) => (
+      <Tooltip content={label}>
+        <Button
+          isIconOnly
+          aria-label={label}
+          className="h-8 w-8 min-w-8"
+          color={color}
+          isDisabled={isDisabled}
+          isLoading={isLoading}
+          size="sm"
+          variant="light"
+          onPress={onPress}
+        >
+          {icon}
+        </Button>
+      </Tooltip>
+    );
+
+    return (
+      <Table isHeaderSticky aria-label="节点列表">
+        <TableHeader>
+          <TableColumn className="w-[80px]">状态</TableColumn>
+          <TableColumn>名称</TableColumn>
+          <TableColumn>地址</TableColumn>
+          <TableColumn className="w-[110px]">端口</TableColumn>
+          <TableColumn className="w-[110px]">Agent</TableColumn>
+          <TableColumn className="w-[150px]">CPU / 内存</TableColumn>
+          <TableColumn className="w-[120px]">实时速度</TableColumn>
+          <TableColumn className="w-[120px]">累计流量</TableColumn>
+          <TableColumn className="w-[200px]">操作</TableColumn>
+        </TableHeader>
+        <TableBody>
+          {nodes.map((node) => {
+            const online = node.connectionStatus === "online";
+            const info = online ? node.systemInfo : undefined;
+            const ownerBadge = getNodeOwnerBadge(node);
+            const upgradeStatus = upgradeItems[node.id];
+            const upgradeActive = activeUpgradeStates.has(
+              upgradeStatus?.task?.state || "",
+            );
+            const manualUpgrade = upgradeStatus?.mode === "manual";
+            const firstIp = (node.ip || "").split(",")[0]?.trim();
+            const extraIps = (node.ip || "").split(",").length - 1;
+
+            return (
+              <TableRow key={node.id}>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`h-2 w-2 rounded-full ${online ? "bg-success" : "bg-danger"}`}
+                    />
+                    <span
+                      className={`text-xs ${online ? "text-success" : "text-danger"}`}
+                    >
+                      {online ? "在线" : "离线"}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {node.name}
+                    </span>
+                    <Chip
+                      className="h-5 max-w-[110px] text-[10px]"
+                      color={ownerBadge.color}
+                      size="sm"
+                      title={ownerBadge.title}
+                      variant="flat"
+                    >
+                      <span className="truncate">{ownerBadge.label}</span>
+                    </Chip>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="font-mono text-xs text-foreground">
+                    {node.serverIp}
+                  </div>
+                  {firstIp && firstIp !== node.serverIp && (
+                    <div className="font-mono text-xs text-default-400">
+                      入口 {firstIp}
+                      {extraIps > 0 ? ` +${extraIps}` : ""}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span className="font-mono text-xs">
+                    {node.portSta}-{node.portEnd}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    <Chip size="sm" variant="flat">
+                      {node.version || "未知"}
+                    </Chip>
+                    {adminMode && upgradeStatus?.upToDate && (
+                      <span className="text-[10px] text-success">最新</span>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {info ? (
+                    <div className="space-y-1">
+                      {(
+                        [
+                          ["CPU", info.cpuUsage],
+                          ["内存", info.memoryUsage],
+                        ] as const
+                      ).map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="flex items-center gap-2 text-[11px]"
+                        >
+                          <span className="w-7 text-default-500">{label}</span>
+                          <Progress
+                            aria-label={`${label}使用率`}
+                            className="max-w-[70px]"
+                            color={getProgressColor(value, false)}
+                            size="sm"
+                            value={value}
+                          />
+                          <span className="font-mono">{value.toFixed(0)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-default-400">-</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="font-mono text-xs text-primary">
+                    ↑ {info ? formatSpeed(info.uploadSpeed) : "-"}
+                  </div>
+                  <div className="font-mono text-xs text-success">
+                    ↓ {info ? formatSpeed(info.downloadSpeed) : "-"}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="font-mono text-xs text-primary">
+                    ↑ {info ? formatTraffic(info.uploadTraffic) : "-"}
+                  </div>
+                  <div className="font-mono text-xs text-success">
+                    ↓ {info ? formatTraffic(info.downloadTraffic) : "-"}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-0.5">
+                    {adminMode &&
+                      iconButton(
+                        "终端",
+                        <SquareTerminal size={16} />,
+                        () => navigate(`/node/${node.id}/terminal`),
+                        "secondary",
+                        !online,
+                      )}
+                    {adminMode &&
+                      iconButton(
+                        "发现服务",
+                        <Radar size={16} />,
+                        () => openServiceDiscovery(node),
+                        "default",
+                        !online,
+                      )}
+                    {adminMode &&
+                      node.editable !== false &&
+                      online &&
+                      !upgradeStatus?.upToDate &&
+                      !manualUpgrade &&
+                      iconButton(
+                        `升级到 Agent ${upgradeTargetVersion}`,
+                        <RefreshCw size={16} />,
+                        () => openNodeUpgrade(node),
+                        "warning",
+                        upgradeActive,
+                        upgradeActive,
+                      )}
+                    {node.editable !== false &&
+                      (!online || manualUpgrade) &&
+                      iconButton(
+                        online
+                          ? `升级到 Agent ${upgradeTargetVersion}`
+                          : "获取安装命令",
+                        online ? (
+                          <RefreshCw size={16} />
+                        ) : (
+                          <ServerCog size={16} />
+                        ),
+                        () =>
+                          handleCopyInstallCommand(
+                            node,
+                            online ? "upgrade" : "install",
+                          ),
+                        online ? "warning" : "success",
+                        false,
+                        Boolean(node.copyLoading),
+                      )}
+                    {node.editable !== false &&
+                      iconButton(
+                        "编辑",
+                        <Pencil size={16} />,
+                        () => handleEdit(node),
+                        "primary",
+                      )}
+                    {node.deletable !== false &&
+                      iconButton(
+                        "删除",
+                        <Trash2 size={16} />,
+                        () => handleDelete(node),
+                        "danger",
+                      )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    );
+  };
 
   const renderNodeGrid = (nodes: Node[]) => (
     <SortableCardGrid
@@ -1617,6 +1885,31 @@ export default function NodePage() {
         <div className="flex-1" />
 
         <div className="flex gap-2">
+          <div className="flex rounded-medium bg-default-100 p-0.5">
+            {(
+              [
+                ["table", "表格", <List key="table" className="h-4 w-4" />],
+                ["card", "卡片", <LayoutGrid key="card" className="h-4 w-4" />],
+              ] as const
+            ).map(([key, label, icon]) => (
+              <Tooltip key={key} content={`${label}视图`}>
+                <Button
+                  isIconOnly
+                  aria-label={`${label}视图`}
+                  className={
+                    layout === key
+                      ? "h-7 w-7 min-w-7 bg-background shadow-small"
+                      : "h-7 w-7 min-w-7 text-default-500"
+                  }
+                  size="sm"
+                  variant="light"
+                  onPress={() => changeLayout(key)}
+                >
+                  {icon}
+                </Button>
+              </Tooltip>
+            ))}
+          </div>
           {adminMode && (
             <Button
               color="warning"
@@ -1733,6 +2026,8 @@ export default function NodePage() {
             </div>
           </CardBody>
         </Card>
+      ) : layout === "table" ? (
+        renderNodeTable([...onlineNodes, ...offlineNodes])
       ) : (
         <div className="space-y-8">
           {onlineNodes.length > 0 && (

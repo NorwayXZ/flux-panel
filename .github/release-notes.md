@@ -1,3 +1,11 @@
+## 2.68.0 New look, part 2: dashboard stat cards and list tables
+
+- Dashboard stat cards follow NodePassDash: a soft gradient in the card's colour, the value in that colour, a rounded icon tile and a slight lift on hover. Node, tunnel and forward cards open their pages when clicked, and their colour turns to warning or danger when something needs attention. Cards can still be reordered by their handle.
+- Forwards and nodes get a table view in NodePassDash's style, now the default; a table/card switch in the page header brings back the cards, remembered per browser.
+  - Forward table: status, name with tunnel and owner, entry and landing addresses, protocol and target strategy, upload and download, and icon actions (start/stop, edit, diagnose, failover history, delete). A search box and status filters (all, running, stopped, abnormal) sit above it, with paging of 10 to 100 rows.
+  - Node table: online state, name with owner badge, server and entry address, port range, Agent version, CPU and memory bars, live speed, total traffic, and icon actions (terminal, service discovery, upgrade or install command, edit, delete).
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.67.0 remains available for rollback.
+
 ## 2.67.0 New look, part 1: NodePass-style theme, sidebar and login
 
 - The panel adopts the visual system of NodePassDash: a blue primary colour, the Inter typeface (bundled with the panel, no external font requests), plain light and dark backgrounds and thin scrollbars.

@@ -20,7 +20,30 @@ import { Checkbox, CheckboxGroup } from "@heroui/checkbox";
 import { Alert } from "@heroui/alert";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from "react-hot-toast";
-import { History, Route, ShieldCheck, ShieldAlert } from "lucide-react";
+import {
+  History,
+  LayoutGrid,
+  List,
+  Pause,
+  Pencil,
+  Play,
+  Route,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Stethoscope,
+  Trash2,
+} from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableColumn,
+  TableHeader,
+  TableRow,
+} from "@heroui/table";
+import { Pagination } from "@heroui/pagination";
+import { Tooltip } from "@heroui/tooltip";
 
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
@@ -225,6 +248,32 @@ export default function ForwardPage() {
       return "grouped";
     }
   });
+
+  // 列表样式：表格（NodePass 风格，默认）或卡片
+  const [layout, setLayout] = useState<"table" | "card">(() => {
+    try {
+      return localStorage.getItem("cloudnest.forward.layout") === "card"
+        ? "card"
+        : "table";
+    } catch {
+      return "table";
+    }
+  });
+  const [tableSearch, setTableSearch] = useState("");
+  const [tableStatus, setTableStatus] = useState<
+    "all" | "running" | "stopped" | "error"
+  >("all");
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(20);
+
+  const changeLayout = (next: "table" | "card") => {
+    setLayout(next);
+    try {
+      localStorage.setItem("cloudnest.forward.layout", next);
+    } catch {
+      // Keep the choice for this page only.
+    }
+  };
 
   // 模态框状态
   const [modalOpen, setModalOpen] = useState(false);
@@ -2046,6 +2095,275 @@ export default function ForwardPage() {
     );
   };
 
+  // 表格视图，样式参考 NodePassDash 的实例列表
+  const renderForwardTable = () => {
+    const keyword = tableSearch.trim().toLowerCase();
+    const rows = [...forwards]
+      .filter((forward) => {
+        const offline = isForwardLinkOffline(forward);
+
+        if (tableStatus === "running" && !(forward.serviceRunning && !offline))
+          return false;
+        if (tableStatus === "stopped" && forward.serviceRunning) return false;
+        if (tableStatus === "error" && !offline && forward.status !== -1)
+          return false;
+        if (!keyword) return true;
+
+        return [
+          forward.name,
+          forward.tunnelName,
+          forward.remoteAddr,
+          forward.inIp,
+          String(forward.inPort),
+          forward.userName,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(keyword));
+      })
+      .sort(
+        (a, b) =>
+          (a.tunnelName || "").localeCompare(b.tunnelName || "") ||
+          (a.inx ?? 0) - (b.inx ?? 0) ||
+          compareForwardCreatedTime(a, b),
+      );
+    const pages = Math.max(1, Math.ceil(rows.length / tablePageSize));
+    const page = Math.min(tablePage, pages);
+    const pageRows = rows.slice(
+      (page - 1) * tablePageSize,
+      page * tablePageSize,
+    );
+    const actionButton = (
+      label: string,
+      icon: ReactNode,
+      onPress: () => void,
+      color:
+        "default" | "primary" | "warning" | "danger" | "success" = "default",
+      isDisabled = false,
+    ) => (
+      <Tooltip content={label}>
+        <Button
+          isIconOnly
+          aria-label={label}
+          className="h-8 w-8 min-w-8"
+          color={color}
+          isDisabled={isDisabled}
+          size="sm"
+          variant="light"
+          onPress={onPress}
+        >
+          {icon}
+        </Button>
+      </Tooltip>
+    );
+
+    return (
+      <Table
+        isHeaderSticky
+        aria-label="转发列表"
+        bottomContent={
+          rows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-1">
+              <span className="text-xs text-default-500">
+                共 {rows.length} 条
+              </span>
+              <Pagination
+                showControls
+                isCompact
+                page={page}
+                size="sm"
+                total={pages}
+                onChange={setTablePage}
+              />
+              <select
+                aria-label="每页条数"
+                className="rounded-medium border border-default-200 bg-transparent px-2 py-1 text-xs text-default-600"
+                value={tablePageSize}
+                onChange={(event) => {
+                  setTablePageSize(Number(event.target.value));
+                  setTablePage(1);
+                }}
+              >
+                {[10, 20, 50, 100].map((size) => (
+                  <option key={size} value={size}>
+                    {size} 条/页
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        }
+        topContent={
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Input
+              isClearable
+              className="sm:max-w-xs"
+              placeholder="搜索名称、隧道、地址或用户"
+              size="sm"
+              startContent={<Search className="h-4 w-4 text-default-400" />}
+              value={tableSearch}
+              onClear={() => setTableSearch("")}
+              onValueChange={(value) => {
+                setTableSearch(value);
+                setTablePage(1);
+              }}
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {(
+                [
+                  ["all", "全部"],
+                  ["running", "运行中"],
+                  ["stopped", "已停止"],
+                  ["error", "异常"],
+                ] as const
+              ).map(([key, label]) => (
+                <Chip
+                  key={key}
+                  className="cursor-pointer"
+                  color={tableStatus === key ? "primary" : "default"}
+                  size="sm"
+                  variant={tableStatus === key ? "solid" : "flat"}
+                  onClick={() => {
+                    setTableStatus(key);
+                    setTablePage(1);
+                  }}
+                >
+                  {label}
+                </Chip>
+              ))}
+            </div>
+          </div>
+        }
+      >
+        <TableHeader>
+          <TableColumn className="w-[90px]">状态</TableColumn>
+          <TableColumn>名称</TableColumn>
+          <TableColumn>入口</TableColumn>
+          <TableColumn>落地</TableColumn>
+          <TableColumn className="w-[120px]">协议 / 策略</TableColumn>
+          <TableColumn className="w-[120px]">流量</TableColumn>
+          <TableColumn className="w-[200px]">操作</TableColumn>
+        </TableHeader>
+        <TableBody
+          emptyContent={
+            <div className="py-6 text-center text-sm text-default-500">
+              {forwards.length === 0
+                ? "还没有创建任何转发，点击右上角「新增」开始创建"
+                : "没有符合条件的转发"}
+            </div>
+          }
+        >
+          {pageRows.map((forward) => {
+            const offline = isForwardLinkOffline(forward);
+            const status = offline
+              ? { color: "danger", text: "链路异常" }
+              : forward.serviceRunning
+                ? { color: "success", text: "运行中" }
+                : getStatusDisplay(forward.status);
+            const strategy = getStrategyDisplay(forward.strategy);
+
+            return (
+              <TableRow key={forward.id}>
+                <TableCell>
+                  <Chip color={status.color as any} size="sm" variant="flat">
+                    {status.text}
+                  </Chip>
+                </TableCell>
+                <TableCell>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {forward.name}
+                    </div>
+                    <div className="truncate text-xs text-default-500">
+                      {forward.tunnelName}
+                      {forward.userName ? ` · ${forward.userName}` : ""}
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <button
+                    className="max-w-[220px] truncate text-left font-mono text-xs text-foreground hover:text-primary"
+                    title={formatInAddress(forward.inIp, forward.inPort)}
+                    type="button"
+                    onClick={() =>
+                      showAddressModal(forward.inIp, forward.inPort, "入口端口")
+                    }
+                  >
+                    {formatInAddress(forward.inIp, forward.inPort)}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  <button
+                    className="max-w-[240px] truncate text-left font-mono text-xs text-foreground hover:text-primary"
+                    title={formatRemoteAddress(forward.remoteAddr)}
+                    type="button"
+                    onClick={() =>
+                      showAddressModal(forward.remoteAddr, null, "目标地址")
+                    }
+                  >
+                    {formatRemoteAddress(forward.remoteAddr)}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  <div className="text-xs text-default-600">
+                    {getProtocolDisplay(forward.protocolMode)}
+                  </div>
+                  <div className="text-xs text-default-400">
+                    {strategy.text}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="text-xs text-primary">
+                    ↑ {formatFlow(forward.inFlow || 0)}
+                  </div>
+                  <div className="text-xs text-success">
+                    ↓ {formatFlow(forward.outFlow || 0)}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-0.5">
+                    {actionButton(
+                      forward.serviceRunning ? "停止" : "启动",
+                      forward.serviceRunning ? (
+                        <Pause className="h-4 w-4" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      ),
+                      () => handleServiceToggle(forward),
+                      forward.serviceRunning ? "warning" : "success",
+                      forward.status !== 1 && forward.status !== 0,
+                    )}
+                    {actionButton(
+                      "编辑",
+                      <Pencil className="h-4 w-4" />,
+                      () => handleEdit(forward),
+                      "primary",
+                    )}
+                    {actionButton(
+                      "诊断",
+                      <Stethoscope className="h-4 w-4" />,
+                      () => handleDiagnose(forward),
+                    )}
+                    {actionButton(
+                      "容灾详情",
+                      <History className="h-4 w-4" />,
+                      () => handleFailoverDetails(forward),
+                    )}
+                    {actionButton(
+                      "删除",
+                      <Trash2 className="h-4 w-4" />,
+                      () => handleDelete(forward),
+                      "danger",
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -2093,32 +2411,69 @@ export default function ForwardPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          {/* 表格 / 卡片切换 */}
+          <div className="flex rounded-medium bg-default-100 p-0.5">
+            {(
+              [
+                ["table", "表格", <List key="table" className="h-4 w-4" />],
+                ["card", "卡片", <LayoutGrid key="card" className="h-4 w-4" />],
+              ] as const
+            ).map(([key, label, icon]) => (
+              <Tooltip key={key} content={`${label}视图`}>
+                <Button
+                  isIconOnly
+                  aria-label={`${label}视图`}
+                  className={
+                    layout === key
+                      ? "h-7 w-7 min-w-7 bg-background shadow-small"
+                      : "h-7 w-7 min-w-7 text-default-500"
+                  }
+                  size="sm"
+                  variant="light"
+                  onPress={() => changeLayout(key)}
+                >
+                  {icon}
+                </Button>
+              </Tooltip>
+            ))}
+          </div>
+
           {/* 显示模式切换按钮 */}
-          <Button
-            isIconOnly
-            className="text-sm"
-            color="default"
-            size="sm"
-            title={
-              viewMode === "grouped" ? "切换到平铺排序" : "切换到按隧道归纳"
-            }
-            variant="flat"
-            onPress={handleViewModeChange}
-          >
-            {viewMode === "grouped" ? (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2zM3 16a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
-              </svg>
-            )}
-          </Button>
+          {layout === "card" && (
+            <Button
+              isIconOnly
+              className="text-sm"
+              color="default"
+              size="sm"
+              title={
+                viewMode === "grouped" ? "切换到平铺排序" : "切换到按隧道归纳"
+              }
+              variant="flat"
+              onPress={handleViewModeChange}
+            >
+              {viewMode === "grouped" ? (
+                <svg
+                  className="w-4 h-4"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2zM3 16a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  className="w-4 h-4"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
+                </svg>
+              )}
+            </Button>
+          )}
 
           {/* 导入按钮 */}
           <Button
@@ -2148,7 +2503,9 @@ export default function ForwardPage() {
       </div>
 
       {/* 根据显示模式渲染不同内容 */}
-      {viewMode === "grouped" ? (
+      {layout === "table" ? (
+        renderForwardTable()
+      ) : viewMode === "grouped" ? (
         /* 按隧道归纳的转发列表 */
         tunnelGroups.length > 0 ? (
           <div className="space-y-4">
