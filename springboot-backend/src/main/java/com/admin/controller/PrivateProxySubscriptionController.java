@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * 私人代理订阅：客户端定时拉取，得到该用户全部运行中的代理。
  * 令牌只能读取这一份订阅，用户可以随时在面板里换一个令牌让旧链接失效。
+ * 带 id 时只返回这一个代理，供单个代理“一键导入”使用。
  */
 @RestController
 @RequestMapping("/api/v1/open_api")
@@ -29,8 +30,9 @@ public class PrivateProxySubscriptionController {
     @GetMapping("/proxy-sub")
     public ResponseEntity<String> subscription(@RequestParam(value = "token", required = false) String token,
                                                @RequestParam(value = "format", required = false) String format,
+                                               @RequestParam(value = "id", required = false) Long id,
                                                @RequestHeader(value = HttpHeaders.USER_AGENT, required = false) String userAgent) {
-        PrivateProxyService.SubscriptionContent content = service.subscriptionContent(token, format, userAgent);
+        PrivateProxyService.SubscriptionContent content = service.subscriptionContent(token, format, userAgent, id);
         if (content == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .contentType(new MediaType("text", "plain", StandardCharsets.UTF_8)).body("订阅链接无效或已重置");
@@ -40,7 +42,7 @@ public class PrivateProxySubscriptionController {
                 .contentType(new MediaType(type[0], type[1], StandardCharsets.UTF_8))
                 .header("subscription-userinfo", content.userInfo)
                 .header("profile-update-interval", "12")
-                .header("profile-title", "base64:" + java.util.Base64.getEncoder().encodeToString("云巢".getBytes(StandardCharsets.UTF_8)))
+                .header("profile-title", "base64:" + java.util.Base64.getEncoder().encodeToString(content.title.getBytes(StandardCharsets.UTF_8)))
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + content.filename)
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(content.body);

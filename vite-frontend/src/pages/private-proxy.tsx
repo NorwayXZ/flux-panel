@@ -64,6 +64,7 @@ import CamouflagePicker, {
 } from "@/components/camouflage-picker";
 import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
 import ProxyEditModal from "@/components/proxy-edit-modal";
+import ProxyImport from "@/components/proxy-import";
 import ProxyQr from "@/components/proxy-qr";
 import ProxySubscriptionModal from "@/components/proxy-subscription-modal";
 import ProxyTrafficModal from "@/components/proxy-traffic-modal";
@@ -349,6 +350,7 @@ export default function PrivateProxyPage() {
   const [subscriptionOpen, setSubscriptionOpen] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [configProxyId, setConfigProxyId] = useState<number | null>(null);
 
   const minExitAgentVersion =
     exitInfo?.minAgentVersion || DEFAULT_EXIT_AGENT_VERSION;
@@ -596,6 +598,7 @@ export default function PrivateProxyPage() {
     if (response.code !== 0 || !response.data)
       return toast.error(response.msg || "读取连接信息失败");
     setShowQr(false);
+    setConfigProxyId(item.id);
     setClientConfig(response.data);
   };
 
@@ -1784,42 +1787,18 @@ export default function PrivateProxyPage() {
             {clientConfig && !clientConfig.uri && (
               <p className="rounded-md bg-default-50 px-3 py-2 text-xs leading-5 text-default-600">
                 {protocolMeta[clientConfig.proxyType].label}
-                没有通用的导入链接。请复制下面的 Clash 配置，或在“订阅链接”里用
-                Clash / sing-box 订阅导入。
+                没有通用的导入链接，请用下面的 Clash 或 sing-box 一键导入。
               </p>
             )}
             {clientConfig?.linkSkipsCertCheck && (
               <p className="rounded-md bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700 dark:bg-warning-500/10 dark:text-warning-400">
                 节点使用自签证书，这种导入链接无法固定证书，客户端会跳过证书校验。
-                更安全的做法是用 Clash 或 sing-box
-                订阅导入，订阅里写入了证书指纹，只认这一张证书。
+                更安全的做法是用下面的 Clash 或 sing-box
+                一键导入，它们写入了证书指纹，只认这一张证书。
               </p>
             )}
-            {clientConfig?.clash && (
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">
-                    Clash / mihomo 配置
-                  </span>
-                  <Button
-                    size="sm"
-                    startContent={<Copy size={15} />}
-                    variant="flat"
-                    onPress={() =>
-                      copyText(clientConfig.clash || "", "Clash 配置")
-                    }
-                  >
-                    复制
-                  </Button>
-                </div>
-                <Textarea
-                  isReadOnly
-                  classNames={{ input: "font-mono text-xs" }}
-                  maxRows={12}
-                  minRows={4}
-                  value={clientConfig.clash}
-                />
-              </div>
+            {clientConfig && configProxyId && (
+              <ProxyImport config={clientConfig} proxyId={configProxyId} />
             )}
           </ModalBody>
           <ModalFooter>

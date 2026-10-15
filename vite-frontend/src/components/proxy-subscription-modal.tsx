@@ -8,7 +8,7 @@ import {
   ModalHeader,
 } from "@heroui/modal";
 import { Spinner } from "@heroui/spinner";
-import { Copy, QrCode, RefreshCw } from "lucide-react";
+import { Copy, Download, QrCode, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
 
 import ProxyQr from "@/components/proxy-qr";
@@ -90,6 +90,12 @@ export default function ProxySubscriptionModal({
             <div className="divide-y divide-divider border-y border-divider">
               {FORMATS.map((format) => {
                 const url = base + format.suffix;
+                const open =
+                  format.key === "clash"
+                    ? `clash://install-config?url=${encodeURIComponent(url)}&name=${encodeURIComponent("云巢")}`
+                    : format.key === "singbox"
+                      ? `sing-box://import-remote-profile?url=${encodeURIComponent(url)}#${encodeURIComponent("云巢")}`
+                      : "";
 
                 return (
                   <div key={format.key} className="space-y-2 py-3">
@@ -105,6 +111,17 @@ export default function ProxySubscriptionModal({
                       <code className="min-w-0 flex-1 break-all rounded-md bg-default-100 px-3 py-2 text-xs">
                         {url}
                       </code>
+                      {open && (
+                        <Button
+                          as="a"
+                          color="primary"
+                          href={open}
+                          size="sm"
+                          startContent={<Download size={15} />}
+                        >
+                          一键导入
+                        </Button>
+                      )}
                       <Button
                         isIconOnly
                         aria-label={`复制${format.label}`}

@@ -1680,15 +1680,31 @@ public class PrivateProxyService {
 
     /** 订阅内容。令牌无效时返回 null。 */
     public SubscriptionContent subscriptionContent(String token, String format, String userAgent) {
+        return subscriptionContent(token, format, userAgent, null);
+    }
+
+    /**
+     * 订阅内容。proxyId 不为空时只包含这一个代理，用于单个代理的“一键导入”；
+     * 代理必须属于令牌的主人（管理员可以导入任何代理）。令牌无效时返回 null。
+     */
+    public SubscriptionContent subscriptionContent(String token, String format, String userAgent, Long proxyId) {
         if (StringUtils.isBlank(token) || !token.matches("[0-9a-f]{48}")) return null;
         List<Integer> users = jdbcTemplate.queryForList("SELECT user_id FROM private_proxy_subscription WHERE token=?", Integer.class, token);
         if (users.isEmpty()) return null;
         Integer userId = users.get(0);
         User user = userMapper.selectById(userId);
         if (user == null || !Objects.equals(user.getStatus(), 1)) return null;
-        QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>().eq("user_id", userId).eq("state", "active").orderByAsc("id");
+        QueryWrapper<PrivateProxy> query = new QueryWrapper<PrivateProxy>().eq("state", "active").orderByAsc("id");
+        if (proxyId != null) {
+            query.eq("id", proxyId);
+            if (!Objects.equals(user.getRoleId(), 0)) query.eq("user_id", userId);
+        } else {
+            query.eq("user_id", userId);
+        }
         excludeMissingNodes(query);
         List<PrivateProxy> proxies = proxyMapper.selectList(query);
+        if (proxyId != null && proxies.isEmpty()) return null;
+        String title = proxyId != null ? proxies.get(0).getName() : PrivateProxySubscriptions.GROUP;
 
         String kind = PrivateProxySubscriptions.detectFormat(format, userAgent);
         java.util.Set<String> names = new java.util.HashSet<>();
@@ -1736,11 +1752,11 @@ public class PrivateProxyService {
         if (expire != null) info.append("; expire=").append(expire / 1000L);
         switch (kind) {
             case "clash":
-                return new SubscriptionContent(PrivateProxySubscriptions.clashProfile(clash), "text/yaml", "CloudNest.yaml", info.toString());
+                return new SubscriptionContent(PrivateProxySubscriptions.clashProfile(clash), "text/yaml", "CloudNest.yaml", info.toString(), title);
             case "singbox":
-                return new SubscriptionContent(PrivateProxySubscriptions.singBoxProfile(singBox, tags), "application/json", "CloudNest.json", info.toString());
+                return new SubscriptionContent(PrivateProxySubscriptions.singBoxProfile(singBox, tags), "application/json", "CloudNest.json", info.toString(), title);
             default:
-                return new SubscriptionContent(PrivateProxySubscriptions.base64(uris), "text/plain", "CloudNest.txt", info.toString());
+                return new SubscriptionContent(PrivateProxySubscriptions.base64(uris), "text/plain", "CloudNest.txt", info.toString(), title);
         }
     }
 
@@ -1749,12 +1765,15 @@ public class PrivateProxyService {
         public final String contentType;
         public final String filename;
         public final String userInfo;
+        /** 客户端里显示的配置名 */
+        public final String title;
 
-        SubscriptionContent(String body, String contentType, String filename, String userInfo) {
+        SubscriptionContent(String body, String contentType, String filename, String userInfo, String title) {
             this.body = body;
             this.contentType = contentType;
             this.filename = filename;
             this.userInfo = userInfo;
+            this.title = title;
         }
     }
 

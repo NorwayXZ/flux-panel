@@ -1,3 +1,12 @@
+## 2.64.2 One-click Clash and sing-box import for private proxies
+
+- The connection dialog of each private proxy now offers 一键导入 for Clash / mihomo and sing-box. Clicking it opens the installed client (Clash Verge, FlClash, Clash Meta for Android, Stash, SFA/SFI/SFM) and adds a subscription that contains only this proxy. Copy-link and QR code are offered for clients that do not react to the button.
+- The raw Clash configuration text is folded away and shown only on request, for people editing a config file by hand.
+- The 订阅链接 dialog for all proxies also gets 一键导入 buttons for Clash and sing-box.
+- The subscription link accepts an optional id to return a single proxy. It uses the owner's existing subscription token, so resetting the token also invalidates these links; an ordinary user can only import their own proxies, an administrator any proxy. The profile name in the client is the proxy name.
+- Panel-only update: Agents stay at 2.64.1 and do not need upgrading. No database change. 2.64.1 remains available for rollback.
+- Verified by type check, frontend tests and backend private-proxy tests. Not yet tried against a live Clash or sing-box client.
+
 ## 2.64.1 Diagnose the actual CNIX shared path
 
 - Fixes the tunnel-card diagnostic for CNIX shared mode. It no longer tests the exit server's SSH port 22 or Google 443 and presents those results as CNIX performance. The dialog and path card display the configured CNIX external address and actual shared exit service port.
