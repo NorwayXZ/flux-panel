@@ -21,6 +21,24 @@ class GostUtilTests {
         }
     }
 
+    @Test void forwardOptionsGoOnTheTcpEntryOnlyAndKeepSharedRelayMetadata() {
+        var tunnel=new com.admin.entity.Tunnel();tunnel.setType(2);tunnel.setTcpListenAddr("0.0.0.0");tunnel.setUdpListenAddr("0.0.0.0");tunnel.setSharedRelay(new com.admin.common.dto.CnixSharedRelayDto());
+        GostUtil.setForwardOptionsResolver(name -> name.equals("5_7_9") ? java.util.Map.of("forward.block","socks,http","forward.maxConns",100) : java.util.Map.of());
+        try {
+            var tcp=GostUtil.createServiceConfig("5_7_9",12005,null,"landing.example:443","tcp",2,tunnel,"fifo",null,"5_7_9").getJSONObject("handler").getJSONObject("metadata");
+            assertEquals("socks,http",tcp.getString("forward.block"));
+            assertEquals(100,tcp.getIntValue("forward.maxConns"));
+            org.junit.jupiter.api.Assertions.assertTrue(tcp.getBooleanValue("cnix.remoteResolution"));
+            var udp=GostUtil.createServiceConfig("5_7_9",12005,null,"landing.example:443","udp",2,tunnel,"fifo",null,"5_7_9").getJSONObject("handler").getJSONObject("metadata");
+            assertFalse(udp.containsKey("forward.block"));
+            tunnel.setSharedRelay(null);
+            var plain=GostUtil.createServiceConfig("6_7_9",12006,null,"landing.example:443","tcp",1,tunnel,"fifo",null,"6_7_9").getJSONObject("handler");
+            assertFalse(plain.containsKey("metadata"));
+        } finally {
+            GostUtil.setForwardOptionsResolver(null);
+        }
+    }
+
     @Test
     void buildsOrderedSocks5HopsForHomeTunnelEgress() {
         JSONObject chain = GostUtil.createPublishingChainData("home_proxy_9_egress", List.of(

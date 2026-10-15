@@ -25,6 +25,9 @@ public class ForwardRoutingSchemaInitializer implements ApplicationRunner {
             ensureColumn("route_switch_reason", "varchar(255) DEFAULT NULL AFTER last_route_switch");
             ensureColumn("route_switch_count", "int NOT NULL DEFAULT 0 AFTER route_switch_reason");
             ensureColumn("route_balance_strategy", "varchar(24) NOT NULL DEFAULT 'round' AFTER route_mode");
+            ensureColumn("proxy_protocol", "tinyint NOT NULL DEFAULT 0 AFTER interface_name");
+            ensureColumn("block_protocols", "varchar(32) DEFAULT NULL AFTER proxy_protocol");
+            ensureColumn("max_connections", "int NOT NULL DEFAULT 0 AFTER block_protocols");
 
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS forward_route_switch ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT, "

@@ -25,6 +25,10 @@ type metadata struct {
 	privateKey  crypto.PrivateKey
 	alpn        string
 	mitmBypass  bypass.Bypass
+
+	block         blockSet
+	maxConns      int64
+	proxyProtocol int
 }
 
 func (h *forwardHandler) parseMetadata(md mdata.Metadata) (err error) {
@@ -55,6 +59,12 @@ func (h *forwardHandler) parseMetadata(md mdata.Metadata) (err error) {
 	}
 	h.md.alpn = mdutil.GetString(md, "mitm.alpn")
 	h.md.mitmBypass = registry.BypassRegistry().Get(mdutil.GetString(md, "mitm.bypass"))
+
+	h.md.block = parseBlockSet(mdutil.GetString(md, "forward.block"))
+	h.md.maxConns = int64(mdutil.GetInt(md, "forward.maxConns"))
+	if pp := mdutil.GetInt(md, "forward.proxyProtocol"); pp == 1 || pp == 2 {
+		h.md.proxyProtocol = pp
+	}
 
 	return
 }

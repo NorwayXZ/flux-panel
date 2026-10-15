@@ -1697,6 +1697,11 @@ export default function TunnelPage() {
                       <Select
                         errorMessage={errors.protocol}
                         isInvalid={!!errors.protocol}
+                        description={
+                          form.protocol === "quic"
+                            ? "QUIC 基于 UDP，丢包较多的线路更稳；出口节点需要放行对应的 UDP 端口"
+                            : undefined
+                        }
                         label="协议类型"
                         isDisabled={Boolean(form.sharedRelay)}
                         placeholder="请选择协议类型"
@@ -1719,6 +1724,7 @@ export default function TunnelPage() {
                         <SelectItem key="mtls">MTLS</SelectItem>
                         <SelectItem key="mwss">MWSS</SelectItem>
                         <SelectItem key="mtcp">MTCP</SelectItem>
+                        <SelectItem key="quic">QUIC</SelectItem>
                       </Select>
 
                       <div className="space-y-3">

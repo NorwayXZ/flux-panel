@@ -16,6 +16,7 @@ import {
 import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
+import { Checkbox, CheckboxGroup } from "@heroui/checkbox";
 import { Alert } from "@heroui/alert";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from "react-hot-toast";
@@ -57,6 +58,9 @@ interface Forward {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
+  proxyProtocol?: number;
+  blockProtocols?: string;
+  maxConnections?: number;
   status: number;
   inFlow: number;
   outFlow: number;
@@ -112,6 +116,9 @@ interface ForwardForm {
   remoteAddr: string;
   interfaceName?: string;
   strategy: string;
+  proxyProtocol: number;
+  blockProtocols: string[];
+  maxConnections: number | null;
   routeMode: "single" | "failover" | "latency" | "balance";
   routeBalanceStrategy: "round" | "rand" | "weighted" | "hash";
   routeWeights: Record<number, number>;
@@ -275,6 +282,9 @@ export default function ForwardPage() {
     remoteAddr: "",
     interfaceName: "",
     strategy: "fifo",
+    proxyProtocol: 0,
+    blockProtocols: [],
+    maxConnections: null,
     routeMode: "single",
     routeBalanceStrategy: "round",
     routeWeights: {},
@@ -674,6 +684,9 @@ export default function ForwardPage() {
       remoteAddr: "",
       interfaceName: "",
       strategy: "fifo",
+      proxyProtocol: 0,
+      blockProtocols: [],
+      maxConnections: null,
       routeMode: "single",
       routeBalanceStrategy: "round",
       routeWeights: {},
@@ -702,6 +715,12 @@ export default function ForwardPage() {
       remoteAddr: forward.remoteAddr.split(",").join("\n"),
       interfaceName: forward.interfaceName || "",
       strategy: forward.strategy || "fifo",
+      proxyProtocol: forward.proxyProtocol || 0,
+      blockProtocols: (forward.blockProtocols || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      maxConnections: forward.maxConnections || null,
       routeMode:
         forward.routeMode || (routes.length > 1 ? "failover" : "single"),
       routeBalanceStrategy: forward.routeBalanceStrategy || "round",
@@ -808,6 +827,12 @@ export default function ForwardPage() {
 
       let res;
 
+      const guardOptions = {
+        proxyProtocol: form.proxyProtocol,
+        blockProtocols: form.blockProtocols.join(","),
+        maxConnections: form.maxConnections || 0,
+      };
+
       if (isEdit) {
         // 更新时确保包含必要字段
         const updateData = {
@@ -819,6 +844,7 @@ export default function ForwardPage() {
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
           strategy: addressCount > 1 ? form.strategy : "fifo",
+          ...guardOptions,
           routeMode: form.routeMode,
           routeBalanceStrategy: form.routeBalanceStrategy,
           routeWeights: form.routeWeights,
@@ -836,6 +862,7 @@ export default function ForwardPage() {
           remoteAddr: processedRemoteAddr,
           interfaceName: form.interfaceName,
           strategy: addressCount > 1 ? form.strategy : "fifo",
+          ...guardOptions,
           routeMode: form.routeMode,
           routeBalanceStrategy: form.routeBalanceStrategy,
           routeWeights: form.routeWeights,
@@ -1464,6 +1491,8 @@ export default function ForwardPage() {
   // 获取策略显示
   const getStrategyDisplay = (strategy: string) => {
     switch (strategy) {
+      case "latency":
+        return { color: "primary", text: "最低延迟" };
       case "fifo":
         return { color: "primary", text: "主备" };
       case "round":
@@ -2720,11 +2749,82 @@ export default function ForwardPage() {
                             : "填写多个目标后可选择"
                         }
                       >
+                        <SelectItem key="latency">
+                          最低延迟 - 自动选最快
+                        </SelectItem>
                         <SelectItem key="fifo">主备 - 自上而下</SelectItem>
                         <SelectItem key="round">轮询 - 依次轮换</SelectItem>
                         <SelectItem key="rand">随机 - 随机选择</SelectItem>
                         <SelectItem key="hash">IP 哈希 - 来源固定</SelectItem>
                       </Select>
+                    </div>
+                  </section>
+
+                  <section className="border-t border-divider pt-5">
+                    <div className="mb-3">
+                      <h3 className="text-sm font-semibold">高级选项</h3>
+                      <p className="text-xs text-default-500">
+                        只对 TCP 生效，作用在入口端口上
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <Select
+                        label="PROXY 协议（传递真实来源 IP）"
+                        selectedKeys={[String(form.proxyProtocol)]}
+                        onSelectionChange={(keys) => {
+                          const value = Number(Array.from(keys)[0] ?? 0);
+
+                          setForm((prev) => ({
+                            ...prev,
+                            proxyProtocol: value,
+                          }));
+                        }}
+                        variant="bordered"
+                        description="落地服务需要支持 PROXY 协议，否则会连接失败"
+                      >
+                        <SelectItem key="0">关闭</SelectItem>
+                        <SelectItem key="1">v1（文本）</SelectItem>
+                        <SelectItem key="2">v2（二进制）</SelectItem>
+                      </Select>
+                      <Input
+                        label="并发连接数上限"
+                        type="number"
+                        min={0}
+                        placeholder="不限制"
+                        value={
+                          form.maxConnections ? String(form.maxConnections) : ""
+                        }
+                        onChange={(event) => {
+                          const value = parseInt(event.target.value, 10);
+
+                          setForm((prev) => ({
+                            ...prev,
+                            maxConnections:
+                              Number.isFinite(value) && value > 0
+                                ? value
+                                : null,
+                          }));
+                        }}
+                        variant="bordered"
+                        description="超过上限的新连接会被直接断开"
+                      />
+                      <CheckboxGroup
+                        className="md:col-span-2"
+                        label="禁止客户端使用的协议"
+                        orientation="horizontal"
+                        value={form.blockProtocols}
+                        onValueChange={(value) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            blockProtocols: value,
+                          }))
+                        }
+                        description="防止转发被当成明文代理使用；禁止 TLS 会让 HTTPS 等加密业务无法使用"
+                      >
+                        <Checkbox value="socks">SOCKS 代理</Checkbox>
+                        <Checkbox value="http">HTTP 代理</Checkbox>
+                        <Checkbox value="tls">TLS</Checkbox>
+                      </CheckboxGroup>
                     </div>
                   </section>
                 </div>

@@ -1168,6 +1168,17 @@ public class GostUtil {
         return data;
     }
 
+    /**
+     * Per-forward TCP entry options (PROXY protocol, blocked protocols, connection limit) by
+     * service name. Every path that rebuilds an entry service goes through createServiceConfig,
+     * so resolving here keeps them on creation, edits, route switches and recovery alike.
+     */
+    private static volatile java.util.function.Function<String, Map<String, Object>> forwardOptions = name -> Map.of();
+
+    public static void setForwardOptionsResolver(java.util.function.Function<String, Map<String, Object>> resolver) {
+        forwardOptions = resolver == null ? name -> Map.of() : resolver;
+    }
+
     static JSONObject createServiceConfig(String name, Integer in_port, Integer limiter, String remoteAddr, String protocol, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String chainName) {
         JSONObject service = new JSONObject();
         service.put("name", name + "_" + protocol);
@@ -1191,7 +1202,10 @@ public class GostUtil {
 
         // 配置处理器
         JSONObject handler = createHandler(protocol, chainName, fow_type);
-        if(tunnel!=null && tunnel.getSharedRelay()!=null) handler.put("metadata",Map.of("cnix.remoteResolution",true));
+        JSONObject handlerMetadata = new JSONObject();
+        if(tunnel!=null && tunnel.getSharedRelay()!=null) handlerMetadata.put("cnix.remoteResolution",true);
+        if (Objects.equals(protocol, "tcp")) handlerMetadata.putAll(forwardOptions.apply(name));
+        if (!handlerMetadata.isEmpty()) handler.put("metadata", handlerMetadata);
         service.put("handler", handler);
 
         // 配置监听器
@@ -1243,7 +1257,8 @@ public class GostUtil {
             num ++;
         }
 
-        if (strategy == null || strategy.equals("")){
+        // "latency" is ordered by the panel's health check; GOST then uses the first target.
+        if (strategy == null || strategy.equals("") || strategy.equals("latency")){
             strategy = "fifo";
         }
 

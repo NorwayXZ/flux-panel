@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-gost/core/chain"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-gost/core/recorder"
 	ctxvalue "github.com/go-gost/x/ctx"
 	xnet "github.com/go-gost/x/internal/net"
+	"github.com/go-gost/x/internal/net/proxyproto"
 	"github.com/go-gost/x/internal/util/forwarder"
 	"github.com/go-gost/x/internal/util/sniffing"
 	tls_util "github.com/go-gost/x/internal/util/tls"
@@ -33,6 +35,7 @@ func init() {
 }
 
 type forwardHandler struct {
+	active   atomic.Int64
 	hop      hop.Hop
 	md       metadata
 	options  handler.Options
@@ -121,6 +124,14 @@ func (h *forwardHandler) Handle(ctx context.Context, conn net.Conn, opts ...hand
 
 	if !h.checkRateLimit(conn.RemoteAddr()) {
 		return rate_limiter.ErrRateLimit
+	}
+
+	if network == "tcp" && h.md.maxConns > 0 {
+		if h.active.Add(1) > h.md.maxConns {
+			h.active.Add(-1)
+			return errTooManyConns
+		}
+		defer h.active.Add(-1)
 	}
 
 	var proto string
@@ -220,6 +231,20 @@ func (h *forwardHandler) Handle(ctx context.Context, conn net.Conn, opts ...hand
 	}
 	defer cc.Close()
 
+	if network == "tcp" && h.md.proxyProtocol > 0 {
+		// Written at the start of the stream, so it reaches the landing through any tunnel.
+		src := conn.RemoteAddr()
+		if clientAddr := ctxvalue.ClientAddrFromContext(ctx); clientAddr != "" {
+			if addr, err := net.ResolveTCPAddr("tcp", string(clientAddr)); err == nil {
+				src = addr
+			}
+		}
+		cc = proxyproto.WrapClientConn(h.md.proxyProtocol, src, conn.LocalAddr(), cc)
+	}
+
+	if network == "tcp" && h.md.block.any() {
+		return h.md.block.transport(conn, cc)
+	}
 	xnet.Transport(conn, cc)
 
 	return nil

@@ -49,4 +49,13 @@ public class ForwardUpdateDto {
 
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String interfaceName;
+
+    /** PROXY protocol version written to the landing before data: 0 off, 1 or 2. */
+    private Integer proxyProtocol;
+
+    /** Comma separated protocols clients may not send through this forward: socks, http, tls. */
+    private String blockProtocols;
+
+    /** Concurrent TCP connections allowed on the entry port; 0 means unlimited. */
+    private Integer maxConnections;
 }

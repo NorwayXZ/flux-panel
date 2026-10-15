@@ -33,10 +33,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * <p>
@@ -65,6 +67,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private static final String ROUTE_MODE_SINGLE = "single";
     private static final String ROUTE_MODE_FAILOVER = "failover";
     private static final String ROUTE_MODE_LATENCY = "latency";
+    private static final java.util.regex.Pattern MAIN_SERVICE_NAME = java.util.regex.Pattern.compile("^(\\d+)_\\d+_\\d+$");
+    private static final Set<String> BLOCKABLE_PROTOCOLS = Set.of("socks", "http", "tls");
+    private static final int MAX_CONNECTION_LIMIT = 1_000_000;
+
+    /** Target strategy: lowest measured latency first, sent to GOST as primary-backup (fifo). */
+    private static final String TARGET_STRATEGY_LATENCY = "latency";
     private static final String ROUTE_MODE_BALANCE = "balance";
     private static final String ROUTE_STATUS_HEALTHY = "healthy";
     private static final String ROUTE_STATUS_UNHEALTHY = "unhealthy";
@@ -120,6 +128,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R createForward(ForwardDto forwardDto) {
+        String guardError = validateGuardOptions(forwardDto.getProxyProtocol(), forwardDto.getBlockProtocols(), forwardDto.getMaxConnections());
+        if (guardError != null) return R.err(guardError);
         portAllocationLockMapper.lockForUpdate();
         if (forwardDto.getBatchEndPort() != null) {
             return createBatchForwards(forwardDto);
@@ -370,6 +380,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (isManagedByAggregation(forwardUpdateDto.getId())) {
             return R.err("该转发由多线路并发调度模块托管，请在多线路并发调度页面编辑");
         }
+        String guardError = validateGuardOptions(forwardUpdateDto.getProxyProtocol(), forwardUpdateDto.getBlockProtocols(), forwardUpdateDto.getMaxConnections());
+        if (guardError != null) return R.err(guardError);
         return updateForwardInternal(forwardUpdateDto, getCurrentUserInfo());
     }
 
@@ -1588,6 +1600,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setUserName(currentUser.getUserName());
         forward.setCreatedTime(System.currentTimeMillis());
         forward.setUpdatedTime(System.currentTimeMillis());
+        applyGuardDefaults(forward);
         return forward;
     }
 
@@ -1608,6 +1621,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         forward.setTargetHealth(existForward.getTargetHealth());
         forward.setLastHealthCheck(existForward.getLastHealthCheck());
         forward.setUpdatedTime(System.currentTimeMillis());
+        applyGuardDefaults(forward);
         return forward;
     }
 
@@ -2460,6 +2474,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return RouteProbeResult.failure("所有目标地址均不可用", targetHealth);
         }
 
+        if (TARGET_STRATEGY_LATENCY.equals(forward.getStrategy())) {
+            healthyTargets = orderTargetsByLatency(
+                    healthyTargets, targetHealth, route.getHealthyTargets(), Math.max(0.0, routeLatencyGapMs));
+        }
         totalLatency += bestTargetLatency;
         totalPacketLoss += bestTargetLoss;
         measurementCount++;
@@ -2620,6 +2638,86 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         } catch (Exception e) {
             log.warn("清理转发 {} 线路切换记录失败：{}", forwardId, e.getMessage());
         }
+    }
+
+    @PostConstruct
+    void registerForwardOptions() {
+        GostUtil.setForwardOptionsResolver(name -> {
+            java.util.regex.Matcher matcher = MAIN_SERVICE_NAME.matcher(name == null ? "" : name);
+            if (!matcher.matches()) return Map.of();
+            Forward forward = this.getById(Long.valueOf(matcher.group(1)));
+            return forward == null ? Map.of() : guardMetadata(forward);
+        });
+    }
+
+    /** GOST handler metadata for a forward's TCP entry service. */
+    static Map<String, Object> guardMetadata(Forward forward) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        Integer proxyProtocol = forward.getProxyProtocol();
+        if (proxyProtocol != null && (proxyProtocol == 1 || proxyProtocol == 2)) metadata.put("forward.proxyProtocol", proxyProtocol);
+        String blocked = normalizeBlockProtocols(forward.getBlockProtocols());
+        if (blocked != null) metadata.put("forward.block", blocked);
+        if (forward.getMaxConnections() != null && forward.getMaxConnections() > 0) metadata.put("forward.maxConns", forward.getMaxConnections());
+        return metadata;
+    }
+
+    /** Keeps known protocol names in a fixed order; null when none are blocked. */
+    static String normalizeBlockProtocols(String value) {
+        if (value == null) return null;
+        Set<String> requested = Arrays.stream(value.toLowerCase(Locale.ROOT).split("[,\\s]+"))
+                .map(String::trim).collect(Collectors.toSet());
+        String result = Stream.of("socks", "http", "tls").filter(requested::contains).collect(Collectors.joining(","));
+        return result.isEmpty() ? null : result;
+    }
+
+    /** Validates the advanced options copied from a create or update request. */
+    static String validateGuardOptions(Integer proxyProtocol, String blockProtocols, Integer maxConnections) {
+        if (proxyProtocol != null && proxyProtocol != 0 && proxyProtocol != 1 && proxyProtocol != 2) return "PROXY 协议只能是关闭、v1 或 v2";
+        if (blockProtocols != null && !blockProtocols.isBlank()) {
+            for (String item : blockProtocols.toLowerCase(Locale.ROOT).split("[,\\s]+")) {
+                if (!item.isBlank() && !BLOCKABLE_PROTOCOLS.contains(item.trim())) return "不支持封禁的协议：" + item;
+            }
+        }
+        if (maxConnections != null && (maxConnections < 0 || maxConnections > MAX_CONNECTION_LIMIT)) return "并发连接数上限需在 0 到 1000000 之间";
+        return null;
+    }
+
+    private static void applyGuardDefaults(Forward forward) {
+        if (forward.getProxyProtocol() != null || forward.getBlockProtocols() != null || forward.getMaxConnections() != null) {
+            if (forward.getProxyProtocol() == null) forward.setProxyProtocol(0);
+            if (forward.getMaxConnections() == null) forward.setMaxConnections(0);
+            if (forward.getBlockProtocols() != null) {
+                String blocked = normalizeBlockProtocols(forward.getBlockProtocols());
+                forward.setBlockProtocols(blocked == null ? "" : blocked);
+            }
+        }
+    }
+
+    /**
+     * Puts the fastest healthy target first; the exit forwarder uses them in order. The current
+     * first target stays first unless another one is faster by more than gapMs, so a small
+     * fluctuation does not rebuild the exit service every minute.
+     */
+    static List<String> orderTargetsByLatency(List<String> healthy,
+                                              List<ForwardTargetHealthDto> health,
+                                              List<String> previous,
+                                              double gapMs) {
+        Map<String, Double> latency = new HashMap<>();
+        for (ForwardTargetHealthDto item : health) {
+            if (item.getAddress() != null && item.getLatency() != null) latency.put(item.getAddress(), item.getLatency());
+        }
+        List<String> ordered = new ArrayList<>(healthy);
+        ordered.sort(Comparator.comparingDouble(address -> latency.getOrDefault(address, Double.MAX_VALUE)));
+        String current = previous == null || previous.isEmpty() ? null : previous.get(0);
+        if (current != null && !ordered.isEmpty() && !current.equals(ordered.get(0)) && ordered.contains(current)) {
+            double fastest = latency.getOrDefault(ordered.get(0), Double.MAX_VALUE);
+            double kept = latency.getOrDefault(current, Double.MAX_VALUE);
+            if (kept - fastest <= gapMs) {
+                ordered.remove(current);
+                ordered.add(0, current);
+            }
+        }
+        return ordered;
     }
 
     static boolean targetPoolChanged(List<String> before, List<String> after) {

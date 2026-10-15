@@ -1,3 +1,15 @@
+## 2.65.0 Lowest-latency targets, forward advanced options and QUIC tunnels
+
+- New target strategy 最低延迟: for a forward with several landing addresses, the panel's per-minute health check puts the fastest healthy landing first and the exit uses it. The current landing stays first unless another one is faster by more than 15 ms, so small fluctuations do not rebuild the exit service. Unhealthy landings are still removed and return automatically when they recover.
+- New 高级选项 on each forward, applied to the TCP entry port:
+  - PROXY protocol v1 or v2: the entry writes the client's real address at the start of the connection, so it reaches the landing through any tunnel. The landing service must accept PROXY protocol.
+  - Block SOCKS, HTTP and/or TLS: connections that open with a blocked protocol are closed before any client data reaches the landing. Protocols in which the server speaks first (SSH, SMTP, MySQL) are not delayed.
+  - Concurrent connection limit: new connections beyond the limit are closed.
+  These options are kept on every rebuild of the entry service, including edits, route switches, load balancing and recovery.
+- Tunnels can use the QUIC transport. QUIC runs over UDP; allow the exit's tunnel port for UDP in the cloud firewall.
+- Update the panel and the entry Agents to 2.65.0 for the advanced options; QUIC tunnels need 2.65.0 on both ends. The latency strategy is panel-only. The database gains three columns on forward (proxy_protocol, block_protocols, max_connections) with defaults that keep existing forwards unchanged. 2.64.5 remains available for rollback.
+- Verified by backend tests (395), frontend tests and build, and Agent tests with the race detector, including real TCP services for SOCKS/HTTP blocking, server-first banners, PROXY v1 headers and the connection limit, and a TCP forward through a QUIC relay tunnel. Not yet run against production nodes.
+
 ## 2.64.5 CNIX shared tunnel card matches the other tunnel cards
 
 - The CNIX shared tunnel card no longer shows a large blue information box. It now has the same layout and height as the other tunnel cards: the subtitle reads CNIX 共享通道已验证 or 待验证, and the hop line between entry and exit shows CNIX · <accelerated entry> in the same gray as 公网 · <address>.
