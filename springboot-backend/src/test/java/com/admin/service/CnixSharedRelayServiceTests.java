@@ -61,6 +61,7 @@ class CnixSharedRelayServiceTests {
         ReflectionTestUtils.setField(
                 service, "encryptionSecret", "cnix-test-key-long-enough-for-encryption-123456");
         tunnel.setId(7L);
+        tunnel.setName("CNIX");
         tunnel.setType(2);
         tunnel.setInNodeId(1L);
         tunnel.setOutNodeId(2L);
@@ -325,5 +326,62 @@ class CnixSharedRelayServiceTests {
         for (String command : sql.split(";")) if (!command.isBlank()) jdbc.execute(command);
         assertEquals(
                 0, jdbc.queryForObject("SELECT COUNT(*) FROM cnix_shared_grant", Integer.class));
+    }
+
+    @Test
+    void sharedDiagnosisUsesExternalMappingAndLocalExitPortWithoutBusinessOrSshFallback() {
+        jdbc.update("DELETE FROM forward");
+        jdbc.update(
+                "INSERT INTO cnix_shared_relay"
+                    + " VALUES(7,2,1000,'161.248.136.186:14694','public-cert','unused','unused','mapping-required',NULL,1)");
+        var entry = new Node();
+        entry.setId(1L);
+        entry.setStatus(1);
+        entry.setVersion("2.64.1");
+        when(nodes.selectById(1L)).thenReturn(entry);
+        var exit = nodes.selectById(2L);
+        exit.setStatus(1);
+        exit.setServerIp("186.244.251.77");
+        doAnswer(
+                        call -> {
+                            var response = response("OK");
+                            String method = call.getArgument(2);
+                            if (method.equals("CnixTransportProbe")) {
+                                var payload = (Map<?, ?>) call.getArgument(1);
+                                assertEquals("161.248.136.186:14694", payload.get("address"));
+                                response.setData(
+                                        Map.of(
+                                                "tlsVerified",
+                                                true,
+                                                "authenticationRequired",
+                                                true,
+                                                "elapsedMs",
+                                                18.5));
+                            } else if (method.equals("TcpPing")) {
+                                var payload = (Map<?, ?>) call.getArgument(1);
+                                assertEquals("127.0.0.1", payload.get("ip"));
+                                assertEquals(1000, payload.get("port"));
+                                response.setData(Map.of("success", true));
+                            } else fail("unexpected diagnostic command " + method);
+                            return response;
+                        })
+                .when(service)
+                .dispatch(anyLong(), any(), anyString());
+        var report = service.diagnose(tunnel);
+        assertEquals("cnix-shared", report.get("diagnosticMode"));
+        assertEquals(true, report.get("channelReady"));
+        assertEquals(0, report.get("businessCount"));
+        assertEquals("186.244.251.77:1000", report.get("exitAddress"));
+        assertFalse(JSON.toJSONString(report).contains("keyPem"));
+        assertEquals(
+                "transport-verified",
+                jdbc.queryForObject("SELECT state FROM cnix_shared_relay", String.class));
+        entry.setVersion("2.64.0");
+        assertEquals(false, service.diagnose(tunnel).get("channelReady"));
+        entry.setVersion("2.64.1");
+        doReturn(response("OK")).when(service).dispatch(eq(1L), any(), eq("CnixTransportProbe"));
+        assertEquals(false, service.diagnose(tunnel).get("channelReady"));
+        jdbc.update("UPDATE cnix_shared_relay SET external_address=NULL");
+        assertEquals(false, service.diagnose(tunnel).get("channelReady"));
     }
 }

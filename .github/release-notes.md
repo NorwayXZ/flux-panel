@@ -1,3 +1,11 @@
+## 2.64.1 Diagnose the actual CNIX shared path
+
+- Fixes the tunnel-card diagnostic for CNIX shared mode. It no longer tests the exit server's SSH port 22 or Google 443 and presents those results as CNIX performance. The dialog and path card display the configured CNIX external address and actual shared exit service port.
+- Adds a standalone channel check that works before any business forwards exist. The domestic Agent connects through the real CNIX endpoint, validates the dedicated exit TLS identity, and requires relay to reject an unissued credential. The exit Agent separately checks its local shared listener. The check neither grants a destination nor creates a temporary forward.
+- Reports channel readiness, pending mapping, offline nodes, incomplete results and outdated Agents explicitly. The displayed TLS/relay handshake duration is not labeled as business latency, packet loss or throughput. Business destination and client-protocol validation remains under forward diagnostics.
+- Update the panel and domestic ingress Agent to 2.64.1 to use the new channel check. The existing 2.64.0 shared exit remains compatible; all normal Agent builds also report 2.64.1. Existing mappings, business targets, credentials and the old 17148 line are not migrated by this update.
+- Adds real TLS/relay response tests for protected/open relays, bad identities and unavailable endpoints, backend routing/no-business/old-Agent regression coverage, and frontend checks preventing SSH/Google and fabricated total-latency output. 2.64.0 remains available for rollback.
+
 ## 2.64.0 CNIX shared relay tunnels
 
 - Adds CNIX shared mode under tunnel creation. Create one relay/TLS exit listener and one dedicated CNIX mapping, then add A/B/C forwards with independent domestic ports and destination addresses. The external CNIX port and the exit listener port can differ. First release supports two nodes and TCP business traffic.

@@ -981,6 +981,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         if (tunnel == null || !canAccessTunnel(tunnel)) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
         }
+        if(cnixSharedRelayService.isShared(tunnel))return R.ok(cnixSharedRelayService.diagnose(tunnel));
 
         // 2. 获取入口和出口节点信息
         Node inNode = nodeService.getById(tunnel.getInNodeId());

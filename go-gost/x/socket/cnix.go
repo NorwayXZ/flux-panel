@@ -5,21 +5,75 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
+	wire "github.com/go-gost/relay"
 	"github.com/go-gost/x/config"
 	relayhandler "github.com/go-gost/x/handler/relay"
 	"github.com/go-gost/x/registry"
 )
 
 var cnixUpdateMu sync.Mutex
+
+// Authenticate the TLS identity and require relay to reject an unissued
+// principal, without creating a business or granting a destination.
+func cnixTransportProbe(data interface{}) (map[string]interface{}, error) {
+	var request struct {
+		Address    string `json:"address"`
+		CAPEM      string `json:"caPem"`
+		ServerName string `json:"serverName"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return nil, err
+	}
+	if _, _, err := net.SplitHostPort(request.Address); err != nil {
+		return nil, errors.New("invalid CNIX external endpoint")
+	}
+	if !strings.HasPrefix(request.ServerName, "cnix-") || !strings.HasSuffix(request.ServerName, ".invalid") {
+		return nil, errors.New("invalid CNIX TLS identity")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(request.CAPEM)) {
+		return nil, errors.New("invalid CNIX trust certificate")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	start := time.Now()
+	dialer := tls.Dialer{NetDialer: &net.Dialer{Timeout: 4 * time.Second}, Config: &tls.Config{RootCAs: roots, ServerName: request.ServerName, MinVersion: tls.VersionTLS12}}
+	connection, err := dialer.DialContext(ctx, "tcp", request.Address)
+	if err != nil {
+		return nil, err
+	}
+	defer connection.Close()
+	connection.SetDeadline(time.Now().Add(2 * time.Second))
+	random := make([]byte, 16)
+	if _, err = rand.Read(random); err != nil {
+		return nil, err
+	}
+	rejectedUser := fmt.Sprintf("cnix-unissued-probe-%x", random)
+	probe := wire.Request{Version: wire.Version1, Cmd: wire.CmdConnect, Features: []wire.Feature{&wire.UserAuthFeature{Username: rejectedUser, Password: rejectedUser}}}
+	if _, err = probe.WriteTo(connection); err != nil {
+		return nil, err
+	}
+	var response wire.Response
+	if _, err = response.ReadFrom(connection); err != nil {
+		return nil, err
+	}
+	if response.Version != wire.Version1 || response.Status != wire.StatusUnauthorized {
+		return nil, errors.New("shared relay did not reject unissued credentials")
+	}
+	return map[string]interface{}{"tlsVerified": true, "authenticationRequired": true, "elapsedMs": float64(time.Since(start).Microseconds()) / 1000}, nil
+}
 
 func cnixProbe(data interface{}) error {
 	var request struct {

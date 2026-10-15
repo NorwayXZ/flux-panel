@@ -1,8 +1,11 @@
 package socket
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	wire "github.com/go-gost/relay"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,58 @@ import (
 	relayhandler "github.com/go-gost/x/handler/relay"
 	tlsutil "github.com/go-gost/x/internal/util/tls"
 )
+
+func TestCNIXTransportProbeVerifiesActualTLSAndRejectsAnonymousRelay(t *testing.T) {
+	cert, err := cnixCertificate("cnix-67.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := tlsutil.LoadServerConfig(&config.TLSConfig{CertPEM: cert["certPem"], KeyPEM: cert["keyPem"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name      string
+		status    uint8
+		identity  string
+		wantError bool
+	}{{"protected relay", wire.StatusUnauthorized, "cnix-67.invalid", false}, {"anonymous relay", wire.StatusOK, "cnix-67.invalid", true}, {"wrong relay response", wire.StatusBadRequest, "cnix-67.invalid", true}, {"wrong TLS identity", wire.StatusUnauthorized, "cnix-wrong.invalid", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				var request wire.Request
+				if _, err = request.ReadFrom(conn); err == nil {
+					(&wire.Response{Version: wire.Version1, Status: test.status}).WriteTo(conn)
+				}
+			}()
+			result, err := cnixTransportProbe(map[string]interface{}{"address": ln.Addr().String(), "caPem": cert["certPem"], "serverName": test.identity})
+			if (err != nil) != test.wantError {
+				t.Fatalf("result=%v error=%v", result, err)
+			}
+			if err == nil && (result["tlsVerified"] != true || result["authenticationRequired"] != true) {
+				t.Fatal(result)
+			}
+		})
+	}
+	address, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := address.Addr().String()
+	address.Close()
+	if _, err = cnixTransportProbe(map[string]interface{}{"address": target, "caPem": cert["certPem"], "serverName": "cnix-67.invalid"}); err == nil {
+		t.Fatal("offline CNIX endpoint accepted")
+	}
+}
 
 func TestCNIXCertificatesUseExplicitTrust(t *testing.T) {
 	cert, err := cnixCertificate("cnix-17.invalid")
