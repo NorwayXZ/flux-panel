@@ -911,7 +911,7 @@ export default function TunnelPage() {
             className={
               tunnelOffline || permissionUnavailable
                 ? "offline-card w-full self-start shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
-                : "w-full self-start shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200"
+                : "w-full self-start border border-transparent dark:border-default-100 overflow-hidden hover:shadow-md transition-shadow duration-200"
             }
           >
             {(tunnelOffline || permissionUnavailable) && (
@@ -1170,7 +1170,7 @@ export default function TunnelPage() {
               <div className="flex gap-1.5 mt-3">
                 {tunnel.editable !== false && (
                   <Button
-                    className="flex-1 min-h-8"
+                    className="min-h-8 min-w-0 flex-1 px-2"
                     color="primary"
                     size="sm"
                     startContent={
@@ -1189,7 +1189,7 @@ export default function TunnelPage() {
                   </Button>
                 )}
                 <Button
-                  className="flex-1 min-h-8"
+                  className="min-h-8 min-w-0 flex-1 px-2"
                   color="warning"
                   size="sm"
                   startContent={
@@ -1212,7 +1212,7 @@ export default function TunnelPage() {
                 </Button>
                 {tunnel.deletable !== false && (
                   <Button
-                    className="flex-1 min-h-8"
+                    className="min-h-8 min-w-0 flex-1 px-2"
                     color="danger"
                     size="sm"
                     startContent={
@@ -1398,7 +1398,7 @@ export default function TunnelPage() {
         </div>
       ) : (
         /* 空状态 */
-        <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">

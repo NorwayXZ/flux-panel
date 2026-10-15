@@ -61,7 +61,7 @@ export default function ApiTokenCard() {
   };
 
   return (
-    <Card className="border border-gray-200 dark:border-default-200 shadow-md">
+    <Card className="border border-transparent dark:border-default-100">
       <CardBody className="space-y-4 p-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-400">

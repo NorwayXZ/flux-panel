@@ -1,3 +1,10 @@
+## 2.69.0 New look, part 3: consistent cards across pages
+
+- Cards on the tunnel, forward, node, user, profile and settings pages drop their grey borders and heavy shadows for NodePassDash's card look: a soft shadow in light mode and a thin border in dark mode.
+- Edit, diagnose and delete buttons on tunnel and forward cards shrink to fit narrow columns instead of making the card scroll sideways.
+- The user table header and the settings page use the theme's own colours, and the profile page no longer repeats the footer.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.68.0 remains available for rollback.
+
 ## 2.68.0 New look, part 2: dashboard stat cards and list tables
 
 - Dashboard stat cards follow NodePassDash: a soft gradient in the card's colour, the value in that colour, a rounded icon tile and a slight lift on hover. Node, tunnel and forward cards open their pages when clicked, and their colour turns to warning or danger when something needs attention. Cards can still be reordered by their handle.

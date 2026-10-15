@@ -81,9 +81,9 @@ export const SettingsPage = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-black">
+    <div className="min-h-screen bg-background">
       {/* 顶部导航 */}
-      <div className="bg-white dark:bg-black border-b border-gray-200 dark:border-gray-700">
+      <div className="border-b border-divider/60 bg-background/80 backdrop-blur-md">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center gap-3">
             <Button
@@ -117,7 +117,7 @@ export const SettingsPage = () => {
       <PageShell width="standard" className="space-y-5">
         <div className="space-y-6">
           {/* 添加新地址 */}
-          <Card className="border border-gray-200 dark:border-gray-700">
+          <Card className="border border-transparent dark:border-default-100">
             <CardBody className="p-6">
               <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
                 添加面板地址
@@ -145,7 +145,7 @@ export const SettingsPage = () => {
           </Card>
 
           {/* 地址列表 */}
-          <Card className="border border-gray-200 dark:border-gray-700">
+          <Card className="border border-transparent dark:border-default-100">
             <CardBody className="p-6">
               <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
                 已保存的面板地址

@@ -14,8 +14,6 @@ import { toast } from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, Boxes, RadioTower, ShieldCheck } from "lucide-react";
 
-import { isWebViewFunc } from "@/utils/panel";
-import { siteConfig } from "@/config/site";
 import { updatePassword } from "@/api";
 import { safeLogout } from "@/utils/logout";
 import { getCurrentUsername, isAdmin as isAdminUser } from "@/utils/auth";
@@ -188,7 +186,7 @@ export default function ProfilePage() {
     <PageShell className="space-y-5 pb-20">
       <div className="space-y-5">
         {/* 用户信息卡片 */}
-        <Card className="border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="p-4">
             <div className="flex items-center space-x-4">
               <div className="w-12 h-12 bg-primary-100 dark:bg-primary-900/30 rounded-full flex items-center justify-center">
@@ -228,7 +226,7 @@ export default function ProfilePage() {
         </Card>
 
         {/* 功能网格 */}
-        <Card className="border border-gray-200 dark:border-default-200 shadow-md hover:shadow-lg transition-shadow">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="p-4">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
               <button
@@ -323,22 +321,6 @@ export default function ProfilePage() {
 
         <ApiTokenCard />
 
-        <div className="border-t border-divider pt-4 text-center">
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            Powered by{" "}
-            <a
-              className="text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              href="https://github.com/NorwayXZ/flux-panel"
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              WhySoQuiet
-            </a>
-          </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            v{isWebViewFunc() ? siteConfig.app_version : siteConfig.version}
-          </p>
-        </div>
       </div>
 
       {/* 修改密码弹窗 */}

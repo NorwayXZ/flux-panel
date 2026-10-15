@@ -1340,7 +1340,7 @@ export default function UserPage() {
           </div>
         </div>
       ) : users.length === 0 ? (
-        <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
@@ -3531,7 +3531,7 @@ export default function UserPage() {
                   aria-label="用户隧道权限列表"
                   classNames={{
                     wrapper: "shadow-none",
-                    th: "bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium",
+                    th: "font-medium",
                   }}
                 >
                   <TableHeader>

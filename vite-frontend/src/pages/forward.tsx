@@ -1692,7 +1692,7 @@ export default function ForwardPage() {
     const outNodeChip = getNodeStatusChip(outNodeOffline);
     const cardClassName = nodeOffline
       ? "offline-card group shadow-sm border border-danger-300 overflow-hidden hover:shadow-md transition-shadow duration-200"
-      : "group shadow-sm border border-divider overflow-hidden hover:shadow-md transition-shadow duration-200";
+      : "group border border-transparent dark:border-default-100 overflow-hidden hover:shadow-md transition-shadow duration-200";
     const inAddressClickable = hasMultipleAddresses(forward.inIp);
     const targetAddressClickable = hasMultipleAddresses(forward.remoteAddr);
     const pathText = getForwardPathText(forward);
@@ -2023,7 +2023,7 @@ export default function ForwardPage() {
 
           <div className="flex gap-1.5 mt-3">
             <Button
-              className="flex-1 min-h-8"
+              className="min-h-8 min-w-0 flex-1 px-2"
               color="primary"
               size="sm"
               startContent={
@@ -2041,7 +2041,7 @@ export default function ForwardPage() {
               编辑
             </Button>
             <Button
-              className="flex-1 min-h-8"
+              className="min-h-8 min-w-0 flex-1 px-2"
               color="warning"
               size="sm"
               startContent={
@@ -2063,7 +2063,7 @@ export default function ForwardPage() {
               诊断
             </Button>
             <Button
-              className="flex-1 min-h-8"
+              className="min-h-8 min-w-0 flex-1 px-2"
               color="danger"
               size="sm"
               startContent={
@@ -2632,7 +2632,7 @@ export default function ForwardPage() {
           </div>
         ) : (
           /* 空状态 */
-          <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
+          <Card className="border border-transparent dark:border-default-100">
             <CardBody className="text-center py-10">
               <div className="flex flex-col items-center gap-4">
                 <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
@@ -2674,7 +2674,7 @@ export default function ForwardPage() {
         />
       ) : (
         /* 空状态 */
-        <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">

@@ -1337,7 +1337,7 @@ export default function NodePage() {
             className={
               nodeOffline
                 ? "offline-card shadow-sm border border-rose-300/70 bg-rose-50/70 dark:border-rose-900/80 dark:bg-rose-950/35 hover:shadow-md transition-shadow duration-200 h-full"
-                : "shadow-sm border border-divider hover:shadow-md transition-shadow duration-200 h-full"
+                : "border border-transparent dark:border-default-100 hover:shadow-md transition-shadow duration-200 h-full"
             }
           >
             <CardHeader className="pb-2">
@@ -1997,7 +1997,7 @@ export default function NodePage() {
           </div>
         </div>
       ) : nodeList.length === 0 ? (
-        <Card className="shadow-sm border border-gray-200 dark:border-gray-700">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="text-center py-10">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 bg-default-100 rounded-full flex items-center justify-center">
