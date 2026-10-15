@@ -3,6 +3,7 @@ package com.admin.service;
 import com.admin.common.dto.CnixSharedRelayDto;
 import com.admin.common.dto.GostDto;
 import com.admin.common.utils.AESCrypto;
+import com.admin.common.utils.AgentVersionUtil;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.common.utils.WebSocketServer;
@@ -56,6 +57,149 @@ public class CnixSharedRelayService {
                                 "SELECT tunnel_id FROM cnix_shared_relay WHERE tunnel_id=?",
                                 tunnel.getId())
                         .isEmpty();
+    }
+
+    public Map<String, Object> diagnose(Tunnel tunnel) {
+        var row =
+                jdbc.queryForList(
+                                "SELECT external_address,service_port,cert_pem FROM"
+                                    + " cnix_shared_relay WHERE tunnel_id=?",
+                                tunnel.getId())
+                        .get(0);
+        Node entry = nodes.selectById(tunnel.getInNodeId()),
+                exit = nodes.selectById(tunnel.getOutNodeId());
+        String external = Objects.toString(row.get("external_address"), "");
+        int port = ((Number) row.get("service_port")).intValue();
+        String exitHost =
+                exit == null ? "" : StringUtils.defaultIfBlank(exit.getServerIp(), exit.getIp());
+        List<Map<String, Object>> checks = new ArrayList<>();
+        Map<String, Object> transport = new LinkedHashMap<>();
+        transport.put("description", "国内入口 → CNIX → 共享 relay/TLS");
+        transport.put("targetAddress", external);
+        transport.put("state", "failed");
+        if (external.isBlank()) {
+            transport.put("state", "pending");
+            transport.put("message", "请先创建专用 CNIX 映射并填写加速入口");
+        } else if (entry == null || !Objects.equals(entry.getStatus(), 1))
+            transport.put("message", "国内入口节点离线");
+        else if (!AgentVersionUtil.isAtLeast(entry.getVersion(), "2.64.1"))
+            transport.put("message", "请将国内入口 Agent 升级到 2.64.1，旧版不能验证独立共享通道");
+        else {
+            try {
+                var response =
+                        dispatch(
+                                entry.getId(),
+                                Map.of(
+                                        "address",
+                                        external,
+                                        "caPem",
+                                        row.get("cert_pem"),
+                                        "serverName",
+                                        serverName(tunnel.getId())),
+                                "CnixTransportProbe");
+                JSONObject data =
+                        response == null ? null : (JSONObject) JSON.toJSON(response.getData());
+                boolean ready =
+                        ok(response)
+                                && data != null
+                                && data.getBooleanValue("tlsVerified")
+                                && data.getBooleanValue("authenticationRequired");
+                transport.put("state", ready ? "passed" : "failed");
+                transport.put(
+                        "message",
+                        ready
+                                ? "已通过实际 CNIX 地址验证共享出口证书，relay 已拒绝未授权凭据；无需先创建业务"
+                                : response == null
+                                        ? "国内入口 Agent 未响应"
+                                        : ok(response)
+                                                ? "Agent 未返回完整 TLS 和认证保护验证结果"
+                                                : StringUtils.abbreviate(response.getMsg(), 500));
+                if (ready && data.get("elapsedMs") instanceof Number duration)
+                    transport.put("elapsedMs", duration.doubleValue());
+            } catch (RuntimeException error) {
+                transport.put("message", StringUtils.abbreviate(error.getMessage(), 500));
+            }
+        }
+        checks.add(transport);
+        Map<String, Object> listener = new LinkedHashMap<>();
+        listener.put("description", "野草云共享出口本机监听");
+        listener.put("targetAddress", exitHost + ":" + port);
+        listener.put("state", "failed");
+        if (exit == null || !Objects.equals(exit.getStatus(), 1)) listener.put("message", "出口节点离线");
+        else
+            try {
+                var response =
+                        dispatch(
+                                exit.getId(),
+                                Map.of(
+                                        "ip",
+                                        "127.0.0.1",
+                                        "port",
+                                        port,
+                                        "count",
+                                        1,
+                                        "timeout",
+                                        3000),
+                                "TcpPing");
+                JSONObject data =
+                        response == null ? null : (JSONObject) JSON.toJSON(response.getData());
+                boolean ready = ok(response) && data != null && data.getBooleanValue("success");
+                listener.put("state", ready ? "passed" : "failed");
+                listener.put(
+                        "message",
+                        ready
+                                ? "出口 Agent 已确认本机共享服务端口可连接"
+                                : response == null
+                                        ? "出口 Agent 未响应"
+                                        : ok(response)
+                                                ? Objects.toString(
+                                                        data == null
+                                                                ? null
+                                                                : data.get("errorMessage"),
+                                                        "共享服务端口验证未通过")
+                                                : StringUtils.abbreviate(response.getMsg(), 500));
+            } catch (RuntimeException error) {
+                listener.put("message", StringUtils.abbreviate(error.getMessage(), 500));
+            }
+        checks.add(listener);
+        boolean ready = checks.stream().allMatch(check -> "passed".equals(check.get("state")));
+        jdbc.update(
+                "UPDATE cnix_shared_relay SET state=?,last_error=? WHERE tunnel_id=?",
+                ready
+                        ? "transport-verified"
+                        : external.isBlank() ? "mapping-required" : "handshake-pending",
+                ready
+                        ? null
+                        : checks.stream()
+                                .filter(check -> !"passed".equals(check.get("state")))
+                                .map(check -> Objects.toString(check.get("message"), "验证未完成"))
+                                .findFirst()
+                                .orElse("验证未完成"),
+                tunnel.getId());
+        Integer businessCount =
+                jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM forward WHERE tunnel_id=?",
+                        Integer.class,
+                        tunnel.getId());
+        return Map.of(
+                "diagnosticMode",
+                "cnix-shared",
+                "tunnelId",
+                tunnel.getId(),
+                "tunnelName",
+                tunnel.getName(),
+                "externalAddress",
+                external,
+                "exitAddress",
+                exitHost + ":" + port,
+                "channelReady",
+                ready,
+                "businessCount",
+                businessCount == null ? 0 : businessCount,
+                "checks",
+                checks,
+                "timestamp",
+                System.currentTimeMillis());
     }
 
     @Scheduled(initialDelay = 30000, fixedDelay = 30000)

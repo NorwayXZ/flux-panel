@@ -674,6 +674,9 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	case "CnixProbe":
 		err = cnixProbe(cmd.Data)
 		response.Type = "CnixProbeResponse"
+	case "CnixTransportProbe":
+		response.Data, err = cnixTransportProbe(cmd.Data)
+		response.Type = "CnixTransportProbeResponse"
 	case "UpdateService":
 		err = w.handleUpdateService(cmd.Data)
 		response.Type = "UpdateServiceResponse"

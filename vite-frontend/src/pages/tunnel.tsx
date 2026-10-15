@@ -20,6 +20,9 @@ import toast from "react-hot-toast";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import CnixTunnelDiagnosis, {
+  type CnixDiagnosticReport,
+} from "@/components/cnix-tunnel-diagnosis";
 import {
   createTunnel,
   getTunnelList,
@@ -107,7 +110,8 @@ interface TunnelForm {
   status: number;
 }
 
-interface DiagnosisResult {
+interface DiagnosisResult extends CnixDiagnosticReport {
+  diagnosticMode?: string;
   tunnelName: string;
   tunnelType: string;
   timestamp: number;
@@ -922,7 +926,13 @@ export default function TunnelPage() {
                         : "text-xs text-default-500 truncate mt-0.5"
                     }
                   >
-                    {getLinkStatusText(tunnel)}
+                    {tunnel.sharedRelay
+                      ? ["verified", "transport-verified"].includes(
+                          tunnel.sharedRelay.state || "",
+                        )
+                        ? "共享通道已验证"
+                        : "共享通道待验证"
+                      : getLinkStatusText(tunnel)}
                   </p>
                   <div className="flex items-center gap-1.5 mt-1">
                     {permissionUnavailable && (
@@ -982,7 +992,9 @@ export default function TunnelPage() {
                   <p>
                     {tunnel.sharedRelay.state === "verified"
                       ? "最近一次认证及目标连接已验证"
-                      : "尚未完成共享隧道握手验证"}
+                      : tunnel.sharedRelay.state === "transport-verified"
+                        ? "共享通道TLS与认证保护已验证，可添加业务"
+                        : "尚未完成共享隧道握手验证"}
                   </p>
                   {tunnel.sharedRelay.lastError && (
                     <p className="text-warning">
@@ -1095,17 +1107,25 @@ export default function TunnelPage() {
                                 strokeWidth={2}
                               />
                             </svg>
-                            {tunnel.hopDetails?.[index] && (
-                              <div
-                                className="mt-1 truncate text-[10px] text-default-500"
-                                title={`${tunnel.hopDetails[index].addressModeName} ${tunnel.hopDetails[index].targetAddress}`}
-                              >
-                                {tunnel.hopDetails[index].addressModeName} ·{" "}
-                                {tunnel.hopDetails[index].targetAddress}
-                                {tunnel.hopDetails[index].fallbackAddress
-                                  ? " · 公网备用"
-                                  : ""}
+                            {tunnel.sharedRelay ? (
+                              <div className="mt-1 truncate text-[10px] text-primary">
+                                经 CNIX ·{" "}
+                                {tunnel.sharedRelay.externalAddress ||
+                                  "待配置加速入口"}
                               </div>
+                            ) : (
+                              tunnel.hopDetails?.[index] && (
+                                <div
+                                  className="mt-1 truncate text-[10px] text-default-500"
+                                  title={`${tunnel.hopDetails[index].addressModeName} ${tunnel.hopDetails[index].targetAddress}`}
+                                >
+                                  {tunnel.hopDetails[index].addressModeName} ·{" "}
+                                  {tunnel.hopDetails[index].targetAddress}
+                                  {tunnel.hopDetails[index].fallbackAddress
+                                    ? " · 公网备用"
+                                    : ""}
+                                </div>
+                              )
                             )}
                           </div>
                         )}
@@ -1903,6 +1923,8 @@ export default function TunnelPage() {
                       <span className="text-default-600">正在诊断...</span>
                     </div>
                   </div>
+                ) : diagnosisResult?.diagnosticMode === "cnix-shared" ? (
+                  <CnixTunnelDiagnosis report={diagnosisResult} />
                 ) : diagnosisResult ? (
                   <div className="space-y-4">
                     {(() => {
