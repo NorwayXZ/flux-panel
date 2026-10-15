@@ -979,9 +979,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 3. 获取转发详情
         List<UserPackageDto.UserForwardDetailDto> forwards = userMapper.getUserForwardDetails(user.getId().intValue());
 
-        // 4. 查询最近24小时流量信息，没有的补0
-        List<StatisticsFlow> statisticsFlows = getLast24HoursFlowStatistics(
-                user.getId(), Objects.equals(roleId, ADMIN_ROLE_ID));
+        // 4. 最近 24 小时和最近 7 天的流量，没有的补 0
+        long now = System.currentTimeMillis();
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        List<StatisticsFlow> samples = getRecentFlowSamples(
+                user.getId(), Objects.equals(roleId, ADMIN_ROLE_ID), now, zone);
+        List<StatisticsFlow> statisticsFlows = bucketLast24Hours(samples, user.getId(), now, zone);
+        List<StatisticsFlow> dailyFlows = bucketLast7Days(samples, user.getId(), now, zone);
         
         // 5. 构造返回结果
         UserPackageDto packageDto = new UserPackageDto();
@@ -989,6 +993,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         packageDto.setTunnelPermissions(tunnelPermissions);
         packageDto.setForwards(forwards);
         packageDto.setStatisticsFlows(statisticsFlows);
+        packageDto.setDailyFlows(dailyFlows);
         
         return packageDto;
     }
@@ -1030,50 +1035,83 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     /**
-     * Hourly traffic for the last 24 hours, newest first.
+     * Traffic samples covering the last seven calendar days, which also covers the last 24 hours.
      *
      * Samples are selected by when they were recorded, so hours missed while the
      * panel was down stay empty instead of being filled by older samples.
      * Administrators see every account combined; other users see their own.
      */
-    private List<StatisticsFlow> getLast24HoursFlowStatistics(Long userId, boolean allUsers) {
-        long now = System.currentTimeMillis();
+    private List<StatisticsFlow> getRecentFlowSamples(Long userId, boolean allUsers, long now, java.time.ZoneId zone) {
+        long since = java.time.Instant.ofEpochMilli(now).atZone(zone)
+                .truncatedTo(java.time.temporal.ChronoUnit.DAYS).minusDays(6).toInstant().toEpochMilli();
         QueryWrapper<StatisticsFlow> query = new QueryWrapper<StatisticsFlow>()
-                .gt("created_time", now - 24L * 60 * 60 * 1000);
+                .ge("created_time", Math.min(since, now - 24L * 60 * 60 * 1000));
         if (!allUsers) {
             query.eq("user_id", userId);
         }
-        return bucketLast24Hours(statisticsFlowService.list(query), userId, now, java.time.ZoneId.systemDefault());
+        return statisticsFlowService.list(query);
     }
 
     static List<StatisticsFlow> bucketLast24Hours(
             List<StatisticsFlow> samples, Long userId, long now, java.time.ZoneId zone) {
         java.time.ZonedDateTime currentHour = java.time.Instant.ofEpochMilli(now).atZone(zone)
                 .truncatedTo(java.time.temporal.ChronoUnit.HOURS);
-        java.util.Map<Long, Long> flowByHour = new java.util.HashMap<>();
-        for (StatisticsFlow sample : samples) {
-            if (sample == null || sample.getCreatedTime() == null) {
-                continue;
-            }
-            long hourStart = java.time.Instant.ofEpochMilli(sample.getCreatedTime()).atZone(zone)
-                    .truncatedTo(java.time.temporal.ChronoUnit.HOURS).toInstant().toEpochMilli();
-            flowByHour.merge(hourStart, sample.getFlow() == null ? 0L : sample.getFlow(), Long::sum);
-        }
+        java.util.Map<Long, long[]> byHour = sumBy(samples, zone, java.time.temporal.ChronoUnit.HOURS);
 
         List<StatisticsFlow> result = new ArrayList<>(24);
         for (int hoursAgo = 0; hoursAgo < 24; hoursAgo++) {
             java.time.ZonedDateTime hour = currentHour.minusHours(hoursAgo);
-            long hourStart = hour.toInstant().toEpochMilli();
-            long flow = flowByHour.getOrDefault(hourStart, 0L);
-            StatisticsFlow bucket = new StatisticsFlow();
-            bucket.setUserId(userId);
-            bucket.setFlow(flow);
-            bucket.setTotalFlow(flow);
-            bucket.setTime(String.format("%02d:00", hour.getHour()));
-            bucket.setCreatedTime(hourStart);
-            result.add(bucket);
+            result.add(bucket(userId, hour.toInstant().toEpochMilli(),
+                    String.format("%02d:00", hour.getHour()), byHour));
         }
         return result;
+    }
+
+    /** Traffic per calendar day for the last seven days including today, newest first. */
+    static List<StatisticsFlow> bucketLast7Days(
+            List<StatisticsFlow> samples, Long userId, long now, java.time.ZoneId zone) {
+        java.time.ZonedDateTime today = java.time.Instant.ofEpochMilli(now).atZone(zone)
+                .truncatedTo(java.time.temporal.ChronoUnit.DAYS);
+        java.util.Map<Long, long[]> byDay = sumBy(samples, zone, java.time.temporal.ChronoUnit.DAYS);
+
+        List<StatisticsFlow> result = new ArrayList<>(7);
+        for (int daysAgo = 0; daysAgo < 7; daysAgo++) {
+            java.time.ZonedDateTime day = today.minusDays(daysAgo);
+            result.add(bucket(userId, day.toInstant().toEpochMilli(),
+                    String.format("%02d-%02d", day.getMonthValue(), day.getDayOfMonth()), byDay));
+        }
+        return result;
+    }
+
+    /** Sums total, inbound and outbound traffic per period start. */
+    private static java.util.Map<Long, long[]> sumBy(
+            List<StatisticsFlow> samples, java.time.ZoneId zone, java.time.temporal.ChronoUnit unit) {
+        java.util.Map<Long, long[]> sums = new java.util.HashMap<>();
+        for (StatisticsFlow sample : samples) {
+            if (sample == null || sample.getCreatedTime() == null) {
+                continue;
+            }
+            long start = java.time.Instant.ofEpochMilli(sample.getCreatedTime()).atZone(zone)
+                    .truncatedTo(unit).toInstant().toEpochMilli();
+            long[] sum = sums.computeIfAbsent(start, key -> new long[3]);
+            sum[0] += sample.getFlow() == null ? 0L : sample.getFlow();
+            sum[1] += sample.getInFlow() == null ? 0L : sample.getInFlow();
+            sum[2] += sample.getOutFlow() == null ? 0L : sample.getOutFlow();
+        }
+        return sums;
+    }
+
+    private static StatisticsFlow bucket(Long userId, long start, String label, java.util.Map<Long, long[]> sums) {
+        long[] sum = sums.getOrDefault(start, new long[3]);
+        StatisticsFlow bucket = new StatisticsFlow();
+        bucket.setUserId(userId);
+        bucket.setFlow(sum[0]);
+        bucket.setInFlow(sum[1]);
+        bucket.setOutFlow(sum[2]);
+        bucket.setTotalFlow(sum[0]);
+        bucket.setTime(label);
+        bucket.setCreatedTime(start);
+        return bucket;
     }
 
 

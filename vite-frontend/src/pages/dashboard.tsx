@@ -3,28 +3,24 @@ import type { User } from "@/types";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { useNavigate } from "react-router-dom";
 import {
   Activity,
   ArrowRight,
   Boxes,
   CircleCheck,
-  Clock3,
   Gauge,
   KeyRound,
+  MonitorDot,
   Network,
+  Play,
+  Plus,
   Route,
   Server,
   ShieldAlert,
+  Square,
+  TriangleAlert,
+  Unlink,
   Users,
 } from "lucide-react";
 
@@ -32,6 +28,18 @@ import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
 import StatsCard from "@/components/ui/stats-card";
+import {
+  TodayTrafficCard,
+  TrafficOverviewChart,
+  WeeklyTrafficChart,
+} from "@/components/dashboard/traffic-charts";
+import {
+  DashboardHeader,
+  EndpointListCard,
+  QuickActionsCard,
+  RecentActivityCard,
+  type ActivityItem,
+} from "@/components/dashboard/dashboard-panels";
 import {
   getAllUsers,
   getForwardList,
@@ -121,6 +129,8 @@ interface StatisticsFlow {
   id: number;
   userId: number;
   flow: number;
+  inFlow?: number;
+  outFlow?: number;
   totalFlow: number;
   time: string;
   createdTime?: number;
@@ -175,6 +185,8 @@ export default function DashboardPage() {
   const [proxyGrants, setProxyGrants] = useState<PrivateProxyItem[]>([]);
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
+  const [dailyFlows, setDailyFlows] = useState<StatisticsFlow[]>([]);
+  const [adminNodes, setAdminNodes] = useState<SharedNode[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminOverview, setAdminOverview] =
     useState<MonitoringOverview>(EMPTY_ADMIN_OVERVIEW);
@@ -182,7 +194,7 @@ export default function DashboardPage() {
   const [adminForwards, setAdminForwards] = useState<AdminForward[]>([]);
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
   const summaryCardIds = isAdmin
-    ? ["admin-flow", "admin-nodes", "admin-tunnels", "admin-forwards"]
+    ? ["admin-running", "admin-stopped", "admin-error", "admin-offline-nodes"]
     : ["total-flow", "used-flow", "forward-quota", "used-forwards"];
   const summaryCardOrder = useCardOrder(
     "dashboard-summary-cards",
@@ -328,6 +340,8 @@ export default function DashboardPage() {
     setProxyGrants([]);
     setForwardList([]);
     setStatisticsFlows([]);
+    setDailyFlows([]);
+    setAdminNodes([]);
     setAdminOverview(EMPTY_ADMIN_OVERVIEW);
     setAdminAlerts([]);
     setAdminForwards([]);
@@ -356,6 +370,7 @@ export default function DashboardPage() {
         setUserTunnels(data.tunnelPermissions || []);
         setForwardList(data.forwards || []);
         setStatisticsFlows(data.statisticsFlows || []);
+        setDailyFlows(data.dailyFlows || []);
 
         // 检查有效期并显示通知
         checkExpirationNotifications(
@@ -434,6 +449,24 @@ export default function DashboardPage() {
           })(),
         );
       } else {
+        tasks.push(
+          (async () => {
+            try {
+              const response = await getNodeList();
+
+              if (response.code === 0)
+                setAdminNodes(
+                  [...((response.data || []) as SharedNode[])].sort(
+                    (a, b) => (b.status || 0) - (a.status || 0) || a.id - b.id,
+                  ),
+                );
+              else console.warn("获取节点列表失败:", response.msg);
+            } catch (error) {
+              console.warn("获取节点列表失败:", error);
+            }
+          })(),
+        );
+
         tasks.push(
           (async () => {
             try {
@@ -538,42 +571,6 @@ export default function DashboardPage() {
     const hours = Math.max(1, Math.ceil(milliseconds / 3600000));
 
     return `${hours} 小时`;
-  };
-
-  // 处理24小时流量统计数据
-  const processFlowChartData = () => {
-    // 生成最近24小时的时间数组（从当前小时往前推24小时）
-    const now = new Date();
-    const hours: string[] = [];
-
-    for (let i = 23; i >= 0; i--) {
-      const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-      const hourString = time.getHours().toString().padStart(2, "0") + ":00";
-
-      hours.push(hourString);
-    }
-
-    // 创建数据映射
-    const flowMap = new Map<string, number>();
-
-    statisticsFlows.forEach((item) => {
-      // Buckets carry their start time; label them in the browser's time zone
-      // and add up entries that fall in the same hour.
-      const key = item.createdTime
-        ? new Date(item.createdTime).getHours().toString().padStart(2, "0") +
-          ":00"
-        : item.time;
-
-      flowMap.set(key, (flowMap.get(key) || 0) + (item.flow || 0));
-    });
-
-    // 生成图表数据，没有数据的小时显示为0
-    return hours.map((hour) => ({
-      time: hour,
-      flow: flowMap.get(hour) || 0,
-      // 格式化显示用的流量值
-      formattedFlow: formatFlow(flowMap.get(hour) || 0),
-    }));
   };
 
   const getExpStatus = (expTime?: string) => {
@@ -763,19 +760,6 @@ export default function DashboardPage() {
     }
   };
 
-  const formatRelativeTime = (timestamp?: number) => {
-    if (!timestamp) return "暂无记录";
-    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
-
-    if (minutes < 1) return "刚刚";
-    if (minutes < 60) return `${minutes} 分钟前`;
-    const hours = Math.floor(minutes / 60);
-
-    if (hours < 24) return `${hours} 小时前`;
-
-    return `${Math.floor(hours / 24)} 天前`;
-  };
-
   const formatAlertDuration = (startedAt: number) => {
     const minutes = Math.max(0, Math.floor((Date.now() - startedAt) / 60000));
 
@@ -808,16 +792,17 @@ export default function DashboardPage() {
     };
   };
 
-  const nodeHealth = resourceSummary("node");
   const tunnelHealth = resourceSummary("tunnel");
-  const forwardHealth = resourceSummary("forward");
-  const total24HourFlow = statisticsFlows.reduce(
-    (sum, item) => sum + (item.flow || 0),
-    0,
-  );
   const runningForwards = adminForwards.filter(
     (forward) => forward.status === 1 && !forward.nodeOffline,
   ).length;
+  const stoppedForwards = adminForwards.filter(
+    (forward) => forward.status !== 1 && forward.status !== -1,
+  ).length;
+  const errorForwards = adminForwards.filter(
+    (forward) => forward.status === -1 || !!forward.nodeOffline,
+  ).length;
+  const offlineNodes = adminNodes.filter((node) => node.status !== 1).length;
   const topTrafficForwards = [...adminForwards]
     .sort(
       (a, b) =>
@@ -826,10 +811,31 @@ export default function DashboardPage() {
         ((a.inFlow || 0) + (a.outFlow || 0)),
     )
     .slice(0, 5);
-  const recentRouteSwitches = adminForwards
-    .filter((forward) => !!forward.lastRouteSwitch)
-    .sort((a, b) => (b.lastRouteSwitch || 0) - (a.lastRouteSwitch || 0))
-    .slice(0, 5);
+  const recentActivity: ActivityItem[] = [
+    ...adminAlerts.map((alert) => ({
+      key: `alert-${alert.id}`,
+      time: alert.startedAt,
+      kind: alert.severity === "critical" ? "严重告警" : "告警",
+      color: (alert.severity === "critical" ? "danger" : "warning") as
+        "danger" | "warning",
+      name: alert.resourceName,
+      detail: `${alert.title}${alert.detail ? ` · ${alert.detail}` : ""}`,
+      onPress: () => navigate("/monitoring"),
+    })),
+    ...adminForwards
+      .filter((forward) => !!forward.lastRouteSwitch)
+      .map((forward) => ({
+        key: `switch-${forward.id}`,
+        time: forward.lastRouteSwitch || 0,
+        kind: "线路切换",
+        color: "primary" as const,
+        name: forward.name,
+        detail: `${forward.userName || "管理员"} · ${forward.routeSwitchReason || "线路状态变化"}`,
+        onPress: () => navigate("/forward"),
+      })),
+  ]
+    .sort((a, b) => b.time - a.time)
+    .slice(0, 20);
   const quotaRisks = adminUsers
     .map((user) => {
       const totalBytes = (user.totalFlow || 0) * 1024 * 1024 * 1024;
@@ -878,9 +884,139 @@ export default function DashboardPage() {
     );
   }
 
+  const sideItems = isAdmin
+    ? adminNodes.map((node) => ({
+        id: node.id,
+        name: node.name,
+        detail: node.ip,
+        online: node.status === 1,
+        badge: node.version ? `v${node.version}` : undefined,
+      }))
+    : sharedNodes.length > 0
+      ? sharedNodes.map((node) => ({
+          id: node.id,
+          name: node.name,
+          detail: node.ip,
+          online: node.status === 1,
+          badge: node.ownerUserName,
+        }))
+      : userTunnels.map((tunnel) => ({
+          id: tunnel.id,
+          name: tunnel.tunnelName,
+          detail: `已用 ${formatFlow(calculateTunnelUsedFlow(tunnel))}`,
+          online: getExpStatus(tunnel.expTime).text !== "已过期",
+          badge: `${getTunnelUsedForwards(tunnel.tunnelId)} 个转发`,
+        }));
+  const quickIcon = "h-4 w-4";
+  const quickActions = isAdmin
+    ? [
+        {
+          label: "新建转发",
+          hint: "转发管理",
+          icon: <Plus className={quickIcon} />,
+          color: "primary" as const,
+          onPress: () => navigate("/forward"),
+        },
+        {
+          label: "添加节点",
+          hint: "节点与 Agent",
+          icon: <Server className={quickIcon} />,
+          color: "success" as const,
+          onPress: () => navigate("/node"),
+        },
+        {
+          label: "隧道组建",
+          hint: "入口到出口",
+          icon: <Route className={quickIcon} />,
+          color: "secondary" as const,
+          onPress: () => navigate("/tunnel"),
+        },
+        {
+          label: "资源监控",
+          hint: "告警与可用率",
+          icon: <MonitorDot className={quickIcon} />,
+          color: "warning" as const,
+          onPress: () => navigate("/monitoring"),
+        },
+      ]
+    : [
+        {
+          label: "转发管理",
+          hint: "新建或修改转发",
+          icon: <Network className={quickIcon} />,
+          color: "primary" as const,
+          onPress: () => navigate("/forward"),
+        },
+        {
+          label: "代理协议",
+          hint: "连接信息",
+          icon: <KeyRound className={quickIcon} />,
+          color: "secondary" as const,
+          onPress: () => navigate("/private-proxy"),
+        },
+        {
+          label: "网络工具",
+          hint: "测速与诊断",
+          icon: <Activity className={quickIcon} />,
+          color: "success" as const,
+          onPress: () => navigate("/network-tools"),
+        },
+        {
+          label: "个人中心",
+          hint: "账号与密码",
+          icon: <Users className={quickIcon} />,
+          color: "warning" as const,
+          onPress: () => navigate("/profile"),
+        },
+      ];
+  const todayFlow = dailyFlows[0];
+
   return (
-    <PageShell width="wide" className="space-y-6 py-2 lg:py-4">
-      {/* 响应式统计卡片 */}
+    <PageShell width="wide" className="space-y-4 md:space-y-6">
+      <DashboardHeader
+        counts={
+          isAdmin
+            ? [
+                {
+                  label: "节点",
+                  value: adminNodes.length,
+                  className: "text-success",
+                  onPress: () => navigate("/node"),
+                },
+                {
+                  label: "隧道",
+                  value: tunnelHealth.total,
+                  className: "text-primary",
+                  onPress: () => navigate("/tunnel"),
+                },
+                {
+                  label: "转发",
+                  value: adminForwards.length,
+                  className: "text-secondary",
+                  onPress: () => navigate("/forward"),
+                },
+              ]
+            : [
+                {
+                  label: "节点",
+                  value: sharedNodes.length,
+                  className: "text-success",
+                },
+                {
+                  label: "隧道",
+                  value: userTunnels.length,
+                  className: "text-primary",
+                },
+                {
+                  label: "转发",
+                  value: forwardList.length,
+                  className: "text-secondary",
+                  onPress: () => navigate("/forward"),
+                },
+              ]
+        }
+      />
+
       <SortableCardGrid
         className="grid grid-cols-2 gap-4 lg:grid-cols-4"
         getId={(id) => id}
@@ -893,59 +1029,52 @@ export default function DashboardPage() {
             !!userInfo.forwardUnlimited || userInfo.num === 99999;
 
           if (isAdmin) {
-            if (cardId === "admin-flow")
+            if (cardId === "admin-running")
               return (
                 <StatsCard
                   action={dragHandle}
-                  color="primary"
-                  hint="全部用户计费流量"
-                  icon={<Gauge className={iconClass} />}
-                  title="24 小时总流量"
-                  value={formatFlow(total24HourFlow)}
+                  color="success"
+                  hint={`共 ${adminForwards.length} 条转发`}
+                  icon={<Play className={iconClass} />}
+                  title="运行中"
+                  value={runningForwards}
+                  onPress={() => navigate("/forward?status=running")}
                 />
               );
-            if (cardId === "admin-nodes")
+            if (cardId === "admin-stopped")
               return (
                 <StatsCard
                   action={dragHandle}
-                  color={
-                    nodeHealth.offline + nodeHealth.degraded > 0
-                      ? "warning"
-                      : "success"
-                  }
-                  hint={`${nodeHealth.offline + nodeHealth.degraded} 台需要关注`}
-                  icon={<Server className={iconClass} />}
-                  title="在线节点"
-                  value={`${nodeHealth.healthy} / ${nodeHealth.total}`}
-                  onPress={() => navigate("/node")}
+                  color="danger"
+                  hint="已暂停的转发"
+                  icon={<Square className={iconClass} />}
+                  title="已暂停"
+                  value={stoppedForwards}
+                  onPress={() => navigate("/forward?status=stopped")}
                 />
               );
-            if (cardId === "admin-tunnels")
+            if (cardId === "admin-error")
               return (
                 <StatsCard
                   action={dragHandle}
-                  color={
-                    tunnelHealth.offline + tunnelHealth.degraded > 0
-                      ? "danger"
-                      : "success"
-                  }
-                  hint={`${tunnelHealth.offline + tunnelHealth.degraded} 条链路异常`}
-                  icon={<Route className={iconClass} />}
-                  title="健康隧道"
-                  value={`${tunnelHealth.healthy} / ${tunnelHealth.total}`}
-                  onPress={() => navigate("/tunnel")}
+                  color="warning"
+                  hint="节点离线或下发失败"
+                  icon={<TriangleAlert className={iconClass} />}
+                  title="异常"
+                  value={errorForwards}
+                  onPress={() => navigate("/forward?status=error")}
                 />
               );
 
             return (
               <StatsCard
                 action={dragHandle}
-                color="secondary"
-                hint={`${Math.max(0, adminForwards.length - runningForwards)} 条暂停或异常`}
-                icon={<Network className={iconClass} />}
-                title="运行中转发"
-                value={`${runningForwards} / ${adminForwards.length}`}
-                onPress={() => navigate("/forward")}
+                color="default"
+                hint={`共 ${adminNodes.length} 台节点`}
+                icon={<Unlink className={iconClass} />}
+                title="离线节点"
+                value={offlineNodes}
+                onPress={() => navigate("/node")}
               />
             );
           }
@@ -1033,204 +1162,39 @@ export default function DashboardPage() {
         onMove={summaryCardOrder.moveCard}
       />
 
-      {/* 24小时流量统计图表 */}
-      <Card className="border border-transparent dark:border-default-100">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <svg
-              className="w-5 h-5 text-primary"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" />
-              <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" />
-            </svg>
-            <h2 className="text-lg lg:text-xl font-semibold text-foreground">
-              24小时流量统计
-            </h2>
-          </div>
-        </CardHeader>
-        <CardBody className="pt-0">
-          {statisticsFlows.length === 0 ? (
-            <div className="text-center py-12">
-              <svg
-                className="w-12 h-12 text-default-400 mx-auto mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                />
-              </svg>
-              <p className="text-default-500">暂无流量统计数据</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* 流量趋势图 */}
-              <div className="h-64 lg:h-80 w-full">
-                <ResponsiveContainer height="100%" width="100%">
-                  <LineChart data={processFlowChartData()}>
-                    <CartesianGrid
-                      className="opacity-30"
-                      strokeDasharray="3 3"
-                    />
-                    <XAxis
-                      axisLine={{ stroke: "#e5e7eb", strokeWidth: 1 }}
-                      dataKey="time"
-                      tick={{ fontSize: 12 }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      axisLine={{ stroke: "#e5e7eb", strokeWidth: 1 }}
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => {
-                        if (value === 0) return "0";
-                        if (value < 1024) return `${value}B`;
-                        if (value < 1024 * 1024)
-                          return `${(value / 1024).toFixed(1)}K`;
-                        if (value < 1024 * 1024 * 1024)
-                          return `${(value / (1024 * 1024)).toFixed(1)}M`;
+      <div className="flex flex-col gap-4 md:gap-6 lg:grid lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <TrafficOverviewChart hourly={statisticsFlows} />
+        </div>
+        <EndpointListCard
+          emptyText={isAdmin ? "还没有节点" : "暂无可用节点或隧道"}
+          items={sideItems}
+          title={
+            isAdmin
+              ? "节点列表"
+              : sharedNodes.length > 0
+                ? "可用节点"
+                : "我的隧道"
+          }
+          onOpen={isAdmin ? () => navigate("/node") : undefined}
+        />
+      </div>
 
-                        return `${(value / (1024 * 1024 * 1024)).toFixed(1)}G`;
-                      }}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (active && payload && payload.length) {
-                          return (
-                            <div className="bg-white dark:bg-default-100 border border-default-200 rounded-lg shadow-lg p-3">
-                              <p className="font-medium text-foreground">{`时间: ${label}`}</p>
-                              <p className="text-primary">
-                                {`流量: ${formatFlow((payload[0]?.value as number) || 0)}`}
-                              </p>
-                            </div>
-                          );
-                        }
-
-                        return null;
-                      }}
-                    />
-                    <Line
-                      activeDot={{
-                        r: 4,
-                        stroke: "#8b5cf6",
-                        strokeWidth: 2,
-                        fill: "#fff",
-                      }}
-                      dataKey="flow"
-                      dot={false}
-                      stroke="#8b5cf6"
-                      strokeWidth={3}
-                      type="monotone"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-        </CardBody>
-      </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
+        <WeeklyTrafficChart daily={dailyFlows} />
+        <TodayTrafficCard today={todayFlow} />
+        <QuickActionsCard actions={quickActions} />
+      </div>
 
       {isAdmin && (
-        <div className="space-y-5 lg:space-y-6">
-          <section
-            aria-label="资源健康概览"
-            className="border-y border-gray-200 bg-content1 px-3 py-5 dark:border-default-200 sm:px-5"
-          >
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-foreground lg:text-lg">
-                  资源健康概览
-                </h2>
-                <p className="mt-1 text-xs text-default-500">
-                  综合在线率 {adminOverview.summary.availability.toFixed(2)}%
-                </p>
-              </div>
-              <button
-                className="flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary hover:bg-primary-50 dark:hover:bg-primary-500/10"
-                type="button"
-                onClick={() => navigate("/monitoring")}
-              >
-                {adminOverview.summary.openAlerts} 条待处理告警{" "}
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 divide-y divide-gray-200 dark:divide-gray-800 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-              {[
-                {
-                  label: "节点",
-                  path: "/node",
-                  summary: nodeHealth,
-                  icon: <Server className="h-5 w-5" />,
-                },
-                {
-                  label: "隧道",
-                  path: "/tunnel",
-                  summary: tunnelHealth,
-                  icon: <Route className="h-5 w-5" />,
-                },
-                {
-                  label: "转发",
-                  path: "/forward",
-                  summary: forwardHealth,
-                  icon: <Network className="h-5 w-5" />,
-                },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  className="group flex min-h-28 flex-col justify-between gap-3 px-1 py-4 text-left first:pt-0 last:pb-0 sm:px-5 sm:py-0 sm:first:pl-0 sm:last:pr-0"
-                  type="button"
-                  onClick={() => navigate(item.path)}
-                >
-                  <div className="flex w-full items-center justify-between gap-3">
-                    <span className="flex items-center gap-2 font-medium text-foreground">
-                      {item.icon}
-                      {item.label}
-                    </span>
-                    <ArrowRight className="h-4 w-4 text-default-400 transition-transform group-hover:translate-x-1" />
-                  </div>
-                  <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-                    <div>
-                      <p className="text-2xl font-semibold text-foreground">
-                        {item.summary.healthy}
-                        <span className="ml-1 text-sm font-normal text-default-500">
-                          / {item.summary.total}
-                        </span>
-                      </p>
-                      <p className="text-xs text-default-500">健康</p>
-                    </div>
-                    <div className="flex gap-3 pb-0.5 text-xs">
-                      <span className="text-amber-600 dark:text-amber-400">
-                        降级 {item.summary.degraded}
-                      </span>
-                      <span className="text-rose-600 dark:text-rose-400">
-                        异常 {item.summary.offline}
-                      </span>
-                      <span className="text-default-500">
-                        暂停 {item.summary.paused}
-                      </span>
-                      {item.summary.unknown > 0 && (
-                        <span className="text-default-500">
-                          未知 {item.summary.unknown}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </section>
+        <>
+          <RecentActivityCard
+            items={recentActivity}
+            onOpen={() => navigate("/monitoring")}
+          />
 
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
-            <Card
-              className="border border-gray-200 shadow-sm dark:border-default-200 xl:col-span-3"
-              radius="sm"
-            >
+          <div className="grid grid-cols-1 gap-4 md:gap-6 xl:grid-cols-3">
+            <Card className="border border-transparent dark:border-default-100">
               <CardHeader className="flex items-center justify-between gap-3 pb-2">
                 <div className="flex items-center gap-2">
                   <ShieldAlert className="h-5 w-5 text-rose-500" />
@@ -1290,10 +1254,7 @@ export default function DashboardPage() {
               </CardBody>
             </Card>
 
-            <Card
-              className="border border-gray-200 shadow-sm dark:border-default-200 xl:col-span-2"
-              radius="sm"
-            >
+            <Card className="border border-transparent dark:border-default-100">
               <CardHeader className="flex items-center justify-between gap-3 pb-2">
                 <div className="flex items-center gap-2">
                   <Gauge className="h-5 w-5 text-blue-500" />
@@ -1353,13 +1314,7 @@ export default function DashboardPage() {
                 )}
               </CardBody>
             </Card>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-            <Card
-              className="border border-gray-200 shadow-sm dark:border-default-200"
-              radius="sm"
-            >
+            <Card className="border border-transparent dark:border-default-100">
               <CardHeader className="flex items-center justify-between gap-3 pb-2">
                 <div className="flex items-center gap-2">
                   <Users className="h-5 w-5 text-amber-500" />
@@ -1418,65 +1373,8 @@ export default function DashboardPage() {
                 )}
               </CardBody>
             </Card>
-
-            <Card
-              className="border border-gray-200 shadow-sm dark:border-default-200"
-              radius="sm"
-            >
-              <CardHeader className="flex items-center justify-between gap-3 pb-2">
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-5 w-5 text-cyan-500" />
-                  <h2 className="text-base font-semibold">线路切换动态</h2>
-                </div>
-                <button
-                  className="text-sm font-medium text-primary"
-                  type="button"
-                  onClick={() => navigate("/forward")}
-                >
-                  转发管理
-                </button>
-              </CardHeader>
-              <CardBody className="pt-1">
-                {recentRouteSwitches.length === 0 ? (
-                  <div className="flex min-h-44 items-center justify-center text-sm text-default-500">
-                    暂无线路切换记录
-                  </div>
-                ) : (
-                  <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                    {recentRouteSwitches.map((forward) => (
-                      <button
-                        key={forward.id}
-                        className="flex w-full items-start gap-3 py-3 text-left first:pt-1 last:pb-1"
-                        type="button"
-                        onClick={() => navigate("/forward")}
-                      >
-                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300">
-                          <Route className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <strong className="truncate text-sm font-medium text-foreground">
-                              {forward.name}
-                            </strong>
-                            <span className="text-xs text-default-500">
-                              {forward.userName || "管理员"}
-                            </span>
-                          </span>
-                          <span className="mt-1 block truncate text-xs text-default-500">
-                            {forward.routeSwitchReason || "线路状态变化"}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-xs text-default-500">
-                          {formatRelativeTime(forward.lastRouteSwitch)}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </CardBody>
-            </Card>
           </div>
-        </div>
+        </>
       )}
 
       {!isAdmin && (

@@ -36,9 +36,9 @@ public class StatisticsFlowAsync {
         String hourString = currentHour.format(DateTimeFormatter.ofPattern("HH:mm"));
         long time = new Date().getTime();
 
-        // 删除48小时前的数据
+        // Keep eight days so the dashboard can show the last seven full days.
         long nowMs = new Date().getTime();
-        long cutoffMs = nowMs - 48L * 60 * 60 * 1000;
+        long cutoffMs = nowMs - 8L * 24 * 60 * 60 * 1000;
         statisticsFlowService.remove(
                 new LambdaQueryWrapper<StatisticsFlow>()
                         .lt(StatisticsFlow::getCreatedTime, cutoffMs)
@@ -65,11 +65,19 @@ public class StatisticsFlowAsync {
             long currentTotalFlow = currentFlow;
             long incrementFlow = hourlyIncrement(
                     lastFlowRecord == null ? null : lastFlowRecord.getTotalFlow(), currentTotalFlow);
+            long currentIn = user.getInFlow();
+            long currentOut = user.getOutFlow();
 
             StatisticsFlow statisticsFlow = new StatisticsFlow();
             statisticsFlow.setUserId(user.getId());
-            statisticsFlow.setFlow(incrementFlow);        
-            statisticsFlow.setTotalFlow(currentTotalFlow); 
+            statisticsFlow.setFlow(incrementFlow);
+            statisticsFlow.setInFlow(hourlyIncrement(
+                    lastFlowRecord == null ? null : lastFlowRecord.getTotalInFlow(), currentIn));
+            statisticsFlow.setOutFlow(hourlyIncrement(
+                    lastFlowRecord == null ? null : lastFlowRecord.getTotalOutFlow(), currentOut));
+            statisticsFlow.setTotalFlow(currentTotalFlow);
+            statisticsFlow.setTotalInFlow(currentIn);
+            statisticsFlow.setTotalOutFlow(currentOut);
             statisticsFlow.setTime(hourString);
             statisticsFlow.setCreatedTime(time);
 

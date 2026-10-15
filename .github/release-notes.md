@@ -1,3 +1,11 @@
+## 2.73.0 Dashboard in the NodePassDash layout
+
+- The dashboard is rebuilt after NodePassDash: a title with a live clock and node, tunnel and forward counts; four status tiles (running, paused, error, offline nodes); a 24-hour traffic chart with gradient areas beside a node list; this week's traffic, today's traffic and quick actions; and a recent-activity table of open alerts and route switches. 异常与待处理, 转发流量排行 and 额度与到期风险 stay below in the same card style.
+- Traffic is now recorded per direction. Charts show inbound and outbound separately; hours recorded before this update show as one grey "未区分方向" share until they age out.
+- Hourly traffic is kept for eight days instead of 48 hours, which feeds the seven-day chart. The weekly chart fills in over the first week after upgrading.
+- The running, paused and error tiles open 转发管理 filtered to that status, in either the card or table view; a chip in the page header clears the filter.
+- Database: `statistics_flow` gains `in_flow`, `out_flow`, `total_in_flow`, `total_out_flow` and an index on `created_time`, added automatically on startup (`migrations/20261016_statistics_flow_direction.sql` for manual upgrades). Agents stay at 2.66.0. 2.72.0 remains available for rollback.
+
 ## 2.72.0 Unified cards, batch 3: resource center, DNS, assets, failover and smart entry
 
 - 家庭设备, 动态解析, 端口资源 (port pools and user grants), 域名管理 (Cloudflare and carrier DNS accounts), AWS 账号 and 服务器资产 now show each item as a standard card with address blocks, fact grid, status line and action buttons. Their summary figures use the dashboard stat cards.

@@ -153,7 +153,11 @@ CREATE TABLE `statistics_flow` (
   `id` int(10) NOT NULL,
   `user_id` int(10) NOT NULL,
   `flow` bigint(20) NOT NULL,
+  `in_flow` bigint(20) NOT NULL DEFAULT 0,
+  `out_flow` bigint(20) NOT NULL DEFAULT 0,
   `total_flow` bigint(20) NOT NULL,
+  `total_in_flow` bigint(20) DEFAULT NULL,
+  `total_out_flow` bigint(20) DEFAULT NULL,
   `time` varchar(100) NOT NULL,
   `created_time` bigint(20) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -448,7 +452,8 @@ ALTER TABLE `speed_limit`
 -- 表的索引 `statistics_flow`
 --
 ALTER TABLE `statistics_flow`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_statistics_flow_created` (`created_time`);
 
 --
 -- 表的索引 `tunnel`

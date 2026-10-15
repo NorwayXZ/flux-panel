@@ -20,6 +20,7 @@ import { Checkbox, CheckboxGroup } from "@heroui/checkbox";
 import { Alert } from "@heroui/alert";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from "react-hot-toast";
+import { useSearchParams } from "react-router-dom";
 import {
   History,
   LayoutGrid,
@@ -261,9 +262,28 @@ export default function ForwardPage() {
     }
   });
   const [tableSearch, setTableSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The dashboard links here with ?status=running|stopped|error; both views honour it.
   const [tableStatus, setTableStatus] = useState<
     "all" | "running" | "stopped" | "error"
-  >("all");
+  >(() => {
+    const status = searchParams.get("status");
+
+    return status === "running" || status === "stopped" || status === "error"
+      ? status
+      : "all";
+  });
+  const changeStatusFilter = (
+    status: "all" | "running" | "stopped" | "error",
+  ) => {
+    setTableStatus(status);
+    if (searchParams.has("status")) {
+      const next = new URLSearchParams(searchParams);
+
+      next.delete("status");
+      setSearchParams(next, { replace: true });
+    }
+  };
   const [tablePage, setTablePage] = useState(1);
   const [tablePageSize, setTablePageSize] = useState(20);
 
@@ -579,7 +599,7 @@ export default function ForwardPage() {
 
     forwardCardOrder
       .sortItems(
-        [...forwards].sort(compareForwardCreatedTime),
+        forwards.filter(matchesStatusFilter).sort(compareForwardCreatedTime),
         (forward) => forward.id,
       )
       .forEach((forward) => {
@@ -1572,6 +1592,16 @@ export default function ForwardPage() {
     isForwardOutNodeOffline(forward) ||
     getActiveRoute(forward).status === "unhealthy";
 
+  const matchesStatusFilter = (forward: Forward): boolean => {
+    const offline = isForwardLinkOffline(forward);
+
+    if (tableStatus === "running") return forward.serviceRunning && !offline;
+    if (tableStatus === "stopped") return !forward.serviceRunning;
+    if (tableStatus === "error") return offline || forward.status === -1;
+
+    return true;
+  };
+
   const getProtocolDisplay = (protocolMode?: string): string => {
     if (protocolMode === "tcp") return "TCP";
     if (protocolMode === "udp") return "UDP";
@@ -1649,13 +1679,13 @@ export default function ForwardPage() {
     }
 
     // 在平铺模式下，只显示当前用户的转发
-    let filteredForwards = forwards;
+    let filteredForwards = forwards.filter(matchesStatusFilter);
 
     if (viewMode === "direct") {
       const currentUserId = JwtUtil.getUserIdFromToken();
 
       if (currentUserId !== null) {
-        filteredForwards = forwards.filter(
+        filteredForwards = filteredForwards.filter(
           (forward) => forward.userId === currentUserId,
         );
       }
@@ -2101,13 +2131,7 @@ export default function ForwardPage() {
     const keyword = tableSearch.trim().toLowerCase();
     const rows = [...forwards]
       .filter((forward) => {
-        const offline = isForwardLinkOffline(forward);
-
-        if (tableStatus === "running" && !(forward.serviceRunning && !offline))
-          return false;
-        if (tableStatus === "stopped" && forward.serviceRunning) return false;
-        if (tableStatus === "error" && !offline && forward.status !== -1)
-          return false;
+        if (!matchesStatusFilter(forward)) return false;
         if (!keyword) return true;
 
         return [
@@ -2224,7 +2248,7 @@ export default function ForwardPage() {
                   size="sm"
                   variant={tableStatus === key ? "solid" : "flat"}
                   onClick={() => {
-                    setTableStatus(key);
+                    changeStatusFilter(key);
                     setTablePage(1);
                   }}
                 >
@@ -2408,6 +2432,22 @@ export default function ForwardPage() {
           {totalOfflineForwardCount > 0 && (
             <Chip className="text-xs" color="danger" size="sm" variant="flat">
               异常 {totalOfflineForwardCount}
+            </Chip>
+          )}
+          {layout === "card" && tableStatus !== "all" && (
+            <Chip
+              className="text-xs"
+              color="primary"
+              size="sm"
+              variant="solid"
+              onClose={() => changeStatusFilter("all")}
+            >
+              只看
+              {tableStatus === "running"
+                ? "运行中"
+                : tableStatus === "stopped"
+                  ? "已停止"
+                  : "异常"}
             </Chip>
           )}
         </div>

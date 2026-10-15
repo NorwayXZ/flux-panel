@@ -27,9 +27,14 @@ public class UserPackageDto {
     private List<UserForwardDetailDto> forwards;
 
     /**
-     * 用户转发列表
+     * Hourly traffic for the last 24 hours, newest first.
      */
     private List<StatisticsFlow> statisticsFlows;
+
+    /**
+     * Daily traffic for the last 7 days including today, newest first.
+     */
+    private List<StatisticsFlow> dailyFlows;
     
     /**
      * 用户基本信息
