@@ -1064,8 +1064,8 @@ public class GostUtil {
         return createChainData(name, remoteAddrs, protocol, interfaceName, weight, "relay");
     }
 
-    private static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol,
-                                              String interfaceName, Integer weight, String connectorType) {
+    static JSONObject createChainData(String name, List<String> remoteAddrs, String protocol,
+                                      String interfaceName, Integer weight, String connectorType) {
         JSONArray hops = new JSONArray();
         int index = 1;
         for (String remoteAddr : remoteAddrs) {
@@ -1082,6 +1082,7 @@ public class GostUtil {
             connector.put("type", connectorType);
 
             JSONObject node = new JSONObject();
+            applyChainPool(dialer, name, protocol, index);
             node.put("name", "node-" + name + "-" + index);
             node.put("addr", remoteAddr);
             node.put("connector", connector);
@@ -1127,6 +1128,7 @@ public class GostUtil {
                     JSONObject metadata = new JSONObject(); metadata.put("keepAlive", true); metadata.put("ttl", "10s");
                     dialer.put("metadata", metadata);
                 }
+                applyChainPool(dialer, name, protocol, hopIndex);
                 JSONObject connector = new JSONObject(); connector.put("type", "relay");
                 JSONObject node = new JSONObject();
                 node.put("name", "node-" + name + "-" + hopIndex + "-" + nodeIndex++);
@@ -1174,6 +1176,24 @@ public class GostUtil {
      * so resolving here keeps them on creation, edits, route switches and recovery alike.
      */
     private static volatile java.util.function.Function<String, Map<String, Object>> forwardOptions = name -> Map.of();
+
+    /** TLS connection pool size for a forward's chain, by chain name; see Tunnel#poolSize. */
+    private static volatile java.util.function.ToIntFunction<String> chainPoolSize = name -> 0;
+
+    public static void setChainPoolSizeResolver(java.util.function.ToIntFunction<String> resolver) {
+        chainPoolSize = resolver == null ? name -> 0 : resolver;
+    }
+
+    /** Adds the pool to a first-hop TLS dialer; later hops are dialed through the first. */
+    private static void applyChainPool(JSONObject dialer, String chainName, String protocol, int hopIndex) {
+        if (hopIndex != 1 || !Objects.equals(protocol, "tls")) return;
+        int size = chainPoolSize.applyAsInt(chainName);
+        if (size <= 0) return;
+        JSONObject metadata = dialer.getJSONObject("metadata");
+        if (metadata == null) metadata = new JSONObject();
+        metadata.put("pool.size", Math.min(size, 8));
+        dialer.put("metadata", metadata);
+    }
 
     public static void setForwardOptionsResolver(java.util.function.Function<String, Map<String, Object>> resolver) {
         forwardOptions = resolver == null ? name -> Map.of() : resolver;

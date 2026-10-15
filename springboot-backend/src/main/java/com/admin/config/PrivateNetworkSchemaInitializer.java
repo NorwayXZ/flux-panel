@@ -48,6 +48,7 @@ public class PrivateNetworkSchemaInitializer {
                     + "PRIMARY KEY(id),KEY idx_route_app_tunnel(tunnel_id,state),KEY idx_route_app_entry(entry_node_id,listen_port,state)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureColumn("tunnel", "hop_config", "longtext DEFAULT NULL AFTER node_path");
+            ensureColumn("tunnel", "pool_size", "int NOT NULL DEFAULT 0 AFTER protocol");
             ensureColumn("network_route_application", "managed_tunnel", "tinyint NOT NULL DEFAULT 0 AFTER hop_ports");
             ensureColumn("network_route_application", "runtime_port", "int DEFAULT NULL AFTER hop_ports");
             ensureColumn("network_route_application", "reality_server_name", "varchar(253) DEFAULT NULL AFTER runtime_port");

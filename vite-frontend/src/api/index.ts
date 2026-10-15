@@ -3758,3 +3758,23 @@ export const getHomeProxyNatEvents = (id: number) =>
 
 // 验证码相关接口
 export const checkCaptcha = () => Network.post("/captcha/check");
+
+export interface ApiTokenItem {
+  id: number;
+  name: string;
+  tokenPrefix: string;
+  createdTime: number;
+  lastUsedAt?: number | null;
+  expiresAt?: number | null;
+}
+
+export const getApiTokens = () =>
+  Network.post<ApiTokenItem[]>("/api-token/list");
+export const createApiToken = (name: string, validDays: number) =>
+  Network.mutate<{ token: string; name: string; expiresAt?: number | null }>(
+    "/api-token/create",
+    { name, validDays },
+    ["/api-token/list"],
+  );
+export const revokeApiToken = (id: number) =>
+  Network.mutate("/api-token/revoke", { id }, ["/api-token/list"]);

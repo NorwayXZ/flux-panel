@@ -43,6 +43,11 @@ public class TunnelDto {
     
     // 协议类型，默认为tls
     private String protocol;
+
+    /** Pre-handshaken TLS connections kept ready on the entry, 0 to 8. */
+    @javax.validation.constraints.Min(value = 0, message = "连接池大小不能小于0")
+    @javax.validation.constraints.Max(value = 8, message = "连接池大小不能大于8")
+    private Integer poolSize;
     
     // TCP监听地址，默认为0.0.0.0
     private String tcpListenAddr = "0.0.0.0";

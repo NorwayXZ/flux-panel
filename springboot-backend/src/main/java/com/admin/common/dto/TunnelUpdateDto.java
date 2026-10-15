@@ -33,6 +33,11 @@ public class TunnelUpdateDto {
     @NotBlank
     private String protocol;
 
+    /** Pre-handshaken TLS connections kept ready on the entry, 0 to 8. */
+    @javax.validation.constraints.Min(value = 0, message = "连接池大小不能小于0")
+    @javax.validation.constraints.Max(value = 8, message = "连接池大小不能大于8")
+    private Integer poolSize;
+
     // TCP监听地址
     @NotBlank
     private String tcpListenAddr;

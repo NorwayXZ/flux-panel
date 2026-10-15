@@ -50,6 +50,7 @@ interface Tunnel {
   outIp?: string;
   nodePath?: string;
   protocol?: string;
+  poolSize?: number;
   tcpListenAddr: string;
   udpListenAddr: string;
   interfaceName?: string;
@@ -102,6 +103,7 @@ interface TunnelForm {
   outNodeId?: number | null;
   nodePath: Array<number | null>;
   protocol: string;
+  poolSize: number;
   tcpListenAddr: string;
   udpListenAddr: string;
   interfaceName?: string;
@@ -202,6 +204,7 @@ export default function TunnelPage() {
     outNodeId: null,
     nodePath: [null, null],
     protocol: "tls",
+    poolSize: 0,
     tcpListenAddr: "[::]",
     udpListenAddr: "[::]",
     interfaceName: "",
@@ -316,6 +319,7 @@ export default function TunnelPage() {
       outNodeId: null,
       nodePath: [null, null],
       protocol: "tls",
+      poolSize: 0,
       tcpListenAddr: "[::]",
       udpListenAddr: "[::]",
       interfaceName: "",
@@ -347,6 +351,7 @@ export default function TunnelPage() {
           ? getTunnelNodePath(tunnel)
           : [tunnel.inNodeId, tunnel.outNodeId || null],
       protocol: tunnel.protocol || "tls",
+      poolSize: tunnel.poolSize || 0,
       tcpListenAddr: tunnel.tcpListenAddr || "[::]",
       udpListenAddr: tunnel.udpListenAddr || "[::]",
       interfaceName: tunnel.interfaceName || "",
@@ -1726,6 +1731,26 @@ export default function TunnelPage() {
                         <SelectItem key="mtcp">MTCP</SelectItem>
                         <SelectItem key="quic">QUIC</SelectItem>
                       </Select>
+
+                      {form.protocol === "tls" && !form.sharedRelay && (
+                        <Select
+                          description="入口提前和出口握手好几条连接，新连接直接使用，首包更快；只在隧道最近 1 分钟有流量时保持"
+                          label="连接池预热"
+                          selectedKeys={[String(form.poolSize || 0)]}
+                          variant="bordered"
+                          onSelectionChange={(keys) => {
+                            const value = Number(Array.from(keys)[0] ?? 0);
+
+                            setForm((prev) => ({ ...prev, poolSize: value }));
+                          }}
+                        >
+                          <SelectItem key="0">关闭</SelectItem>
+                          <SelectItem key="1">1 条</SelectItem>
+                          <SelectItem key="2">2 条</SelectItem>
+                          <SelectItem key="4">4 条</SelectItem>
+                          <SelectItem key="8">8 条</SelectItem>
+                        </Select>
+                      )}
 
                       <div className="space-y-3">
                         <div className="flex items-center justify-between gap-3">

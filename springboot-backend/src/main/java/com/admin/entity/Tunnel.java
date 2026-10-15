@@ -86,6 +86,9 @@ public class Tunnel extends BaseEntity {
 
     private String interfaceName;
 
+    /** Pre-handshaken TLS connections the entry keeps ready while the tunnel carries traffic (0 = off). */
+    private Integer poolSize;
+
     @TableField(exist = false)
     private String ownerUserName;
 

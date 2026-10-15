@@ -176,6 +176,7 @@ CREATE TABLE `tunnel` (
   `node_path` longtext DEFAULT NULL,
   `type` int(10) NOT NULL,
   `protocol` varchar(10) NOT NULL DEFAULT 'tls',
+  `pool_size` int(10) NOT NULL DEFAULT '0',
   `flow` int(10) NOT NULL,
   `tcp_listen_addr` varchar(100) NOT NULL DEFAULT '[::]',
   `udp_listen_addr` varchar(100) NOT NULL DEFAULT '[::]',

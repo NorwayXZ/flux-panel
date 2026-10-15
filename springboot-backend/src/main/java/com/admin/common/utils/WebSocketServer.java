@@ -373,6 +373,8 @@ public class WebSocketServer extends TextWebSocketHandler {
                             res.put("type", "status");
                             res.put("data", 1);
                             broadcastMessage(res.toJSONString());
+                            com.admin.service.PanelEventHub.publish("node.online", null,
+                                    java.util.Map.of("nodeId", nodeId, "name", String.valueOf(node.getName()), "version", String.valueOf(version)));
                         } else {
                             log.info("节点 {} 状态更新失败", nodeId);
                         }
@@ -471,6 +473,8 @@ public class WebSocketServer extends TextWebSocketHandler {
                         
                         if (updateResult) {
                             log.info("节点 {} 状态更新为离线成功", nodeId);
+                            com.admin.service.PanelEventHub.publish("node.offline", null,
+                                    java.util.Map.of("nodeId", nodeId, "name", String.valueOf(node.getName())));
                             
                             JSONObject res = new JSONObject();
                             res.put("id", id);

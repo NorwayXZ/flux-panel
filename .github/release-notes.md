@@ -1,3 +1,12 @@
+## 2.66.0 Connection pool, API tokens, real-time events and MCP
+
+- TLS tunnels can keep a pool of 1-8 pre-handshaken connections to the exit (隧道 → 连接池预热). A new client connection takes one and skips the TCP and TLS round trips. The pool only stays warm while the tunnel carried traffic in the last minute, replaces entries before the exit's 15-second idle limit, and lets them expire when the tunnel goes quiet. It applies to the first hop of TLS tunnels; multiplexed protocols (MTLS, MWSS) already reuse one connection.
+- Personal API tokens (个人中心 → API 令牌): send "Authorization: Bearer cn_..." or "X-API-Key: cn_..." to call any panel endpoint as the token's owner, with that account's permissions. Tokens are shown once, stored as SHA-256 hashes, can expire after 30/90/365 days or never, and can be revoked. A token cannot create tokens or change the account password.
+- Real-time events: GET /api/v1/events streams Server-Sent Events for node online/offline, forward created/updated/deleted/paused/resumed and route switches. Administrators receive all events; other users only events about their own forwards.
+- MCP endpoint at /api/v1/mcp (Streamable HTTP) for AI assistants, authenticated with an API token. Tools: list nodes, tunnels and forwards; diagnose a forward or a tunnel; pause or resume a forward; read a forward's route switch history. Every tool runs as the token's owner.
+- Update the panel and the entry Agents to 2.66.0 for the connection pool; tokens, events and MCP are panel-only. The database gains the api_token table and tunnel.pool_size (default 0, off). 2.65.0 remains available for rollback.
+- Verified by backend tests (404) including token authentication, expiry, revocation, the request filter, event delivery rules and the MCP protocol, Agent tests with the race detector for the pool (served from the pool, refills, stops when unused, replaces stale entries) and sequential plus concurrent connections through a pooled relay/TLS tunnel, and frontend tests and build.
+
 ## 2.65.0 Lowest-latency targets, forward advanced options and QUIC tunnels
 
 - New target strategy 最低延迟: for a forward with several landing addresses, the panel's per-minute health check puts the fastest healthy landing first and the exit uses it. The current landing stays first unless another one is faster by more than 15 ms, so small fluctuations do not rebuild the exit service. Unhealthy landings are still removed and return automatically when they recover.

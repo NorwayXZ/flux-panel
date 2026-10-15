@@ -20,6 +20,7 @@ import { updatePassword } from "@/api";
 import { safeLogout } from "@/utils/logout";
 import { getCurrentUsername, isAdmin as isAdminUser } from "@/utils/auth";
 import PageShell from "@/components/page-shell";
+import ApiTokenCard from "@/components/api-token-card";
 interface PasswordForm {
   newUsername: string;
   currentPassword: string;
@@ -319,6 +320,8 @@ export default function ProfilePage() {
             </div>
           </CardBody>
         </Card>
+
+        <ApiTokenCard />
 
         <div className="border-t border-divider pt-4 text-center">
           <p className="text-xs text-gray-400 dark:text-gray-500">

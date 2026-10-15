@@ -131,10 +131,29 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         String guardError = validateGuardOptions(forwardDto.getProxyProtocol(), forwardDto.getBlockProtocols(), forwardDto.getMaxConnections());
         if (guardError != null) return R.err(guardError);
         portAllocationLockMapper.lockForUpdate();
-        if (forwardDto.getBatchEndPort() != null) {
-            return createBatchForwards(forwardDto);
+        R result = forwardDto.getBatchEndPort() != null
+                ? createBatchForwards(forwardDto)
+                : createSingleForward(forwardDto);
+        if (result.getCode() == 0) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("name", forwardDto.getName());
+            data.put("tunnelId", forwardDto.getTunnelId());
+            data.put("inPort", forwardDto.getInPort());
+            data.put("batch", forwardDto.getBatchEndPort() != null);
+            com.admin.service.PanelEventHub.publish("forward.created", JwtUtil.getUserIdFromToken(), data);
         }
-        return createSingleForward(forwardDto);
+        return result;
+    }
+
+    /** Publishes a forward event to its owner and administrators. */
+    private void publishForwardEvent(String type, Forward forward, Map<String, Object> extra) {
+        if (forward == null) return;
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("forwardId", forward.getId());
+        data.put("name", forward.getName());
+        data.put("status", forward.getStatus());
+        if (extra != null) data.putAll(extra);
+        com.admin.service.PanelEventHub.publish(type, forward.getUserId(), data);
     }
 
     @Override
@@ -397,6 +416,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R updateForwardInternal(ForwardUpdateDto forwardUpdateDto, UserInfo currentUser) {
+        R result = updateForwardUnpublished(forwardUpdateDto, currentUser);
+        if (result.getCode() == 0) publishForwardEvent("forward.updated", this.getById(forwardUpdateDto.getId()), null);
+        return result;
+    }
+
+    private R updateForwardUnpublished(ForwardUpdateDto forwardUpdateDto, UserInfo currentUser) {
         portAllocationLockMapper.lockForUpdate();
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             User user = userService.getById(currentUser.getUserId());
@@ -565,6 +590,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R deleteForwardInternal(Long id, UserInfo currentUser) {
+        Forward before = this.getById(id);
+        R result = deleteForwardUnpublished(id, currentUser);
+        if (result.getCode() == 0) publishForwardEvent("forward.deleted", before, null);
+        return result;
+    }
+
+    private R deleteForwardUnpublished(Long id, UserInfo currentUser) {
 
         // 2. 检查转发是否存在
         Forward forward = validateForwardExists(id, currentUser);
@@ -639,6 +671,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R changeManagedForwardStatus(Long id, int status, String operation, String method) {
+        R result = changeManagedForwardStatusUnpublished(id, status, operation, method);
+        if (result.getCode() == 0) publishForwardEvent(status == FORWARD_STATUS_PAUSED ? "forward.paused" : "forward.resumed", this.getById(id), null);
+        return result;
+    }
+
+    private R changeManagedForwardStatusUnpublished(Long id, int status, String operation, String method) {
         Forward existing = this.getById(id);
         if (existing == null) return R.err("托管转发不存在");
         return changeForwardStatus(id, status, operation, method,
@@ -678,6 +716,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      * 改变转发状态（暂停/恢复）
      */
     private R changeForwardStatus(Long id, int targetStatus, String operation, String gostMethod, UserInfo currentUser) {
+        R result = changeForwardStatusUnpublished(id, targetStatus, operation, gostMethod, currentUser);
+        if (result.getCode() == 0) publishForwardEvent(targetStatus == FORWARD_STATUS_PAUSED ? "forward.paused" : "forward.resumed", this.getById(id), null);
+        return result;
+    }
+
+    private R changeForwardStatusUnpublished(Long id, int targetStatus, String operation, String gostMethod, UserInfo currentUser) {
 
         if (currentUser.getRoleId() != ADMIN_ROLE_ID) {
             User user = userService.getById(currentUser.getUserId());
@@ -2630,6 +2674,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         } catch (Exception e) {
             log.warn("记录转发 {} 线路切换事件失败：{}", forward.getId(), e.getMessage());
         }
+        Map<String, Object> switched = new LinkedHashMap<>();
+        switched.put("fromTunnelId", previous == null ? null : previous.getTunnelId());
+        switched.put("toTunnelId", selected == null ? null : selected.getTunnelId());
+        switched.put("reason", reason);
+        switched.put("trigger", triggerType);
+        switched.put("result", status);
+        publishForwardEvent("route.switched", forward, switched);
     }
 
     private void deleteRouteEvents(Long forwardId) {
@@ -2638,6 +2689,24 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         } catch (Exception e) {
             log.warn("清理转发 {} 线路切换记录失败：{}", forwardId, e.getMessage());
         }
+    }
+
+    private static final java.util.regex.Pattern CHAIN_NAME = java.util.regex.Pattern.compile("^(\\d+)_\\d+_\\d+(?:r(\\d+))?$");
+
+    @PostConstruct
+    void registerChainPool() {
+        GostUtil.setChainPoolSizeResolver(name -> {
+            java.util.regex.Matcher matcher = CHAIN_NAME.matcher(name == null ? "" : name);
+            if (!matcher.matches()) return 0;
+            Integer tunnelId = matcher.group(2) != null ? Integer.valueOf(matcher.group(2)) : null;
+            if (tunnelId == null) {
+                Forward forward = this.getById(Long.valueOf(matcher.group(1)));
+                if (forward == null) return 0;
+                tunnelId = forward.getActiveTunnelId() != null ? forward.getActiveTunnelId() : forward.getTunnelId();
+            }
+            Tunnel tunnel = tunnelId == null ? null : tunnelService.getById(tunnelId);
+            return tunnel == null || tunnel.getPoolSize() == null ? 0 : tunnel.getPoolSize();
+        });
     }
 
     @PostConstruct

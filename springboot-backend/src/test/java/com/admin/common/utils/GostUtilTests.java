@@ -39,6 +39,25 @@ class GostUtilTests {
         }
     }
 
+    @Test void connectionPoolGoesOnTheFirstTlsHopOnly() {
+        GostUtil.setChainPoolSizeResolver(name -> name.startsWith("5_") ? 4 : 0);
+        try {
+            var chain=GostUtil.createChainData("5_7_9",List.of("198.51.100.1:1000","198.51.100.2:1000"),"tls",null,null,"relay");
+            var hops=chain.getJSONArray("hops");
+            assertEquals(4,hops.getJSONObject(0).getJSONArray("nodes").getJSONObject(0).getJSONObject("dialer").getJSONObject("metadata").getIntValue("pool.size"));
+            assertFalse(hops.getJSONObject(1).getJSONArray("nodes").getJSONObject(0).getJSONObject("dialer").containsKey("metadata"));
+            var routed=GostUtil.createRoutedChainData("5_7_9r12",List.of(List.of("198.51.100.1:1000","198.51.100.3:1000")),"tls",null,null);
+            for (Object node : routed.getJSONArray("hops").getJSONObject(0).getJSONArray("nodes"))
+                assertEquals(4,((JSONObject) node).getJSONObject("dialer").getJSONObject("metadata").getIntValue("pool.size"));
+            var quic=GostUtil.createChainData("5_7_9",List.of("198.51.100.1:1000"),"quic",null,null,"relay");
+            assertFalse(quic.getJSONArray("hops").getJSONObject(0).getJSONArray("nodes").getJSONObject(0).getJSONObject("dialer").getJSONObject("metadata").containsKey("pool.size"));
+            var off=GostUtil.createChainData("6_7_9",List.of("198.51.100.1:1000"),"tls",null,null,"relay");
+            assertFalse(off.getJSONArray("hops").getJSONObject(0).getJSONArray("nodes").getJSONObject(0).getJSONObject("dialer").containsKey("metadata"));
+        } finally {
+            GostUtil.setChainPoolSizeResolver(null);
+        }
+    }
+
     @Test
     void buildsOrderedSocks5HopsForHomeTunnelEgress() {
         JSONObject chain = GostUtil.createPublishingChainData("home_proxy_9_egress", List.of(

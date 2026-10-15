@@ -270,6 +270,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                 !Objects.equals(existingTunnel.getUdpListenAddr(), tunnelUpdateDto.getUdpListenAddr()) ||
                 !Objects.equals(existingTunnel.getProtocol(), tunnelUpdateDto.getProtocol()) ||
                 !Objects.equals(existingTunnel.getInterfaceName(), tunnelUpdateDto.getInterfaceName()) ||
+                (tunnelUpdateDto.getPoolSize() != null && !Objects.equals(existingTunnel.getPoolSize(), tunnelUpdateDto.getPoolSize())) ||
                 !Objects.equals(oldHopConfig, newHopConfig)) {
             up++;
         }
@@ -283,6 +284,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         existingTunnel.setTrafficRatio(tunnelUpdateDto.getTrafficRatio());
         existingTunnel.setProtocol(tunnelUpdateDto.getProtocol());
         existingTunnel.setInterfaceName(tunnelUpdateDto.getInterfaceName());
+        if (tunnelUpdateDto.getPoolSize() != null) existingTunnel.setPoolSize(tunnelUpdateDto.getPoolSize());
         existingTunnel.setHopConfig(newHopConfig);
         this.updateById(existingTunnel);
         int err = 0;
@@ -620,6 +622,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
             // 隧道转发时，设置协议类型，默认为tls
             String protocol = StrUtil.isNotBlank(tunnelDto.getProtocol()) ? tunnelDto.getProtocol() : "tls";
             tunnel.setProtocol(protocol);
+            tunnel.setPoolSize(tunnelDto.getPoolSize() == null ? 0 : tunnelDto.getPoolSize());
         } else {
             // 端口转发时，协议类型为null
             tunnel.setProtocol(null);

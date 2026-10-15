@@ -9,6 +9,7 @@ import (
 
 type metadata struct {
 	handshakeTimeout time.Duration
+	poolSize         int
 }
 
 func (d *tlsDialer) parseMetadata(md mdata.Metadata) (err error) {
@@ -17,6 +18,8 @@ func (d *tlsDialer) parseMetadata(md mdata.Metadata) (err error) {
 	)
 
 	d.md.handshakeTimeout = mdutil.GetDuration(md, handshakeTimeout)
+	// Pre-handshaken connections kept ready while the tunnel carries traffic (0 = off).
+	d.md.poolSize = min(max(mdutil.GetInt(md, "pool.size"), 0), 8)
 
 	return
 }
