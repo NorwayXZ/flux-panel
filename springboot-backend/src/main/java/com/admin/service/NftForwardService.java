@@ -544,7 +544,7 @@ public class NftForwardService {
     }
 
     private static List<String> splitSourceCIDRs(String raw) {
-        if (StringUtils.isBlank(raw)) return List.of();
+        if (StringUtils.isBlank(raw)) return new ArrayList<>();
         return Arrays.stream(raw.trim().split("[\\s,，;；]+"))
                 .map(String::trim).filter(StringUtils::isNotBlank).distinct().sorted().collect(Collectors.toList());
     }

@@ -14,6 +14,7 @@ import com.admin.service.NatTraversalService;
 import com.admin.service.OpenWrtDnsResolverService;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.serializer.SerializerFeature;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -659,12 +660,20 @@ public class WebSocketServer extends TextWebSocketHandler {
         return sendCommand(connectorSessions, connectorId, msg, type, "内网接入端", timeoutSeconds);
     }
 
+    /**
+     * Agents decode plain JSON. fastjson otherwise writes a value seen twice in one message, such
+     * as the shared empty List.of(), as {"$ref":...}, which the Agent cannot read as the value.
+     */
+    static String agentJson(JSONObject data) {
+        return JSON.toJSONString(data, SerializerFeature.DisableCircularReferenceDetect);
+    }
+
     public static boolean sendConnectorEvent(Long connectorId, String type, Object msg) {
         WebSocketSession session = connectorSessions.get(connectorId);
         if (session == null || !session.isOpen()) return false;
         JSONObject data = new JSONObject();
         data.put("type",type); data.put("data",msg);
-        sendToUser(session,data.toJSONString(),(String)session.getAttributes().get("nodeSecret"));
+        sendToUser(session,agentJson(data),(String)session.getAttributes().get("nodeSecret"));
         return session.isOpen();
     }
 
@@ -675,7 +684,7 @@ public class WebSocketServer extends TextWebSocketHandler {
         data.put("type", type);
         data.put("data", msg);
         String nodeSecret = (String) nodeSession.getAttributes().get("nodeSecret");
-        sendToUser(nodeSession, data.toJSONString(), nodeSecret);
+        sendToUser(nodeSession, agentJson(data), nodeSecret);
         return nodeSession.isOpen();
     }
 
@@ -717,7 +726,7 @@ public class WebSocketServer extends TextWebSocketHandler {
             data.put("type", type);
             data.put("data", msg);
             data.put("requestId", requestId);
-            sendToUser(nodeSession, data.toJSONString(), nodeSecret);
+            sendToUser(nodeSession, agentJson(data), nodeSecret);
             GostDto result = future.get(Math.max(1, timeoutSeconds), TimeUnit.SECONDS);
             
             log.info("成功发送消息到{} {} 并收到响应: {}", targetLabel, targetId, result.getMsg());

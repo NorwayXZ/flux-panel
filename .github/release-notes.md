@@ -1,3 +1,11 @@
+## 2.64.4 Fix nftables rules failing on nodes with several open-source rules
+
+- Fixes nftables port forwarding on a node with two or more rules that allow any source. The panel sent the second and later rules' empty source allowlist as a JSON reference object instead of an empty list, so the Agent rejected the whole node update with "cannot unmarshal object into Go struct field nftForwardRule.rules.sourceCidrs". New rules on such a node showed 异常 with "Agent 返回的实际规则不完整", and deleting a rule on that node failed and kept its port reserved.
+- Messages to Agents are now always written as plain JSON without fastjson reference objects, so a value repeated within one command can no longer break any other Agent command either.
+- After updating, the panel re-syncs affected nodes on its own within about a minute; rules pending deletion are then removed and their ports released. Clicking a rule's sync or delete again also works.
+- Panel-only update: Agents stay at 2.64.3, no Agent upgrade is needed. No database change. 2.64.3 remains available for rollback.
+- Verified by backend tests (392), including a new test that a message with three rules sharing an empty allowlist is written without reference objects.
+
 ## 2.64.3 CNIX shared tunnels survive an offline exit and customer renewals
 
 - An offline exit node no longer blocks removing shared businesses, pausing them, removing a user's tunnel permission, deleting a user or deleting a shared tunnel. The database change applies at once; the exit carries no traffic while offline, and the periodic sync (about 30 seconds) pushes the current grants when it is back. A shared tunnel deleted while its exit is offline keeps its exit port reserved until the exit returns and the shared listener is removed, or until the exit node is deleted from the panel. An exit that is online but rejects a change still fails the operation.
