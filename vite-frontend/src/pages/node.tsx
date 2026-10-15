@@ -1031,11 +1031,12 @@ export default function NodePage() {
 
   const [layout, setLayout] = useState<"table" | "card">(() => {
     try {
-      return localStorage.getItem("cloudnest.node.layout") === "card"
-        ? "card"
-        : "table";
+      // Cards by default; the table view is opt-in.
+      return localStorage.getItem("cloudnest.node.layout") === "table"
+        ? "table"
+        : "card";
     } catch {
-      return "table";
+      return "card";
     }
   });
   const changeLayout = (next: "table" | "card") => {

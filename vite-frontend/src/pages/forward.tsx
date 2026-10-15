@@ -249,14 +249,15 @@ export default function ForwardPage() {
     }
   });
 
-  // 列表样式：表格（NodePass 风格，默认）或卡片
+  // 列表样式：卡片（默认）或表格
   const [layout, setLayout] = useState<"table" | "card">(() => {
     try {
-      return localStorage.getItem("cloudnest.forward.layout") === "card"
-        ? "card"
-        : "table";
+      // Cards by default; the table view is opt-in.
+      return localStorage.getItem("cloudnest.forward.layout") === "table"
+        ? "table"
+        : "card";
     } catch {
-      return "table";
+      return "card";
     }
   });
   const [tableSearch, setTableSearch] = useState("");

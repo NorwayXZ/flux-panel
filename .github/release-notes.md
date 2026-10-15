@@ -1,3 +1,8 @@
+## 2.69.1 Forwards and nodes open as cards again
+
+- 转发管理 and 添加节点 open in the card view again by default. The table view stays available from the switch in the page header and is remembered per browser once chosen.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.69.0 remains available for rollback.
+
 ## 2.69.0 New look, part 3: consistent cards across pages
 
 - Cards on the tunnel, forward, node, user, profile and settings pages drop their grey borders and heavy shadows for NodePassDash's card look: a soft shadow in light mode and a thin border in dark mode.
