@@ -7,7 +7,7 @@ type PageShellProps = {
 };
 
 const widthClass = {
-  standard: "max-w-[1500px]",
+  standard: "max-w-[1400px]",
   wide: "max-w-[1680px]",
   full: "max-w-none",
 } as const;
@@ -18,7 +18,9 @@ export default function PageShell({
   className = "",
 }: PageShellProps) {
   return (
-    <div className={`mx-auto w-full ${widthClass[width]} p-4 sm:p-6 ${className}`}>
+    <div
+      className={`mx-auto w-full ${widthClass[width]} px-4 pb-4 pt-5 sm:px-6 sm:pt-8 ${className}`}
+    >
       {children}
     </div>
   );

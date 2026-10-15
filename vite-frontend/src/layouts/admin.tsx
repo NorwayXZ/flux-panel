@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@heroui/button";
-import {
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
-} from "@heroui/dropdown";
+import { Tooltip } from "@heroui/tooltip";
 import {
   Modal,
   ModalContent,
@@ -30,13 +25,21 @@ import {
   Gauge,
   Home,
   House,
+  KeyRound,
   LockKeyhole,
+  LogOut,
   MapPinned,
+  Menu,
+  MonitorCog,
+  Moon,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   RadioTower,
   SearchCheck,
   Server,
   ShieldCheck,
+  Sun,
   Waypoints,
   Wrench,
 } from "lucide-react";
@@ -48,6 +51,11 @@ import { siteConfig } from "@/config/site";
 import { useAlertUnreadCount } from "@/hooks/use-alert-unread-count";
 import { preloadRoute } from "@/utils/route-preload";
 import { getCurrentUsername, isAdmin as isAdminUser } from "@/utils/auth";
+import {
+  type ThemePreference,
+  setThemePreference,
+  useThemePreference,
+} from "@/components/theme-provider";
 
 interface MenuItem {
   path: string;
@@ -82,6 +90,14 @@ export default function AdminLayout({
     Record<string, boolean>
   >({});
   const { count: unreadAlertCount } = useAlertUnreadCount();
+  const themePreference = useThemePreference();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("cloudnest.admin.sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [passwordForm, setPasswordForm] = useState<PasswordForm>({
     newUsername: "",
     currentPassword: "",
@@ -447,6 +463,36 @@ export default function AdminLayout({
     }
   };
 
+  const toggleSidebar = (collapsed: boolean) => {
+    setSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(
+        "cloudnest.admin.sidebar-collapsed",
+        collapsed ? "1" : "0",
+      );
+    } catch {
+      // Keep the choice for this page only.
+    }
+  };
+
+  const themeOrder: ThemePreference[] = ["system", "light", "dark"];
+  const themeLabel: Record<ThemePreference, string> = {
+    system: "跟随系统",
+    light: "浅色",
+    dark: "深色",
+  };
+  const themeIcon: Record<ThemePreference, React.ReactNode> = {
+    system: <MonitorCog className="h-5 w-5" />,
+    light: <Sun className="h-5 w-5" />,
+    dark: <Moon className="h-5 w-5" />,
+  };
+  const cycleTheme = () => {
+    const next =
+      themeOrder[(themeOrder.indexOf(themePreference) + 1) % themeOrder.length];
+
+    setThemePreference(next);
+  };
+
   const toggleGroup = (label: string) => {
     setCollapsedGroups((current) => {
       const next = { ...current, [label]: !current[label] };
@@ -540,251 +586,258 @@ export default function AdminLayout({
     }))
     .filter((group) => group.items.length > 0);
 
+  const isItemActive = (item: MenuItem) =>
+    (item.activePaths || [item.path]).includes(location.pathname);
+  const showLabels = isMobile || !sidebarCollapsed;
+
   return (
     <div
-      className={`flex ${isMobile ? "min-h-screen" : "h-screen"} bg-gray-100 dark:bg-black`}
+      className={`flex ${isMobile ? "min-h-screen" : "h-screen"} bg-background`}
     >
       {/* 移动端遮罩层 */}
       {isMobile && mobileMenuVisible && (
         <div
-          className="fixed inset-0 backdrop-blur-sm bg-white/50 dark:bg-black/30 z-40"
+          className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
           onClick={hideMobileMenu}
         />
       )}
 
-      {/* 左侧菜单栏 */}
+      {/* 左侧菜单栏：样式参考 NodePassDash 的侧栏布局 */}
       <aside
         className={`
-        ${isMobile ? "fixed" : "relative"}
+        ${isMobile ? "fixed top-0 left-0 h-screen" : "relative h-full"}
         ${isMobile && !mobileMenuVisible ? "-translate-x-full" : "translate-x-0"}
-        ${isMobile ? "w-64" : "w-72"}
-        bg-white dark:bg-black 
-        shadow-lg 
-        border-r border-gray-200 dark:border-gray-600
-        z-50 
-        transition-transform duration-300 ease-in-out
-        flex flex-col
-        ${isMobile ? "h-screen" : "h-full"}
-        ${isMobile ? "top-0 left-0" : ""}
+        ${isMobile ? "w-72 bg-background" : sidebarCollapsed ? "w-[83px]" : "w-72"}
+        z-50 flex shrink-0 flex-col border-r border-divider/60
+        bg-default-50/80 backdrop-blur-md dark:bg-default-100/30
+        transition-[transform,width] duration-300 ease-in-out
       `}
       >
         {/* Logo 区域 */}
-        <div className="px-3 py-3 h-14 flex items-center">
-          <div className="flex items-center gap-2 w-full">
-            <Logo size={24} />
-            <div className="flex-1 min-w-0">
-              <h1 className="text-sm font-bold text-foreground overflow-hidden whitespace-nowrap">
+        <div
+          className={`flex h-16 items-center gap-3 px-5 ${showLabels ? "" : "justify-center px-0"}`}
+        >
+          <Logo size={26} />
+          {showLabels && (
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-sm font-bold text-foreground">
                 {siteConfig.name}
               </h1>
               <p className="text-xs text-default-500">v{siteConfig.version}</p>
             </div>
-          </div>
+          )}
+          {!isMobile && showLabels && (
+            <button
+              aria-label="收起侧栏"
+              className="flex text-default-500 transition-colors hover:text-foreground"
+              type="button"
+              onClick={() => toggleSidebar(true)}
+            >
+              <PanelLeftClose className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         {/* 菜单导航 */}
-        <nav className="flex-1 px-4 py-6 overflow-y-auto">
-          <div className="space-y-6">
-            {filteredMenuGroups.map((group) => (
-              <section key={group.label} aria-label={group.label}>
-                <button
-                  aria-expanded={
-                    collapsedGroups[group.label] !== true ||
-                    group.items.some((item) =>
-                      (item.activePaths || [item.path]).includes(
-                        location.pathname,
-                      ),
-                    )
-                  }
-                  className="mb-1 flex min-h-8 w-full items-center gap-2 rounded-md px-3 text-left text-[11px] font-semibold tracking-wide text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-900 dark:hover:text-gray-300"
-                  type="button"
-                  onClick={() => toggleGroup(group.label)}
-                >
-                  {collapsedGroups[group.label] === true &&
-                  !group.items.some((item) =>
-                    (item.activePaths || [item.path]).includes(
-                      location.pathname,
-                    ),
-                  ) ? (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  )}
-                  <span>{group.label}</span>
-                </button>
-                {(collapsedGroups[group.label] !== true ||
-                  group.items.some((item) =>
-                    (item.activePaths || [item.path]).includes(
-                      location.pathname,
-                    ),
-                  )) && (
-                  <ul className="space-y-1">
-                    {group.items.map((item) => {
-                      const isActive = (
-                        item.activePaths || [item.path]
-                      ).includes(location.pathname);
+        <nav
+          className={`scrollbar-thin flex-1 overflow-y-auto py-3 ${showLabels ? "px-4" : "px-[14px]"}`}
+        >
+          <div className={showLabels ? "space-y-5" : "space-y-1"}>
+            {filteredMenuGroups.map((group) => {
+              const hasActive = group.items.some(isItemActive);
+              const expanded =
+                !showLabels ||
+                collapsedGroups[group.label] !== true ||
+                hasActive;
 
-                      return (
-                        <li key={item.path}>
-                          <button
-                            className={`
-                              w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left
-                              transition-colors duration-200 min-h-[44px]
-                              ${
-                                isActive
-                                  ? "bg-primary-100 dark:bg-primary-600/20 text-primary-600 dark:text-primary-300"
-                                  : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-900"
-                              }
-                            `}
-                            onClick={() => handleMenuClick(item.path)}
-                            onFocus={() => preloadRoute(item.path)}
-                            onMouseEnter={() => preloadRoute(item.path)}
-                          >
-                            <div className="flex-shrink-0">{item.icon}</div>
-                            <span className="min-w-0 flex-1 font-medium text-sm">
-                              {item.label}
-                            </span>
-                            {item.path === "/monitoring" &&
-                              unreadAlertCount > 0 && (
-                                <span className="inline-flex min-w-5 h-5 items-center justify-center rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">
-                                  {unreadAlertCount > 99
-                                    ? "99+"
-                                    : unreadAlertCount}
+              return (
+                <section key={group.label} aria-label={group.label}>
+                  {showLabels && (
+                    <button
+                      aria-expanded={expanded}
+                      className="mb-1 flex min-h-7 w-full items-center gap-1.5 rounded-lg px-3 text-left text-[11px] font-semibold tracking-wide text-default-400 transition-colors hover:text-default-600"
+                      type="button"
+                      onClick={() => toggleGroup(group.label)}
+                    >
+                      {expanded ? (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      )}
+                      <span>{group.label}</span>
+                    </button>
+                  )}
+                  {expanded && (
+                    <ul className="space-y-1">
+                      {group.items.map((item) => {
+                        const isActive = isItemActive(item);
+                        const badge =
+                          item.path === "/monitoring" && unreadAlertCount > 0
+                            ? unreadAlertCount > 99
+                              ? "99+"
+                              : String(unreadAlertCount)
+                            : "";
+
+                        return (
+                          <li key={item.path}>
+                            <Tooltip
+                              content={item.label}
+                              isDisabled={showLabels}
+                              placement="right"
+                            >
+                              <button
+                                className={`
+                                relative flex h-11 w-full items-center gap-3 rounded-xl text-left text-sm font-medium
+                                transition-all duration-200
+                                ${showLabels ? "px-3" : "justify-center px-0"}
+                                ${
+                                  isActive
+                                    ? "bg-foreground text-background shadow-small"
+                                    : "text-default-600 hover:bg-background hover:text-foreground dark:hover:bg-default-100"
+                                }
+                              `}
+                                onClick={() => handleMenuClick(item.path)}
+                                onFocus={() => preloadRoute(item.path)}
+                                onMouseEnter={() => preloadRoute(item.path)}
+                              >
+                                <span className="flex-shrink-0">
+                                  {item.icon}
                                 </span>
-                              )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </section>
-            ))}
+                                {showLabels && (
+                                  <span className="min-w-0 flex-1 truncate">
+                                    {item.label}
+                                  </span>
+                                )}
+                                {badge &&
+                                  (showLabels ? (
+                                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-white">
+                                      {badge}
+                                    </span>
+                                  ) : (
+                                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-danger" />
+                                  ))}
+                              </button>
+                            </Tooltip>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
           </div>
         </nav>
 
-        {/* 底部版权信息 */}
-        <div className="px-4 py-2 pb-4 mt-auto flex-shrink-0">
-          <div className="text-center">
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              Powered by{" "}
-              <a
-                className="text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-                href="https://github.com/NorwayXZ/flux-panel"
-                rel="noopener noreferrer"
-                target="_blank"
+        {/* 底部：主题、账号、退出 */}
+        <div
+          className={`flex flex-col gap-1 border-t border-divider/60 py-3 ${showLabels ? "px-4" : "items-center px-[14px]"}`}
+        >
+          {!isMobile && !showLabels && (
+            <Tooltip content="展开侧栏" placement="right">
+              <Button
+                isIconOnly
+                aria-label="展开侧栏"
+                className="h-11 w-11 text-default-600"
+                radius="lg"
+                variant="light"
+                onPress={() => toggleSidebar(false)}
               >
-                WhySoQuiet
-              </a>
-            </p>
-          </div>
+                <PanelLeftOpen className="h-5 w-5" />
+              </Button>
+            </Tooltip>
+          )}
+          {[
+            {
+              key: "theme",
+              label: `外观：${themeLabel[themePreference]}`,
+              icon: themeIcon[themePreference],
+              onPress: cycleTheme,
+              danger: false,
+            },
+            {
+              key: "password",
+              label: `账号：${username}`,
+              icon: <KeyRound className="h-5 w-5" />,
+              onPress: onOpen,
+              danger: false,
+            },
+            {
+              key: "logout",
+              label: "退出登录",
+              icon: <LogOut className="h-5 w-5" />,
+              onPress: handleLogout,
+              danger: true,
+            },
+          ].map((action) => (
+            <Tooltip
+              key={action.key}
+              content={action.label}
+              isDisabled={showLabels}
+              placement="right"
+            >
+              <Button
+                className={`truncate ${showLabels ? "justify-start" : "h-11 w-11 justify-center px-0"} ${
+                  action.danger
+                    ? "text-danger"
+                    : "text-default-600 hover:text-primary"
+                }`}
+                color={action.danger ? "danger" : "default"}
+                fullWidth={showLabels}
+                isIconOnly={!showLabels}
+                radius="lg"
+                variant="light"
+                onPress={action.onPress}
+              >
+                {action.icon}
+                {showLabels && <span className="truncate">{action.label}</span>}
+              </Button>
+            </Tooltip>
+          ))}
         </div>
       </aside>
 
       {/* 主内容区域 */}
       <div
-        className={`flex flex-col flex-1 ${isMobile ? "min-h-0" : "h-full overflow-hidden"}`}
+        className={`flex min-w-0 flex-1 flex-col ${isMobile ? "min-h-0" : "h-full overflow-hidden"}`}
       >
-        {/* 顶部导航栏 */}
-        <header className="bg-white dark:bg-black shadow-md border-b border-gray-200 dark:border-gray-600 h-14 flex items-center justify-between px-4 lg:px-6 relative z-10">
-          <div className="flex items-center gap-4">
-            {/* 移动端菜单按钮 */}
-            {isMobile && (
-              <Button
-                isIconOnly
-                className="lg:hidden"
-                variant="light"
-                onPress={toggleMobileMenu}
-              >
-                <svg
-                  className="w-6 h-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    d="M4 6h16M4 12h16M4 18h16"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                  />
-                </svg>
-              </Button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* 用户菜单 */}
-            <Dropdown placement="bottom-end">
-              <DropdownTrigger>
-                <Button
-                  className="text-sm font-medium text-foreground"
-                  variant="light"
-                >
-                  {username}
-                  <svg
-                    className="w-4 h-4 ml-1"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      clipRule="evenodd"
-                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                      fillRule="evenodd"
-                    />
-                  </svg>
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu aria-label="用户菜单">
-                <DropdownItem
-                  key="change-password"
-                  startContent={
-                    <svg
-                      className="w-4 h-4"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        clipRule="evenodd"
-                        d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
-                        fillRule="evenodd"
-                      />
-                    </svg>
-                  }
-                  onPress={onOpen}
-                >
-                  修改密码
-                </DropdownItem>
-                <DropdownItem
-                  key="logout"
-                  className="text-danger"
-                  color="danger"
-                  startContent={
-                    <svg
-                      className="w-4 h-4"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        clipRule="evenodd"
-                        d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z"
-                        fillRule="evenodd"
-                      />
-                    </svg>
-                  }
-                  onPress={handleLogout}
-                >
-                  退出登录
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
-          </div>
-        </header>
+        {/* 移动端顶栏 */}
+        {isMobile && (
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-divider/60 bg-background/80 px-4 backdrop-blur-md">
+            <Button
+              isIconOnly
+              aria-label="打开菜单"
+              variant="light"
+              onPress={toggleMobileMenu}
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <Logo size={22} />
+            <span className="text-sm font-bold text-foreground">
+              {siteConfig.name}
+            </span>
+          </header>
+        )}
 
         {/* 主内容 */}
         <main
-          className={`flex-1 bg-gray-100 dark:bg-black ${isMobile ? "" : "overflow-y-auto"}`}
+          className={`scrollbar-thin flex flex-1 flex-col ${isMobile ? "" : "overflow-y-auto"}`}
         >
-          {children}
+          <div key={location.pathname} className="flex-1 animate-page-enter">
+            {children}
+          </div>
+          <footer className="flex w-full items-center justify-center py-4 text-xs text-default-500">
+            {siteConfig.name} © {new Date().getFullYear()} | v
+            {siteConfig.version} | Powered by{" "}
+            <a
+              className="ml-1 text-primary transition-colors hover:text-primary-600"
+              href="https://github.com/NorwayXZ/flux-panel"
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              WhySoQuiet
+            </a>
+          </footer>
         </main>
       </div>
 

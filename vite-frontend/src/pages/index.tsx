@@ -5,10 +5,12 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import axios from "axios";
+import { motion } from "framer-motion";
+import { Eye, EyeOff, Lock, User } from "lucide-react";
 
 import { isWebViewFunc } from "@/utils/panel";
 import { siteConfig } from "@/config/site";
-import { title } from "@/components/primitives";
+import { Logo } from "@/components/icons";
 import DefaultLayout from "@/layouts/default";
 import { login, LoginData, checkCaptcha } from "@/api";
 import "@/utils/tac.css";
@@ -48,6 +50,7 @@ export default function IndexPage() {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<LoginForm>>({});
   const [showCaptcha, setShowCaptcha] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const tacInstanceRef = useRef<any>(null);
   const captchaContainerRef = useRef<HTMLDivElement>(null);
@@ -254,15 +257,28 @@ export default function IndexPage() {
   return (
     <DefaultLayout>
       <section className="flex flex-col items-center justify-center gap-4 py-4 sm:py-8 md:py-10 pb-20 min-h-[calc(100dvh-120px)] sm:min-h-[calc(100dvh-200px)]">
-        <div className="w-full max-w-md px-4 sm:px-0">
-          <Card className="w-full">
-            <CardHeader className="pb-0 pt-6 px-6 flex-col items-center">
-              <h1 className={title({ size: "sm" })}>登陆</h1>
-              <p className="text-small text-default-500 mt-2">
-                请输入您的账号信息
-              </p>
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md px-4 sm:px-0"
+          initial={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.5 }}
+        >
+          <Card className="w-full shadow-2xl">
+            <CardHeader className="flex flex-col items-center gap-1 px-8 pb-6 pt-8">
+              <motion.div
+                animate={{ scale: 1 }}
+                className="mb-4 flex h-16 w-16 items-center justify-center"
+                initial={{ scale: 0 }}
+                transition={{ delay: 0.2, type: "spring" }}
+              >
+                <Logo size={56} />
+              </motion.div>
+              <h1 className="text-2xl font-bold text-foreground">
+                {siteConfig.name}
+              </h1>
+              <p className="text-small text-default-500">请输入您的账号信息</p>
             </CardHeader>
-            <CardBody className="px-6 py-6">
+            <CardBody className="px-8 pb-8">
               <div className="flex flex-col gap-4">
                 <Input
                   errorMessage={errors.username}
@@ -270,6 +286,7 @@ export default function IndexPage() {
                   isInvalid={!!errors.username}
                   label="用户名"
                   placeholder="请输入用户名"
+                  startContent={<User className="h-4 w-4 text-default-400" />}
                   value={form.username}
                   variant="bordered"
                   onChange={(e) =>
@@ -279,11 +296,27 @@ export default function IndexPage() {
                 />
 
                 <Input
+                  endContent={
+                    <button
+                      aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                      className="focus:outline-none"
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4 text-default-400 transition-colors hover:text-default-600" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-default-400 transition-colors hover:text-default-600" />
+                      )}
+                    </button>
+                  }
+                  errorMessage={errors.password}
                   isDisabled={loading}
                   isInvalid={!!errors.password}
                   label="密码"
                   placeholder="请输入密码"
-                  type="password"
+                  startContent={<Lock className="h-4 w-4 text-default-400" />}
+                  type={showPassword ? "text" : "password"}
                   value={form.password}
                   variant="bordered"
                   onChange={(e) =>
@@ -293,7 +326,7 @@ export default function IndexPage() {
                 />
 
                 <Button
-                  className="mt-2"
+                  className="mt-2 w-full font-semibold"
                   color="primary"
                   disabled={loading}
                   isLoading={loading}
@@ -305,7 +338,7 @@ export default function IndexPage() {
               </div>
             </CardBody>
           </Card>
-        </div>
+        </motion.div>
 
         {/* 版权信息 - 固定在底部，不占据布局空间 */}
 

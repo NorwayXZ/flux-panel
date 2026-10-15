@@ -1,3 +1,13 @@
+## 2.67.0 New look, part 1: NodePass-style theme, sidebar and login
+
+- The panel adopts the visual system of NodePassDash: a blue primary colour, the Inter typeface (bundled with the panel, no external font requests), plain light and dark backgrounds and thin scrollbars.
+- New sidebar: frosted background, rounded menu items with the current page shown in reverse colour, group headings kept, and a collapse button that shrinks it to an icon rail with tooltips (remembered per browser). Appearance, account and logout moved from the top bar to the bottom of the sidebar; the desktop top bar is gone and phones keep a slim header.
+- Appearance can be set to follow the system, light or dark (previously always the system), remembered per browser.
+- Pages fade in when opened, and a footer shows the version. Page width and spacing follow NodePassDash.
+- The login page uses NodePassDash's card, entrance animation, field icons and a show-password toggle.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.66.0 remains available for rollback. Page contents (cards, tables, dashboard) are restyled in the next release.
+- Design adapted from NodePassDash under its BSD-3-Clause licence; see THIRD_PARTY_NOTICES.md.
+
 ## 2.66.0 Connection pool, API tokens, real-time events and MCP
 
 - TLS tunnels can keep a pool of 1-8 pre-handshaken connections to the exit (隧道 → 连接池预热). A new client connection takes one and skips the TCP and TLS round trips. The pool only stays warm while the tunnel carried traffic in the last minute, replaces entries before the exit's 15-second idle limit, and lets them expire when the tunnel goes quiet. It applies to the first hop of TLS tunnels; multiplexed protocols (MTLS, MWSS) already reuse one connection.
