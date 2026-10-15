@@ -797,6 +797,20 @@ rollback_panel() {
       [[ "${local_smart_groups}" == "0" ]] || fail "delete local Smart Entry strategies and wait for DNS cleanup and router acknowledgment before rollback"
     fi
   fi
+  if (( previous_major < 2 || (previous_major == 2 && previous_minor < 64) )); then
+    if [[ "${override}" == "--force" ]]; then
+      log "WARNING: forced rollback skips CNIX shared tunnel cleanup checks"
+    elif [[ "${current_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]] &&
+         (( 10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 64) )); then
+      local pending_cnix
+      pending_cnix="$(compose exec -T mysql sh -c '
+        MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse \
+        "SELECT COUNT(*) FROM cnix_shared_relay"
+      ')" || fail "unable to verify CNIX shared tunnel cleanup before rollback"
+      [[ "${pending_cnix}" =~ ^[0-9]+$ ]] || fail "unexpected CNIX shared tunnel cleanup state"
+      [[ "${pending_cnix}" == "0" ]] || fail "migrate or delete CNIX shared businesses and delete their shared tunnels before rolling back to a release without CNIX support"
+    fi
+  fi
   set_env_value PANEL_VERSION "${previous_version}"
   set_env_value PREVIOUS_PANEL_VERSION "${current_version}"
   if ! deploy_release; then

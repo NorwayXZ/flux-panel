@@ -87,6 +87,10 @@ case "${1:-}" in
     fi
     if [[ " $* " == *" exec "* ]]; then
       [[ "${PANEL_TEST_MIGRATION_QUERY_FAIL:-0}" != "1" ]] || exit 1
+      if [[ " $* " == *"cnix_shared_relay"* ]]; then
+        printf '%s\n' "${PANEL_TEST_PENDING_CNIX:-0}"
+        exit 0
+      fi
       printf '%s\n' "${PANEL_TEST_PENDING_MIGRATIONS:-0}"
       exit 0
     fi
@@ -175,6 +179,18 @@ grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Fq "PREVIOUS_PANEL_VERSION=${NEXT_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 grep -Eq 'docker compose .* pull mysql backend frontend' "${EVENT_LOG}"
 grep -Eq 'docker compose .* up -d --no-build' "${EVENT_LOG}"
+
+# Shared relay listeners must be cleaned before a downgrade loses their manager.
+awk '
+  /^PREVIOUS_PANEL_VERSION=/ { print "PREVIOUS_PANEL_VERSION=2.63.0"; next }
+  { print }
+' "${CONFIG_DIR}/flux-panel.env" > "${CONFIG_DIR}/flux-panel.env.cnix-pending"
+mv "${CONFIG_DIR}/flux-panel.env.cnix-pending" "${CONFIG_DIR}/flux-panel.env"
+if PANEL_TEST_PENDING_CNIX=1 run_manager rollback >/dev/null 2>&1; then
+  printf 'rollback unexpectedly proceeded with CNIX shared resources\n' >&2
+  exit 1
+fi
+grep -Fq "PANEL_VERSION=${BASE_VERSION}" "${CONFIG_DIR}/flux-panel.env"
 
 # Router policies must be removed before downgrading to a panel without the worker.
 awk '

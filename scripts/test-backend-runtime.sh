@@ -151,10 +151,16 @@ done
 retirement_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='authorized_entry_forward' AND column_name='retire_at'")
 [[ "${retirement_column_exists}" -eq 1 ]]
-for table in smart_entry_dns_cleanup smart_entry_activity_archive openwrt_dns_resolver; do
+for table in smart_entry_dns_cleanup smart_entry_activity_archive openwrt_dns_resolver cnix_shared_relay cnix_shared_grant; do
   smart_entry_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
   [[ "${smart_entry_table_exists}" -eq 1 ]]
+done
+# Startup creates the CNIX tables; manual migration must remain repeatable on
+# both MySQL runtime versions and preserve tables already created at startup.
+for cnix_migration_pass in 1 2; do
+  docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
+    "${PROJECT_DIR}/migrations/20261015_cnix_shared_relay.sql"
 done
 status_json_type=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='openwrt_dns_resolver' AND column_name='status_json'")

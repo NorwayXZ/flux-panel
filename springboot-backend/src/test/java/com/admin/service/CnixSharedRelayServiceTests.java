@@ -161,6 +161,15 @@ class CnixSharedRelayServiceTests {
                     jdbc.queryForObject("SELECT key_pem FROM cnix_shared_relay", String.class)
                             .contains("private-key"));
             service.pauseBusiness(tunnel, 2L, true);
+            jdbc.update("UPDATE forward SET status=0 WHERE id=2");
+            service.pauseBusiness(tunnel, 2L, false);
+            assertEquals(
+                    3,
+                    ((JSONObject) snapshots.get(snapshots.size() - 1))
+                            .getJSONArray("grants")
+                            .size());
+            jdbc.update("UPDATE forward SET status=1 WHERE id=2");
+            service.pauseBusiness(tunnel, 2L, true);
             assertEquals(
                     2,
                     jdbc.queryForObject(

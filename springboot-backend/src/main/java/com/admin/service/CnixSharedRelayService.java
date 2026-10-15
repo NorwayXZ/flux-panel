@@ -117,7 +117,7 @@ public class CnixSharedRelayService {
         var rows =
                 jdbc.queryForList(
                         "SELECT service_port,external_address,state,last_error FROM"
-                            + " cnix_shared_relay WHERE tunnel_id=?",
+                                + " cnix_shared_relay WHERE tunnel_id=?",
                         tunnel.getId());
         if (rows.isEmpty()) {
             tunnel.setSharedRelay(null);
@@ -260,6 +260,10 @@ public class CnixSharedRelayService {
     }
 
     private List<Map<String, Object>> grants(long id) {
+        return grants(id, -1L);
+    }
+
+    private List<Map<String, Object>> grants(long id, long resumingForwardId) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (var row :
                 jdbc.queryForList(
@@ -269,10 +273,12 @@ public class CnixSharedRelayService {
                             + " f.id=g.forward_id JOIN tunnel t ON t.id=g.tunnel_id JOIN user u ON"
                             + " u.id=f.user_id LEFT JOIN user_tunnel p ON p.user_id=f.user_id AND"
                             + " p.tunnel_id=g.tunnel_id WHERE g.tunnel_id=? AND g.enabled=1 AND"
-                            + " f.status=1 AND u.status=1 AND (u.exp_time IS NULL OR u.exp_time>?)"
-                            + " AND (u.role_id=0 OR t.owner_user_id=f.user_id OR (p.status=1 AND"
-                            + " (p.exp_time IS NULL OR p.exp_time>?))) ORDER BY g.forward_id",
+                            + " (f.status=1 OR f.id=?) AND u.status=1 AND (u.exp_time IS NULL OR"
+                            + " u.exp_time>?) AND (u.role_id=0 OR t.owner_user_id=f.user_id OR"
+                            + " (p.status=1 AND (p.exp_time IS NULL OR p.exp_time>?))) ORDER BY"
+                            + " g.forward_id",
                         id,
+                        resumingForwardId,
                         System.currentTimeMillis(),
                         System.currentTimeMillis())) {
             long expiry = Long.MAX_VALUE;
@@ -298,6 +304,17 @@ public class CnixSharedRelayService {
         send(
                 tunnel.getOutNodeId(),
                 Map.of("service", serviceName(tunnel.getId()), "grants", grants(tunnel.getId())),
+                "CnixGrants");
+    }
+
+    private void pushResumingGrant(Tunnel tunnel, long forwardId) {
+        send(
+                tunnel.getOutNodeId(),
+                Map.of(
+                        "service",
+                        serviceName(tunnel.getId()),
+                        "grants",
+                        grants(tunnel.getId(), forwardId)),
                 "CnixGrants");
     }
 
@@ -481,7 +498,8 @@ public class CnixSharedRelayService {
                     tunnel.getId(),
                     forwardId);
             try {
-                pushGrants(tunnel);
+                if (pause) pushGrants(tunnel);
+                else pushResumingGrant(tunnel, forwardId);
             } catch (RuntimeException e) {
                 jdbc.update(
                         "UPDATE cnix_shared_grant SET enabled=? WHERE tunnel_id=? AND forward_id=?",
