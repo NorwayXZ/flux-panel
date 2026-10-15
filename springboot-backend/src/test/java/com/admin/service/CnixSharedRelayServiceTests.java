@@ -29,6 +29,7 @@ class CnixSharedRelayServiceTests {
     private final PortLedgerService ledger = mock(PortLedgerService.class);
     private final CnixSharedRelayService service;
     private final Tunnel tunnel = new Tunnel();
+    private final boolean[] exitOnline = {true};
 
     CnixSharedRelayServiceTests() {
         var source = new JdbcDataSource();
@@ -74,6 +75,7 @@ class CnixSharedRelayServiceTests {
         node.setVersion("2.0.0");
         when(nodes.selectById(2L)).thenReturn(node);
         when(ledger.diagnose(anyLong(), anyInt())).thenReturn(Map.of("occupied", false));
+        doAnswer(call -> exitOnline[0]).when(service).nodeOnline(anyLong());
     }
 
     private GostDto response(String message) {
@@ -383,5 +385,76 @@ class CnixSharedRelayServiceTests {
         assertEquals(false, service.diagnose(tunnel).get("channelReady"));
         jdbc.update("UPDATE cnix_shared_relay SET external_address=NULL");
         assertEquals(false, service.diagnose(tunnel).get("channelReady"));
+    }
+
+    private List<String> recordDispatches() {
+        List<String> methods = Collections.synchronizedList(new ArrayList<>());
+        doAnswer(
+                        call -> {
+                            String method = call.getArgument(2);
+                            methods.add(method);
+                            if (method.equals("CnixCertificate")) {
+                                var result = response("OK");
+                                result.setData(Map.of("certPem", "certificate", "keyPem", "private"));
+                                return result;
+                            }
+                            return response("OK");
+                        })
+                .when(service)
+                .dispatch(anyLong(), any(), anyString());
+        return methods;
+    }
+
+    @Test
+    void offlineExitDoesNotBlockRemovingBusinessesUsersOrTheTunnel() {
+        var methods = recordDispatches();
+        service.prepare(tunnel, config("198.51.100.20:17149"));
+        service.bindBusiness(tunnel, business(1), "A", "203.0.113.1:443");
+        service.bindBusiness(tunnel, business(2), "B", "203.0.113.2:443");
+
+        exitOnline[0] = false;
+        methods.clear();
+        service.pauseBusiness(tunnel, 1L, true);
+        service.revokeUser(tunnel, 2);
+        service.removeBusiness(tunnel, 1L, "A");
+        assertFalse(methods.contains("CnixGrants"), "offline exit must not be contacted");
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cnix_shared_grant", Integer.class));
+
+        jdbc.update("DELETE FROM forward WHERE tunnel_id=7");
+        service.delete(tunnel);
+        assertFalse(methods.contains("DeleteService"));
+        assertEquals(
+                CnixSharedRelayService.PENDING_DELETE,
+                jdbc.queryForObject("SELECT state FROM cnix_shared_relay", String.class));
+
+        // Still offline: nothing to do yet, the port stays reserved.
+        service.finishDeferredDeletions();
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM cnix_shared_relay", Integer.class));
+
+        exitOnline[0] = true;
+        service.finishDeferredDeletions();
+        assertTrue(methods.contains("DeleteService"));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cnix_shared_relay", Integer.class));
+    }
+
+    @Test
+    void deferredDeletionIsReleasedWhenTheExitNodeNoLongerExists() {
+        jdbc.update(
+                "INSERT INTO cnix_shared_relay VALUES(9,5,12003,NULL,'cert','cipher','cipher',?,NULL,1)",
+                CnixSharedRelayService.PENDING_DELETE);
+        exitOnline[0] = false;
+        service.finishDeferredDeletions();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cnix_shared_relay", Integer.class));
+    }
+
+    @Test
+    void oneBusinessFailingItsLandingDoesNotMarkTheSharedChannel() {
+        recordDispatches();
+        service.prepare(tunnel, config("198.51.100.20:17149"));
+        service.recordProbe(tunnel, response("OK"));
+        service.recordProbe(tunnel, response("dial 203.0.113.2:443: connection refused"));
+        service.enrich(tunnel);
+        assertEquals("verified", tunnel.getSharedRelay().getState());
+        assertNull(tunnel.getSharedRelay().getLastError());
     }
 }

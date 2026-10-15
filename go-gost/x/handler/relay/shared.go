@@ -3,7 +3,6 @@ package relay
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"net"
 	"strconv"
@@ -23,7 +22,46 @@ type SharedGrant struct {
 type sharedPolicy struct {
 	mu       sync.Mutex
 	grants   map[string]SharedGrant
-	sessions map[net.Conn]string
+	sessions map[net.Conn]*sharedSession
+}
+
+// sharedSession tracks who opened a connection and when it must be closed.
+type sharedSession struct {
+	user   string
+	expiry *time.Timer
+}
+
+// schedule closes the session at the grant's expiry. Callers hold policy.mu.
+func (p *sharedPolicy) schedule(conn net.Conn, session *sharedSession, expiresAt int64) {
+	if session.expiry != nil {
+		session.expiry.Stop()
+		session.expiry = nil
+	}
+	if expiresAt <= 0 {
+		return
+	}
+	session.expiry = time.AfterFunc(time.Until(time.UnixMilli(expiresAt)), func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.sessions[conn] == session {
+			conn.Close()
+			delete(p.sessions, conn)
+		}
+	})
+}
+
+// sameAccess reports whether two grants allow the same credentials and targets.
+// Expiry is compared separately so a renewal does not drop live sessions.
+func sameAccess(a, b SharedGrant) bool {
+	if a.Password != b.Password || len(a.Targets) != len(b.Targets) {
+		return false
+	}
+	for i := range a.Targets {
+		if a.Targets[i] != b.Targets[i] {
+			return false
+		}
+	}
+	return true
 }
 
 var sharedPolicies sync.Map
@@ -96,18 +134,24 @@ func SharedGrants(service string, grants []SharedGrant) error {
 		}
 		next[grant.Username] = grant
 	}
-	value, _ := sharedPolicies.LoadOrStore(service, &sharedPolicy{grants: map[string]SharedGrant{}, sessions: map[net.Conn]string{}})
+	value, _ := sharedPolicies.LoadOrStore(service, &sharedPolicy{grants: map[string]SharedGrant{}, sessions: map[net.Conn]*sharedSession{}})
 	policy := value.(*sharedPolicy)
 	policy.mu.Lock()
 	defer policy.mu.Unlock()
-	for connection, user := range policy.sessions {
-		before, oldOK := policy.grants[user]
-		after, newOK := next[user]
-		a, _ := json.Marshal(before)
-		b, _ := json.Marshal(after)
-		if !oldOK || !newOK || string(a) != string(b) {
+	now := time.Now().UnixMilli()
+	for connection, session := range policy.sessions {
+		before, oldOK := policy.grants[session.user]
+		after, newOK := next[session.user]
+		if !oldOK || !newOK || !sameAccess(before, after) || (after.ExpiresAt > 0 && now >= after.ExpiresAt) {
+			if session.expiry != nil {
+				session.expiry.Stop()
+			}
 			connection.Close()
 			delete(policy.sessions, connection)
+			continue
+		}
+		if before.ExpiresAt != after.ExpiresAt {
+			policy.schedule(connection, session, after.ExpiresAt)
 		}
 	}
 	policy.grants = next
@@ -147,17 +191,17 @@ func (h *relayHandler) sharedAuthorize(conn net.Conn, user, password, target str
 	if !allowed {
 		return nil, false
 	}
-	policy.sessions[conn] = user
-	var expiryTimer *time.Timer
-	if grant.ExpiresAt > 0 {
-		expiryTimer = time.AfterFunc(time.Until(time.UnixMilli(grant.ExpiresAt)), func() { policy.mu.Lock(); defer policy.mu.Unlock(); conn.Close(); delete(policy.sessions, conn) })
-	}
+	session := &sharedSession{user: user}
+	policy.sessions[conn] = session
+	policy.schedule(conn, session, grant.ExpiresAt)
 	return func() {
-		if expiryTimer != nil {
-			expiryTimer.Stop()
-		}
 		policy.mu.Lock()
-		delete(policy.sessions, conn)
-		policy.mu.Unlock()
+		defer policy.mu.Unlock()
+		if session.expiry != nil {
+			session.expiry.Stop()
+		}
+		if policy.sessions[conn] == session {
+			delete(policy.sessions, conn)
+		}
 	}, true
 }

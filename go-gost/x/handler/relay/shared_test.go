@@ -96,3 +96,45 @@ func TestSharedRevocationClosesOnlyAffectedSessions(t *testing.T) {
 		t.Fatal("bad update replaced working A policy")
 	}
 }
+
+func TestSharedRenewalKeepsLiveSessionsAndShorteningClosesThem(t *testing.T) {
+	service := "shared-renewal-test"
+	defer sharedPolicies.Delete(service)
+	grant := SharedGrant{Username: "renewed", Password: strings.Repeat("r", 40), Targets: []string{"example.com:443"}, ExpiresAt: time.Now().Add(150 * time.Millisecond).UnixMilli()}
+	if err := SharedGrants(service, []SharedGrant{grant}); err != nil {
+		t.Fatal(err)
+	}
+	handler := &relayHandler{}
+	handler.options.Service = service
+	conn, peer := net.Pipe()
+	defer conn.Close()
+	defer peer.Close()
+	finish, allowed := handler.sharedAuthorize(conn, grant.Username, grant.Password, grant.Targets[0])
+	if !allowed {
+		t.Fatal("unexpired grant refused")
+	}
+	defer finish()
+
+	renewed := grant
+	renewed.ExpiresAt = time.Now().Add(time.Hour).UnixMilli()
+	if err := SharedGrants(service, []SharedGrant{renewed}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	go conn.Write([]byte("x"))
+	peer.SetReadDeadline(time.Now().Add(time.Second))
+	var data [1]byte
+	if _, err := peer.Read(data[:]); err != nil {
+		t.Fatalf("renewed session closed at the old expiry: %v", err)
+	}
+
+	shortened := renewed
+	shortened.ExpiresAt = time.Now().Add(-time.Second).UnixMilli()
+	if err := SharedGrants(service, []SharedGrant{shortened}); err != nil {
+		t.Fatal(err)
+	}
+	peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(data[:]); err == nil {
+		t.Fatal("session survived an expiry moved into the past")
+	}
+}

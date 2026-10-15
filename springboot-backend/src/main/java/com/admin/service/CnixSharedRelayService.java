@@ -43,6 +43,8 @@ public class CnixSharedRelayService {
     private final NodeMapper nodes;
     private final PortLedgerService ledger;
     private final Map<Long, Object> locks = new ConcurrentHashMap<>();
+    /** The tunnel is deleted; its exit listener is removed once the exit node is online. */
+    static final String PENDING_DELETE = "pending-delete";
 
     public CnixSharedRelayService(JdbcTemplate jdbc, NodeMapper nodes, PortLedgerService ledger) {
         this.jdbc = jdbc;
@@ -207,10 +209,10 @@ public class CnixSharedRelayService {
         for (var row :
                 jdbc.queryForList(
                         "SELECT r.tunnel_id,t.in_node_id,t.out_node_id FROM cnix_shared_relay r"
-                                + " JOIN tunnel t ON t.id=r.tunnel_id")) {
+                                + " JOIN tunnel t ON t.id=r.tunnel_id WHERE r.state<>?",
+                        PENDING_DELETE)) {
             long id = ((Number) row.get("tunnel_id")).longValue();
-            if (!WebSocketServer.isNodeOnline(((Number) row.get("out_node_id")).longValue()))
-                continue;
+            if (!nodeOnline(((Number) row.get("out_node_id")).longValue())) continue;
             synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
                 Tunnel tunnel = new Tunnel();
                 tunnel.setId(id);
@@ -228,17 +230,48 @@ public class CnixSharedRelayService {
                 }
             }
         }
+        finishDeferredDeletions();
+    }
+
+    /** Removes exit listeners of tunnels deleted while their exit node was offline. */
+    void finishDeferredDeletions() {
+        for (var row :
+                jdbc.queryForList(
+                        "SELECT tunnel_id,out_node_id FROM cnix_shared_relay WHERE state=?",
+                        PENDING_DELETE)) {
+            long id = ((Number) row.get("tunnel_id")).longValue();
+            long exit = ((Number) row.get("out_node_id")).longValue();
+            boolean gone = nodes.selectById(exit) == null;
+            if (!gone) {
+                if (!nodeOnline(exit)) continue;
+                var result =
+                        dispatch(
+                                exit,
+                                Map.of("services", List.of(serviceName(id))),
+                                "DeleteService");
+                gone =
+                        ok(result)
+                                || (result != null
+                                        && result.getMsg() != null
+                                        && result.getMsg().contains("not found"));
+            }
+            if (gone)
+                jdbc.update(
+                        "DELETE FROM cnix_shared_relay WHERE tunnel_id=? AND state=?",
+                        id,
+                        PENDING_DELETE);
+        }
     }
 
     public void recordProbe(Tunnel tunnel, GostDto probe) {
+        // A business probe also reaches that business's own landing. Its failure is shown on the
+        // business; the shared channel state, seen by every business, changes only on success.
+        if (!ok(probe)) return;
         jdbc.update(
-                "UPDATE cnix_shared_relay SET state=?,last_error=? WHERE tunnel_id=?",
-                ok(probe) ? "verified" : "handshake-pending",
-                ok(probe)
-                        ? null
-                        : StringUtils.abbreviate(
-                                probe == null ? "入口Agent没有返回握手结果" : probe.getMsg(), 500),
-                tunnel.getId());
+                "UPDATE cnix_shared_relay SET state='verified',last_error=NULL WHERE tunnel_id=?"
+                        + " AND state<>?",
+                tunnel.getId(),
+                PENDING_DELETE);
     }
 
     private Map<String, Object> resource(long id) {
@@ -451,6 +484,15 @@ public class CnixSharedRelayService {
                 "CnixGrants");
     }
 
+    /**
+     * Revocations must not wait for an offline exit, or a dead exit server would make businesses,
+     * tunnels and users undeletable. The database is the source of truth: the exit cannot carry
+     * traffic while offline, and reconcileExitPolicies pushes the current snapshot once it is back.
+     */
+    private void pushGrantsUnlessExitOffline(Tunnel tunnel) {
+        if (nodeOnline(tunnel.getOutNodeId())) pushGrants(tunnel);
+    }
+
     private void pushResumingGrant(Tunnel tunnel, long forwardId) {
         send(
                 tunnel.getOutNodeId(),
@@ -579,7 +621,15 @@ public class CnixSharedRelayService {
                     row.get("targets"),
                     row.get("enabled"));
         }
-        pushGrants(tunnel);
+        try {
+            pushGrants(tunnel);
+        } catch (RuntimeException error) {
+            LoggerFactory.getLogger(CnixSharedRelayService.class)
+                    .warn(
+                            "CNIX grant restore not pushed, reconcile will retry tunnelId={}: {}",
+                            tunnel.getId(),
+                            error.getMessage());
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -596,7 +646,7 @@ public class CnixSharedRelayService {
                     tunnel.getId(),
                     forwardId);
             try {
-                pushGrants(tunnel);
+                pushGrantsUnlessExitOffline(tunnel);
             } catch (RuntimeException e) {
                 restoreGrant(tunnel, forwardId, old);
                 throw e;
@@ -622,7 +672,7 @@ public class CnixSharedRelayService {
                     tunnel.getId(),
                     userId);
             try {
-                pushGrants(tunnel);
+                pushGrantsUnlessExitOffline(tunnel);
             } catch (RuntimeException error) {
                 for (var row : old)
                     restoreGrant(
@@ -642,6 +692,7 @@ public class CnixSharedRelayService {
                     tunnel.getId(),
                     forwardId);
             try {
+                if (!nodeOnline(tunnel.getOutNodeId())) return;
                 if (pause) pushGrants(tunnel);
                 else pushResumingGrant(tunnel, forwardId);
             } catch (RuntimeException e) {
@@ -664,12 +715,22 @@ public class CnixSharedRelayService {
                         tunnel.getId());
         if (count != null && count > 0)
             throw new IllegalArgumentException("共享隧道仍有" + count + "条业务，请先迁移或删除业务");
+        jdbc.update("DELETE FROM cnix_shared_grant WHERE tunnel_id=?", tunnel.getId());
+        if (!nodeOnline(tunnel.getOutNodeId())) {
+            // Keep the row (and its port reservation) until the exit is back and the listener is
+            // removed; a node deleted from the panel releases it.
+            jdbc.update(
+                    "UPDATE cnix_shared_relay SET state=?,last_error=? WHERE tunnel_id=?",
+                    PENDING_DELETE,
+                    "出口节点离线，上线后自动删除共享出口服务",
+                    tunnel.getId());
+            return;
+        }
         check(
                 dispatch(
                         tunnel.getOutNodeId(),
                         Map.of("services", List.of(serviceName(tunnel.getId()))),
                         "DeleteService"));
-        jdbc.update("DELETE FROM cnix_shared_grant WHERE tunnel_id=?", tunnel.getId());
         jdbc.update("DELETE FROM cnix_shared_relay WHERE tunnel_id=?", tunnel.getId());
     }
 
@@ -755,6 +816,10 @@ public class CnixSharedRelayService {
 
     GostDto dispatch(Long node, Object data, String method) {
         return WebSocketServer.send_msg(node, data, method);
+    }
+
+    boolean nodeOnline(Long node) {
+        return WebSocketServer.isNodeOnline(node);
     }
 
     private void requireCapableAgent(Long node) {

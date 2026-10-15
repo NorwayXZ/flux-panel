@@ -1,3 +1,11 @@
+## 2.64.3 CNIX shared tunnels survive an offline exit and customer renewals
+
+- An offline exit node no longer blocks removing shared businesses, pausing them, removing a user's tunnel permission, deleting a user or deleting a shared tunnel. The database change applies at once; the exit carries no traffic while offline, and the periodic sync (about 30 seconds) pushes the current grants when it is back. A shared tunnel deleted while its exit is offline keeps its exit port reserved until the exit returns and the shared listener is removed, or until the exit node is deleted from the panel. An exit that is online but rejects a change still fails the operation.
+- Renewing a customer or changing their expiry no longer disconnects their live shared-tunnel sessions. The exit Agent closes sessions at the new expiry, and immediately if the expiry is moved into the past. Changed credentials or targets still close the affected sessions.
+- A business whose own landing is unreachable no longer marks the whole shared tunnel as pending with that business's error. The shared channel state changes to verified when a business check succeeds; failures stay on the business's health status. Use the tunnel card's 诊断 to check the shared channel itself.
+- Update the panel and both CNIX Agents (domestic ingress and exit) to 2.64.3; the renewal fix runs on the exit Agent. Ordinary Agents also report 2.64.3. No database change. 2.64.2 remains available for rollback.
+- Verified by backend tests (391), Go tests with the race detector for the relay, socket and limiter packages, and an Agent build. New tests cover deleting businesses, users and the tunnel with the exit offline followed by automatic cleanup, renewal past the old expiry, and a failing business probe. Not verified against a real CNIX mapping.
+
 ## 2.64.2 One-click Clash and sing-box import for private proxies
 
 - The connection dialog of each private proxy now offers 一键导入 for Clash / mihomo and sing-box. Clicking it opens the installed client (Clash Verge, FlClash, Clash Meta for Android, Stash, SFA/SFI/SFM) and adds a subscription that contains only this proxy. Copy-link and QR code are offered for clients that do not react to the button.
