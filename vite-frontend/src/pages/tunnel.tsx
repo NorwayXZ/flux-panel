@@ -888,6 +888,18 @@ export default function TunnelPage() {
         const ownerBadge = getTunnelOwnerBadge(tunnel);
         const permissionUnavailable =
           tunnel.accessType === "shared" && tunnel.quotaAvailable === false;
+        const sharedPending =
+          Boolean(tunnel.sharedRelay) &&
+          !["verified", "transport-verified"].includes(
+            tunnel.sharedRelay?.state || "",
+          );
+        const sharedTitle = tunnel.sharedRelay
+          ? [
+              "CNIX 共享隧道 · TCP / relay+TLS",
+              `加速入口：${tunnel.sharedRelay.externalAddress || "待补录"}`,
+              `出口映射目标：${tunnel.outIp}:${tunnel.sharedRelay.servicePort}`,
+            ].join("\n")
+          : undefined;
 
         return (
           <Card
@@ -923,15 +935,16 @@ export default function TunnelPage() {
                     className={
                       tunnelOffline
                         ? "text-xs text-danger-600 dark:text-danger-300 truncate mt-0.5"
-                        : "text-xs text-default-500 truncate mt-0.5"
+                        : sharedPending
+                          ? "text-xs text-warning-600 dark:text-warning-400 truncate mt-0.5"
+                          : "text-xs text-default-500 truncate mt-0.5"
                     }
+                    title={sharedTitle}
                   >
                     {tunnel.sharedRelay
-                      ? ["verified", "transport-verified"].includes(
-                          tunnel.sharedRelay.state || "",
-                        )
-                        ? "共享通道已验证"
-                        : "共享通道待验证"
+                      ? sharedPending
+                        ? "CNIX 共享通道待验证"
+                        : "CNIX 共享通道已验证"
                       : getLinkStatusText(tunnel)}
                   </p>
                   <div className="flex items-center gap-1.5 mt-1">
@@ -978,31 +991,6 @@ export default function TunnelPage() {
             </CardHeader>
 
             <CardBody className="pt-0 pb-3">
-              {tunnel.sharedRelay && (
-                <div className="mb-3 space-y-1 rounded-lg bg-primary-50 p-2.5 text-xs dark:bg-primary-500/10">
-                  <p className="font-medium">CNIX共享隧道 · TCP / relay+TLS</p>
-                  <p className="break-all">
-                    加速入口：
-                    {tunnel.sharedRelay.externalAddress || "待补录CNIX映射"}
-                  </p>
-                  <p className="break-all">
-                    出口映射目标：{tunnel.outIp}:
-                    {tunnel.sharedRelay.servicePort}
-                  </p>
-                  <p>
-                    {tunnel.sharedRelay.state === "verified"
-                      ? "最近一次认证及目标连接已验证"
-                      : tunnel.sharedRelay.state === "transport-verified"
-                        ? "共享通道TLS与认证保护已验证，可添加业务"
-                        : "尚未完成共享隧道握手验证"}
-                  </p>
-                  {tunnel.sharedRelay.lastError && (
-                    <p className="text-warning">
-                      {tunnel.sharedRelay.lastError}
-                    </p>
-                  )}
-                </div>
-              )}
               <div className="space-y-2">
                 {tunnel.accessType === "shared" && (
                   <div
@@ -1108,11 +1096,30 @@ export default function TunnelPage() {
                               />
                             </svg>
                             {tunnel.sharedRelay ? (
-                              <div className="mt-1 truncate text-[10px] text-primary">
-                                经 CNIX ·{" "}
-                                {tunnel.sharedRelay.externalAddress ||
-                                  "待配置加速入口"}
-                              </div>
+                              <>
+                                <div
+                                  className={
+                                    tunnel.sharedRelay.externalAddress
+                                      ? "mt-1 truncate text-[10px] text-default-500"
+                                      : "mt-1 truncate text-[10px] text-warning-600 dark:text-warning-400"
+                                  }
+                                  title={sharedTitle}
+                                >
+                                  CNIX ·{" "}
+                                  {tunnel.sharedRelay.externalAddress ||
+                                    "待补录加速入口"}
+                                </div>
+                                {sharedPending &&
+                                  tunnel.sharedRelay.externalAddress &&
+                                  tunnel.sharedRelay.lastError && (
+                                    <div
+                                      className="mt-0.5 truncate text-[10px] text-warning-600 dark:text-warning-400"
+                                      title={tunnel.sharedRelay.lastError}
+                                    >
+                                      {tunnel.sharedRelay.lastError}
+                                    </div>
+                                  )}
+                              </>
                             ) : (
                               tunnel.hopDetails?.[index] && (
                                 <div

@@ -1,3 +1,11 @@
+## 2.64.5 CNIX shared tunnel card matches the other tunnel cards
+
+- The CNIX shared tunnel card no longer shows a large blue information box. It now has the same layout and height as the other tunnel cards: the subtitle reads CNIX 共享通道已验证 or 待验证, and the hop line between entry and exit shows CNIX · <accelerated entry> in the same gray as 公网 · <address>.
+- Hovering the subtitle or the hop line shows the full details: TCP / relay+TLS, the accelerated entry and the exit mapping target (exit IP and shared service port).
+- A tunnel whose CNIX entry has not been filled in shows CNIX · 待补录加速入口 in orange; a pending tunnel with an entry shows its last error in one orange line. A verified tunnel shows no extra lines.
+- Panel-only update: Agents stay at 2.64.3. No database change. 2.64.4 remains available for rollback.
+- Verified in a local preview with sample tunnels and by frontend type check, tests and production build.
+
 ## 2.64.4 Fix nftables rules failing on nodes with several open-source rules
 
 - Fixes nftables port forwarding on a node with two or more rules that allow any source. The panel sent the second and later rules' empty source allowlist as a JSON reference object instead of an empty list, so the Agent rejected the whole node update with "cannot unmarshal object into Go struct field nftForwardRule.rules.sourceCidrs". New rules on such a node showed 异常 with "Agent 返回的实际规则不完整", and deleting a rule on that node failed and kept its port reserved.
