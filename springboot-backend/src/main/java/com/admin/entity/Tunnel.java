@@ -19,6 +19,8 @@ import lombok.EqualsAndHashCode;
 @Data
 @EqualsAndHashCode(callSuper = true)
 public class Tunnel extends BaseEntity {
+    @TableField(exist = false)
+    private com.admin.common.dto.CnixSharedRelayDto sharedRelay;
 
     private static final long serialVersionUID = 1L;
 

@@ -90,22 +90,26 @@ func (h *relayHandler) handleConnect(ctx context.Context, conn net.Conn, network
 	}
 
 	var cc net.Conn
-	switch network {
-	case "unix":
-		cc, err = (&net.Dialer{}).DialContext(ctx, "unix", address)
-	case "serial":
-		var port io.ReadWriteCloser
-		port, err = serial.OpenPort(serial.ParseConfigFromAddr(address))
-		if err == nil {
-			cc = &serialConn{
-				ReadWriteCloser: port,
-				port:            address,
+	if h.md.shared {
+		cc, err = sharedConnect(ctx, address)
+	} else {
+		switch network {
+		case "unix":
+			cc, err = (&net.Dialer{}).DialContext(ctx, "unix", address)
+		case "serial":
+			var port io.ReadWriteCloser
+			port, err = serial.OpenPort(serial.ParseConfigFromAddr(address))
+			if err == nil {
+				cc = &serialConn{
+					ReadWriteCloser: port,
+					port:            address,
+				}
 			}
+		default:
+			var buf bytes.Buffer
+			cc, err = h.options.Router.Dial(ctxvalue.ContextWithBuffer(ctx, &buf), network, address)
+			ro.Route = buf.String()
 		}
-	default:
-		var buf bytes.Buffer
-		cc, err = h.options.Router.Dial(ctxvalue.ContextWithBuffer(ctx, &buf), network, address)
-		ro.Route = buf.String()
 	}
 	if err != nil {
 		resp.Status = relay.StatusNetworkUnreachable

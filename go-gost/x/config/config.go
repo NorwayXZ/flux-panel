@@ -104,6 +104,9 @@ type MetricsConfig struct {
 }
 
 type TLSConfig struct {
+	CertPEM      string                 `yaml:"certPem,omitempty" json:"certPem,omitempty"`
+	KeyPEM       string                 `yaml:"keyPem,omitempty" json:"keyPem,omitempty"`
+	CAPEM        string                 `yaml:"caPem,omitempty" json:"caPem,omitempty"`
 	CertFile     string                 `yaml:"certFile,omitempty" json:"certFile,omitempty"`
 	KeyFile      string                 `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
 	CAFile       string                 `yaml:"caFile,omitempty" json:"caFile,omitempty"`

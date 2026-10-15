@@ -134,6 +134,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
 
     @Resource
     JdbcTemplate jdbcTemplate;
+    @Resource com.admin.service.CnixSharedRelayService cnixSharedRelayService;
+    @Resource com.admin.mapper.PortAllocationLockMapper portAllocationLockMapper;
 
     // ========== 公共接口实现 ==========
 
@@ -145,7 +147,9 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      * @return 创建结果响应
      */
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public R createTunnel(TunnelDto tunnelDto) {
+        portAllocationLockMapper.lockForUpdate();
         // 1. 验证隧道名称唯一性
         R nameValidationResult = validateTunnelNameUniqueness(tunnelDto.getName());
         if (nameValidationResult.getCode() != 0) {
@@ -188,6 +192,10 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         setDefaultTunnelProperties(tunnel);
         tunnel.setOwnerUserId(JwtUtil.getUserIdFromToken());
         boolean result = this.save(tunnel);
+        if (result && tunnelDto.getSharedRelay() != null) {
+            try { cnixSharedRelayService.prepare(tunnel,tunnelDto.getSharedRelay()); }
+            catch (RuntimeException e) { TransactionAspectSupport.currentTransactionStatus().setRollbackOnly(); return R.err(e.getMessage()); }
+        }
         
         return result ? R.ok(SUCCESS_CREATE_MSG) : R.err(ERROR_CREATE_MSG);
     }
@@ -216,6 +224,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         }
         enrichTunnelAccess(tunnelList, userId, roleId);
         enrichTunnelPathDetails(tunnelList);
+        tunnelList.forEach(cnixSharedRelayService::enrich);
         return R.ok(tunnelList);
     }
 
@@ -235,6 +244,11 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         if (!canEdit(existingTunnel)) {
             return R.err("共享隧道为只读，不能修改");
         }
+        if (cnixSharedRelayService.isShared(existingTunnel)) {
+            if (!"tls".equals(tunnelUpdateDto.getProtocol())) return R.err("CNIX共享隧道仅支持relay/TLS");
+            try { if(tunnelUpdateDto.getSharedRelay()!=null) cnixSharedRelayService.update(existingTunnel,tunnelUpdateDto.getSharedRelay()); }
+            catch(RuntimeException e){return R.err(e.getMessage());}
+        } else if(tunnelUpdateDto.getSharedRelay()!=null) return R.err("普通隧道不能直接转为共享模式，请新建专用共享隧道");
 
         // 2. 验证隧道名称唯一性（排除自身）
         R nameValidationResult = validateTunnelNameUniquenessForUpdate(tunnelUpdateDto.getName(), tunnelUpdateDto.getId());
@@ -332,6 +346,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         }
 
         try {
+            cnixSharedRelayService.delete(tunnel);
             Map<String, Object> cleanupSummary = cleanupTunnelDependencies(id);
 
             // 3. 执行删除操作
@@ -927,6 +942,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      */
     private TunnelListDto convertToTunnelListDto(Tunnel tunnel) {
         TunnelListDto dto = new TunnelListDto();
+        if(cnixSharedRelayService!=null) cnixSharedRelayService.enrich(tunnel);
+        dto.setSharedRelay(tunnel.getSharedRelay());
         dto.setId(tunnel.getId().intValue());
         dto.setName(tunnel.getName());
         dto.setIp(tunnel.getInIp());

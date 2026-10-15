@@ -103,6 +103,7 @@ jobs:
           go test ./...
           (cd x && go test ./...)
           (cd x && go test -race ./dnsdecision)
+          (cd x && go test -race ./handler/relay ./socket ./limiter/traffic)
           sudo apt-get update -qq
           sudo apt-get install -y -qq dnsmasq-base
           (cd x && FLUX_DNSMASQ_TEST_BINARY=/usr/sbin/dnsmasq go test -race ./dnsdecision -run 'TestRealDNSMasq|TestEffectiveConfDir' -v)

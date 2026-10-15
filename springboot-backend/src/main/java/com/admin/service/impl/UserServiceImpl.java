@@ -50,6 +50,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
+    @Resource private com.admin.service.CnixSharedRelayService cnixSharedRelayService;
 
     // ========== 常量定义 ==========
     
@@ -802,6 +803,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @param userId 用户ID
      */
     private void deleteUserRelatedData(Long userId) {
+        if(cnixSharedRelayService!=null) {
+            List<Tunnel> shared=tunnelService.list().stream().filter(cnixSharedRelayService::isShared).toList();
+            for(Tunnel tunnel:shared) {
+                if(Objects.equals(tunnel.getOwnerUserId(),userId.intValue()) && forwardService.count(new QueryWrapper<Forward>().eq("tunnel_id",tunnel.getId()))>0)
+                    throw new IllegalStateException("请先删除或迁移用户自建CNIX共享隧道的业务后再删除用户");
+            }
+            for(Tunnel tunnel:shared)cnixSharedRelayService.revokeUser(tunnel,userId.intValue());
+            for(Tunnel tunnel:shared)if(Objects.equals(tunnel.getOwnerUserId(),userId.intValue()))cnixSharedRelayService.delete(tunnel);
+        }
         R entryCleanup = authorizedEntryService.revokeForUser(userId.intValue());
         if (entryCleanup.getCode() != 0) throw new IllegalStateException(entryCleanup.getMsg());
         // Active published services keep their grants reserved until explicitly removed.

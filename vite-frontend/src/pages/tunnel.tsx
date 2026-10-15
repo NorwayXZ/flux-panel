@@ -13,6 +13,7 @@ import {
 import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import { Divider } from "@heroui/divider";
+import { Switch } from "@heroui/switch";
 import { Alert } from "@heroui/alert";
 import toast from "react-hot-toast";
 
@@ -29,6 +30,12 @@ import {
 } from "@/api";
 
 interface Tunnel {
+  sharedRelay?: {
+    servicePort?: number;
+    externalAddress?: string;
+    state?: string;
+    lastError?: string;
+  };
   id: number;
   name: string;
   type: number; // 1: 端口转发, 2: 隧道转发
@@ -84,6 +91,7 @@ interface Node {
 }
 
 interface TunnelForm {
+  sharedRelay?: { servicePort?: number; externalAddress?: string };
   id?: number;
   name: string;
   type: number;
@@ -322,6 +330,12 @@ export default function TunnelPage() {
       id: tunnel.id,
       name: tunnel.name,
       type: tunnel.type,
+      sharedRelay: tunnel.sharedRelay
+        ? {
+            servicePort: tunnel.sharedRelay.servicePort,
+            externalAddress: tunnel.sharedRelay.externalAddress || "",
+          }
+        : undefined,
       inNodeId: tunnel.inNodeId,
       outNodeId: tunnel.outNodeId || null,
       nodePath:
@@ -954,6 +968,29 @@ export default function TunnelPage() {
             </CardHeader>
 
             <CardBody className="pt-0 pb-3">
+              {tunnel.sharedRelay && (
+                <div className="mb-3 space-y-1 rounded-lg bg-primary-50 p-2.5 text-xs dark:bg-primary-500/10">
+                  <p className="font-medium">CNIX共享隧道 · TCP / relay+TLS</p>
+                  <p className="break-all">
+                    加速入口：
+                    {tunnel.sharedRelay.externalAddress || "待补录CNIX映射"}
+                  </p>
+                  <p className="break-all">
+                    出口映射目标：{tunnel.outIp}:
+                    {tunnel.sharedRelay.servicePort}
+                  </p>
+                  <p>
+                    {tunnel.sharedRelay.state === "verified"
+                      ? "最近一次认证及目标连接已验证"
+                      : "尚未完成共享隧道握手验证"}
+                  </p>
+                  {tunnel.sharedRelay.lastError && (
+                    <p className="text-warning">
+                      {tunnel.sharedRelay.lastError}
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
                 {tunnel.accessType === "shared" && (
                   <div
@@ -1414,6 +1451,69 @@ export default function TunnelPage() {
                     <SelectItem key="2">隧道转发</SelectItem>
                   </Select>
 
+                  {form.type === 2 && (
+                    <section className="space-y-3 rounded-lg border border-divider p-3">
+                      <Switch
+                        isDisabled={isEdit}
+                        isSelected={Boolean(form.sharedRelay)}
+                        onValueChange={(enabled) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            sharedRelay: enabled
+                              ? { externalAddress: "" }
+                              : undefined,
+                            protocol: enabled ? "tls" : prev.protocol,
+                          }))
+                        }
+                      >
+                        CNIX共享隧道（单跳 TCP · relay/TLS）
+                      </Switch>
+                      {form.sharedRelay && (
+                        <>
+                          <Input
+                            type="number"
+                            label="出口本机共享服务端口"
+                            placeholder="留空自动分配"
+                            isReadOnly={isEdit}
+                            value={
+                              form.sharedRelay.servicePort?.toString() || ""
+                            }
+                            onValueChange={(value) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                sharedRelay: {
+                                  ...prev.sharedRelay,
+                                  servicePort: value
+                                    ? Number(value)
+                                    : undefined,
+                                },
+                              }))
+                            }
+                          />
+                          <Input
+                            label="CNIX外部加速入口"
+                            placeholder="加速IP:端口，可先留空，创建映射后补录"
+                            value={form.sharedRelay.externalAddress || ""}
+                            onValueChange={(value) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                sharedRelay: {
+                                  ...prev.sharedRelay,
+                                  externalAddress: value,
+                                },
+                              }))
+                            }
+                          />
+                          <p className="text-xs text-default-500">
+                            在 CNIX
+                            控制台将此入口映射到出口节点的共享服务端口，并放行云防火墙和供应商白名单。两个端口可以不同。每条转发只需独立入口端口与落地地址。首版仅支持两个节点与
+                            TCP 业务，认证由面板自动管理。
+                          </p>
+                        </>
+                      )}
+                    </section>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Select
                       errorMessage={errors.flow}
@@ -1571,6 +1671,7 @@ export default function TunnelPage() {
                         errorMessage={errors.protocol}
                         isInvalid={!!errors.protocol}
                         label="协议类型"
+                        isDisabled={Boolean(form.sharedRelay)}
                         placeholder="请选择协议类型"
                         selectedKeys={[form.protocol]}
                         variant="bordered"
@@ -1600,7 +1701,7 @@ export default function TunnelPage() {
                           </h4>
                           <Button
                             color="primary"
-                            isDisabled={isEdit}
+                            isDisabled={isEdit || Boolean(form.sharedRelay)}
                             size="sm"
                             variant="flat"
                             onPress={addTransitNode}

@@ -42,6 +42,7 @@ import java.util.Map;
  */
 @Service
 public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTunnel> implements UserTunnelService {
+    @Resource private com.admin.service.CnixSharedRelayService cnixSharedRelayService;
 
     // ========== 常量定义 ==========
     
@@ -141,6 +142,11 @@ public class UserTunnelServiceImpl extends ServiceImpl<UserTunnelMapper, UserTun
         }
         
         // 2. 删除该用户在该隧道下的所有转发
+        Tunnel shared=tunnelService.getById(userTunnel.getTunnelId());
+        if(cnixSharedRelayService!=null && cnixSharedRelayService.isShared(shared)) {
+            try {cnixSharedRelayService.revokeUser(shared,userTunnel.getUserId());}
+            catch(RuntimeException error){return R.err("共享隧道授权撤销失败，已保留权限："+error.getMessage());}
+        }
         try {
             removeUserTunnelForwards(userTunnel.getUserId(), userTunnel.getTunnelId());
         } catch (Exception e) {

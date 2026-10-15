@@ -14,6 +14,7 @@ import java.util.List;
 
 @Data
 public class TunnelUpdateDto {
+    private CnixSharedRelayDto sharedRelay;
     
     @NotNull(message = "隧道ID不能为空")
     private Long id;

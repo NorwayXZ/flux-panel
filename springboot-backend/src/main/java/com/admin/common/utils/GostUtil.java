@@ -1168,7 +1168,7 @@ public class GostUtil {
         return data;
     }
 
-    private static JSONObject createServiceConfig(String name, Integer in_port, Integer limiter, String remoteAddr, String protocol, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String chainName) {
+    static JSONObject createServiceConfig(String name, Integer in_port, Integer limiter, String remoteAddr, String protocol, Integer fow_type, Tunnel tunnel, String strategy, String interfaceName, String chainName) {
         JSONObject service = new JSONObject();
         service.put("name", name + "_" + protocol);
         if (Objects.equals(protocol, "tcp")){
@@ -1191,6 +1191,7 @@ public class GostUtil {
 
         // 配置处理器
         JSONObject handler = createHandler(protocol, chainName, fow_type);
+        if(tunnel!=null && tunnel.getSharedRelay()!=null) handler.put("metadata",Map.of("cnix.remoteResolution",true));
         service.put("handler", handler);
 
         // 配置监听器
@@ -1198,7 +1199,7 @@ public class GostUtil {
         service.put("listener", listener);
 
         // 端口转发需要配置转发器
-        if (isPortForwarding(fow_type)) {
+        if (isPortForwarding(fow_type) || (tunnel != null && tunnel.getSharedRelay() != null)) {
             JSONObject forwarder = createForwarder(remoteAddr, strategy);
             service.put("forwarder", forwarder);
         }

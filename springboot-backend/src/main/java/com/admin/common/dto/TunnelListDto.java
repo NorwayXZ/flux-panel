@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class TunnelListDto {
+    private CnixSharedRelayDto sharedRelay;
 
     private Integer id;
 

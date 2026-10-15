@@ -12,6 +12,7 @@ import java.util.List;
 
 @Data
 public class TunnelDto {
+    private CnixSharedRelayDto sharedRelay;
     
     @NotBlank(message = "隧道名称不能为空")
     private String name;

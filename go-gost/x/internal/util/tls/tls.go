@@ -259,12 +259,19 @@ func LoadDefaultConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 
 // LoadServerConfig loads the certificate from cert & key files and client CA file.
 func LoadServerConfig(config *config.TLSConfig) (*tls.Config, error) {
-	if config.CertFile == "" && config.KeyFile == "" && len(config.Certificates) == 0 {
+	if config.CertPEM == "" && config.CertFile == "" && config.KeyFile == "" && len(config.Certificates) == 0 {
 		return nil, nil
 	}
 
 	var certificates []tls.Certificate
 	nameCertificates := make(map[string]*tls.Certificate)
+	if config.CertPEM != "" || config.KeyPEM != "" {
+		cert, err := tls.X509KeyPair([]byte(config.CertPEM), []byte(config.KeyPEM))
+		if err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, cert)
+	}
 	if config.CertFile != "" || config.KeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 		if err != nil {
@@ -340,6 +347,12 @@ func LoadClientConfig(config *config.TLSConfig) (*tls.Config, error) {
 	}
 
 	cfg.RootCAs = rootCAs
+	if config.CAPEM != "" {
+		cfg.RootCAs = x509.NewCertPool()
+		if !cfg.RootCAs.AppendCertsFromPEM([]byte(config.CAPEM)) {
+			return nil, errors.New("invalid inline TLS trust certificate")
+		}
+	}
 	cfg.ServerName = config.ServerName
 	cfg.InsecureSkipVerify = !config.Secure
 

@@ -49,6 +49,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> implements ForwardService {
+    @Resource private CnixSharedRelayService cnixSharedRelayService;
 
     // 常量定义
     private static final String GOST_SUCCESS_MSG = "OK";
@@ -525,9 +526,14 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (gostResult.getCode() != 0) {
             return gostResult;
         }
-        updatedForward.setStatus(1);
+        boolean keepSharedPaused=tunnel.getSharedRelay()!=null && Objects.equals(existForward.getStatus(),FORWARD_STATUS_PAUSED);
+        updatedForward.setStatus(keepSharedPaused?FORWARD_STATUS_PAUSED:FORWARD_STATUS_ACTIVE);
         // 9. 保存更新
         boolean result = this.updateById(updatedForward);
+        if(result && keepSharedPaused) {
+            R paused=pauseManagedForward(updatedForward.getId());
+            if(paused.getCode()!=0)return paused;
+        }
         return result ? R.ok("端口转发更新成功") : R.err("端口转发更新失败");
     }
 
@@ -640,6 +646,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         if (forward == null) {
             return R.err("端口转发不存在");
         }
+        if(cnixSharedRelayService.isShared(validateTunnel(forward.getTunnelId())))
+            return R.err("共享业务必须通过正常删除撤销出口授权，不能仅删除数据库记录");
         if (isUsedByCrossEntryFailover(forward.getId())) {
             return R.err("该转发正在被入口容灾组使用，请先从容灾组移除后再强制删除");
         }
@@ -810,6 +818,15 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         List<DiagnosisResult> results = new ArrayList<>();
         String[] remoteAddresses = diagnosticForward.getRemoteAddr().split(",");
         // 6. 根据隧道类型执行不同的诊断策略
+        if(cnixSharedRelayService.isShared(tunnel)) {
+            UserTunnel subscription=getPrimaryUserTunnel(forward);
+            String name=buildServiceName(forward.getId(),forward.getUserId(),subscription);
+            var probe=WebSocketServer.send_msg(tunnel.getInNodeId(),Map.of("chain",routeResourceName(forward,name,activeRoute)+"_chains","target",remoteAddresses[0]),"CnixProbe");
+            cnixSharedRelayService.recordProbe(tunnel,probe);
+            Map<String,Object> report=new LinkedHashMap<>(); report.put("tunnelName",tunnel.getName());report.put("tunnelType","CNIX共享隧道");report.put("timestamp",System.currentTimeMillis());
+            report.put("results",List.of(Map.of("success",isGostOperationSuccess(probe),"description","经CNIX进行TLS信任、relay认证及目标连接检查","message",gostMessage(probe))));
+            return R.ok(report);
+        }
         if (tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD) {
             // 端口转发：入口节点直接TCP ping目标地址
             for (String remoteAddress : remoteAddresses) {
@@ -1102,7 +1119,9 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      * 验证隧道是否存在
      */
     private Tunnel validateTunnel(Integer tunnelId) {
-        return tunnelService.getById(tunnelId);
+        Tunnel tunnel=tunnelService.getById(tunnelId);
+        if(cnixSharedRelayService!=null && tunnel!=null)cnixSharedRelayService.enrich(tunnel);
+        return tunnel;
     }
 
     /**
@@ -1282,6 +1301,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                 && tunnels.stream().anyMatch(tunnel -> !Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD))) {
             return RouteValidationResult.error("负载均衡模式当前仅支持隧道线路；直接端口线路请使用目标地址池");
         }
+        if(tunnels.size()>1 && tunnels.stream().anyMatch(tunnel->tunnel.getSharedRelay()!=null))
+            return RouteValidationResult.error("CNIX共享隧道首版使用独立单线路业务，不支持混合线路调度");
         return RouteValidationResult.success(tunnels);
     }
 
@@ -1428,6 +1449,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private PortAllocation allocateRoutePorts(Tunnel tunnel, Long excludeForwardId, Map<String, Set<Integer>> reservedPorts) {
+        if(tunnel.getSharedRelay()!=null)return PortAllocation.success(null,null,List.of());
         Integer outPort = null;
         List<Integer> hopPorts = new ArrayList<>();
         if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
@@ -1495,6 +1517,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     private PortAllocation allocatePorts(Tunnel tunnel, Integer specifiedInPort, Long excludeForwardId,
                                          String protocolMode) {
+        if (cnixSharedRelayService.isShared(tunnel) && !"tcp".equals(protocolMode)) return PortAllocation.error("CNIX共享隧道首版仅支持TCP业务");
         Integer inPort;
 
         if (specifiedInPort != null) {
@@ -1513,7 +1536,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         Integer outPort = null;
         List<Integer> hopPorts = new ArrayList<>();
-        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
+        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD && !cnixSharedRelayService.isShared(tunnel)) {
             List<Long> nodePath = TunnelRouteUtil.parseNodePath(tunnel);
             Map<String, Set<Integer>> reservedPorts = new HashMap<>();
             if (nodePath.size() < 2) {
@@ -1714,6 +1737,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
 
         // 如果原隧道是隧道转发类型，需要删除链和远程服务
+        if(cnixSharedRelayService.isShared(oldTunnel)) {
+            cnixSharedRelayService.removeBusiness(oldTunnel,forward.getId(),serviceName);
+            return R.ok();
+        }
         if (oldTunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
             // 删除链服务
             if (!oldNodeInfo.isHasError() && oldNodeInfo.getInNode() != null) {
@@ -1915,6 +1942,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private R createRouteInfrastructure(Forward forward, ForwardRouteDto route, Tunnel tunnel, String mainServiceName) {
+        if(cnixSharedRelayService.isShared(tunnel)) {
+            try {
+                cnixSharedRelayService.bindBusiness(tunnel,forward,routeResourceName(forward,mainServiceName,route),effectiveRemoteAddr(forward,route));
+                return R.ok();
+            } catch(RuntimeException e){return R.err(e.getMessage());}
+        }
         if (!Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
             return R.ok();
         }
@@ -2009,6 +2042,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private void deleteRouteInfrastructureBestEffort(Forward forward, List<ForwardRouteDto> routes, String mainServiceName) {
         for (ForwardRouteDto route : routes) {
             Tunnel tunnel = validateTunnel(route.getTunnelId());
+            if(cnixSharedRelayService.isShared(tunnel)) {
+                cnixSharedRelayService.removeBusiness(tunnel,forward.getId(),routeResourceName(forward,mainServiceName,route));
+                continue;
+            }
             if (tunnel == null || !Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
                 continue;
             }
@@ -2144,6 +2181,10 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private void changeRouteInfrastructureStatus(Forward forward, List<ForwardRouteDto> routes, String mainServiceName, boolean pause) {
         for (ForwardRouteDto route : routes) {
             Tunnel routeTunnel = validateTunnel(route.getTunnelId());
+            if(cnixSharedRelayService.isShared(routeTunnel)) {
+                cnixSharedRelayService.pauseBusiness(routeTunnel,forward.getId(),pause);
+                continue;
+            }
             if (routeTunnel == null || !Objects.equals(routeTunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
                 continue;
             }
@@ -2343,6 +2384,19 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         double totalLatency = 0;
         double totalPacketLoss = 0;
         int measurementCount = 0;
+        if(cnixSharedRelayService.isShared(tunnel)) {
+            String name=buildServiceName(forward.getId(),forward.getUserId(),getPrimaryUserTunnel(forward));
+            List<ForwardTargetHealthDto> health=new ArrayList<>();List<String> available=new ArrayList<>();
+            for(String target:splitRemoteAddresses(forward.getRemoteAddr())) {
+                var response=WebSocketServer.send_msg(tunnel.getInNodeId(),Map.of("chain",routeResourceName(forward,name,route)+"_chains","target",target),"CnixProbe");
+                cnixSharedRelayService.recordProbe(tunnel,response);
+                boolean verified=isGostOperationSuccess(response);
+                ForwardTargetHealthDto state=new ForwardTargetHealthDto(); state.setAddress(target);state.setStatus(verified?"healthy":"unhealthy");state.setMessage(gostMessage(response));state.setLastCheckTime(System.currentTimeMillis());health.add(state);
+                if(verified)available.add(target);
+            }
+            if(available.isEmpty())return RouteProbeResult.failure("CNIX握手或目标连接未验证",health);
+            return new RouteProbeResult(true,"CNIX的TLS信任、relay授权及目标连接已验证",null,null,available,health);
+        }
         if (Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)) {
             List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(route.getHopPorts());
             List<Node> pathNodes = nodeInfo.getPathNodes();
@@ -2574,6 +2628,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     private void updateRouteTargetPool(Forward forward, ForwardRouteDto route, Tunnel tunnel) {
+        if(cnixSharedRelayService.isShared(tunnel))return; // Shared targets belong to each ingress, never to a fixed exit forwarder.
         if (!Objects.equals(tunnel.getType(), TUNNEL_TYPE_TUNNEL_FORWARD)
                 || route.getHealthyTargets() == null
                 || route.getHealthyTargets().isEmpty()) {
@@ -2817,6 +2872,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
                     "SELECT DISTINCT listen_port FROM domain_route WHERE node_id IN (" + placeholders + ") AND state<>'deleted'",
                     Integer.class, args.toArray());
             usedPorts.addAll(domainPorts);
+            usedPorts.addAll(jdbcTemplate.queryForList("SELECT service_port FROM cnix_shared_relay WHERE out_node_id IN ("+placeholders+")",Integer.class,args.toArray()));
         }
 
         return usedPorts;

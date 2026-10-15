@@ -656,6 +656,24 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	case "AddService":
 		err = w.handleAddService(cmd.Data)
 		response.Type = "AddServiceResponse"
+	case "CnixCertificate":
+		var request struct {
+			Name string `json:"name"`
+		}
+		err = decodeCommandData(cmd.Data, &request)
+		if err == nil {
+			response.Data, err = cnixCertificate(request.Name)
+		}
+		response.Type = "CnixCertificateResponse"
+	case "CnixCapabilities":
+		response.Data = map[string]interface{}{"sharedRelay": 1, "tcpOnly": true, "targetAuthorization": true, "inlineTrust": true}
+		response.Type = "CnixCapabilitiesResponse"
+	case "CnixGrants":
+		err = cnixGrants(cmd.Data)
+		response.Type = "CnixGrantsResponse"
+	case "CnixProbe":
+		err = cnixProbe(cmd.Data)
+		response.Type = "CnixProbeResponse"
 	case "UpdateService":
 		err = w.handleUpdateService(cmd.Data)
 		response.Type = "UpdateServiceResponse"
@@ -1081,9 +1099,13 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		response.Success = false
 		response.Message = err.Error()
 	} else {
-		saveConfig()
-		response.Success = true
-		response.Message = "OK"
+		if persistErr := saveConfig(); persistErr != nil {
+			response.Success = false
+			response.Message = "persist Agent configuration failed: " + persistErr.Error()
+		} else {
+			response.Success = true
+			response.Message = "OK"
+		}
 	}
 
 	w.sendResponse(response)

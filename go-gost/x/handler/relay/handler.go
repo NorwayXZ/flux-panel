@@ -201,7 +201,7 @@ func (h *relayHandler) Handle(ctx context.Context, conn net.Conn, opts ...handle
 		log = log.WithFields(map[string]any{"user": user})
 	}
 
-	if h.options.Auther != nil {
+	if h.options.Auther != nil && !h.md.shared {
 		clientID, ok := h.options.Auther.Authenticate(ctx, user, pass)
 		if !ok {
 			resp.Status = relay.StatusUnauthorized
@@ -214,6 +214,22 @@ func (h *relayHandler) Handle(ctx context.Context, conn net.Conn, opts ...handle
 	network := networkID.String()
 	if (req.Cmd & relay.FUDP) == relay.FUDP {
 		network = "udp"
+	}
+	if h.md.shared {
+		// Never expose BIND, UDP, Unix sockets, serial devices or a fixed forwarder.
+		if req.Cmd != relay.CmdConnect || network != "tcp" || h.hop != nil {
+			resp.Status = relay.StatusForbidden
+			resp.WriteTo(conn)
+			return ErrUnauthorized
+		}
+		release, allowed := h.sharedAuthorize(conn, user, pass, address)
+		if !allowed {
+			resp.Status = relay.StatusUnauthorized
+			resp.WriteTo(conn)
+			return ErrUnauthorized
+		}
+		defer release()
+		ctx = ctxvalue.ContextWithClientID(ctx, ctxvalue.ClientID(user))
 	}
 	ro.Network = network
 	ro.Host = address

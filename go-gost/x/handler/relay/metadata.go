@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"time"
 
 	"github.com/go-gost/core/bypass"
@@ -14,6 +15,7 @@ import (
 )
 
 type metadata struct {
+	shared      bool
 	readTimeout time.Duration
 	enableBind  bool
 	noDelay     bool
@@ -38,6 +40,20 @@ type metadata struct {
 }
 
 func (h *relayHandler) parseMetadata(md mdata.Metadata) (err error) {
+	h.md.shared = mdutil.GetBool(md, "cnix.shared")
+	if h.md.shared {
+		var grants []SharedGrant
+		encoded, marshalErr := json.Marshal(md.Get("cnix.grants"))
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := json.Unmarshal(encoded, &grants); err != nil {
+			return err
+		}
+		if err := SharedGrants(h.options.Service, grants); err != nil {
+			return err
+		}
+	}
 	h.md.readTimeout = mdutil.GetDuration(md, "readTimeout")
 	if h.md.readTimeout <= 0 {
 		h.md.readTimeout = 15 * time.Second
