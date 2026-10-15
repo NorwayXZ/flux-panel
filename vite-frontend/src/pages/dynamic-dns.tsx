@@ -28,6 +28,9 @@ import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import {
   deleteDynamicDnsProvider,
   deleteDynamicDnsRule,
@@ -293,7 +296,7 @@ export default function DynamicDnsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -327,25 +330,31 @@ export default function DynamicDnsPage() {
           )}
         </div>
       </header>
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["规则", data.summary.rules],
-          ["运行中", data.summary.active],
-          ["正常", data.summary.healthy],
-          ["失败", data.summary.errors],
-        ].map(([label, value], index) => (
-          <div
-            key={String(label)}
-            className="rounded-md border border-divider bg-content1 p-4"
-          >
-            <p className="text-sm text-default-500">{label}</p>
-            <p
-              className={`mt-2 text-2xl font-semibold ${index === 3 && Number(value) ? "text-danger" : ""}`}
-            >
-              {value}
-            </p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<CloudCog size={20} />}
+          title="规则"
+          value={data.summary.rules}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<Clock3 size={20} />}
+          title="运行中"
+          value={data.summary.active}
+        />
+        <StatsCard
+          color="success"
+          icon={<CircleCheck size={20} />}
+          title="正常"
+          value={data.summary.healthy}
+        />
+        <StatsCard
+          color="danger"
+          icon={<TriangleAlert size={20} />}
+          title="失败"
+          value={data.summary.errors}
+        />
       </section>
       <Tabs
         selectedKey={tab}
@@ -367,145 +376,131 @@ export default function DynamicDnsPage() {
               <span>尚未创建动态 DNS 规则</span>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {data.rules.map((rule) => (
-              <article
-                key={rule.id}
-                className="rounded-md border border-divider bg-content1 p-4"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <strong className="truncate">{rule.name}</strong>
-                    <Chip size="sm" variant="flat">
-                      {rule.recordType}
-                    </Chip>
-                  </div>
-                  <p className="mt-1 truncate font-mono text-sm text-default-500">
-                    {rule.recordName}
-                  </p>
-                  <p className="mt-1 text-xs text-default-400">
-                    每 {rule.checkIntervalSeconds} 秒检测 · TTL {rule.ttl}
-                  </p>
-                </div>
-                <div>
-                  <p className="truncate font-medium">
-                    {rule.sourceType === "connector"
-                      ? rule.connectorName || `接入端 ${rule.connectorId}`
-                      : rule.nodeName || `节点 ${rule.nodeId}`}
-                  </p>
-                  <p
-                    className={`mt-1 text-xs ${rule.sourceType === "connector" ? (rule.connectorOnline ? "text-success" : "text-danger") : rule.nodeOnline ? "text-success" : "text-danger"}`}
-                  >
-                    {rule.sourceType === "connector"
-                      ? rule.connectorOnline
-                        ? "接入端在线"
-                        : "接入端离线"
-                      : rule.nodeOnline
-                        ? "节点在线"
-                        : "节点离线"}{" "}
-                    · Agent{" "}
-                    {rule.sourceType === "connector"
-                      ? rule.connectorVersion || "未知"
-                      : rule.nodeVersion || "未知"}
-                  </p>
-                </div>
-                <div>
-                  <p>{providerLabel[rule.provider]}</p>
-                  <p className="mt-1 truncate text-xs text-default-500">
-                    {rule.providerAccountName || rule.zoneName}
-                  </p>
-                </div>
-                <div>
-                  <p className="truncate font-mono text-sm">
-                    {rule.lastAppliedIp || "尚未同步"}
-                  </p>
-                  {rule.lastDetectedIp &&
-                    rule.lastDetectedIp !== rule.lastAppliedIp && (
-                      <p className="mt-1 truncate text-xs text-warning">
-                        检测到 {rule.lastDetectedIp}
-                      </p>
-                    )}
-                </div>
-                <div>
-                  <Chip
-                    color={
+            <ResourceCardGrid>
+              {data.rules.map((rule) => {
+                const connector = rule.sourceType === "connector";
+                const sourceOnline = connector
+                  ? rule.connectorOnline
+                  : rule.nodeOnline;
+                const failing =
+                  Boolean(rule.enabled) && rule.lastStatus === "error";
+                const drifted =
+                  rule.lastDetectedIp &&
+                  rule.lastDetectedIp !== rule.lastAppliedIp;
+
+                return (
+                  <ResourceCard
+                    key={rule.id}
+                    actions={[
+                      {
+                        label: "检测",
+                        icon: <Play size={14} />,
+                        color: "primary",
+                        isLoading: busy === rule.id,
+                        onPress: () => void run(rule),
+                      },
+                      {
+                        label: "历史",
+                        icon: <History size={14} />,
+                        onPress: () => void showHistory(rule),
+                      },
+                      {
+                        label: "编辑",
+                        icon: <Pencil size={14} />,
+                        onPress: () => openRule(rule),
+                      },
+                      {
+                        label: "删除",
+                        icon: <Trash2 size={14} />,
+                        color: "danger",
+                        onPress: () => void removeRule(rule),
+                      },
+                    ]}
+                    blocks={[
+                      {
+                        label: "解析",
+                        rows: [
+                          {
+                            label: "当前",
+                            value: rule.lastAppliedIp || "尚未同步",
+                          },
+                          ...(drifted
+                            ? [{ label: "检测到", value: rule.lastDetectedIp }]
+                            : []),
+                        ],
+                      },
+                      {
+                        label: connector ? "家庭设备" : "检测节点",
+                        status: sourceOnline
+                          ? { text: "在线", color: "success" as const }
+                          : { text: "离线", color: "danger" as const },
+                        rows: [
+                          {
+                            value: connector
+                              ? rule.connectorName ||
+                                `接入端 ${rule.connectorId}`
+                              : rule.nodeName || `节点 ${rule.nodeId}`,
+                            mono: false,
+                          },
+                        ],
+                      },
+                    ]}
+                    chips={[
+                      { text: rule.recordType, color: "primary" },
+                      { text: providerLabel[rule.provider] },
+                    ]}
+                    danger={failing}
+                    facts={[
+                      {
+                        label: "检测间隔",
+                        value: `${rule.checkIntervalSeconds} 秒 · TTL ${rule.ttl}`,
+                      },
+                      {
+                        label: "Agent",
+                        value:
+                          (connector
+                            ? rule.connectorVersion
+                            : rule.nodeVersion) || "未知",
+                      },
+                      {
+                        label: "DNS 账号",
+                        value: rule.providerAccountName || rule.zoneName,
+                      },
+                      { label: "最近检测", value: time(rule.lastCheckedAt) },
+                    ]}
+                    notice={
+                      rule.lastError
+                        ? {
+                            icon: <TriangleAlert size={14} />,
+                            label: "最近错误",
+                            value: (
+                              <span title={rule.lastError}>
+                                {rule.lastError}
+                              </span>
+                            ),
+                            tone: "danger",
+                          }
+                        : undefined
+                    }
+                    status={
                       !rule.enabled
-                        ? "default"
-                        : rule.lastStatus === "success"
-                          ? "success"
-                          : rule.lastStatus === "error"
-                            ? "danger"
-                            : "warning"
+                        ? { text: "已停用", color: "default" }
+                        : {
+                            text: statusLabel(rule.lastStatus),
+                            color:
+                              rule.lastStatus === "success"
+                                ? "success"
+                                : rule.lastStatus === "error"
+                                  ? "danger"
+                                  : "warning",
+                          }
                     }
-                    size="sm"
-                    startContent={
-                      rule.lastStatus === "success" ? (
-                        <CircleCheck size={13} />
-                      ) : rule.lastStatus === "error" ? (
-                        <TriangleAlert size={13} />
-                      ) : (
-                        <Clock3 size={13} />
-                      )
-                    }
-                    variant="flat"
-                  >
-                    {!rule.enabled ? "已停用" : statusLabel(rule.lastStatus)}
-                  </Chip>
-                  <p className="mt-1 text-xs text-default-400">
-                    {time(rule.lastCheckedAt)}
-                  </p>
-                  {rule.lastError && (
-                    <p
-                      className="mt-1 line-clamp-2 text-xs text-danger"
-                      title={rule.lastError}
-                    >
-                      {rule.lastError}
-                    </p>
-                  )}
-                </div>
-                <div className="flex justify-end gap-1">
-                  <Button
-                    isIconOnly
-                    aria-label="立即检测"
-                    isLoading={busy === rule.id}
-                    size="sm"
-                    variant="light"
-                    onPress={() => run(rule)}
-                  >
-                    <Play size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="历史"
-                    size="sm"
-                    variant="light"
-                    onPress={() => showHistory(rule)}
-                  >
-                    <History size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="编辑"
-                    size="sm"
-                    variant="light"
-                    onPress={() => openRule(rule)}
-                  >
-                    <Pencil size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除"
-                    color="danger"
-                    size="sm"
-                    variant="light"
-                    onPress={() => removeRule(rule)}
-                  >
-                    <Trash2 size={16} />
-                  </Button>
-                </div>
-              </article>
-              ))}
-            </div>
+                    subtitles={[rule.recordName]}
+                    title={rule.name}
+                  />
+                );
+              })}
+            </ResourceCardGrid>
           )}
         </section>
       ) : (
@@ -536,59 +531,49 @@ export default function DynamicDnsPage() {
               </Button>
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
+            <ResourceCardGrid>
               {dynamicProviders.map((provider) => (
-              <article
-                key={provider.id}
-                className="flex min-w-0 flex-col gap-3 rounded-md border border-divider bg-content1 p-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <strong>{provider.name}</strong>
-                    <Chip size="sm" variant="flat">
-                      {providerLabel[provider.provider]}
-                    </Chip>
-                    <Chip
-                      color={provider.enabled ? "success" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {provider.enabled ? "启用" : "停用"}
-                    </Chip>
-                  </div>
-                  <p className="mt-1 text-sm text-default-500">
-                    历史兼容凭据；新凭据建议迁移到域名管理统一维护
-                  </p>
-                  {provider.lastError && (
-                    <p className="mt-1 text-sm text-danger">
-                      {provider.lastError}
-                    </p>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    isIconOnly
-                    aria-label="编辑"
-                    size="sm"
-                    variant="light"
-                    onPress={() => openProvider(provider)}
-                  >
-                    <Pencil size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除"
-                    color="danger"
-                    size="sm"
-                    variant="light"
-                    onPress={() => removeProvider(provider)}
-                  >
-                    <Trash2 size={16} />
-                  </Button>
-                </div>
-              </article>
+                <ResourceCard
+                  key={provider.id}
+                  actions={[
+                    {
+                      label: "编辑",
+                      icon: <Pencil size={14} />,
+                      onPress: () => openProvider(provider),
+                    },
+                    {
+                      label: "删除",
+                      icon: <Trash2 size={14} />,
+                      color: "danger",
+                      onPress: () => void removeProvider(provider),
+                    },
+                  ]}
+                  chips={[{ text: providerLabel[provider.provider] }]}
+                  danger={Boolean(provider.lastError)}
+                  notice={
+                    provider.lastError
+                      ? {
+                          icon: <TriangleAlert size={14} />,
+                          label: "最近错误",
+                          value: (
+                            <span title={provider.lastError}>
+                              {provider.lastError}
+                            </span>
+                          ),
+                          tone: "danger",
+                        }
+                      : undefined
+                  }
+                  status={
+                    provider.enabled
+                      ? { text: "启用", color: "success" }
+                      : { text: "停用", color: "default" }
+                  }
+                  subtitles={["历史兼容凭据，建议迁移到域名管理"]}
+                  title={provider.name}
+                />
               ))}
-            </div>
+            </ResourceCardGrid>
           )}
         </section>
       )}
@@ -935,6 +920,6 @@ export default function DynamicDnsPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

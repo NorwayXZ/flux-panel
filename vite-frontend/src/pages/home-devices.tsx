@@ -12,7 +12,6 @@ import {
 import { Select, SelectItem } from "@heroui/select";
 import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
-import { Tooltip } from "@heroui/tooltip";
 import {
   ArrowRight,
   Copy,
@@ -24,11 +23,16 @@ import {
   RefreshCw,
   ShieldAlert,
   Trash2,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import {
   createInternalConnector,
   clearLanDiscoveryResults,
@@ -320,7 +324,7 @@ export default function HomeDevicesPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -346,17 +350,25 @@ export default function HomeDevicesPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-divider bg-divider sm:grid-cols-3">
-        {[
-          ["设备总数", devices.length],
-          ["在线设备", devices.filter((item) => item.online).length],
-          ["离线设备", devices.filter((item) => !item.online).length],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-content1 px-4 py-4">
-            <div className="text-xs text-default-500">{label}</div>
-            <div className="mt-1 text-xl font-semibold">{value}</div>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatsCard
+          color="primary"
+          icon={<Laptop size={20} />}
+          title="设备总数"
+          value={devices.length}
+        />
+        <StatsCard
+          color="success"
+          icon={<Wifi size={20} />}
+          title="在线设备"
+          value={devices.filter((item) => item.online).length}
+        />
+        <StatsCard
+          color="danger"
+          icon={<WifiOff size={20} />}
+          title="离线设备"
+          value={devices.filter((item) => !item.online).length}
+        />
       </section>
 
       {loading ? (
@@ -364,116 +376,81 @@ export default function HomeDevicesPage() {
           <Spinner />
         </div>
       ) : devices.length === 0 ? (
-        <div className="flex min-h-56 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <Laptop size={30} />
           <span>尚未添加家庭设备</span>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <ResourceCardGrid>
           {devices.map((device) => (
-            <article
+            <ResourceCard
               key={device.id}
-              className="rounded-md border border-divider bg-content1 p-5"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold">
-                    {device.name}
-                  </h2>
-                  <p className="mt-1 text-xs text-default-500">
-                    {device.ownerUserName || "当前用户"} ·{" "}
-                    {platformLabel[device.platform] || device.platform}
-                  </p>
-                </div>
-                <Chip
-                  color={device.online ? "success" : "danger"}
-                  size="sm"
-                  variant="flat"
-                >
-                  {device.online ? "在线" : "离线"}
-                </Chip>
-              </div>
-              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <div>
-                  <dt className="text-default-500">Agent 版本</dt>
-                  <dd className="mt-1 font-medium">
-                    {device.version || "尚未上报"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">最近连接</dt>
-                  <dd className="mt-1 font-medium">
-                    {formatTime(device.lastSeen)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">远端地址</dt>
-                  <dd className="mt-1 break-all font-mono text-xs">
-                    {device.remoteIp || "尚未上报"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">允许网段</dt>
-                  <dd className="mt-1 break-all font-mono text-xs">
-                    {device.allowedCidrs || "默认网段"}
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-divider pt-4">
-                <Chip
-                  color={getDiscoveryStatusMeta(device.discoveryStatus).color}
-                  size="sm"
-                  variant="flat"
-                >
-                  {device.discoveryEnabled
+              actions={[
+                {
+                  label: "发现服务",
+                  icon: <Radar size={14} />,
+                  color: "primary",
+                  onPress: () => void openDiscovery(device),
+                },
+                {
+                  label: device.online ? "安装" : "重装",
+                  icon: <Download size={14} />,
+                  onPress: () =>
+                    void showCommand(device.id, device.platform, "install"),
+                },
+                {
+                  label: "卸载",
+                  onPress: () =>
+                    void showCommand(device.id, device.platform, "uninstall"),
+                },
+                {
+                  label: "删除",
+                  icon: <Trash2 size={14} />,
+                  color: "danger",
+                  onPress: () => setDeleteDevice(device),
+                },
+              ]}
+              blocks={[
+                {
+                  label: "连接",
+                  rows: [
+                    {
+                      label: "远端",
+                      value: device.remoteIp || "尚未上报",
+                    },
+                    {
+                      label: "网段",
+                      value: device.allowedCidrs || "默认网段",
+                      title: device.allowedCidrs || undefined,
+                    },
+                  ],
+                },
+              ]}
+              chips={[
+                {
+                  text: device.discoveryEnabled
                     ? `${device.discoveredServiceCount || 0} 个候选服务`
-                    : "服务发现已关闭"}
-                </Chip>
-                <div className="ml-auto flex flex-wrap justify-end gap-2">
-                  <Button
-                    size="sm"
-                    startContent={<Radar size={15} />}
-                    variant="flat"
-                    onPress={() => openDiscovery(device)}
-                  >
-                    发现服务
-                  </Button>
-                  <Button
-                    size="sm"
-                    startContent={<Download size={15} />}
-                    variant="flat"
-                    onPress={() =>
-                      showCommand(device.id, device.platform, "install")
-                    }
-                  >
-                    {device.online ? "安装命令" : "重新安装"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="flat"
-                    onPress={() =>
-                      showCommand(device.id, device.platform, "uninstall")
-                    }
-                  >
-                    卸载命令
-                  </Button>
-                  <Tooltip content="删除设备记录">
-                    <Button
-                      isIconOnly
-                      aria-label={`删除 ${device.name} 设备记录`}
-                      color="danger"
-                      size="sm"
-                      variant="flat"
-                      onPress={() => setDeleteDevice(device)}
-                    >
-                      <Trash2 size={15} />
-                    </Button>
-                  </Tooltip>
-                </div>
-              </div>
-            </article>
+                    : "服务发现已关闭",
+                  color: getDiscoveryStatusMeta(device.discoveryStatus).color,
+                },
+              ]}
+              danger={!device.online}
+              facts={[
+                { label: "Agent 版本", value: device.version || "尚未上报" },
+                { label: "最近连接", value: formatTime(device.lastSeen) },
+              ]}
+              status={
+                device.online
+                  ? { text: "在线", color: "success" }
+                  : { text: "离线", color: "danger" }
+              }
+              subtitles={[
+                `${device.ownerUserName || "当前用户"} · ${platformLabel[device.platform] || device.platform}`,
+              ]}
+              title={device.name}
+            />
           ))}
-        </div>
+        </ResourceCardGrid>
       )}
 
       <Modal isOpen={createOpen} size="xl" onOpenChange={setCreateOpen}>
@@ -830,6 +807,6 @@ export default function HomeDevicesPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

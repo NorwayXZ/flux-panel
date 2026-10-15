@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
-import { Chip } from "@heroui/chip";
 import { Input, Textarea } from "@heroui/input";
 import {
   Modal,
@@ -30,6 +29,9 @@ import {
   type ServerAsset,
   type ServerAssetOverview,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 
 interface NodeOption {
   id: number;
@@ -189,7 +191,7 @@ export default function ServerAssetsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">资产与成本</p>
@@ -208,28 +210,31 @@ export default function ServerAssetsPage() {
           </Button>
         </div>
       </header>
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["资产总数", data.summary.total, <Server size={18} />],
-          [
-            "30 天内到期",
-            data.summary.expiringSoon,
-            <CalendarClock size={18} />,
-          ],
-          ["已到期", data.summary.expired, <CalendarClock size={18} />],
-          ["月度费用", costs, <CircleDollarSign size={18} />],
-        ].map(([label, value, icon]) => (
-          <div
-            key={String(label)}
-            className="rounded-md border border-divider bg-content1 p-4"
-          >
-            <div className="flex items-center justify-between text-sm text-default-500">
-              <span>{label}</span>
-              {icon}
-            </div>
-            <div className="mt-2 text-xl font-semibold">{value}</div>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<Server size={20} />}
+          title="资产总数"
+          value={data.summary.total}
+        />
+        <StatsCard
+          color="warning"
+          icon={<CalendarClock size={20} />}
+          title="30 天内到期"
+          value={data.summary.expiringSoon}
+        />
+        <StatsCard
+          color="danger"
+          icon={<CalendarClock size={20} />}
+          title="已到期"
+          value={data.summary.expired}
+        />
+        <StatsCard
+          color="success"
+          icon={<CircleDollarSign size={20} />}
+          title="月度费用"
+          value={costs}
+        />
       </section>
       <section className="space-y-3">
         {loading ? (
@@ -242,128 +247,115 @@ export default function ServerAssetsPage() {
             <span>尚未登记服务器资产</span>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <ResourceCardGrid>
             {data.items.map((item) => {
-            const urgent =
-              item.remainingDays !== undefined &&
-              item.remainingDays !== null &&
-              item.remainingDays <= 30;
+              const hasDays =
+                item.remainingDays !== undefined && item.remainingDays !== null;
+              const expired = hasDays && item.remainingDays! < 0;
+              const urgent = hasDays && item.remainingDays! <= 30;
 
-            return (
-              <article
-                key={item.id}
-                className="rounded-md border border-divider bg-content1 p-4"
-              >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <strong className="truncate">{item.name}</strong>
-                    {item.nodeId && (
-                      <Chip
-                        color={item.nodeStatus === 1 ? "success" : "default"}
-                        size="sm"
-                        variant="flat"
-                      >
-                        {item.nodeName || `节点 ${item.nodeId}`}
-                      </Chip>
-                    )}
-                  </div>
-                  <p className="mt-1 truncate text-sm text-default-500">
-                    {item.provider || "未填写厂商"} ·{" "}
-                    {item.region || "未填写地区"}
-                  </p>
-                  <p className="mt-1 font-mono text-xs text-default-400">
-                    {item.ipv4 || item.ipv6 || "未登记 IP"}
-                  </p>
-                  </div>
-                  <Chip
-                    className="shrink-0"
-                    color={
-                      item.remainingDays !== undefined && item.remainingDays < 0
-                        ? "danger"
-                        : urgent
-                          ? "warning"
-                          : "success"
-                    }
-                    size="sm"
-                    variant="flat"
-                  >
-                    {item.expiryDate
-                      ? item.remainingDays! < 0
+              return (
+                <ResourceCard
+                  key={item.id}
+                  actions={[
+                    {
+                      label: "编辑",
+                      icon: <Pencil size={14} />,
+                      onPress: () => edit(item),
+                    },
+                    {
+                      label: "删除",
+                      icon: <Trash2 size={14} />,
+                      color: "danger",
+                      onPress: () => void remove(item),
+                    },
+                  ]}
+                  blocks={[
+                    {
+                      label: "地址",
+                      status: item.nodeId
+                        ? {
+                            text: item.nodeName || `节点 ${item.nodeId}`,
+                            color:
+                              item.nodeStatus === 1
+                                ? ("success" as const)
+                                : ("default" as const),
+                          }
+                        : undefined,
+                      rows: [
+                        ...(item.ipv4
+                          ? [{ label: "IPv4", value: item.ipv4 }]
+                          : []),
+                        ...(item.ipv6
+                          ? [
+                              {
+                                label: "IPv6",
+                                value: item.ipv6,
+                                title: item.ipv6,
+                              },
+                            ]
+                          : []),
+                        ...(!item.ipv4 && !item.ipv6
+                          ? [{ value: "未登记 IP", mono: false }]
+                          : []),
+                      ],
+                    },
+                  ]}
+                  chips={(item.tags || "")
+                    .split(/[,，\s]+/)
+                    .filter(Boolean)
+                    .map((tag) => ({ text: tag }))}
+                  danger={expired}
+                  facts={[
+                    {
+                      label: "配置",
+                      value: `${item.cpuSpec || "未填写"}${item.memoryMb ? ` · ${item.memoryMb} MB` : ""}${item.diskGb ? ` · ${item.diskGb} GB` : ""}`,
+                    },
+                    {
+                      label: "月费",
+                      value: `${item.currency} ${Number(item.monthlyCost).toFixed(2)}`,
+                    },
+                    {
+                      label: "线路套餐",
+                      value: item.networkLine || item.trafficPlan || "未填写",
+                    },
+                    {
+                      label: "带宽",
+                      value: item.bandwidthMbps
+                        ? `${item.bandwidthMbps} Mbps`
+                        : "未填写",
+                    },
+                    {
+                      label: "到期日期",
+                      value: `${displayDate(item.expiryDate)}${item.autoRenew ? " · 自动续费" : ""}`,
+                      tone: expired ? "danger" : urgent ? "warning" : "default",
+                    },
+                  ]}
+                  status={{
+                    text: item.expiryDate
+                      ? expired
                         ? `已过期 ${Math.abs(item.remainingDays!)} 天`
                         : `剩余 ${item.remainingDays} 天`
-                      : "长期 / 未设置"}
-                  </Chip>
-                </div>
-                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
-                  <div>
-                    <dt className="text-xs text-default-500">配置</dt>
-                    <dd className="mt-1 truncate">
-                      {item.cpuSpec || "配置未填写"}
-                      {item.memoryMb ? ` · ${item.memoryMb} MB` : ""}
-                      {item.diskGb ? ` · ${item.diskGb} GB` : ""}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">月费</dt>
-                    <dd className="mt-1 font-medium">
-                      {item.currency} {Number(item.monthlyCost).toFixed(2)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">线路套餐</dt>
-                    <dd className="mt-1 truncate">
-                      {item.networkLine || item.trafficPlan || "未填写"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">到期日期</dt>
-                    <dd className="mt-1 truncate">
-                      {displayDate(item.expiryDate)}
-                      {item.autoRenew ? " · 自动续费" : ""}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-default-500">
-                  <span className="truncate" title={item.tags || ""}>
-                    标签：{item.tags || "无"}
-                  </span>
-                  <span className="shrink-0">
-                    {item.bandwidthMbps ? `${item.bandwidthMbps} Mbps` : "带宽未填"}
-                  </span>
-                </div>
-                {item.notes && (
-                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-default-500">
-                    {item.notes}
-                  </p>
-                )}
-                <div className="mt-4 flex justify-end gap-1 border-t border-divider pt-3">
-                  <Button
-                    isIconOnly
-                    aria-label="编辑服务器资产"
-                    size="sm"
-                    title="编辑"
-                    variant="light"
-                    onPress={() => edit(item)}
-                  >
-                    <Pencil size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除服务器资产"
-                    color="danger"
-                    size="sm"
-                    title="删除"
-                    variant="light"
-                    onPress={() => remove(item)}
-                  >
-                    <Trash2 size={16} />
-                  </Button>
-                </div>
-              </article>
-            );
+                      : "长期",
+                    color: expired ? "danger" : urgent ? "warning" : "success",
+                  }}
+                  subtitles={[
+                    `${item.provider || "未填写厂商"} · ${item.region || "未填写地区"}`,
+                  ]}
+                  title={item.name}
+                >
+                  {item.notes && (
+                    <p
+                      className="line-clamp-2 border-t border-divider pt-2 text-xs leading-5 text-default-500"
+                      title={item.notes}
+                    >
+                      {item.notes}
+                    </p>
+                  )}
+                </ResourceCard>
+              );
             })}
-          </div>
+          </ResourceCardGrid>
         )}
       </section>
       <Modal
@@ -574,6 +566,6 @@ export default function ServerAssetsPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

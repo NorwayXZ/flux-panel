@@ -1,3 +1,9 @@
+## 2.72.0 Unified cards, batch 3: resource center, DNS, assets, failover and smart entry
+
+- 家庭设备, 动态解析, 端口资源 (port pools and user grants), 域名管理 (Cloudflare and carrier DNS accounts), AWS 账号 and 服务器资产 now show each item as a standard card with address blocks, fact grid, status line and action buttons. Their summary figures use the dashboard stat cards.
+- 入口容灾, 三网优化 and 私有组网 keep their detailed group panels, now in the same card frame, page width and stat cards as the rest of the panel.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.71.0 remains available for rollback.
+
 ## 2.71.0 Unified cards, batch 2: exit pool, home access, service publishing, Docker and authorized entry
 
 - 家宽出口池: country tiles use the dashboard stat cards and open the country list; exit groups are standard cards with the candidate exits, their switches and block buttons inside.

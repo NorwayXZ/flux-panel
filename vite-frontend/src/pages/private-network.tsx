@@ -61,6 +61,7 @@ import {
   AwsAccessAccount,
   DnsZoneOption,
 } from "@/api";
+import PageShell from "@/components/page-shell";
 import { formatDateTime } from "@/utils/format";
 
 type NativeMemberForm = {
@@ -658,7 +659,7 @@ export default function PrivateNetworkPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 px-3 py-4 sm:px-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-divider pb-5">
         <div>
           <h1 className="text-2xl font-semibold">内网组建与出口</h1>
@@ -812,7 +813,7 @@ export default function PrivateNetworkPage() {
             return (
               <article
                 key={network.id}
-                className="overflow-hidden rounded-lg border border-default-200 bg-content1 shadow-sm"
+                className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-medium transition-shadow duration-200 hover:shadow-lg dark:border-default-100"
               >
                 <div className="flex flex-wrap items-start justify-between gap-4 border-b border-default-200 bg-content1 px-4 py-4 sm:px-5">
                   <div className="min-w-0">
@@ -987,7 +988,7 @@ export default function PrivateNetworkPage() {
             return (
               <article
                 key={group.id}
-                className="border border-divider bg-content1"
+                className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-medium transition-shadow duration-200 hover:shadow-lg dark:border-default-100"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3 border-b border-divider p-4">
                   <div>
@@ -1138,7 +1139,7 @@ export default function PrivateNetworkPage() {
             return (
               <article
                 key={app.id}
-                className="overflow-hidden rounded-lg border border-default-200 bg-content1 shadow-sm"
+                className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-medium transition-shadow duration-200 hover:shadow-lg dark:border-default-100"
               >
                 <div className="flex flex-wrap items-start justify-between gap-4 border-b border-default-200 px-4 py-4 sm:px-5">
                   <div className="min-w-0">
@@ -2025,6 +2026,6 @@ export default function PrivateNetworkPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

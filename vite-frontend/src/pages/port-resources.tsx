@@ -28,6 +28,8 @@ import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import {
   createPublishingPortPool,
   deletePublishingPortPool,
@@ -233,7 +235,7 @@ export default function PortResourcesPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
       <header className="flex items-end justify-between border-b border-divider pb-5">
         <div>
@@ -301,91 +303,70 @@ export default function PortResourcesPage() {
           <span>暂无端口池</span>
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ResourceCardGrid>
           {pools.map((pool) => {
             const orphaned = !nodes.some((node) => node.id === pool.nodeId);
+            const usedPercent = pool.totalPorts
+              ? Math.min(
+                  100,
+                  (((pool.usedPorts || 0) + (pool.sharedPorts || 0)) /
+                    pool.totalPorts) *
+                    100,
+                )
+              : 0;
 
             return (
-              <article
+              <ResourceCard
                 key={pool.id}
-                className={`rounded-md border bg-content1 p-4 ${orphaned ? "border-warning-300 dark:border-warning-500/40" : "border-divider"}`}
+                actions={[
+                  {
+                    label: orphaned ? "清理" : "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    onPress: () => void remove(pool),
+                  },
+                ]}
+                blocks={[
+                  {
+                    label: "公网入口",
+                    rows: [
+                      { label: "地址", value: pool.publicHost },
+                      {
+                        label: "端口",
+                        value: `${pool.startPort}-${pool.endPort}`,
+                      },
+                    ],
+                  },
+                ]}
+                facts={[
+                  { label: "公网节点", value: pool.nodeName },
+                  { label: "停止后冷却", value: `${pool.cooldownSeconds} 秒` },
+                  { label: "管理员占用", value: pool.usedPorts },
+                  { label: "用户保留", value: pool.sharedPorts || 0 },
+                  {
+                    label: "管理员可用",
+                    value: pool.availablePorts,
+                    tone: "success",
+                  },
+                  { label: "总端口", value: pool.totalPorts },
+                ]}
+                status={
+                  orphaned
+                    ? { text: "节点已删除", color: "warning" }
+                    : { text: "可用", color: "success" }
+                }
+                title={pool.name}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="truncate font-semibold">{pool.name}</div>
-                      {orphaned && (
-                        <Chip color="warning" size="sm" variant="flat">
-                          节点已删除
-                        </Chip>
-                      )}
-                    </div>
-                    <div className="mt-1 truncate font-mono text-xs text-default-500">
-                      {pool.publicHost}
-                    </div>
-                  </div>
-                  <Button
-                    isIconOnly
-                    aria-label={orphaned ? "清理孤儿端口池" : "删除端口池"}
-                    color="danger"
-                    size="sm"
-                    title={orphaned ? "清理孤儿端口池" : "删除端口池"}
-                    variant="light"
-                    onPress={() => remove(pool)}
-                  >
-                    <Trash2 size={17} />
-                  </Button>
+                <div className="h-1.5 overflow-hidden rounded-full bg-default-200">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${usedPercent}%` }}
+                  />
                 </div>
-                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
-                  <div>
-                    <dt className="text-xs text-default-500">公网节点</dt>
-                    <dd className="mt-1 truncate">{pool.nodeName}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">端口范围</dt>
-                    <dd className="mt-1 font-mono">
-                      {pool.startPort}-{pool.endPort}
-                    </dd>
-                  </div>
-                  <div className="col-span-2">
-                    <dt className="mb-2 text-xs text-default-500">端口状态</dt>
-                    <dd className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                      <span>
-                        管理员占用{" "}
-                        <strong className="text-foreground">
-                          {pool.usedPorts}
-                        </strong>
-                      </span>
-                      <span>
-                        用户保留{" "}
-                        <strong className="text-secondary">
-                          {pool.sharedPorts || 0}
-                        </strong>
-                      </span>
-                      <span>
-                        管理员可用{" "}
-                        <strong className="text-success">
-                          {pool.availablePorts}
-                        </strong>
-                      </span>
-                    </dd>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-default-200">
-                      <div
-                        className="h-full bg-primary"
-                        style={{
-                          width: `${pool.totalPorts ? Math.min(100, (((pool.usedPorts || 0) + (pool.sharedPorts || 0)) / pool.totalPorts) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                </dl>
-                <p className="mt-3 text-xs text-default-500">
-                  停止后冷却 {pool.cooldownSeconds} 秒 · 服务自行选择定时或永久
-                </p>
-              </article>
+              </ResourceCard>
             );
           })}
-        </div>
+        </ResourceCardGrid>
       )}
 
       <section className="space-y-3 border-t border-divider pt-5">
@@ -406,46 +387,39 @@ export default function PortResourcesPage() {
             尚未向用户分享端口资源
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <ResourceCardGrid>
             {grants.map((grant) => (
-              <article
+              <ResourceCard
                 key={grant.id}
-                className="rounded-md border border-divider bg-content1 p-4"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="font-semibold">{grant.ownerUserName}</div>
-                  <Chip color="secondary" size="sm" variant="flat">
-                    已授权
-                  </Chip>
-                </div>
-                <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-divider py-3 text-sm">
-                  <div>
-                    <dt className="text-xs text-default-500">端口池</dt>
-                    <dd className="mt-1 truncate">{grant.poolName}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">公网节点</dt>
-                    <dd className="mt-1 truncate">{grant.nodeName}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">授权范围</dt>
-                    <dd className="mt-1 font-mono">
-                      {grant.startPort}-{grant.endPort}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-default-500">使用情况</dt>
-                    <dd className="mt-1">
-                      已用 {grant.usedPorts} / {grant.totalPorts}
-                    </dd>
-                  </div>
-                </dl>
-                <div className="mt-3 text-xs text-default-500">
-                  剩余可用端口：{grant.availablePorts}
-                </div>
-              </article>
+                blocks={[
+                  {
+                    label: "授权范围",
+                    rows: [
+                      {
+                        label: "端口",
+                        value: `${grant.startPort}-${grant.endPort}`,
+                      },
+                    ],
+                  },
+                ]}
+                facts={[
+                  { label: "端口池", value: grant.poolName },
+                  { label: "公网节点", value: grant.nodeName },
+                  {
+                    label: "已用",
+                    value: `${grant.usedPorts} / ${grant.totalPorts}`,
+                  },
+                  {
+                    label: "剩余可用",
+                    value: grant.availablePorts,
+                    tone: grant.availablePorts > 0 ? "success" : "warning",
+                  },
+                ]}
+                status={{ text: "已授权", color: "secondary" }}
+                title={grant.ownerUserName}
+              />
             ))}
-          </div>
+          </ResourceCardGrid>
         )}
       </section>
 
@@ -694,7 +668,7 @@ export default function PortResourcesPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

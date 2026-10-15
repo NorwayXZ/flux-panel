@@ -59,6 +59,8 @@ import {
   type CrossEntrySummary,
   type DnsZoneOption,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 import { formatBytes, formatDateTime, truthy } from "@/utils/format";
 
@@ -2206,7 +2208,7 @@ export default function CrossEntryFailoverPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">公网入口高可用</p>
@@ -2223,41 +2225,32 @@ export default function CrossEntryFailoverPage() {
 
       <section
         aria-label="入口容灾概况"
-        className="grid grid-cols-2 border-y border-divider sm:grid-cols-4"
+        className="grid grid-cols-2 gap-3 xl:grid-cols-4"
       >
-        {[
-          [
-            "运行组",
-            summary.enabled,
-            <ShieldCheck key="shield" className="h-5 w-5 text-primary" />,
-          ],
-          [
-            "健康",
-            summary.healthy,
-            <CheckCircle2 key="healthy" className="h-5 w-5 text-success" />,
-          ],
-          [
-            "需处理",
-            summary.degraded,
-            <TriangleAlert key="warning" className="h-5 w-5 text-warning" />,
-          ],
-          [
-            "累计切换",
-            summary.switches,
-            <Activity key="switches" className="h-5 w-5 text-secondary" />,
-          ],
-        ].map(([label, value, icon], index) => (
-          <div
-            key={String(label)}
-            className={`flex min-h-24 items-center justify-between px-4 py-4 sm:px-6 ${index % 2 ? "" : "border-r border-divider"} ${index === 1 ? "sm:border-r" : ""}`}
-          >
-            <div>
-              <p className="text-xs text-default-500">{label}</p>
-              <p className="mt-1 text-2xl font-semibold">{value}</p>
-            </div>
-            {icon}
-          </div>
-        ))}
+        <StatsCard
+          color="primary"
+          icon={<ShieldCheck size={20} />}
+          title="运行组"
+          value={summary.enabled}
+        />
+        <StatsCard
+          color="success"
+          icon={<CheckCircle2 size={20} />}
+          title="健康"
+          value={summary.healthy}
+        />
+        <StatsCard
+          color={summary.degraded ? "warning" : "default"}
+          icon={<TriangleAlert size={20} />}
+          title="需处理"
+          value={summary.degraded}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<Activity size={20} />}
+          title="累计切换"
+          value={summary.switches}
+        />
       </section>
 
       {recentSwitches.length > 0 && (
@@ -2438,9 +2431,7 @@ export default function CrossEntryFailoverPage() {
             return (
               <Card
                 key={group.id}
-                className="border border-divider bg-content1"
-                radius="sm"
-                shadow="none"
+                className="border border-transparent transition-shadow duration-200 hover:shadow-md dark:border-default-100"
               >
                 <CardBody className="gap-4 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5172,6 +5163,6 @@ export default function CrossEntryFailoverPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

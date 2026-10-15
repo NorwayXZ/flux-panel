@@ -27,6 +27,9 @@ import {
 import toast from "react-hot-toast";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import {
   deleteDnsProviderAccount,
   deleteDynamicDnsProvider,
@@ -248,7 +251,7 @@ export default function DnsSettingsPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <AccessResourceTabs />
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -275,44 +278,32 @@ export default function DnsSettingsPage() {
 
       <section
         aria-label="DNS 概况"
-        className="grid grid-cols-2 border-y border-divider sm:grid-cols-4"
+        className="grid grid-cols-2 gap-3 xl:grid-cols-4"
       >
-        {[
-          [
-            "DNS 服务商",
-            summary.accounts + carrierProviders.length,
-            <CloudCog key="accounts" className="h-5 w-5 text-primary" />,
-          ],
-          [
-            "可用 Zone",
-            summary.zones,
-            <Globe2 key="zones" className="h-5 w-5 text-success" />,
-          ],
-          [
-            "受管记录",
-            summary.records,
-            <CheckCircle2 key="records" className="h-5 w-5 text-secondary" />,
-          ],
-          [
-            "同步异常",
-            summary.errors,
-            <AlertTriangle
-              key="errors"
-              className={`h-5 w-5 ${summary.errors ? "text-danger" : "text-default-400"}`}
-            />,
-          ],
-        ].map(([label, value, icon], index) => (
-          <div
-            key={String(label)}
-            className={`flex min-h-24 items-center justify-between px-4 py-4 sm:px-6 ${index % 2 ? "" : "border-r border-divider"} ${index === 1 ? "sm:border-r" : ""}`}
-          >
-            <div>
-              <p className="text-xs text-default-500">{label}</p>
-              <p className="mt-1 text-2xl font-semibold">{value}</p>
-            </div>
-            {icon}
-          </div>
-        ))}
+        <StatsCard
+          color="primary"
+          icon={<CloudCog size={20} />}
+          title="DNS 服务商"
+          value={summary.accounts + carrierProviders.length}
+        />
+        <StatsCard
+          color="success"
+          icon={<Globe2 size={20} />}
+          title="可用 Zone"
+          value={summary.zones}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<CheckCircle2 size={20} />}
+          title="受管记录"
+          value={summary.records}
+        />
+        <StatsCard
+          color={summary.errors ? "danger" : "default"}
+          icon={<AlertTriangle size={20} />}
+          title="同步异常"
+          value={summary.errors}
+        />
       </section>
 
       <section>
@@ -333,90 +324,73 @@ export default function DnsSettingsPage() {
             <span className="text-sm">尚未添加 Cloudflare 配置</span>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {accounts.map((account) => (
-              <article
-                key={account.id}
-                className="grid gap-4 rounded-md border border-divider bg-content1 p-4 lg:grid-cols-[minmax(180px,0.7fr)_minmax(0,1.4fr)_auto] lg:items-center"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate font-medium">{account.name}</h3>
-                    <Chip
-                      color={truthy(account.enabled) ? "success" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {truthy(account.enabled) ? "启用" : "停用"}
-                    </Chip>
-                  </div>
-                  <p className="mt-1 text-xs text-default-500">
-                    最近同步：{timeText(account.lastSyncAt)}
-                  </p>
-                </div>
-                <div className="flex min-w-0 flex-wrap gap-2">
-                  {(zonesByAccount.get(account.id) || [])
-                    .filter((zone) => zone.status === "active")
-                    .map((zone) => (
-                      <Chip
-                        key={zone.id}
-                        color="primary"
-                        size="sm"
-                        variant="flat"
-                      >
-                        {zone.zoneName}
-                      </Chip>
-                    ))}
-                  {(zonesByAccount.get(account.id) || []).filter(
-                    (zone) => zone.status === "active",
-                  ).length === 0 && (
-                    <span className="text-xs text-default-500">
-                      没有可用 Zone
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center justify-end gap-1">
-                  <Button
-                    isIconOnly
-                    aria-label="同步 Zone"
-                    isLoading={syncingId === account.id}
-                    size="sm"
-                    title="同步 Zone"
-                    variant="light"
-                    onPress={() => sync(account)}
-                  >
-                    <RefreshCw size={17} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="编辑配置"
-                    size="sm"
-                    title="编辑配置"
-                    variant="light"
-                    onPress={() => openEdit(account)}
-                  >
-                    <Pencil size={17} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除配置"
-                    color="danger"
-                    size="sm"
-                    title="删除配置"
-                    variant="light"
-                    onPress={() => remove(account)}
-                  >
-                    <Trash2 size={17} />
-                  </Button>
-                </div>
-                {account.lastError && (
-                  <p className="border-t border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger dark:border-danger-500/20 dark:bg-danger-500/10 lg:col-span-3">
-                    {account.lastError}
-                  </p>
-                )}
-              </article>
-            ))}
-          </div>
+          <ResourceCardGrid>
+            {accounts.map((account) => {
+              const activeZones = (zonesByAccount.get(account.id) || []).filter(
+                (zone) => zone.status === "active",
+              );
+
+              return (
+                <ResourceCard
+                  key={account.id}
+                  actions={[
+                    {
+                      label: "同步",
+                      icon: <RefreshCw size={14} />,
+                      color: "primary",
+                      isLoading: syncingId === account.id,
+                      onPress: () => void sync(account),
+                    },
+                    {
+                      label: "编辑",
+                      icon: <Pencil size={14} />,
+                      onPress: () => openEdit(account),
+                    },
+                    {
+                      label: "删除",
+                      icon: <Trash2 size={14} />,
+                      color: "danger",
+                      onPress: () => void remove(account),
+                    },
+                  ]}
+                  chips={
+                    activeZones.length > 0
+                      ? activeZones.map((zone) => ({
+                          text: zone.zoneName,
+                          color: "primary" as const,
+                        }))
+                      : [{ text: "没有可用 Zone" }]
+                  }
+                  danger={Boolean(account.lastError)}
+                  facts={[
+                    { label: "可用 Zone", value: activeZones.length },
+                    { label: "最近同步", value: timeText(account.lastSyncAt) },
+                  ]}
+                  notice={
+                    account.lastError
+                      ? {
+                          icon: <AlertTriangle size={14} />,
+                          label: "最近错误",
+                          value: (
+                            <span title={account.lastError}>
+                              {account.lastError}
+                            </span>
+                          ),
+                          tone: "danger",
+                        }
+                      : undefined
+                  }
+                  status={
+                    truthy(account.enabled)
+                      ? { text: "启用", color: "success" }
+                      : { text: "停用", color: "default" }
+                  }
+                  subtitles={["Cloudflare"]}
+                  title={account.name}
+                />
+              );
+            })}
+          </ResourceCardGrid>
         )}
       </section>
 
@@ -450,61 +424,55 @@ export default function DnsSettingsPage() {
             </Button>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
+          <ResourceCardGrid>
             {carrierProviders.map((provider) => (
-              <article
+              <ResourceCard
                 key={provider.id}
-                className="flex min-w-0 flex-col gap-3 rounded-md border border-divider bg-content1 p-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate font-medium">{provider.name}</h3>
-                    <Chip color="primary" size="sm" variant="flat">
-                      {provider.provider === "dnspod" ? "DNSPod" : "阿里云 DNS"}
-                    </Chip>
-                    <Chip
-                      color={truthy(provider.enabled) ? "success" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {truthy(provider.enabled) ? "启用" : "停用"}
-                    </Chip>
-                  </div>
-                  <p className="mt-1 text-xs text-default-500">
-                    密钥已加密保存，页面不会回显
-                  </p>
-                  {provider.lastError && (
-                    <p className="mt-1 text-xs text-danger">
-                      {provider.lastError}
-                    </p>
-                  )}
-                </div>
-                <div className="flex justify-end gap-1">
-                  <Button
-                    isIconOnly
-                    aria-label="编辑线路 DNS 配置"
-                    size="sm"
-                    title="编辑配置"
-                    variant="light"
-                    onPress={() => openCarrierEdit(provider)}
-                  >
-                    <Pencil size={17} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    aria-label="删除线路 DNS 配置"
-                    color="danger"
-                    size="sm"
-                    title="删除配置"
-                    variant="light"
-                    onPress={() => removeCarrier(provider)}
-                  >
-                    <Trash2 size={17} />
-                  </Button>
-                </div>
-              </article>
+                actions={[
+                  {
+                    label: "编辑",
+                    icon: <Pencil size={14} />,
+                    onPress: () => openCarrierEdit(provider),
+                  },
+                  {
+                    label: "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    onPress: () => void removeCarrier(provider),
+                  },
+                ]}
+                chips={[
+                  {
+                    text:
+                      provider.provider === "dnspod" ? "DNSPod" : "阿里云 DNS",
+                    color: "primary",
+                  },
+                ]}
+                danger={Boolean(provider.lastError)}
+                notice={
+                  provider.lastError
+                    ? {
+                        icon: <AlertTriangle size={14} />,
+                        label: "最近错误",
+                        value: (
+                          <span title={provider.lastError}>
+                            {provider.lastError}
+                          </span>
+                        ),
+                        tone: "danger",
+                      }
+                    : undefined
+                }
+                status={
+                  truthy(provider.enabled)
+                    ? { text: "启用", color: "success" }
+                    : { text: "停用", color: "default" }
+                }
+                subtitles={["密钥已加密保存，页面不会回显"]}
+                title={provider.name}
+              />
             ))}
-          </div>
+          </ResourceCardGrid>
         )}
       </section>
 
@@ -703,6 +671,6 @@ export default function DnsSettingsPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

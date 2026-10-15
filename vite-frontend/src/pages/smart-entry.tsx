@@ -50,6 +50,8 @@ import {
   type SmartEntryGroup,
   type SmartEntryProviderOption,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 import SmartEntryRouters from "@/components/smart-entry-routers";
 import { hasVerifiedRouterDns } from "@/utils/openwrt-dns-status";
@@ -790,7 +792,7 @@ export default function SmartEntryPage() {
     );
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm text-default-500">
@@ -849,52 +851,31 @@ export default function SmartEntryPage() {
                 {summary.total} 个策略 · {summary.lineRecords} 条线路
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {[
-                [
-                  "运行策略",
-                  summary.enabled,
-                  <Waypoints key="enabled" className="h-4 w-4 text-primary" />,
-                  "text-primary",
-                ],
-                [
-                  "线路正常",
-                  summary.healthy,
-                  <CheckCircle2
-                    key="healthy"
-                    className="h-4 w-4 text-success"
-                  />,
-                  "text-success",
-                ],
-                [
-                  "需要处理",
-                  summary.degraded,
-                  <TriangleAlert
-                    key="degraded"
-                    className={`h-4 w-4 ${summary.degraded ? "text-warning" : "text-default-400"}`}
-                  />,
-                  summary.degraded ? "text-warning" : "text-default-500",
-                ],
-                [
-                  "线路记录",
-                  summary.lineRecords,
-                  <Route key="records" className="h-4 w-4 text-secondary" />,
-                  "text-secondary",
-                ],
-              ].map(([label, value, icon, valueClass]) => (
-                <div
-                  key={String(label)}
-                  className="border border-divider bg-content1 px-3 py-3 sm:px-4"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs text-default-500">{label}</p>
-                    {icon}
-                  </div>
-                  <p className={`mt-2 text-xl font-semibold ${valueClass}`}>
-                    {value}
-                  </p>
-                </div>
-              ))}
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <StatsCard
+                color="primary"
+                icon={<Waypoints size={20} />}
+                title="运行策略"
+                value={summary.enabled}
+              />
+              <StatsCard
+                color="success"
+                icon={<CheckCircle2 size={20} />}
+                title="线路正常"
+                value={summary.healthy}
+              />
+              <StatsCard
+                color={summary.degraded ? "warning" : "default"}
+                icon={<TriangleAlert size={20} />}
+                title="需要处理"
+                value={summary.degraded}
+              />
+              <StatsCard
+                color="secondary"
+                icon={<Route size={20} />}
+                title="线路记录"
+                value={summary.lineRecords}
+              />
             </div>
           </section>
 
@@ -1102,9 +1083,7 @@ export default function SmartEntryPage() {
                     return (
                       <Card
                         key={group.id}
-                        className="border border-divider bg-content1"
-                        radius="sm"
-                        shadow="none"
+                        className={`${meta.color === "danger" ? "offline-card border border-danger-300" : "border border-transparent dark:border-default-100"} transition-shadow duration-200 hover:shadow-md`}
                       >
                         <CardBody className="gap-4 p-4 sm:p-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2481,6 +2460,6 @@ export default function SmartEntryPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

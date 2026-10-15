@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Button } from "@heroui/button";
-import { Chip } from "@heroui/chip";
 import { Input } from "@heroui/input";
 import {
   Modal,
@@ -18,10 +17,14 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import {
   deleteAwsAccessAccount,
   getAwsAccessAccounts,
@@ -122,7 +125,7 @@ export default function AwsAccessPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
+    <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
       <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -148,17 +151,25 @@ export default function AwsAccessPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-divider bg-divider">
-        {[
-          ["账号总数", data.summary.accounts],
-          ["已启用", data.summary.enabled],
-          ["异常", data.summary.errors],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="bg-content1 px-4 py-4">
-            <div className="text-xs text-default-500">{label}</div>
-            <div className="mt-1 text-xl font-semibold">{value}</div>
-          </div>
-        ))}
+      <section className="grid grid-cols-3 gap-3">
+        <StatsCard
+          color="primary"
+          icon={<CloudCog size={20} />}
+          title="账号总数"
+          value={data.summary.accounts}
+        />
+        <StatsCard
+          color="success"
+          icon={<ShieldCheck size={20} />}
+          title="已启用"
+          value={data.summary.enabled}
+        />
+        <StatsCard
+          color="danger"
+          icon={<TriangleAlert size={20} />}
+          title="异常"
+          value={data.summary.errors}
+        />
       </section>
 
       {loading ? (
@@ -166,96 +177,83 @@ export default function AwsAccessPage() {
           <Spinner />
         </div>
       ) : data.accounts.length === 0 ? (
-        <div className="flex min-h-56 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <CloudCog size={30} />
           <span>尚未添加 AWS 账号</span>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
+        <ResourceCardGrid>
           {data.accounts.map((account) => (
-            <article
+            <ResourceCard
               key={account.id}
-              className="rounded-md border border-divider bg-content1 p-5"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold">
-                    {account.name}
-                  </h2>
-                  <p className="mt-1 text-xs text-default-500">
-                    区域：{account.defaultRegion || "us-east-1"} · Access Key：
-                    {account.accessKeyId}
-                  </p>
-                </div>
-                <Chip
-                  color={account.enabled ? "success" : "default"}
-                  size="sm"
-                  variant="flat"
-                >
-                  {account.enabled ? "启用" : "停用"}
-                </Chip>
-              </div>
-              <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <div>
-                  <dt className="text-default-500">AWS Account</dt>
-                  <dd className="mt-1 font-medium">
-                    {account.awsAccountId || "尚未验证"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">Caller ARN</dt>
-                  <dd className="mt-1 break-all font-mono text-xs">
-                    {account.callerArn || "尚未验证"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">最近验证</dt>
-                  <dd className="mt-1 font-medium">
-                    {timeText(account.lastTestAt)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-default-500">状态</dt>
-                  <dd className="mt-1 font-medium">
-                    {account.lastError ? (
-                      <span className="text-danger">{account.lastError}</span>
-                    ) : (
-                      "正常"
-                    )}
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-divider pt-4">
-                <Button
-                  isLoading={syncingId === account.id}
-                  size="sm"
-                  startContent={<ShieldCheck size={15} />}
-                  variant="flat"
-                  onPress={() => sync(account)}
-                >
-                  验证
-                </Button>
-                <Button
-                  size="sm"
-                  startContent={<Pencil size={15} />}
-                  variant="flat"
-                  onPress={() => openEdit(account)}
-                >
-                  编辑
-                </Button>
-                <Button
-                  color="danger"
-                  size="sm"
-                  startContent={<Trash2 size={15} />}
-                  variant="flat"
-                  onPress={() => remove(account)}
-                >
-                  删除
-                </Button>
-              </div>
-            </article>
+              actions={[
+                {
+                  label: "验证",
+                  icon: <ShieldCheck size={14} />,
+                  color: "primary",
+                  isLoading: syncingId === account.id,
+                  onPress: () => void sync(account),
+                },
+                {
+                  label: "编辑",
+                  icon: <Pencil size={14} />,
+                  onPress: () => openEdit(account),
+                },
+                {
+                  label: "删除",
+                  icon: <Trash2 size={14} />,
+                  color: "danger",
+                  onPress: () => void remove(account),
+                },
+              ]}
+              blocks={[
+                {
+                  label: "身份",
+                  rows: [
+                    { label: "Access Key", value: account.accessKeyId },
+                    {
+                      label: "Account",
+                      value: account.awsAccountId || "尚未验证",
+                    },
+                    {
+                      label: "ARN",
+                      value: account.callerArn || "尚未验证",
+                      title: account.callerArn || undefined,
+                    },
+                  ],
+                },
+              ]}
+              danger={Boolean(account.lastError)}
+              facts={[
+                {
+                  label: "默认区域",
+                  value: account.defaultRegion || "us-east-1",
+                },
+                { label: "最近验证", value: timeText(account.lastTestAt) },
+              ]}
+              notice={
+                account.lastError
+                  ? {
+                      icon: <TriangleAlert size={14} />,
+                      label: "最近错误",
+                      value: (
+                        <span title={account.lastError}>
+                          {account.lastError}
+                        </span>
+                      ),
+                      tone: "danger",
+                    }
+                  : undefined
+              }
+              status={
+                account.enabled
+                  ? { text: "启用", color: "success" }
+                  : { text: "停用", color: "default" }
+              }
+              title={account.name}
+            />
           ))}
-        </div>
+        </ResourceCardGrid>
       )}
 
       <Modal isOpen={formOpen} size="3xl" onOpenChange={setFormOpen}>
@@ -311,6 +309,6 @@ export default function AwsAccessPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
