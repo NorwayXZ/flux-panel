@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
         revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
         wait_until(lambda: state.exists() and int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         wait_until(lambda: sql(f"SELECT active_carrier FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="mobile")
-        assert dns_answer()=="192.0.2.2"
+        # The resolver may answer from the previous carrier for a moment after switching.
+        wait_until(lambda: dns_answer()=="192.0.2.2")
         # A non-OpenWrt runtime must not claim that router DNS has been verified.
         repaired=api("openwrt-dns/repair",{"connectorId":connector_id})
         assert repaired["verified"] is False
@@ -104,7 +105,7 @@ with tempfile.TemporaryDirectory(prefix="flux-openwrt-runtime-") as directory:
         revision=sql(f"SELECT policy_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}")
         wait_until(lambda: int(sql(f"SELECT applied_revision FROM openwrt_dns_resolver WHERE connector_id={connector_id}"))>=int(revision))
         wait_until(lambda: sql(f"SELECT active_carrier FROM openwrt_dns_resolver WHERE connector_id={connector_id}")=="unicom")
-        assert dns_answer()=="192.0.2.3"
+        wait_until(lambda: dns_answer()=="192.0.2.3")
         process.terminate();process.wait(timeout=15)
         process=subprocess.Popen([binary,"-agent-config",str(connection)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         wait_until(lambda: api("openwrt-dns/list",{})[0]["online"])
