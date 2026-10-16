@@ -192,9 +192,8 @@ export default function AdminLayout({
     },
     {
       path: "/exit-pool",
-      label: "家宽出口池",
+      label: "出口管理",
       icon: <House className="h-5 w-5" />,
-      adminOnly: true,
     },
     {
       path: "/home-access",

@@ -4,6 +4,7 @@ import { Chip } from "@heroui/chip";
 import { Input } from "@heroui/input";
 import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
+import { Tab, Tabs } from "@heroui/tabs";
 import {
   ArrowLeftRight,
   Ban,
@@ -36,6 +37,8 @@ import {
 } from "@/utils/exit-display";
 import { formatBytes, formatDateTime } from "@/utils/format";
 import PageShell from "@/components/page-shell";
+import CustomExitsPanel from "@/components/custom-exits-panel";
+import { isAdmin as isAdminUser } from "@/utils/auth";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
 
@@ -81,7 +84,7 @@ const visibleMembers = (members: ExitMember[]) => {
   };
 };
 
-export default function ExitPoolPage() {
+function ResidentialExits() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [overview, setOverview] = useState<ExitPoolOverview | null>(null);
@@ -195,14 +198,11 @@ export default function ExitPoolPage() {
   const groups = overview?.groups || [];
 
   return (
-    <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">家宽出口池</h1>
-          <p className="mt-1 max-w-3xl text-sm text-default-500">
-            这里的出口由系统自动连接、检测和更换，平时不需要操作。只有在某个出口表现不好时，才需要手动排除它。
-          </p>
-        </div>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-3xl text-sm text-default-500">
+          家宽出口由系统自动连接、检测和更换，平时不需要操作。只有在某个出口表现不好时，才需要手动排除它。
+        </p>
         <Button
           isLoading={refreshing}
           startContent={!refreshing && <RefreshCw size={16} />}
@@ -211,7 +211,7 @@ export default function ExitPoolPage() {
         >
           刷新候选列表
         </Button>
-      </header>
+      </div>
 
       {loading ? (
         <div className="flex min-h-40 items-center justify-center">
@@ -534,6 +534,54 @@ export default function ExitPoolPage() {
         target={eventsTarget}
         onClose={() => setEventsTarget(null)}
       />
+    </div>
+  );
+}
+
+/** Exits a private proxy can use: residential exits (admins) and custom exits. */
+export default function ExitManagementPage() {
+  const admin = isAdminUser();
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem("cloudnest.exit-tab");
+
+      return admin && saved !== "custom" ? "residential" : "custom";
+    } catch {
+      return admin ? "residential" : "custom";
+    }
+  });
+
+  return (
+    <PageShell className="space-y-5" width="wide">
+      <header>
+        <h1 className="text-2xl font-bold text-foreground">出口管理</h1>
+        <p className="mt-1 text-sm text-default-500">
+          私人代理可以用的出口：各国家宽，和你自己添加的节点
+        </p>
+      </header>
+      {admin ? (
+        <Tabs
+          aria-label="出口类型"
+          selectedKey={tab}
+          variant="underlined"
+          onSelectionChange={(key) => {
+            setTab(String(key));
+            try {
+              localStorage.setItem("cloudnest.exit-tab", String(key));
+            } catch {
+              // Remembering the tab is optional.
+            }
+          }}
+        >
+          <Tab key="residential" title="家宽出口" />
+          <Tab key="custom" title="自定义出口" />
+        </Tabs>
+      ) : null}
+      {admin && tab === "residential" ? (
+        <ResidentialExits />
+      ) : (
+        <CustomExitsPanel />
+      )}
     </PageShell>
   );
 }

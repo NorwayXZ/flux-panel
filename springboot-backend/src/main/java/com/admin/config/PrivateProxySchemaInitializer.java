@@ -61,6 +61,20 @@ public class PrivateProxySchemaInitializer {
                     + "PRIMARY KEY (user_id), UNIQUE KEY uk_private_proxy_subscription_token (token)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureIndex("idx_private_proxy_grant", "granted_by_user_id,user_id,state");
+            // 自定义出口和按域名分流（2.76.0）。都可为空，旧版本忽略即可。
+            ensureColumn("exit_custom_id", "bigint DEFAULT NULL");
+            ensureColumn("route_rules", "text DEFAULT NULL");
+            ensureColumn("route_countries", "varchar(255) DEFAULT NULL");
+            ensureColumn("route_exit_ports", "varchar(500) DEFAULT NULL");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS proxy_exit ("
+                    + "id bigint NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, "
+                    + "protocol varchar(32) NOT NULL, server varchar(253) NOT NULL, port int NOT NULL, "
+                    + "outbound text NOT NULL, last_test_at bigint DEFAULT NULL, last_test_ok tinyint DEFAULT NULL, "
+                    + "last_test_ip varchar(64) DEFAULT NULL, last_test_country varchar(8) DEFAULT NULL, "
+                    + "last_test_latency int DEFAULT NULL, last_test_error varchar(500) DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, updated_time bigint NOT NULL, "
+                    + "PRIMARY KEY (id), KEY idx_proxy_exit_user (user_id)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {
             log.error("Private proxy storage initialization failed", e);

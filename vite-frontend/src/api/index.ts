@@ -708,6 +708,7 @@ export interface PrivateProxyItem {
   exitType?: PrivateProxyExitType;
   exitCountry?: string;
   exit?: ExitStatusView;
+  routing?: PrivateProxyRouting;
   connectHost?: string;
   transport?: PrivateProxyTransport;
   /** REALITY 伪装站或 ShadowTLS 握手网站 */
@@ -724,7 +725,7 @@ export interface PrivateProxyItem {
   createdTime: number;
 }
 
-export type PrivateProxyExitType = "node" | "residential";
+export type PrivateProxyExitType = "node" | "residential" | "custom";
 
 export type ExitGroupStatus =
   | "ok"
@@ -1056,6 +1057,87 @@ export const getCamouflageTargets = (nodeId: number, domains?: string[]) =>
   });
 export const getPrivateProxySubscription = (reset = false) =>
   Network.post<{ token: string }>("/private-proxy/subscription", { reset });
+
+export type RouteRuleMatch =
+  | "preset"
+  | "domain_suffix"
+  | "domain_keyword"
+  | "domain"
+  | "ip_cidr";
+
+export interface RouteRule {
+  match: RouteRuleMatch;
+  values: string[];
+  /** direct, block, residential:CC or custom:ID */
+  exit: string;
+}
+
+export interface PrivateProxyRouting {
+  supported: boolean;
+  exitType: PrivateProxyExitType;
+  exitCountry?: string;
+  exitCustomId?: number;
+  exitCustomName?: string;
+  rules: RouteRule[];
+}
+
+export interface ProxyExit {
+  id: number;
+  name: string;
+  protocol: string;
+  server: string;
+  port: number;
+  ownerUserId: number;
+  ownerUserName?: string;
+  lastTestAt?: number;
+  lastTestOk?: boolean;
+  lastTestIp?: string;
+  lastTestCountry?: string;
+  lastTestLatency?: number;
+  lastTestError?: string;
+  usedBy: number;
+}
+
+export interface RoutePreset {
+  key: string;
+  name: string;
+  domains: string[];
+}
+
+export const getProxyExits = () =>
+  Network.post<{
+    exits: ProxyExit[];
+    presets: RoutePreset[];
+    minimumAgentVersion: string;
+  }>("/proxy-exit/list");
+export const parseProxyExits = (text: string) =>
+  Network.post<Array<{ name: string; protocol: string; server: string; port: number }>>(
+    "/proxy-exit/parse",
+    { text },
+  );
+export const createProxyExits = (text: string, name?: string) =>
+  Network.mutate<{ created: number }>("/proxy-exit/create", { text, name }, [
+    "/proxy-exit/list",
+  ]);
+export const renameProxyExit = (id: number, name: string) =>
+  Network.mutate("/proxy-exit/rename", { id, name }, ["/proxy-exit/list"]);
+export const deleteProxyExit = (id: number) =>
+  Network.mutate("/proxy-exit/delete", { id }, ["/proxy-exit/list"]);
+export const testProxyExit = (id: number, nodeId?: number) =>
+  Network.post<{ ip: string; country?: string; latencyMs: number; nodeName: string }>(
+    "/proxy-exit/test",
+    { id, nodeId },
+  );
+export const updatePrivateProxyRouting = (data: {
+  id: number;
+  exitType: PrivateProxyExitType;
+  exitCountry?: string;
+  exitCustomId?: number;
+  rules: RouteRule[];
+}) =>
+  Network.mutate<PrivateProxyItem>("/private-proxy/routing", data, [
+    "/private-proxy/list",
+  ]);
 
 export const updatePrivateProxyExit = (
   id: number,

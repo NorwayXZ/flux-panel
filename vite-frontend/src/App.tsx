@@ -597,7 +597,7 @@ function App() {
             />
             <Route
               element={
-                <ProtectedRoute adminOnly>
+                <ProtectedRoute>
                   <ExitPoolPage />
                 </ProtectedRoute>
               }

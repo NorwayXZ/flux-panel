@@ -69,22 +69,10 @@ export default function StatsCard({
 }: StatsCardProps) {
   const colors = colorClasses[color];
 
-  return (
+  const card = (
     <Card
       className={`h-full p-3 transition-transform hover:scale-[1.02] md:p-4 ${onPress ? "cursor-pointer" : ""} ${colors.card}`}
-      role={onPress ? "link" : undefined}
       shadow="sm"
-      tabIndex={onPress ? 0 : undefined}
-      // A plain click handler: the card sits in a drag-sortable grid, whose pointer events
-      // would otherwise fire a pressable card's onPress, and its drag handle must not nest
-      // inside a button.
-      onClick={onPress}
-      onKeyDown={(event) => {
-        if (onPress && (event.key === "Enter" || event.key === " ")) {
-          event.preventDefault();
-          onPress();
-        }
-      }}
     >
       <CardBody className="overflow-visible p-0">
         <div className="flex items-center justify-between gap-2">
@@ -117,5 +105,26 @@ export default function StatsCard({
         {children && <div className="mt-2">{children}</div>}
       </CardBody>
     </Card>
+  );
+
+  if (!onPress) return card;
+
+  // HeroUI only forwards clicks on pressable cards, and a pressable card would fight the
+  // drag-sortable grid and nest the drag handle in a button; a plain wrapper handles it.
+  return (
+    <div
+      className="h-full rounded-large outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      role="link"
+      tabIndex={0}
+      onClick={onPress}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onPress();
+        }
+      }}
+    >
+      {card}
+    </div>
   );
 }

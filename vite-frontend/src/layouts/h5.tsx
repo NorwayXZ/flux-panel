@@ -45,7 +45,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
     "/profile": "我的",
     "/service-publishing": "内网映射",
     "/private-proxy": "私人代理",
-    "/exit-pool": "家宽出口池",
+    "/exit-pool": "出口管理",
     "/home-access": "家庭网络中转",
     "/authorized-entry": "授权入口",
     "/monitoring": "告警中心",

@@ -40,6 +40,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -47,6 +48,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -76,13 +78,18 @@ public class PrivateProxyService {
     private final AESCrypto crypto;
     private final TransactionTemplate transactionTemplate;
     private final JdbcTemplate jdbcTemplate;
+    private final ProxyRoutingService routing;
+    private final ProxyExitService exitService;
 
     public PrivateProxyService(PrivateProxyMapper proxyMapper, NodeMapper nodeMapper, UserMapper userMapper,
                                PortAllocationLockMapper allocationLockMapper, PortLedgerService portLedgerService,
                                UserQuotaService userQuotaService, ExitPoolService exitPoolService,
                                PlatformTransactionManager transactionManager, JdbcTemplate jdbcTemplate,
+                               ProxyRoutingService routing, ProxyExitService exitService,
                                @Value("${jwt-secret}") String secret) {
         this.jdbcTemplate = jdbcTemplate;
+        this.routing = routing;
+        this.exitService = exitService;
         this.proxyMapper = proxyMapper;
         this.nodeMapper = nodeMapper;
         this.userMapper = userMapper;
@@ -426,11 +433,11 @@ public class PrivateProxyService {
         String serverName = (String) chosen.getData();
         if (serverName.equals(spec.serverName)) return R.ok(serverName);
         boolean residentialExit = "residential".equals(proxy.getExitType()) && StringUtils.isNotBlank(proxy.getExitCountry());
-        Integer routePort = residentialExit ? openExitRoute(proxy, node, ExitPoolService.interfaceName(proxy.getExitCountry())) : null;
+        Route route = runtimeRoute(proxy, node, residentialExit ? ExitPoolService.interfaceName(proxy.getExitCountry()) : null);
         GostDto runtime = GostUtil.AddRealityRuntime(node.getId(), realityRuntimeName(proxy), serverName,
                 "vless_xhttp".equals(proxy.getProxyType()) ? "xhttp" : null, spec.path,
-                routePort == null ? null : "127.0.0.1", routePort,
-                routePort == null ? null : EXIT_ROUTE_USER, routePort == null ? null : exitRoutePassword(proxy));
+                route == null ? null : "127.0.0.1", route == null ? null : route.port,
+                route == null ? null : route.username, route == null ? null : route.password);
         if (!gostSuccess(runtime)) return R.err("更换伪装站失败：" + gostMessage(runtime));
         JSONObject config = storedClientConfig(proxy);
         config.put("serverName", serverName);
@@ -582,11 +589,11 @@ public class PrivateProxyService {
                 return c;
             case "vless_reality":
             case "vless_xhttp": {
-                Integer routePort = residentialExit ? openExitRoute(proxy, node, exitInterface) : null;
+                Route route = runtimeRoute(proxy, node, exitInterface);
                 String network = "vless_xhttp".equals(proxyType) ? "xhttp" : null;
                 GostDto runtime = GostUtil.AddRealityRuntime(node.getId(), realityRuntimeName(proxy), spec.serverName,
-                        network, spec.path, routePort == null ? null : "127.0.0.1", routePort,
-                        routePort == null ? null : EXIT_ROUTE_USER, routePort == null ? null : exitRoutePassword(proxy));
+                        network, spec.path, route == null ? null : "127.0.0.1", route == null ? null : route.port,
+                        route == null ? null : route.username, route == null ? null : route.password);
                 requireGost(runtime, "准备 REALITY 运行时失败");
                 JSONObject data = JSONObject.parseObject(JSONObject.toJSONString(runtime.getData()));
                 Integer runtimePort = data == null ? null : data.getInteger("port");
@@ -615,10 +622,10 @@ public class PrivateProxyService {
             }
             default: {
                 if (!isAdvancedRuntime(proxyType)) throw new IllegalStateException("不支持的代理类型");
-                Integer routePort = residentialExit ? openExitRoute(proxy, node, exitInterface) : null;
+                Route route = runtimeRoute(proxy, node, exitInterface);
                 GostDto runtime = GostUtil.AddPrivateProxyRuntime(node.getId(), advancedRuntimeName(proxy), proxyType,
-                        bindIp, proxy.getListenPort(), runtimePassword(proxyType, spec), routePort,
-                        routePort == null ? null : EXIT_ROUTE_USER, routePort == null ? null : exitRoutePassword(proxy),
+                        bindIp, proxy.getListenPort(), runtimePassword(proxyType, spec), route == null ? null : route.port,
+                        route == null ? null : route.username, route == null ? null : route.password,
                         runtimeOptions(spec, cidrs));
                 requireGost(runtime, "创建 " + protocolLabel(proxyType) + " 运行时失败");
                 JSONObject data = JSONObject.parseObject(JSONObject.toJSONString(runtime.getData()));
@@ -807,6 +814,10 @@ public class PrivateProxyService {
                 && Objects.equals(proxy.getExitCountry(), exitCountry)) {
             return R.ok(view(proxy));
         }
+        if (routing.active(proxy) || "custom".equals(proxy.getExitType())) {
+            // Keep the proxy's rules; only the default exit changes.
+            return updateRouting(id, exitType, country, null, rulesForUpdate(proxy));
+        }
         if (!ExitPoolService.SUPPORTED_PROXY_TYPES.contains(proxy.getProxyType())) {
             return R.err("家宽出口暂不支持 WireGuard");
         }
@@ -855,6 +866,86 @@ public class PrivateProxyService {
         return R.ok(view(proxyMapper.selectById(proxy.getId())));
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> rulesForUpdate(PrivateProxy proxy) {
+        List<Map<String, Object>> rules = new ArrayList<>();
+        for (JSONObject rule : ProxyRoutingService.rules(proxy.getRouteRules())) rules.add((Map<String, Object>) (Map<?, ?>) rule);
+        return rules;
+    }
+
+    /**
+     * Sets the default exit (node, residential country or custom exit) and the per-domain rules,
+     * then points the running proxy at its router, its residential route or straight out.
+     */
+    public R updateRouting(Long id, String exitType, String country, Long customId, List<Map<String, Object>> rules) {
+        PrivateProxy proxy = id == null ? null : owned(id);
+        if (proxy == null) return R.err("代理不存在或无权访问");
+        String type = StringUtils.defaultIfBlank(exitType, "node");
+        if (!Set.of("node", "residential", "custom").contains(type)) return R.err("不支持的出口类型");
+        String routeRules;
+        try {
+            routeRules = ProxyRoutingService.normalizeRules(rules);
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+        List<JSONObject> parsedRules = ProxyRoutingService.rules(routeRules);
+        boolean usesRouter = "custom".equals(type) || !parsedRules.isEmpty();
+        if (usesRouter && !ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())) {
+            return R.err("这个协议不支持自定义出口和分流，请使用 VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、Shadowsocks 2022、ShadowTLS 或 VLESS REALITY/XHTTP");
+        }
+        String exitCountry = "residential".equals(type) ? ExitPoolService.normalizeCountry(country) : null;
+        if ("residential".equals(type) && StringUtils.isBlank(exitCountry)) return R.err("请选择家宽出口国家");
+        if ("custom".equals(type) && customId == null) return R.err("请选择自定义出口");
+        Set<String> countries = ProxyRoutingService.residentialCountries(type, exitCountry, parsedRules);
+        if (!countries.isEmpty() && !isAdmin()) return R.err("家宽出口目前仅管理员可以配置");
+        for (String code : countries) {
+            if (!exitPoolService.hasCandidates(code)) return R.err(code + " 当前没有可用的家宽出口");
+        }
+        for (Long exitId : ProxyRoutingService.customExitIds(type, customId, parsedRules)) {
+            if (exitService.usableOutbound(exitId, JwtUtil.getUserIdFromToken(), isAdmin()) == null) {
+                return R.err("自定义出口 #" + exitId + " 不存在或不能使用");
+            }
+        }
+        if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以修改出口，请先恢复代理");
+        Node node = nodeMapper.selectById(proxy.getNodeId());
+        if (node == null || !WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法修改出口");
+        if (usesRouter && !AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.ROUTER_AGENT_VERSION)) {
+            return R.err("自定义出口和分流规则需要节点 Agent " + ProxyExitService.ROUTER_AGENT_VERSION + " 或更高版本，请先升级该节点");
+        }
+        if (!usesRouter && !routing.active(proxy)) {
+            if (Objects.equals(StringUtils.defaultIfBlank(proxy.getExitType(), "node"), type)
+                    && Objects.equals(proxy.getExitCountry(), exitCountry)) {
+                return R.ok(view(proxy));
+            }
+            // No router before or after: the plain exit switch handles it.
+            return updateExit(id, type, country);
+        }
+        boolean wasActive = routing.active(proxy);
+        proxy.setExitType(type);
+        proxy.setExitCountry(exitCountry);
+        proxy.setExitCustomId("custom".equals(type) ? customId : null);
+        proxy.setRouteRules(routeRules);
+        try {
+            rerouteRuntime(proxy, node, exitCountry == null ? null : ExitPoolService.interfaceName(exitCountry));
+            if (wasActive && !usesRouter) {
+                routing.remove(proxy, node);
+                proxy.setRouteCountries(null);
+            }
+        } catch (RuntimeException e) {
+            return R.err("修改出口失败：" + e.getMessage());
+        }
+        proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
+                .set("exit_type", type).set("exit_country", exitCountry)
+                .set("exit_custom_id", proxy.getExitCustomId())
+                .set("route_rules", routeRules)
+                .set("route_countries", usesRouter ? proxy.getRouteCountries() : null)
+                .set("route_exit_ports", proxy.getRouteExitPorts())
+                .set("exit_route_port", proxy.getExitRoutePort())
+                .set("updated_time", System.currentTimeMillis()));
+        reconcileExitsAfterCommit();
+        return R.ok(view(proxyMapper.selectById(proxy.getId())));
+    }
+
     private static final String EXIT_ROUTE_USER = "exit";
 
     private String exitRouteName(PrivateProxy proxy) {
@@ -890,11 +981,43 @@ public class PrivateProxyService {
         throw new IllegalStateException("节点上没有可用的本机端口用于出口通道");
     }
 
+    /** Where a sing-box or Xray runtime sends its traffic. */
+    private static final class Route {
+        final int port;
+        final String username;
+        final String password;
+        final boolean router;
+
+        Route(int port, String username, String password, boolean router) {
+            this.port = port;
+            this.username = username;
+            this.password = password;
+            this.router = router;
+        }
+    }
+
+    /**
+     * The proxy's outbound: its router when it has a custom exit or rules, its residential route
+     * when only the default exit is residential, otherwise none (traffic leaves directly).
+     */
+    private Route runtimeRoute(PrivateProxy proxy, Node node, String exitInterface) {
+        if (routing.active(proxy)) {
+            if (!AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.ROUTER_AGENT_VERSION)) {
+                throw new IllegalStateException("自定义出口和分流规则需要节点 Agent " + ProxyExitService.ROUTER_AGENT_VERSION + " 或更高版本");
+            }
+            ProxyRoutingService.Endpoint endpoint = routing.apply(proxy, node, true);
+            return new Route(endpoint.port, endpoint.username, endpoint.password, true);
+        }
+        if (exitInterface == null) return null;
+        return new Route(openExitRoute(proxy, node, exitInterface), EXIT_ROUTE_USER, exitRoutePassword(proxy), false);
+    }
+
     /** 改变独立运行时的出站方式：经出口通道，或直接从节点发出。密钥和客户端配置保持不变。 */
     private void rerouteRuntime(PrivateProxy proxy, Node node, String exitInterface) {
-        Integer routePort = exitInterface == null ? null : openExitRoute(proxy, node, exitInterface);
-        String routeUser = routePort == null ? null : EXIT_ROUTE_USER;
-        String routePassword = routePort == null ? null : exitRoutePassword(proxy);
+        Route route = runtimeRoute(proxy, node, exitInterface);
+        Integer routePort = route == null ? null : route.port;
+        String routeUser = route == null ? null : route.username;
+        String routePassword = route == null ? null : route.password;
         Spec spec;
         try {
             spec = specOf(proxy);
@@ -912,7 +1035,7 @@ public class PrivateProxyService {
                     routeUser, routePassword, runtimeOptions(spec, cidrs == null ? List.of() : cidrs)),
                     "更新 " + protocolLabel(proxy.getProxyType()) + " 运行时失败");
         }
-        if (routePort == null && proxy.getExitRoutePort() != null) {
+        if ((route == null || route.router) && proxy.getExitRoutePort() != null) {
             GostUtil.DeleteNamedService(node.getId(), exitRouteName(proxy));
             proxy.setExitRoutePort(null);
         }
@@ -1059,6 +1182,14 @@ public class PrivateProxyService {
         Node node = nodeMapper.selectById(proxy.getNodeId());
         String host = clientHost(proxy, node);
         if (StringUtils.isBlank(host)) return R.err("节点未配置公网地址");
+        Map<String, Object> routingView = new LinkedHashMap<>();
+        routingView.put("supported", ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType()));
+        routingView.put("exitType", StringUtils.defaultIfBlank(proxy.getExitType(), "node"));
+        routingView.put("exitCountry", proxy.getExitCountry());
+        routingView.put("exitCustomId", proxy.getExitCustomId());
+        routingView.put("exitCustomName", proxy.getExitCustomId() == null ? null : exitService.exitName(proxy.getExitCustomId()));
+        routingView.put("rules", ProxyRoutingService.rules(proxy.getRouteRules()));
+        proxy.setRouting(routingView);
         try {
             JSONObject config = clientConfigOf(proxy);
             if (config == null) return R.err("该代理没有可用的连接信息");
@@ -1450,6 +1581,8 @@ public class PrivateProxyService {
                 .set("auth_password", crypto.encrypt(secret))
                 .set("client_config", crypto.encrypt(JSONObject.toJSONString(clientConfig)))
                 .set("exit_route_port", proxy.getExitRoutePort())
+                .set("route_exit_ports", proxy.getRouteExitPorts())
+                .set("route_countries", proxy.getRouteCountries())
                 .set("state", "active").set("last_error", null)
                 .set("check_failures", 0).set("last_check_at", null).set("last_check_ok", null)
                 .set("updated_time", System.currentTimeMillis()));
@@ -1944,6 +2077,7 @@ public class PrivateProxyService {
                 || ("residential".equals(proxy.getExitType()) && ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType()))) {
             serviceClean = gostCleanupSuccess(GostUtil.DeleteNamedService(node.getId(), exitRouteName(proxy))) && serviceClean;
         }
+        if (routing.active(proxy) || proxy.getRouteExitPorts() != null) routing.remove(proxy, node);
         boolean limiterClean = proxy.getGrantedByUserId() == null || !supportsGrantRateLimit(proxy.getProxyType())
                 || gostCleanupSuccess(GostUtil.DeleteNamedLimiter(node.getId(), limiterName(proxy)));
         return serviceClean && admissionClean && advancedRuntimeClean && limiterClean;

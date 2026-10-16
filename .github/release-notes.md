@@ -1,3 +1,13 @@
+## 2.76.0 Custom exits and per-domain routing for private proxies (Agent 2.76.0)
+
+- 出口管理 (formerly 家宽出口池) has two tabs: residential exits, and a new custom exits tab. Paste share links (vless://, vmess://, trojan://, ss://, hysteria2://, tuic://, anytls://, socks5://, http(s)://, several at once) or Clash proxies; the panel shows what it recognised before saving. Each exit can be self-tested from a node, which reports the exit IP, country and latency. Custom exits are available to every user for their own proxies.
+- Private proxies get "出口与分流": a default exit (the node's own IP, a residential country, or a custom exit) and rules matched top to bottom by built-in group (ChatGPT/OpenAI, Claude, Gemini, Google, YouTube, Netflix, Disney+, Spotify, Telegram, X, Meta, TikTok, GitHub, Microsoft, Apple, Steam, Discord, common Chinese sites), domain suffix, keyword, full domain or IP range. Each rule sends traffic to the node's IP, a residential country, a custom exit, or rejects it. For example, only ChatGPT can go through a US residential exit while everything else leaves directly.
+- On the node the proxy hands its traffic to a loopback sing-box router that sniffs the domain and picks the exit, so routing works the same for sing-box and Xray protocols. Traffic for an exit that is down is dropped rather than sent from the node's own address. The exit pool keeps the countries used by rules connected.
+- Routing needs Agent 2.76.0 on the proxy's node and is available for VLESS, VMess, Trojan, Hysteria2, TUIC, AnyTLS, Shadowsocks 2022, ShadowTLS and VLESS REALITY/XHTTP. SOCKS5, HTTP, mixed and classic Shadowsocks proxies keep a single exit.
+- Stat cards that open another page (dashboard, routing overview, residential countries) respond to clicks again.
+- Includes 2.75.0 (tunnel link diagram and pre-create checks), whose build was interrupted on GitHub, and a fix for a timing-sensitive OpenWrt DNS smoke test.
+- Database: `private_proxy` gains `exit_custom_id`, `route_rules`, `route_countries`, `route_exit_ports`, and a new `proxy_exit` table; added automatically on startup (`migrations/20261016_proxy_custom_exit_routing.sql` for manual upgrades). Upgrade Agents on nodes that should route traffic. 2.74.0 remains available for rollback.
+
 ## 2.75.0 Tunnel link diagram with checks before creating
 
 - The tunnel form has a live link diagram on the right: user device → entry → relays → exit → internet. A moment after the nodes, hops or protocol change, the panel checks the path and colours each node and hop green, amber or red with the reason, so a broken hop shows before the tunnel is saved.

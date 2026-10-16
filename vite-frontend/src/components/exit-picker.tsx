@@ -1,13 +1,15 @@
-import type { ExitCountry, PrivateProxyExitType } from "@/api";
+import type { ExitCountry, PrivateProxyExitType, ProxyExit } from "@/api";
 
+import { Select, SelectItem } from "@heroui/select";
 import { Spinner } from "@heroui/spinner";
-import { Home, Server } from "lucide-react";
+import { Home, Route, Server } from "lucide-react";
 
 import { sortExitCountries } from "@/utils/exit-display";
 
 export interface ExitChoice {
   exitType: PrivateProxyExitType;
   exitCountry: string;
+  exitCustomId?: number;
 }
 
 interface ExitPickerProps {
@@ -18,6 +20,10 @@ interface ExitPickerProps {
   error?: string;
   /** 不能使用家宽出口的原因，例如协议不支持或节点版本过低 */
   blockedReason?: string;
+  /** Custom exits the user can pick; the option is hidden when undefined. */
+  customExits?: ProxyExit[];
+  /** Why custom exits cannot be used here, e.g. the protocol or Agent version. */
+  customBlockedReason?: string;
   onChange: (value: ExitChoice) => void;
 }
 
@@ -37,20 +43,31 @@ export default function ExitPicker({
   loading,
   error,
   blockedReason,
+  customExits,
+  customBlockedReason,
   onChange,
 }: ExitPickerProps) {
   const residential = value.exitType === "residential";
+  const custom = value.exitType === "custom";
   const sorted = sortExitCountries(countries);
 
   return (
     <div className="space-y-3">
       <div className="text-sm font-medium">出口</div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div
+        className={`grid gap-3 ${customExits ? "md:grid-cols-3" : "md:grid-cols-2"}`}
+      >
         <button
-          aria-pressed={!residential}
-          className={optionClass(!residential)}
+          aria-pressed={!residential && !custom}
+          className={optionClass(!residential && !custom)}
           type="button"
-          onClick={() => onChange({ exitType: "node", exitCountry: "" })}
+          onClick={() =>
+            onChange({
+              exitType: "node",
+              exitCountry: "",
+              exitCustomId: undefined,
+            })
+          }
         >
           <Server className="mt-0.5 shrink-0 text-default-500" size={18} />
           <span>
@@ -80,9 +97,67 @@ export default function ExitPicker({
             </span>
           </span>
         </button>
+        {customExits && (
+          <button
+            aria-pressed={custom}
+            className={optionClass(custom, Boolean(customBlockedReason))}
+            disabled={Boolean(customBlockedReason)}
+            type="button"
+            onClick={() =>
+              onChange({
+                exitType: "custom",
+                exitCountry: "",
+                exitCustomId: value.exitCustomId ?? customExits[0]?.id,
+              })
+            }
+          >
+            <Route className="mt-0.5 shrink-0 text-default-500" size={18} />
+            <span>
+              <span className="block text-sm font-medium">自定义出口</span>
+              <span className="mt-0.5 block text-xs text-default-500">
+                经你添加的 VLESS、Trojan 等节点出去
+              </span>
+            </span>
+          </button>
+        )}
       </div>
-      {blockedReason && (
+      {blockedReason && !custom && (
         <p className="text-xs text-default-500">{blockedReason}</p>
+      )}
+      {customBlockedReason && customExits && (
+        <p className="text-xs text-default-500">{customBlockedReason}</p>
+      )}
+      {custom && customExits && !customBlockedReason && (
+        <div className="rounded-lg border border-divider px-4 py-3">
+          {customExits.length === 0 ? (
+            <p className="text-sm text-default-500">
+              还没有自定义出口，请先到“出口管理 → 自定义出口”粘贴分享链接添加。
+            </p>
+          ) : (
+            <Select
+              label="自定义出口"
+              selectedKeys={
+                value.exitCustomId ? [String(value.exitCustomId)] : []
+              }
+              onSelectionChange={(keys) => {
+                const id = Number(Array.from(keys)[0]);
+
+                if (id)
+                  onChange({
+                    exitType: "custom",
+                    exitCountry: "",
+                    exitCustomId: id,
+                  });
+              }}
+            >
+              {customExits.map((exit) => (
+                <SelectItem key={String(exit.id)} textValue={exit.name}>
+                  {exit.name} · {exit.protocol.toUpperCase()} · {exit.server}
+                </SelectItem>
+              ))}
+            </Select>
+          )}
+        </div>
       )}
       {residential && !blockedReason && (
         <div className="space-y-3 rounded-lg border border-divider px-4 py-3">

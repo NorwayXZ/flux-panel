@@ -194,8 +194,8 @@ public class ExitPoolService {
             view.put("nodeName", node == null ? "节点已删除" : node.getName());
             view.put("proxyTraffic", jdbc.queryForObject("SELECT COALESCE(SUM(in_flow + out_flow), 0) FROM private_proxy WHERE node_id=? "
                     + "AND exit_type='residential' AND UPPER(exit_country)=? AND state <> 'deleted'", Long.class, group.get("node_id"), group.get("country")));
-            view.put("proxyCount", jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE node_id=? AND exit_type='residential' "
-                    + "AND UPPER(exit_country)=? AND state IN ('provisioning','active')", Long.class, group.get("node_id"), group.get("country")));
+            view.put("proxyCount", jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE node_id=? AND state IN ('provisioning','active') "
+                    + "AND ((exit_type='residential' AND UPPER(exit_country)=?) OR route_countries LIKE ?)", Long.class, group.get("node_id"), group.get("country"), "%," + group.get("country") + ",%"));
             view.put("members", jdbc.queryForList("SELECT m.id, m.state, m.exit_ip AS exitIp, m.exit_owner AS exitOwner, m.exit_kind AS exitKind, "
                     + "m.exit_flagged AS exitFlagged, m.approved, m.latency_ms AS latencyMs, m.rx_bytes AS rxBytes, m.tx_bytes AS txBytes, "
                     + "m.connected_at AS connectedAt, m.last_ok_at AS lastOkAt, m.error, m.retry_after AS retryAfter, m.updated_time AS updatedTime, "
@@ -710,8 +710,19 @@ public class ExitPoolService {
 
     /** 执行一轮调度；返回是否还有出口组在等待可用出口。 */
     synchronized boolean reconcile() {
-        List<Map<String, Object>> wanted = jdbc.queryForList("SELECT DISTINCT node_id, UPPER(exit_country) AS country FROM private_proxy "
-                + "WHERE exit_type = 'residential' AND exit_country IS NOT NULL AND exit_country <> '' AND state IN ('provisioning','active')");
+        List<Map<String, Object>> wanted = new ArrayList<>(jdbc.queryForList("SELECT DISTINCT node_id, UPPER(exit_country) AS country FROM private_proxy "
+                + "WHERE exit_type = 'residential' AND exit_country IS NOT NULL AND exit_country <> '' AND state IN ('provisioning','active')"));
+        // Countries that only appear in per-domain rules need their exits too.
+        for (Map<String, Object> row : jdbc.queryForList("SELECT node_id, route_countries FROM private_proxy "
+                + "WHERE route_countries IS NOT NULL AND route_countries <> '' AND state IN ('provisioning','active')")) {
+            for (String code : String.valueOf(row.get("route_countries")).split(",")) {
+                if (code.isBlank()) continue;
+                Map<String, Object> extra = new HashMap<>();
+                extra.put("node_id", row.get("node_id"));
+                extra.put("country", code.trim().toUpperCase(Locale.ROOT));
+                wanted.add(extra);
+            }
+        }
         List<Map<String, Object>> groups = jdbc.queryForList("SELECT * FROM exit_group");
         if (wanted.isEmpty() && groups.isEmpty()) return false;
 

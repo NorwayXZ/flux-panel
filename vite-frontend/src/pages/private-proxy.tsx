@@ -55,6 +55,11 @@ import {
   resumePrivateProxy,
   testPrivateProxy,
   updatePrivateProxyExit,
+  updatePrivateProxyRouting,
+  getProxyExits,
+  type ProxyExit,
+  type RoutePreset,
+  type RouteRule,
   type ExitCountriesResponse,
   type PrivateProxyClientConfig,
   type PrivateProxyItem,
@@ -72,6 +77,7 @@ import CamouflagePicker, {
   AUTO_CAMOUFLAGE,
 } from "@/components/camouflage-picker";
 import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
+import RouteRulesEditor, { exitLabel } from "@/components/route-rules-editor";
 import ProxyEditModal from "@/components/proxy-edit-modal";
 import ProxyImport from "@/components/proxy-import";
 import ProxyQr from "@/components/proxy-qr";
@@ -158,6 +164,8 @@ const ROUTED_EXIT_PROXY_TYPES: PrivateProxyType[] = [
 ];
 // 这些协议、自检、修改端口和重置密钥需要的 Agent 版本
 const PROTOCOL_AGENT_VERSION = "2.62.0";
+// 自定义出口和分流规则由节点上的分流路由承载
+const ROUTER_AGENT_VERSION = "2.76.0";
 const NEW_PROTOCOLS: PrivateProxyType[] = [
   "shadowsocks2022",
   "vless_xhttp",
@@ -348,6 +356,9 @@ export default function PrivateProxyPage() {
     exitCountry: "",
   });
   const [exitSaving, setExitSaving] = useState(false);
+  const [proxyExits, setProxyExits] = useState<ProxyExit[]>([]);
+  const [routePresets, setRoutePresets] = useState<RoutePreset[]>([]);
+  const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
     groupId: number;
     title: string;
@@ -628,17 +639,83 @@ export default function PrivateProxyPage() {
 
   const openExitSettings = (item: PrivateProxyItem) => {
     setExitChoice({
-      exitType: item.exitType === "residential" ? "residential" : "node",
+      exitType: item.exitType || "node",
       exitCountry: item.exitCountry || "",
+      exitCustomId: item.routing?.exitCustomId,
     });
+    setRouteRules(item.routing?.rules || []);
     setSwitchLink("");
     setExitTarget(item);
+    if (ROUTED_EXIT_PROXY_TYPES.includes(item.proxyType))
+      void getProxyExits().then((response) => {
+        if (response.code === 0 && response.data) {
+          setProxyExits(response.data.exits || []);
+          setRoutePresets(response.data.presets || []);
+        }
+      });
+  };
+
+  /** Why this proxy cannot use custom exits or rules, or "" when it can. */
+  const routingBlockedReason = (item: PrivateProxyItem) => {
+    if (!ROUTED_EXIT_PROXY_TYPES.includes(item.proxyType))
+      return "这个协议不支持自定义出口和分流。";
+    const node = nodes.find(
+      (entry) => String(entry.id) === String(item.nodeId),
+    );
+
+    if (node && !agentSupportsExit(node.version, ROUTER_AGENT_VERSION))
+      return `该节点的 Agent 版本是 ${node.version || "未知"}，自定义出口和分流需要升级到 ${ROUTER_AGENT_VERSION} 或更高。`;
+
+    return "";
   };
 
   const saveExit = async () => {
     if (!exitTarget) return;
     if (exitChoice.exitType === "residential" && !exitChoice.exitCountry)
       return toast.error("请选择出口国家");
+    if (exitChoice.exitType === "custom" && !exitChoice.exitCustomId)
+      return toast.error("请选择自定义出口");
+    const hadRouting =
+      exitTarget.exitType === "custom" ||
+      (exitTarget.routing?.rules?.length || 0) > 0;
+
+    if (
+      exitChoice.exitType === "custom" ||
+      routeRules.length > 0 ||
+      hadRouting
+    ) {
+      setExitSaving(true);
+      const routed = await updatePrivateProxyRouting({
+        id: exitTarget.id,
+        exitType: exitChoice.exitType,
+        exitCountry:
+          exitChoice.exitType === "residential"
+            ? exitChoice.exitCountry
+            : undefined,
+        exitCustomId:
+          exitChoice.exitType === "custom"
+            ? exitChoice.exitCustomId
+            : undefined,
+        rules: routeRules.map(({ match, values, exit }) => ({
+          match,
+          values,
+          exit,
+        })),
+      });
+
+      setExitSaving(false);
+      if (routed.code !== 0)
+        return toast.error(routed.msg || "保存出口与分流失败");
+      toast.success(
+        routeRules.length > 0
+          ? `已保存，${routeRules.length} 条分流规则生效中`
+          : "出口已保存",
+      );
+      setExitTarget(null);
+      void load();
+
+      return;
+    }
     setExitSaving(true);
     const response = await updatePrivateProxyExit(
       exitTarget.id,
@@ -804,7 +881,7 @@ export default function PrivateProxyPage() {
               variant="flat"
               onPress={() => navigate("/exit-pool")}
             >
-              家宽出口池
+              出口管理
             </Button>
           )}
           <Button
@@ -1019,6 +1096,30 @@ export default function PrivateProxyPage() {
                                 },
                               ]
                             : []),
+                          ...(item.exitType === "custom" ||
+                          (item.routing?.rules?.length || 0) > 0
+                            ? [
+                                {
+                                  label: "出口与分流",
+                                  status: {
+                                    text: `${item.routing?.rules?.length || 0} 条规则`,
+                                    color: "secondary" as ChipColor,
+                                  },
+                                  rows: [
+                                    {
+                                      label: "默认",
+                                      value:
+                                        item.exitType === "custom"
+                                          ? `自定义 · ${item.routing?.exitCustomName || `#${item.routing?.exitCustomId}`}`
+                                          : item.exitType === "residential"
+                                            ? `家宽 · ${item.exit?.countryName || item.exitCountry}`
+                                            : "节点自身 IP",
+                                      mono: false,
+                                    },
+                                  ],
+                                },
+                              ]
+                            : []),
                         ]}
                         chips={[
                           {
@@ -1091,10 +1192,13 @@ export default function PrivateProxyPage() {
                               <BarChart3 size={14} />,
                               () => setTrafficTarget(item),
                             )}
-                            {isAdmin &&
-                              item.state === "active" &&
-                              EXIT_PROXY_TYPES.includes(item.proxyType) &&
-                              smallIcon("出口设置", <Home size={14} />, () =>
+                            {item.state === "active" &&
+                              (isAdmin
+                                ? EXIT_PROXY_TYPES.includes(item.proxyType)
+                                : ROUTED_EXIT_PROXY_TYPES.includes(
+                                    item.proxyType,
+                                  )) &&
+                              smallIcon("出口与分流", <Home size={14} />, () =>
                                 openExitSettings(item),
                               )}
                           </>
@@ -1603,21 +1707,61 @@ export default function PrivateProxyPage() {
       >
         <ModalContent>
           <ModalHeader>
-            {exitTarget ? `“${exitTarget.name}”的出口` : "出口设置"}
+            {exitTarget ? `“${exitTarget.name}”的出口与分流` : "出口与分流"}
           </ModalHeader>
           <ModalBody>
             {exitTarget && (
               <ExitPicker
-                blockedReason={exitBlockedReason(
-                  exitTarget.proxyType,
-                  exitTarget.nodeId,
-                )}
+                blockedReason={
+                  isAdmin
+                    ? exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)
+                    : "家宽出口目前仅管理员可以配置。"
+                }
                 countries={exitInfo?.countries || []}
+                customBlockedReason={routingBlockedReason(exitTarget)}
+                customExits={
+                  ROUTED_EXIT_PROXY_TYPES.includes(exitTarget.proxyType)
+                    ? proxyExits
+                    : undefined
+                }
                 error={exitInfoError}
                 loading={exitInfoLoading && !exitInfo}
                 value={exitChoice}
                 onChange={setExitChoice}
               />
+            )}
+            {exitTarget && !routingBlockedReason(exitTarget) && (
+              <div className="border-t border-divider pt-4">
+                <RouteRulesEditor
+                  allowResidential={
+                    isAdmin &&
+                    !exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)
+                  }
+                  countries={exitInfo?.countries || []}
+                  customExits={proxyExits}
+                  presets={routePresets}
+                  rules={routeRules}
+                  onChange={setRouteRules}
+                />
+                {routeRules.length > 0 && (
+                  <p className="mt-2 text-xs text-default-500">
+                    命中规则的出口不可用时，这部分连接会断开，不会改走节点自身
+                    IP。当前规则：
+                    {routeRules
+                      .map((rule) =>
+                        exitLabel(
+                          rule.exit,
+                          exitInfo?.countries || [],
+                          proxyExits,
+                        ),
+                      )
+                      .filter(
+                        (label, index, list) => list.indexOf(label) === index,
+                      )
+                      .join("、")}
+                  </p>
+                )}
+              </div>
             )}
             <p className="text-xs text-default-500">
               保存后代理会重新启动，正在进行的连接需要重连；设备上填写的地址、端口和密码都不用改。

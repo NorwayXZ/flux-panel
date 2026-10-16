@@ -54,6 +54,17 @@ public class PrivateProxyController {
                 body.get("exitType") == null ? null : body.get("exitType").toString(),
                 body.get("exitCountry") == null ? null : body.get("exitCountry").toString());
     }
+    @SuppressWarnings("unchecked")
+    @LogAnnotation @PostMapping("/routing") public R updateRouting(@RequestBody Map<String, Object> body) {
+        Object id = body.get("id");
+        Object customId = body.get("exitCustomId");
+        Object rules = body.get("rules");
+        return service.updateRouting(id == null ? null : Long.valueOf(id.toString()),
+                body.get("exitType") == null ? null : body.get("exitType").toString(),
+                body.get("exitCountry") == null ? null : body.get("exitCountry").toString(),
+                customId == null || customId.toString().isBlank() ? null : Long.valueOf(customId.toString()),
+                rules instanceof java.util.List ? (java.util.List<Map<String, Object>>) rules : null);
+    }
     @LogAnnotation @PostMapping("/exit-switch") public R switchExit(@RequestBody Map<String, Object> body) {
         Object id = body.get("id");
         return service.switchOwnExit(id == null ? null : Long.valueOf(id.toString()));

@@ -142,6 +142,7 @@ type WebSocketReporter struct {
 	terminalManager   *TerminalManager
 	realityManager    *realityRuntimeManager
 	proxyManager      *privateProxyRuntimeManager
+	routerManager     *proxyRouterManager
 	natManager        *natRuntimeManager
 	nftManager        *nftForwardManager
 	bandwidthManager  *bandwidthTestManager
@@ -179,6 +180,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.terminalManager = NewTerminalManager(reporter.sendTerminalEvent)
 	reporter.realityManager = newRealityRuntimeManager()
 	reporter.proxyManager = newPrivateProxyRuntimeManager()
+	reporter.routerManager = newProxyRouterManager(reporter.proxyManager)
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	reporter.nftManager = newNFTForwardManager()
 	reporter.bandwidthManager = newBandwidthTestManager()
@@ -194,7 +196,13 @@ func (w *WebSocketReporter) Start() {
 		go w.realityManager.restore()
 	}
 	if w.proxyManager != nil {
-		go w.proxyManager.restore()
+		go func() {
+			// Proxies hand their traffic to their routers, so routers come up first.
+			if w.routerManager != nil {
+				w.routerManager.restore()
+			}
+			w.proxyManager.restore()
+		}()
 	}
 	if w.natManager != nil {
 		go w.natManager.restore()
@@ -222,6 +230,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.proxyManager != nil {
 		w.proxyManager.stopAll()
+	}
+	if w.routerManager != nil {
+		w.routerManager.stopAll()
 	}
 	if w.natManager != nil {
 		w.natManager.stopAll()
@@ -633,6 +644,10 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		go w.runRealityTargetProbe(cmd)
 		return
 	}
+	if cmd.Type == "TestProxyExit" {
+		go w.runProxyExitTest(cmd)
+		return
+	}
 	if strings.HasPrefix(cmd.Type, "ExitPool") {
 		// 出口池指令按固定周期下发且带有证书，只记录类型
 		fmt.Println("🔔 收到命令: ", cmd.Type)
@@ -854,6 +869,16 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 		result, err = w.handleAddPrivateProxyRuntime(cmd.Data)
 		response.Type = "AddPrivateProxyRuntimeResponse"
 		response.Data = result
+
+	case "ApplyProxyRouter":
+		var result proxyRouterResponse
+		result, err = w.handleApplyProxyRouter(cmd.Data)
+		response.Type = "ApplyProxyRouterResponse"
+		response.Data = result
+
+	case "DeleteProxyRouter":
+		err = w.handleDeleteProxyRouter(cmd.Data)
+		response.Type = "DeleteProxyRouterResponse"
 
 	case "DeletePrivateProxyRuntime":
 		err = w.handleDeletePrivateProxyRuntime(cmd.Data)
@@ -2213,6 +2238,50 @@ func (w *WebSocketReporter) runPrivateProxyProbe(cmd CommandMessage) {
 	if err == nil {
 		var result privateProxyProbeResponse
 		result, err = (&probeRunner{singBox: w.proxyManager, xray: w.realityManager}).probe(request)
+		response.Data = result
+	}
+	if err != nil {
+		response.Message = err.Error()
+	} else {
+		response.Success, response.Message = true, "OK"
+	}
+	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) handleApplyProxyRouter(data interface{}) (proxyRouterResponse, error) {
+	if w.routerManager == nil {
+		return proxyRouterResponse{}, errors.New("proxy router manager is unavailable")
+	}
+	var request proxyRouterRequest
+	if err := decodeCommandData(data, &request); err != nil {
+		return proxyRouterResponse{}, err
+	}
+	return w.routerManager.apply(request)
+}
+
+func (w *WebSocketReporter) handleDeleteProxyRouter(data interface{}) error {
+	if w.routerManager == nil {
+		return errors.New("proxy router manager is unavailable")
+	}
+	var request struct {
+		Name string `json:"name"`
+	}
+	if err := decodeCommandData(data, &request); err != nil {
+		return err
+	}
+	return w.routerManager.delete(request.Name)
+}
+
+func (w *WebSocketReporter) runProxyExitTest(cmd CommandMessage) {
+	response := CommandResponse{Type: "TestProxyExitResponse", RequestId: cmd.RequestId}
+	var request proxyExitTestRequest
+	err := decodeCommandData(cmd.Data, &request)
+	if err == nil && w.routerManager == nil {
+		err = errors.New("proxy router manager is unavailable")
+	}
+	if err == nil {
+		var result proxyExitTestResponse
+		result, err = w.routerManager.testExit(request)
 		response.Data = result
 	}
 	if err != nil {
