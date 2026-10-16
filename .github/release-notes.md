@@ -1,3 +1,9 @@
+## 2.77.2 Clearer default exit in proxy routing
+
+- In 出口与分流 the top choice is now labelled 默认出口 and explains that it carries the traffic no rule matches. To send only some sites through a custom or residential exit, keep the default on the node's own IP and add rules for those sites.
+- A rule whose exit is the same as the default exit is flagged as having no effect, with what to change.
+- Panel-only update; Agents stay at 2.76.0. No database change. 2.77.1 remains available for rollback.
+
 ## 2.77.1 A cleaner, more professional look
 
 - Page headers are a bold title with its actions on the same line. The explanation that used to sit under each title now opens from a help icon beside it.

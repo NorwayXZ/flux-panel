@@ -24,6 +24,10 @@ interface ExitPickerProps {
   customExits?: ProxyExit[];
   /** Why custom exits cannot be used here, e.g. the protocol or Agent version. */
   customBlockedReason?: string;
+  /** Heading above the options; defaults to "出口". */
+  title?: string;
+  /** One line under the heading. */
+  description?: string;
   onChange: (value: ExitChoice) => void;
 }
 
@@ -45,6 +49,8 @@ export default function ExitPicker({
   blockedReason,
   customExits,
   customBlockedReason,
+  title = "出口",
+  description,
   onChange,
 }: ExitPickerProps) {
   const residential = value.exitType === "residential";
@@ -53,7 +59,12 @@ export default function ExitPicker({
 
   return (
     <div className="space-y-3">
-      <div className="text-sm font-medium">出口</div>
+      <div>
+        <div className="text-sm font-medium">{title}</div>
+        {description && (
+          <p className="mt-0.5 text-xs text-default-500">{description}</p>
+        )}
+      </div>
       <div
         className={`grid gap-3 ${customExits ? "md:grid-cols-3" : "md:grid-cols-2"}`}
       >

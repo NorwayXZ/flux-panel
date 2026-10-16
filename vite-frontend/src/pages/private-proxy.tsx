@@ -1719,6 +1719,12 @@ export default function PrivateProxyPage() {
                 }
                 countries={exitInfo?.countries || []}
                 customBlockedReason={routingBlockedReason(exitTarget)}
+                description={
+                  routingBlockedReason(exitTarget)
+                    ? undefined
+                    : "没有命中下面分流规则的流量走这里。只想让部分网站换出口时，这里选“节点自身 IP”，再在下面加规则。"
+                }
+                title={routingBlockedReason(exitTarget) ? "出口" : "默认出口"}
                 customExits={
                   ROUTED_EXIT_PROXY_TYPES.includes(exitTarget.proxyType)
                     ? proxyExits
@@ -1733,6 +1739,13 @@ export default function PrivateProxyPage() {
             {exitTarget && !routingBlockedReason(exitTarget) && (
               <div className="border-t border-divider pt-4">
                 <RouteRulesEditor
+                  defaultExit={
+                    exitChoice.exitType === "custom"
+                      ? `custom:${exitChoice.exitCustomId}`
+                      : exitChoice.exitType === "residential"
+                        ? `residential:${exitChoice.exitCountry}`
+                        : "direct"
+                  }
                   allowResidential={
                     isAdmin &&
                     !exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)

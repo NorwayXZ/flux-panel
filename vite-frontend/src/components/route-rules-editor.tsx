@@ -65,7 +65,10 @@ export default function RouteRulesEditor({
   countries,
   customExits,
   allowResidential,
+  defaultExit,
 }: {
+  /** The proxy's default exit as a rule exit key, to flag rules that change nothing. */
+  defaultExit?: string;
   rules: RouteRule[];
   onChange: (rules: RouteRule[]) => void;
   presets: RoutePreset[];
@@ -110,7 +113,7 @@ export default function RouteRulesEditor({
         <div>
           <div className="text-sm font-medium">分流规则</div>
           <p className="mt-0.5 text-xs text-default-500">
-            从上往下匹配，命中第一条就走它的出口；没有命中的走上面的默认出口。
+            从上往下匹配，命中第一条就走它的出口；没有命中任何规则的流量走上面的“默认出口”。
           </p>
         </div>
         <Button
@@ -267,6 +270,13 @@ export default function RouteRulesEditor({
                     } as Partial<EditableRule>)
                   }
                 />
+              )}
+              {defaultExit && rule.exit === defaultExit && (
+                <p className="text-xs text-warning-600 dark:text-warning-400">
+                  {defaultExit === "direct"
+                    ? "没有命中规则的流量本来就走节点自身 IP，这条规则不起作用，可以删掉。"
+                    : "这条规则的出口和默认出口相同，不起作用。想只让这些网站走这个出口，请把上面的默认出口改为“节点自身 IP”。"}
+                </p>
               )}
             </li>
           ))}
