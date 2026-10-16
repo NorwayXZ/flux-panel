@@ -432,7 +432,7 @@ export default function MultiLineAggregationPage() {
       {!data ? (
         <div className="py-24 text-center text-default-400">正在加载...</div>
       ) : data.groups.length === 0 ? (
-        <div className="border border-divider bg-content1 py-20 text-center">
+        <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 py-20 text-center">
           <Gauge className="mx-auto h-9 w-9 text-default-300" />
           <div className="mt-3 font-medium">尚未创建并发调度入口</div>
         </div>

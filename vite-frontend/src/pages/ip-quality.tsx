@@ -33,6 +33,9 @@ import {
   type IpQualityOverview,
   type IpQualityScan,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
 const initial: IpQualityOverview = {
@@ -139,14 +142,13 @@ export default function IpQualityPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">实用工具</p>
-          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
+          <h1 className="text-2xl font-bold text-foreground">
             IP 质量与解锁检测
           </h1>
-          <p className="mt-2 text-sm text-default-500">
+          <p className="mt-1 text-sm text-default-500">
             从节点真实出口检测公网 IP、风险情报、黑名单、服务访问、DNS
             解析器和常见出站端口。
           </p>
@@ -186,201 +188,168 @@ export default function IpQualityPage() {
           </Button>
         </div>
       )}
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          [
-            "服务器节点",
-            loading ? "-" : data.summary.total,
-            <Activity size={18} />,
-          ],
-          [
-            "已检测",
-            loading ? "-" : data.summary.tested,
-            <ShieldCheck size={18} />,
-          ],
-          [
-            "检测中",
-            loading ? "-" : data.summary.running,
-            <Clock3 size={18} />,
-          ],
-          [
-            "高风险",
-            loading ? "-" : data.summary.highRisk,
-            <ShieldAlert size={18} />,
-          ],
-        ].map(([label, value, icon]) => (
-          <div
-            key={String(label)}
-            className="border border-divider bg-content1 p-4"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-default-500">
-                {label as string}
-              </span>
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-default-100 text-default-600">
-                {icon}
-              </span>
-            </div>
-            <p className="mt-3 text-2xl font-semibold">
-              {value as string | number}
-            </p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<Activity size={20} />}
+          title="服务器节点"
+          value={loading ? "-" : data.summary.total}
+        />
+        <StatsCard
+          color="success"
+          icon={<ShieldCheck size={20} />}
+          title="已检测"
+          value={loading ? "-" : data.summary.tested}
+        />
+        <StatsCard
+          color="warning"
+          icon={<Clock3 size={20} />}
+          title="检测中"
+          value={loading ? "-" : data.summary.running}
+        />
+        <StatsCard
+          color="danger"
+          icon={<ShieldAlert size={20} />}
+          title="高风险"
+          value={loading ? "-" : data.summary.highRisk}
+        />
       </section>
-      <section className="grid gap-4 xl:grid-cols-2">
+      <ResourceCardGrid>
         {data.nodes.map((node) => {
           const running = node.scanStatus === "running";
           const risk = riskMeta(node);
           const services = node.unlockResults || [];
           const ports = node.ports || [];
+          const tested = Boolean(node.finishedAt);
 
           return (
-            <article
+            <ResourceCard
               key={node.id}
-              className="border border-divider bg-content1 p-4 sm:p-5"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-semibold">{node.name}</h2>
-                    <Chip
-                      color={node.status === 1 ? "success" : "default"}
-                      size="sm"
-                      variant="flat"
-                    >
-                      {node.status === 1 ? "在线" : "离线"}
-                    </Chip>
-                    {running && (
-                      <Chip color="primary" size="sm" variant="flat">
-                        检测中
-                      </Chip>
-                    )}
-                  </div>
-                  <p className="mt-2 text-xs text-default-400">
-                    Agent {node.version || "-"} · 要求{" "}
-                    {data.minimumAgentVersion}+
-                  </p>
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    isIconOnly
-                    isDisabled={node.status !== 1 || running}
-                    isLoading={busy === `run-${node.id}` || running}
-                    size="sm"
-                    title="开始检测"
-                    variant="light"
-                    onPress={() => void run(node)}
-                  >
-                    <Play size={16} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    isLoading={busy === `history-${node.id}`}
-                    size="sm"
-                    title="历史结果"
-                    variant="light"
-                    onPress={() => void openHistory(node)}
-                  >
-                    <History size={16} />
-                  </Button>
-                </div>
-              </div>
-              {node.finishedAt ? (
-                <>
-                  <div className="mt-4 grid gap-3 border-y border-divider py-3 sm:grid-cols-[1.1fr_1fr_auto]">
-                    <div>
-                      <p className="text-xs text-default-500">出口地址</p>
-                      <p className="mt-1 break-all font-mono text-sm">
-                        {node.publicIpv4 || node.publicIpv6 || "-"}
-                      </p>
-                      {node.publicIpv6 && node.publicIpv4 && (
-                        <p className="mt-1 break-all font-mono text-xs text-default-400">
-                          {node.publicIpv6}
-                        </p>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-xs text-default-500">地区与网络</p>
-                      <p className="mt-1 text-sm">
-                        {[node.country, node.region, node.city]
-                          .filter(Boolean)
-                          .join(" · ") || "-"}
-                      </p>
-                      <p className="mt-1 truncate text-xs text-default-400">
-                        {[node.asn, node.organization]
-                          .filter(Boolean)
-                          .join(" · ") || "-"}
-                      </p>
-                    </div>
-                    <div className="sm:text-right">
-                      <p className="text-xs text-default-500">综合风险</p>
-                      <Chip
-                        className="mt-1"
-                        color={risk.color}
-                        size="sm"
-                        variant="flat"
-                      >
-                        {risk.label}
-                      </Chip>
-                      <p className="mt-1 text-xs text-default-400">
-                        可信度 {node.confidence || "none"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 divide-x divide-divider text-center">
-                    <div>
-                      <p className="text-xs text-default-500">服务可访问</p>
-                      <p className="mt-1 font-semibold">
-                        {
-                          services.filter((item) => item.state === "available")
-                            .length
-                        }
-                        /{services.length}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-default-500">出站端口</p>
-                      <p className="mt-1 font-semibold">
-                        {ports.filter((item) => item.reachable).length}/
-                        {ports.length}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-default-500">黑名单命中</p>
-                      <p className="mt-1 font-semibold">
-                        {
-                          (node.blacklist || []).filter((item) => item.listed)
-                            .length
-                        }
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <span className="text-xs text-default-400">
-                      {timeText(node.finishedAt)}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      onPress={() => setDetail(node)}
-                    >
-                      查看完整结果
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="mt-4 flex min-h-36 flex-col items-center justify-center gap-2 border-y border-divider text-default-400">
-                  <MapPin size={25} />
-                  <p className="text-sm">
-                    {node.scanError ||
-                      (running ? "正在从真实出口检测" : "尚未检测")}
-                  </p>
-                </div>
-              )}
-            </article>
+              actions={[
+                {
+                  label: running ? "检测中" : "检测",
+                  icon: <Play size={14} />,
+                  color: "primary",
+                  isDisabled: node.status !== 1 || running,
+                  isLoading: busy === `run-${node.id}` || running,
+                  onPress: () => void run(node),
+                },
+                {
+                  label: "历史",
+                  icon: <History size={14} />,
+                  isLoading: busy === `history-${node.id}`,
+                  onPress: () => void openHistory(node),
+                },
+                {
+                  label: "详情",
+                  icon: <ExternalLink size={14} />,
+                  isDisabled: !tested,
+                  onPress: () => setDetail(node),
+                },
+              ]}
+              blocks={
+                tested
+                  ? [
+                      {
+                        label: "出口地址",
+                        status: { text: risk.label, color: risk.color },
+                        rows: [
+                          ...(node.publicIpv4
+                            ? [{ label: "IPv4", value: node.publicIpv4 }]
+                            : []),
+                          ...(node.publicIpv6
+                            ? [
+                                {
+                                  label: "IPv6",
+                                  value: node.publicIpv6,
+                                  title: node.publicIpv6,
+                                },
+                              ]
+                            : []),
+                          ...(!node.publicIpv4 && !node.publicIpv6
+                            ? [{ value: "-" }]
+                            : []),
+                        ],
+                      },
+                    ]
+                  : []
+              }
+              chips={
+                tested
+                  ? [
+                      {
+                        text:
+                          [node.country, node.region, node.city]
+                            .filter(Boolean)
+                            .join(" · ") || "未知地区",
+                      },
+                      ...(node.asn ? [{ text: node.asn }] : []),
+                    ]
+                  : []
+              }
+              danger={risk.color === "danger"}
+              facts={
+                tested
+                  ? [
+                      {
+                        label: "服务可访问",
+                        value: `${services.filter((item) => item.state === "available").length} / ${services.length}`,
+                      },
+                      {
+                        label: "出站端口",
+                        value: `${ports.filter((item) => item.reachable).length} / ${ports.length}`,
+                      },
+                      {
+                        label: "黑名单命中",
+                        value: (node.blacklist || []).filter(
+                          (item) => item.listed,
+                        ).length,
+                        tone:
+                          (node.blacklist || []).some((item) => item.listed)
+                            ? "danger"
+                            : "default",
+                      },
+                      { label: "检测时间", value: timeText(node.finishedAt) },
+                    ]
+                  : []
+              }
+              notice={
+                tested
+                  ? node.organization
+                    ? {
+                        icon: <MapPin size={14} />,
+                        label: "网络",
+                        value: (
+                          <span title={node.organization}>
+                            {node.organization}
+                          </span>
+                        ),
+                      }
+                    : undefined
+                  : {
+                      icon: <MapPin size={14} />,
+                      label: running ? "检测中" : "状态",
+                      value:
+                        node.scanError ||
+                        (running ? "正在从真实出口检测" : "尚未检测"),
+                      tone: node.scanError ? "danger" : "default",
+                    }
+              }
+              status={
+                running
+                  ? { text: "检测中", color: "primary" }
+                  : node.status === 1
+                    ? { text: "在线", color: "success" }
+                    : { text: "离线", color: "default" }
+              }
+              subtitles={[
+                `Agent ${node.version || "-"} · 要求 ${data.minimumAgentVersion}+`,
+              ]}
+              title={node.name}
+            />
           );
         })}
-      </section>
+      </ResourceCardGrid>
 
       <Modal isOpen={settingsOpen} size="2xl" onOpenChange={setSettingsOpen}>
         <ModalContent>
@@ -533,7 +502,7 @@ export default function IpQualityPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

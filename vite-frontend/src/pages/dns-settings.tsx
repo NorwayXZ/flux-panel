@@ -253,10 +253,9 @@ export default function DnsSettingsPage() {
   return (
     <PageShell className="space-y-6" width="wide">
       <AccessResourceTabs />
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">资源中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">域名管理</h1>
+          <h1 className="text-2xl font-bold text-foreground">域名管理</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -319,7 +318,7 @@ export default function DnsSettingsPage() {
           </Chip>
         </div>
         {accounts.length === 0 ? (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+          <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
             <KeyRound className="h-8 w-8" />
             <span className="text-sm">尚未添加 Cloudflare 配置</span>
           </div>
@@ -410,7 +409,7 @@ export default function DnsSettingsPage() {
           </div>
         </div>
         {carrierProviders.length === 0 ? (
-          <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+          <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
             <Globe2 className="h-8 w-8" />
             <span className="text-sm">尚未添加线路 DNS 配置</span>
             <Button
@@ -484,7 +483,7 @@ export default function DnsSettingsPage() {
           </p>
         </div>
         {records.length === 0 ? (
-          <div className="flex min-h-40 items-center justify-center border-y border-divider text-sm text-default-500">
+          <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-divider text-sm text-default-500">
             暂无受管 DNS 记录
           </div>
         ) : (

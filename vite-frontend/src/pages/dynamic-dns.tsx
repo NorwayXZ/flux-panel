@@ -298,11 +298,10 @@ export default function DynamicDnsPage() {
   return (
     <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">资源中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">动态解析</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">动态解析</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             本页只管理公网地址变化后的更新规则和执行历史；DNS
             凭据统一优先在域名管理维护，旧的独立凭据仍可兼容使用。
           </p>

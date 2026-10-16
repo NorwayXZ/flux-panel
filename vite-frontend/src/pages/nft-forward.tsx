@@ -299,10 +299,11 @@ export default function NftForwardPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">内核网络</p>
-          <h1 className="mt-1 text-2xl font-semibold">nftables 端口转发</h1>
+          <h1 className="text-2xl font-bold text-foreground">
+            nftables 端口转发
+          </h1>
         </div>
         <div className="flex gap-2">
           <Tooltip content="刷新规则和计数器">

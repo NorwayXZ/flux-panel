@@ -2209,10 +2209,12 @@ export default function CrossEntryFailoverPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">公网入口高可用</p>
-          <h1 className="mt-1 text-2xl font-semibold">入口容灾</h1>
+          <h1 className="text-2xl font-bold text-foreground">入口容灾</h1>
+          <p className="mt-1 text-sm text-default-500">
+            公网入口高可用
+          </p>
         </div>
         <Button
           color="primary"
@@ -2375,7 +2377,7 @@ export default function CrossEntryFailoverPage() {
       </div>
 
       {groups.length === 0 ? (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-center text-default-500">
           <ShieldCheck className="h-9 w-9" />
           <p>暂无跨入口容灾组</p>
         </div>

@@ -793,12 +793,12 @@ export default function SmartEntryPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">三网优化</h1>
+          <p className="mt-1 text-sm text-default-500">
             客户只填一个域名和端口，电信、联通、移动自动走各自的入口
           </p>
-          <h1 className="mt-1 text-2xl font-semibold">三网优化</h1>
         </div>
         <Button
           color="primary"
@@ -1000,12 +1000,12 @@ export default function SmartEntryPage() {
               </Button>
             </div>
             {groups.length === 0 ? (
-              <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y border-divider text-center text-default-500">
+              <div className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-center text-default-500">
                 <Waypoints className="h-9 w-9" />
                 <p>暂无三网优化策略</p>
               </div>
             ) : (
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
                 {groups
                   .filter((group) =>
                     `${group.name} ${group.domain}`
@@ -1085,7 +1085,7 @@ export default function SmartEntryPage() {
                         key={group.id}
                         className={`${meta.color === "danger" ? "offline-card border border-danger-300" : "border border-transparent dark:border-default-100"} transition-shadow duration-200 hover:shadow-md`}
                       >
-                        <CardBody className="gap-4 p-4 sm:p-5">
+                        <CardBody className="gap-3 p-4 sm:p-5">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
@@ -1378,7 +1378,7 @@ export default function SmartEntryPage() {
                               return (
                                 <div
                                   key={carrier.key}
-                                  className={`min-h-24 rounded-md border px-3 py-3 ${route.status === "unhealthy" ? "border-warning-300 bg-warning-50/60 dark:border-warning-500/40 dark:bg-warning-500/5" : `${tone.border} ${tone.background}`}`}
+                                  className={`rounded-lg border px-3 py-2 ${route.status === "unhealthy" ? "border-warning-300 bg-warning-50/60 dark:border-warning-500/40 dark:bg-warning-500/5" : `${tone.border} ${tone.background}`}`}
                                 >
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <div className="flex items-center gap-2">
@@ -1433,15 +1433,7 @@ export default function SmartEntryPage() {
                                       </Chip>
                                     </div>
                                   </div>
-                                  <p className="mt-3 truncate text-xs text-default-500">
-                                    当前入口：
-                                    {target?.nodeName ||
-                                      (route.currentAddress
-                                        ? "旧入口"
-                                        : "尚未就绪")}{" "}
-                                    · {route.currentAddress || "-"}
-                                  </p>
-                                  <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                                  <div className="mt-1.5 flex items-center justify-between gap-2 text-xs">
                                     <span
                                       className={
                                         activeOnOwnEntry
@@ -1457,19 +1449,23 @@ export default function SmartEntryPage() {
                                         : "-"}
                                     </span>
                                   </div>
-                                  <p className="mt-2 text-xs text-default-500">
-                                    备用：
+                                  <p
+                                    className="mt-1 truncate text-xs text-default-500"
+                                    title={`当前入口：${target?.nodeName || (route.currentAddress ? "旧入口" : "尚未就绪")} · ${route.currentAddress || "-"}`}
+                                  >
+                                    当前 {route.currentAddress || "尚未就绪"} ·
+                                    备用{" "}
                                     {backupNames.length
                                       ? backupNames.join(" → ")
                                       : "未配置"}
                                   </p>
                                   {route.lastError && (
-                                    <p className="mt-2 text-xs text-warning">
+                                    <p className="mt-1 text-xs text-warning">
                                       {route.lastError}
                                     </p>
                                   )}
                                   {route.dnsError && (
-                                    <p className="mt-2 text-xs text-danger">
+                                    <p className="mt-1 text-xs text-danger">
                                       {route.dnsError}
                                     </p>
                                   )}

@@ -196,11 +196,10 @@ export default function ExitPoolPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">私人代理</p>
-          <h1 className="mt-1 text-2xl font-semibold">家宽出口池</h1>
-          <p className="mt-2 max-w-3xl text-sm text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">家宽出口池</h1>
+          <p className="mt-1 max-w-3xl text-sm text-default-500">
             这里的出口由系统自动连接、检测和更换，平时不需要操作。只有在某个出口表现不好时，才需要手动排除它。
           </p>
         </div>

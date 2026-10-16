@@ -1309,10 +1309,9 @@ export default function ServicePublishingPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">内网穿透</p>
-          <h1 className="mt-1 text-2xl font-semibold">内网映射</h1>
+          <h1 className="text-2xl font-bold text-foreground">内网映射</h1>
         </div>
         <Button
           color="primary"
@@ -1379,7 +1378,7 @@ export default function ServicePublishingPage() {
               <Spinner />
             </div>
           ) : services.length === 0 ? (
-            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
               <RadioTower size={30} />
               <span>暂无内网映射</span>
             </div>
@@ -1570,7 +1569,7 @@ export default function ServicePublishingPage() {
               <Spinner />
             </div>
           ) : domainRoutes.length === 0 ? (
-            <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+            <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
               <Globe2 size={30} />
               <span>暂无域名直达规则</span>
             </div>
@@ -1607,7 +1606,7 @@ export default function ServicePublishingPage() {
                     <details
                       key={group.key}
                       open
-                      className="overflow-hidden rounded-lg border border-divider bg-content1"
+                      className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100"
                     >
                       <summary className="cursor-pointer list-none px-4 py-4 [&::-webkit-details-marker]:hidden">
                         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -1685,7 +1684,7 @@ export default function ServicePublishingPage() {
                 <Spinner />
               </div>
             ) : certificates.length === 0 ? (
-              <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+              <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
                 <FileKey2 size={30} />
                 <span>暂无托管证书</span>
               </div>

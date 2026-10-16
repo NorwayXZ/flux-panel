@@ -1295,8 +1295,11 @@ export default function UserPage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div className="flex flex-col gap-4 mb-6">
-        <div className="flex items-center gap-3" />
+      <div className="flex flex-col gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-foreground">用户管理</h1>
+          <p className="mt-1 text-sm text-default-500">账号、流量额度、到期时间和资源授权</p>
+        </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
           <div className="flex items-center gap-3 flex-1 max-w-md">

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@heroui/button";
+import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import {
   AlertTriangle,
   CheckCircle2,
   CircleHelp,
   ExternalLink,
+  Network,
   RefreshCw,
   Route,
   ShieldCheck,
@@ -14,6 +16,8 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 import {
   getAggregationOverview,
   getCrossEntryGroups,
@@ -119,6 +123,16 @@ const modules = [
     boundary:
       "它不是把单个 TCP 连接拆到多条线路上；单连接速度仍由该连接实际使用的路径决定。",
   },
+  {
+    title: "内网组建与出口",
+    path: "/private-network",
+    icon: Network,
+    tone: "secondary" as const,
+    role: "内网优先的多跳出口",
+    detail:
+      "把能走内网的服务器组起来，再创建“本地连 B，C/D 出口”的代理入口，跳点优先走内网。",
+    boundary: "WireGuard 组网依赖 UDP；中继和出口节点会产生流量。",
+  },
 ];
 
 const capabilityRows: CapabilityRow[] = [
@@ -196,17 +210,6 @@ const toneClass: Record<string, string> = {
   warning:
     "bg-warning-100 text-warning-700 dark:bg-warning-500/15 dark:text-warning-300",
 };
-
-const routePath = (path: string, navigate: ReturnType<typeof useNavigate>) => (
-  <Button
-    endContent={<ExternalLink size={14} />}
-    size="sm"
-    variant="flat"
-    onPress={() => navigate(path)}
-  >
-    查看配置
-  </Button>
-);
 
 export default function RoutingOverviewPage() {
   const navigate = useNavigate();
@@ -569,23 +572,55 @@ export default function RoutingOverviewPage() {
     return result;
   }, [snapshot]);
 
-  const counts: Array<[string, number, string]> = [
-    ["转发", snapshot.forwards.length, "/forward"],
-    ["三网优化", snapshot.smartGroups.length, "/smart-entry"],
-    ["来源 IP 分流", snapshot.sourceGroups.length, "/source-ip-entry"],
-    ["入口容灾", snapshot.failoverGroups.length, "/cross-entry-failover"],
-    ["并发调度", snapshot.aggregationGroups.length, "/multi-line-aggregation"],
+  const counts = [
+    {
+      label: "转发",
+      value: snapshot.forwards.length,
+      path: "/forward",
+      icon: <Route size={20} />,
+      color: "primary" as const,
+    },
+    {
+      label: "三网优化",
+      value: snapshot.smartGroups.length,
+      path: "/smart-entry",
+      icon: <Split size={20} />,
+      color: "secondary" as const,
+    },
+    {
+      label: "来源 IP 分流",
+      value: snapshot.sourceGroups.length,
+      path: "/source-ip-entry",
+      icon: <Workflow size={20} />,
+      color: "warning" as const,
+    },
+    {
+      label: "入口容灾",
+      value: snapshot.failoverGroups.length,
+      path: "/cross-entry-failover",
+      icon: <ShieldCheck size={20} />,
+      color: "success" as const,
+    },
+    {
+      label: "并发调度",
+      value: snapshot.aggregationGroups.length,
+      path: "/multi-line-aggregation",
+      icon: <Workflow size={20} />,
+      color: "default" as const,
+    },
   ];
+  const warningCount = findings.filter(
+    (finding) => finding.level === "warning",
+  ).length;
   const blockingLoading = loading && !hasSnapshotData(snapshot);
   const refreshingNow = refreshing && hasSnapshotData(snapshot);
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-6 p-4 sm:p-6">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <PageShell className="space-y-6" width="wide">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">线路调度</p>
-          <h1 className="mt-1 text-2xl font-semibold">线路调度中心</h1>
-          <p className="mt-2 max-w-4xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">线路调度中心</h1>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-default-500">
             统一查看每个调度模块负责什么、依赖什么，以及当前配置是否存在潜在的
             DNS 或端口重叠。这里只读检查，不会自动修改线路。
           </p>
@@ -613,7 +648,7 @@ export default function RoutingOverviewPage() {
       </header>
 
       {errors.length > 0 && (
-        <section className="flex gap-3 border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
+        <section className="flex gap-3 rounded-xl border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-200">
           <CircleHelp className="mt-0.5 h-5 w-5 flex-none" />
           <div>
             <p className="font-medium">部分检查未完成</p>
@@ -625,162 +660,45 @@ export default function RoutingOverviewPage() {
         </section>
       )}
 
-      <section aria-label="线路调度配置数量" className="space-y-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">调度模块概况</h2>
-            <p className="mt-1 text-xs text-default-500">
-              点击卡片进入对应模块配置
-            </p>
-          </div>
-          <Chip size="sm" variant="flat">
-            只读总览
-          </Chip>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-          {counts.map(([label, value, path]) => (
-            <button
-              key={label}
-              className="border border-divider bg-content1 p-4 text-left transition-colors hover:border-primary-300 hover:bg-primary-50/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/5"
-              type="button"
-              onClick={() => navigate(path)}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-default-500">{label}</p>
-                <ExternalLink className="text-default-400" size={15} />
-              </div>
-              <p className="mt-2 text-2xl font-semibold">
-                {blockingLoading ? "-" : value}
-              </p>
-            </button>
-          ))}
-        </div>
+      <section
+        aria-label="线路调度配置数量"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5"
+      >
+        {counts.map((item) => (
+          <StatsCard
+            key={item.label}
+            color={item.color}
+            icon={item.icon}
+            title={item.label}
+            value={blockingLoading ? "-" : item.value}
+            onPress={() => navigate(item.path)}
+          />
+        ))}
       </section>
 
-      <section className="space-y-3">
-        <div className="mb-3 flex items-end justify-between gap-3">
+      <Card className="border border-transparent dark:border-default-100">
+        <CardHeader className="flex items-start justify-between gap-3 p-5 pb-2">
           <div>
-            <h2 className="text-base font-semibold">模块边界</h2>
-            <p className="mt-1 text-xs text-default-500">
-              先确定谁负责“选路”，再配置对应的 DNS、统一入口或线路策略。
+            <h2 className="text-base font-semibold text-foreground">
+              配置检查
+            </h2>
+            <p className="mt-0.5 text-sm text-default-500">
+              基于当前配置和端口账本的只读检查，不会自动关闭任何功能
             </p>
           </div>
-          <Chip size="sm" variant="flat">
-            只读说明
+          <Chip
+            color={warningCount > 0 ? "warning" : "success"}
+            size="sm"
+            variant="flat"
+          >
+            {warningCount > 0 ? `${warningCount} 项需确认` : "未发现冲突"}
           </Chip>
-        </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          {modules.map((item) => {
-            const Icon = item.icon;
-
-            return (
-              <article
-                key={item.title}
-                className="border border-divider bg-content1 p-4 sm:p-5"
-              >
-                <div className="flex items-start gap-3">
-                  <div className={`rounded-md p-2 ${toneClass[item.tone]}`}>
-                    <Icon size={19} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-semibold">{item.title}</h3>
-                      <Chip color={item.tone} size="sm" variant="flat">
-                        {item.role}
-                      </Chip>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-default-600">
-                      {item.detail}
-                    </p>
-                    <p className="mt-2 border-t border-divider pt-2 text-xs leading-5 text-default-500">
-                      {item.boundary}
-                    </p>
-                    <div className="mt-3">{routePath(item.path, navigate)}</div>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="mb-3 flex items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">功能能力矩阵</h2>
-            <p className="mt-1 text-xs text-default-500">
-              用一张表确认版本要求、是否吃中转流量、是否依赖
-              DNS，以及能否给普通用户直接授权。
-            </p>
-          </div>
-          <Chip size="sm" variant="flat">
-            调度关系
-          </Chip>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {capabilityRows.map((row) => (
-            <article
-              key={row.feature}
-              className="border border-divider bg-content1 p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="font-semibold">{row.feature}</h3>
-                <Route className="shrink-0 text-primary" size={17} />
-              </div>
-              <dl className="mt-4 space-y-2 border-t border-divider pt-3 text-xs">
-                <div className="flex items-start justify-between gap-3">
-                  <dt className="text-default-500">Agent</dt>
-                  <dd className="max-w-[68%] text-right text-default-700">
-                    {row.agent}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <dt className="text-default-500">中转流量</dt>
-                  <dd className="max-w-[68%] text-right text-default-700">
-                    {row.traffic}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <dt className="text-default-500">DNS</dt>
-                  <dd className="max-w-[68%] text-right text-default-700">
-                    {row.dns}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <dt className="text-default-500">UDP</dt>
-                  <dd className="max-w-[68%] text-right text-default-700">
-                    {row.udp}
-                  </dd>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <dt className="text-default-500">用户授权</dt>
-                  <dd className="max-w-[68%] text-right text-default-700">
-                    {row.userAuth}
-                  </dd>
-                </div>
-              </dl>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div className="mb-3 flex items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">静态检查结果</h2>
-            <p className="mt-1 text-xs text-default-500">
-              提示项不会自动关闭功能，避免误伤现有线路。
-            </p>
-          </div>
-          <Chip size="sm" variant="flat">
-            {findings.length} 项
-          </Chip>
-        </div>
-        <div className="space-y-3">
+        </CardHeader>
+        <CardBody className="space-y-2 p-5 pt-2">
           {findings.map((finding, index) => (
-            <article
+            <div
               key={`${finding.title}-${index}`}
-              className={`flex gap-3 border px-4 py-4 ${finding.level === "warning" ? "border-warning-200 bg-warning-50/60 dark:border-warning-500/20 dark:bg-warning-500/10" : "border-divider bg-content1"}`}
+              className={`flex gap-3 rounded-xl px-4 py-3 ${finding.level === "warning" ? "bg-warning-50 dark:bg-warning-500/10" : "bg-default-50 dark:bg-default-100/60"}`}
             >
               {finding.level === "warning" ? (
                 <AlertTriangle className="mt-0.5 h-5 w-5 flex-none text-warning-600" />
@@ -788,15 +706,18 @@ export default function RoutingOverviewPage() {
                 <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-success" />
               )}
               <div className="min-w-0 flex-1">
-                <h3 className="font-medium">{finding.title}</h3>
+                <h3 className="text-sm font-medium text-foreground">
+                  {finding.title}
+                </h3>
                 <p className="mt-1 text-sm leading-6 text-default-600">
                   {finding.detail}
                 </p>
                 {finding.links && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {finding.links.map((link) => (
                       <Button
                         key={`${link.path}-${link.label}`}
+                        endContent={<ExternalLink size={13} />}
                         size="sm"
                         variant="flat"
                         onPress={() => navigate(link.path)}
@@ -807,18 +728,101 @@ export default function RoutingOverviewPage() {
                   </div>
                 )}
               </div>
-            </article>
+            </div>
           ))}
+          <p className="px-1 pt-1 text-xs leading-5 text-default-500">
+            保存时会阻断明确冲突：同一个 DNS
+            记录不能同时交给三网优化和入口容灾管理；完全相同的一组转发不能同时交给不同调度策略接管。
+          </p>
+        </CardBody>
+      </Card>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground">调度模块</h2>
+          <p className="mt-0.5 text-sm text-default-500">
+            每个模块负责什么、依赖什么、能否给普通用户授权
+          </p>
+        </div>
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {modules.map((item) => {
+            const Icon = item.icon;
+            const capability = capabilityRows.find(
+              (row) => row.feature === item.title,
+            );
+
+            return (
+              <Card
+                key={item.title}
+                className="h-full border border-transparent transition-shadow duration-200 hover:shadow-md dark:border-default-100"
+              >
+                <CardHeader className="flex items-start gap-3 p-5 pb-0">
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${toneClass[item.tone]}`}
+                  >
+                    <Icon size={19} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="truncate font-semibold text-foreground">
+                      {item.title}
+                    </h3>
+                    <Chip
+                      className="mt-1"
+                      color={item.tone}
+                      size="sm"
+                      variant="flat"
+                    >
+                      {item.role}
+                    </Chip>
+                  </div>
+                </CardHeader>
+                <CardBody className="flex flex-col gap-3 p-5 pt-3">
+                  <p className="text-sm leading-6 text-default-600">
+                    {item.detail}
+                  </p>
+                  {capability && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-xl bg-default-50 p-3 text-xs dark:bg-default-100/60">
+                      {(
+                        [
+                          ["Agent", capability.agent],
+                          ["中转流量", capability.traffic],
+                          ["DNS", capability.dns],
+                          ["UDP", capability.udp],
+                          ["用户授权", capability.userAuth],
+                        ] as const
+                      ).map(([label, value]) => (
+                        <div
+                          key={label}
+                          className={label === "Agent" ? "col-span-2" : ""}
+                        >
+                          <div className="text-[11px] text-default-400">
+                            {label}
+                          </div>
+                          <div className="mt-0.5 font-medium text-foreground">
+                            {value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs leading-5 text-default-500">
+                    {item.boundary}
+                  </p>
+                  <Button
+                    className="mt-auto"
+                    endContent={<ExternalLink size={14} />}
+                    size="sm"
+                    variant="flat"
+                    onPress={() => navigate(item.path)}
+                  >
+                    查看配置
+                  </Button>
+                </CardBody>
+              </Card>
+            );
+          })}
         </div>
       </section>
-
-      <section className="border-y border-divider py-4 text-xs leading-5 text-default-500">
-        <p className="font-medium text-foreground">保存时会阻断明确冲突</p>
-        <p className="mt-1">
-          同一个 DNS
-          记录不能同时交给三网优化和入口容灾管理；完全相同的一组转发不能同时交给不同调度策略接管。页面里的静态提示用于提前发现风险，后端保存校验用于阻止新冲突落库。
-        </p>
-      </section>
-    </div>
+    </PageShell>
   );
 }

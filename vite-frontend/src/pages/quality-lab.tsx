@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
-import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Input } from "@heroui/input";
 import {
@@ -57,6 +56,8 @@ import {
   type QualityProbeTask,
   type QualityProbeTaskInput,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
 type Range = "24h" | "7d" | "30d";
@@ -384,40 +385,37 @@ export default function QualityLabPage() {
       value: data.summary.total,
       meta: `${data.summary.enabled} 项自动运行`,
       icon: <FlaskConical size={18} />,
-      tone: "bg-blue-50 text-blue-600 dark:bg-blue-500/10",
+      color: "primary" as const,
     },
     {
       label: "质量正常",
       value: data.summary.healthy,
       meta: "最近一轮全部成功",
       icon: <Activity size={18} />,
-      tone: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10",
+      color: "success" as const,
     },
     {
       label: "需要关注",
       value: data.summary.degraded,
       meta: "存在失败或明显波动",
       icon: <TriangleAlert size={18} />,
-      tone: "bg-amber-50 text-amber-600 dark:bg-amber-500/10",
+      color: "warning" as const,
     },
     {
       label: "探测失败",
       value: data.summary.failed,
       meta: "目标或执行节点不可达",
       icon: <Gauge size={18} />,
-      tone: "bg-rose-50 text-rose-600 dark:bg-rose-500/10",
+      color: "danger" as const,
     },
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
-      <header className="flex min-w-0 flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <PageShell className="space-y-5" width="wide">
+      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm text-default-500">实用工具</p>
-          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
-            网络质量实验室
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">网络质量实验室</h1>
+          <p className="mt-1 max-w-3xl text-sm text-default-500">
             由现有 Agent
             定时建立线路画像。任务默认关闭，不创建任务就不会产生探测流量。
           </p>
@@ -445,41 +443,24 @@ export default function QualityLabPage() {
 
       <section
         aria-label="质量摘要"
-        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        className="grid grid-cols-2 gap-3 xl:grid-cols-4"
       >
         {summaryCards.map((card) => (
-          <Card
+          <StatsCard
             key={card.label}
-            className="border border-divider"
-            radius="sm"
-            shadow="none"
-          >
-            <CardBody className="gap-3 p-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm text-default-500">{card.label}</span>
-                <span
-                  className={`flex h-9 w-9 items-center justify-center rounded-lg ${card.tone}`}
-                >
-                  {card.icon}
-                </span>
-              </div>
-              <div>
-                <p className="text-2xl font-semibold">
-                  {loading ? "-" : card.value}
-                </p>
-                <p className="mt-1 truncate text-xs text-default-500">
-                  {card.meta}
-                </p>
-              </div>
-            </CardBody>
-          </Card>
+            color={card.color}
+            hint={card.meta}
+            icon={card.icon}
+            title={card.label}
+            value={loading ? "-" : card.value}
+          />
         ))}
       </section>
 
       {data.lineProfiles.length > 0 && (
-        <section className="border-y border-divider py-4">
+        <section className="rounded-large border border-transparent bg-content1 p-5 shadow-small dark:border-default-100">
           <div className="mb-3">
-            <h2 className="font-medium">过去 24 小时线路画像</h2>
+            <h2 className="font-semibold">过去 24 小时线路画像</h2>
             <p className="mt-1 text-xs text-default-500">
               按服务器资产中的线路标签汇总多台执行节点；这是节点标签对比，不等同于住宅三网实测。
             </p>
@@ -488,7 +469,7 @@ export default function QualityLabPage() {
             {data.lineProfiles.map((item) => (
               <div
                 key={String(item.label)}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-divider p-3 text-sm"
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-default-50 p-3 text-sm dark:bg-default-100/60"
               >
                 <div className="min-w-0">
                   <p className="truncate font-medium">{String(item.label)}</p>
@@ -511,7 +492,7 @@ export default function QualityLabPage() {
       )}
 
       {data.tasks.length === 0 && !loading ? (
-        <div className="flex min-h-72 flex-col items-center justify-center gap-3 border-y border-divider text-default-400">
+        <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-400">
           <FlaskConical size={34} />
           <p>尚未创建质量任务</p>
           <Button size="sm" variant="flat" onPress={openCreate}>
@@ -526,7 +507,7 @@ export default function QualityLabPage() {
             return (
               <article
                 key={task.id}
-                className="min-w-0 border border-divider bg-content1 p-4 sm:p-5"
+                className="min-w-0 rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4 sm:p-5"
               >
                 <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1153,7 +1134,7 @@ export default function QualityLabPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
 

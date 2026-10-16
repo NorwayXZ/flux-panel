@@ -8,6 +8,7 @@ import SpeedTest, {
 } from "@cloudflare/speedtest";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
+import { Modal, ModalBody, ModalContent, ModalHeader } from "@heroui/modal";
 import { Chip } from "@heroui/chip";
 import { Input } from "@heroui/input";
 import { Select, SelectItem } from "@heroui/select";
@@ -18,11 +19,10 @@ import {
   AlertCircle,
   Copy,
   Download,
-  Gauge,
   Globe2,
   MapPin,
-  Play,
   RotateCcw,
+  Settings2,
   Square,
   Upload,
   Wifi,
@@ -36,6 +36,12 @@ import {
   YAxis,
 } from "recharts";
 import toast from "react-hot-toast";
+
+import PageShell from "@/components/page-shell";
+import SpeedGauge, {
+  formatGaugeSpeed,
+  GoButton,
+} from "@/components/speed-gauge";
 
 type Phase =
   | "idle"
@@ -443,6 +449,7 @@ export default function ClientSpeedTestPage() {
   const [qualityPhase, setQualityPhase] = useState("");
   const [error, setError] = useState("");
   const [history, setHistory] = useState<Result[]>(loadHistory);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [form, setForm] = useState({
     downloadUrl: DEFAULT_DOWNLOAD_URL,
     uploadUrl: DEFAULT_UPLOAD_URL,
@@ -466,8 +473,6 @@ export default function ClientSpeedTestPage() {
     phase === "download" ||
     phase === "upload" ||
     phase === "quality";
-  const primaryMetric = phase === "upload" ? upload : download;
-  const displaySpeed = running ? currentMbps : primaryMetric?.averageMbps;
   const browserNetworkType =
     (
       navigator as Navigator & {
@@ -1141,23 +1146,25 @@ export default function ClientSpeedTestPage() {
   ) => (
     <div
       key={label}
-      className="min-h-24 border border-divider bg-content2/30 px-3 py-3"
+      className="rounded-xl bg-default-50 px-3 py-3 dark:bg-default-100/60"
     >
-      <div className="flex items-center gap-2 text-xs text-default-500">
+      <div className="flex items-center gap-1.5 text-xs text-default-500">
         {icon}
         <span>{label}</span>
       </div>
-      <p className="mt-1 break-words text-base font-semibold">{value}</p>
+      <p className="mt-1 break-words text-base font-semibold text-foreground">
+        {value}
+      </p>
     </div>
   );
 
   const renderQualityPointRows = (points: QualityPoint[]) =>
     points.length === 0 ? (
-      <div className="flex min-h-20 items-center justify-center border border-divider text-sm text-default-500">
+      <div className="flex min-h-20 items-center justify-center rounded-xl bg-default-50 text-sm text-default-500 dark:bg-default-100/60">
         暂无明细
       </div>
     ) : (
-      <div className="divide-y divide-divider border border-divider">
+      <div className="divide-y divide-divider overflow-hidden rounded-xl bg-default-50 dark:bg-default-100/60">
         {points.map((point, index) => (
           <div
             key={`${point.direction}-${point.bytes}-${point.durationMs}-${index}`}
@@ -1176,34 +1183,427 @@ export default function ClientSpeedTestPage() {
       </div>
     );
 
+  const phaseLabel =
+    phase === "metadata"
+      ? "正在连接测速节点"
+      : phase === "latency"
+        ? "正在测量延迟"
+        : phase === "download"
+          ? "单线程下载"
+          : phase === "upload"
+            ? "单线程上传"
+            : phase === "quality"
+              ? `Cloudflare 质量测量${qualityPhase ? ` · ${qualityPhase}` : ""}`
+              : "";
+  const pingValue = quality?.summary?.latency || unloadedLatency?.medianMs;
+  const jitterValue = quality?.summary?.jitter || unloadedLatency?.jitterMs;
+  const liveDownload =
+    phase === "download" ? currentMbps : download?.averageMbps;
+  const liveUpload = phase === "upload" ? currentMbps : upload?.averageMbps;
+  const hasResult = Boolean(download || upload);
+  const readouts = [
+    {
+      key: "ping",
+      label: "延迟",
+      unit: "ms",
+      icon: <Activity className="h-4 w-4" />,
+      tone: "text-warning",
+      active: phase === "latency",
+      value:
+        pingValue !== undefined && pingValue !== null
+          ? Number(pingValue).toFixed(0)
+          : undefined,
+    },
+    {
+      key: "jitter",
+      label: "抖动",
+      unit: "ms",
+      icon: <Wifi className="h-4 w-4" />,
+      tone: "text-success",
+      active: phase === "latency",
+      value:
+        jitterValue !== undefined && jitterValue !== null
+          ? Number(jitterValue).toFixed(1)
+          : undefined,
+    },
+    {
+      key: "download",
+      label: "下载",
+      unit: (liveDownload || 0) >= 1000 ? "Gbps" : "Mbps",
+      icon: <Download className="h-4 w-4" />,
+      tone: "text-primary",
+      active: phase === "download",
+      value: liveDownload ? formatGaugeSpeed(liveDownload).value : undefined,
+    },
+    {
+      key: "upload",
+      label: "上传",
+      unit: (liveUpload || 0) >= 1000 ? "Gbps" : "Mbps",
+      icon: <Upload className="h-4 w-4" />,
+      tone: "text-secondary",
+      active: phase === "upload",
+      value: liveUpload ? formatGaugeSpeed(liveUpload).value : undefined,
+    },
+  ];
+
   return (
-    <div className="mx-auto w-full max-w-[1560px] space-y-5 p-4 md:p-6">
-      <header className="flex flex-col gap-3 border-b border-divider pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <PageShell className="space-y-6" width="wide">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm text-default-500">浏览器直连测速</p>
-          <h1 className="mt-1 text-2xl font-semibold">本机测速中心</h1>
-          <p className="mt-2 max-w-4xl text-sm leading-6 text-default-500">
-            单线程大包测速显示真实 Mbps / Gbps；Cloudflare
-            质量引擎补充延迟、抖动、加载中延迟和多档明细。
+          <h1 className="text-2xl font-bold text-foreground">本机测速</h1>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-default-500">
+            浏览器直连 Cloudflare 单线程大包测速，显示真实 Mbps /
+            Gbps；质量引擎补充延迟、抖动和加载中延迟。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Chip color="primary" variant="flat">
-            超大单线程
-          </Chip>
-          <Chip color="secondary" variant="flat">
-            Cloudflare端点
-          </Chip>
+        <div className="flex flex-wrap items-center gap-2">
           <Chip variant="flat">{browserNetworkType}</Chip>
+          <Button
+            startContent={<Settings2 size={16} />}
+            variant="flat"
+            onPress={() => setSettingsOpen(true)}
+          >
+            测速设置
+          </Button>
+          <Button
+            isDisabled={history.length === 0}
+            startContent={<Copy size={15} />}
+            variant="flat"
+            onPress={copyResult}
+          >
+            复制结果
+          </Button>
         </div>
       </header>
 
-      <section className="grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <Card
-          className="self-start border border-divider shadow-none xl:sticky xl:top-5"
-          radius="sm"
-        >
-          <CardBody className="gap-5 p-4 sm:p-5">
+      <Card className="overflow-hidden border border-transparent dark:border-default-100">
+        <CardBody className="gap-6 p-5 sm:p-8">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            {readouts.map((item) => (
+              <div
+                key={item.key}
+                className={`rounded-2xl px-4 py-3 transition-colors duration-300 ${item.active ? "bg-default-100 dark:bg-default-100/80" : ""}`}
+              >
+                <div
+                  className={`flex items-center gap-1.5 text-sm font-medium ${item.tone}`}
+                >
+                  {item.icon}
+                  {item.label}
+                  <span className="text-xs font-normal text-default-400">
+                    {item.unit}
+                  </span>
+                </div>
+                <div className="mt-1 h-10 text-3xl font-bold tabular-nums text-foreground">
+                  {item.value ??
+                    (item.active ? (
+                      <span className="inline-flex gap-1 pt-3">
+                        <span className="h-2 w-2 animate-bounce rounded-full bg-default-400 [animation-delay:-0.3s]" />
+                        <span className="h-2 w-2 animate-bounce rounded-full bg-default-400 [animation-delay:-0.15s]" />
+                        <span className="h-2 w-2 animate-bounce rounded-full bg-default-400" />
+                      </span>
+                    ) : (
+                      <span className="text-default-300">—</span>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col items-center gap-4">
+            {running ? (
+              <>
+                <SpeedGauge
+                  label={phaseLabel}
+                  mbps={
+                    phase === "download" || phase === "upload" ? currentMbps : 0
+                  }
+                  mode={
+                    phase === "upload"
+                      ? "upload"
+                      : phase === "download"
+                        ? "download"
+                        : "idle"
+                  }
+                />
+                <Button
+                  radius="full"
+                  startContent={<Square size={14} />}
+                  variant="flat"
+                  onPress={stop}
+                >
+                  停止
+                </Button>
+              </>
+            ) : (
+              <>
+                <GoButton label={hasResult ? "再测" : "开始"} onPress={run} />
+                {hasResult && (
+                  <Button
+                    radius="full"
+                    size="sm"
+                    startContent={<RotateCcw size={14} />}
+                    variant="light"
+                    onPress={reset}
+                  >
+                    清空结果
+                  </Button>
+                )}
+              </>
+            )}
+            {error && (
+              <p className="rounded-xl bg-danger-50 px-4 py-2 text-sm text-danger dark:bg-danger-500/10">
+                {error}
+              </p>
+            )}
+          </div>
+
+          {chartData.length > 0 && (
+            <div className="h-24 w-full">
+              <ResponsiveContainer height="100%" width="100%">
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 4, right: 0, left: 0, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="speed-down" x1="0" x2="0" y1="0" y2="1">
+                      <stop
+                        offset="5%"
+                        stopColor="#3b82f6"
+                        stopOpacity={0.35}
+                      />
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="speed-up" x1="0" x2="0" y1="0" y2="1">
+                      <stop
+                        offset="5%"
+                        stopColor="#8b5cf6"
+                        stopOpacity={0.35}
+                      />
+                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="name" hide />
+                  <YAxis hide />
+                  <Tooltip
+                    formatter={(value) => formatSpeed(Number(value))}
+                    labelFormatter={(value) => `时间 ${value}`}
+                  />
+                  <Area
+                    dataKey="download"
+                    fill="url(#speed-down)"
+                    isAnimationActive={false}
+                    name="下载"
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    type="monotone"
+                  />
+                  <Area
+                    dataKey="upload"
+                    fill="url(#speed-up)"
+                    isAnimationActive={false}
+                    name="上传"
+                    stroke="#8b5cf6"
+                    strokeWidth={2}
+                    type="monotone"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          <div className="grid gap-3 border-t border-divider pt-5 sm:grid-cols-2">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Globe2 className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs text-default-500">你的网络</p>
+                <p className="truncate font-medium text-foreground">
+                  {edgeMeta?.asn
+                    ? `AS${edgeMeta.asn}`
+                    : edgeMeta?.ip
+                      ? "公网出口"
+                      : "开始测速后显示"}
+                </p>
+                <p className="truncate font-mono text-xs text-default-500">
+                  {edgeMeta?.ip
+                    ? `${edgeMeta.ip}${edgeMeta.ipVersion ? ` · ${edgeMeta.ipVersion}` : ""}`
+                    : "—"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 sm:justify-end sm:text-right">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary/10 text-secondary sm:order-last">
+                <MapPin className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs text-default-500">测速节点</p>
+                <p className="truncate font-medium text-foreground">
+                  Cloudflare{" "}
+                  {[edgeMeta?.colo, edgeMeta?.city || edgeMeta?.country]
+                    .filter(Boolean)
+                    .join(" · ") || ""}
+                </p>
+                <p className="truncate text-xs text-default-500">
+                  {[edgeMeta?.http, edgeMeta?.tls]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
+      <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
+        <Card className="border border-transparent dark:border-default-100">
+          <CardBody className="gap-4 p-5">
+            <div>
+              <h2 className="text-base font-semibold text-foreground">
+                测速明细
+              </h2>
+              <p className="mt-0.5 text-sm text-default-500">
+                单线程结果和 HTTP 层延迟统计
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {summary.map(([label, value]) => renderMetric(label, value))}
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card className="border border-transparent dark:border-default-100">
+          <CardBody className="gap-4 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">
+                  网络质量评分
+                </h2>
+                <p className="mt-0.5 text-sm text-default-500">
+                  Cloudflare 质量引擎的下载、上传、丢包与场景评分
+                </p>
+              </div>
+              <Chip size="sm" variant="flat">
+                {quality?.summary?.packetLoss !== undefined
+                  ? "原生丢包"
+                  : "HTTP 近似丢包"}
+              </Chip>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {(["streaming", "gaming", "rtc"] as const).map((key) => {
+                const label =
+                  key === "streaming"
+                    ? "视频流媒体"
+                    : key === "gaming"
+                      ? "在线游戏"
+                      : "视频通话";
+                const score = quality?.scores?.[key];
+
+                return (
+                  <div
+                    key={key}
+                    className="rounded-xl bg-default-50 px-3 py-3 text-center dark:bg-default-100/60"
+                  >
+                    <p className="text-xs text-default-500">{label}</p>
+                    <p
+                      className={`mt-1 text-xl font-bold ${scoreColor(
+                        score?.classificationName,
+                      )}`}
+                    >
+                      {scoreText(score?.classificationName)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-default-500">
+                      {score ? `${score.points} 分` : "等待测量"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {renderMetric(
+                "下载",
+                formatBps(quality?.summary?.download),
+                <Download className="h-3.5 w-3.5" />,
+              )}
+              {renderMetric(
+                "上传",
+                formatBps(quality?.summary?.upload),
+                <Upload className="h-3.5 w-3.5" />,
+              )}
+              {renderMetric(
+                "丢包",
+                quality?.summary?.packetLoss !== undefined
+                  ? formatPacketLossRatio(quality.summary.packetLoss)
+                  : formatPercent(httpLoss?.lossPercent),
+                <Wifi className="h-3.5 w-3.5" />,
+              )}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card className="border border-transparent dark:border-default-100">
+        <CardBody className="gap-2 p-5">
+          <Tabs aria-label="测速结果明细" color="primary" variant="underlined">
+            <Tab key="history" title="最近测速">
+              {history.length === 0 ? (
+                <div className="flex min-h-24 items-center justify-center text-sm text-default-500">
+                  暂无本机测速记录
+                </div>
+              ) : (
+                <div className="divide-y divide-divider">
+                  {history.map((item) => (
+                    <div
+                      key={item.startedAt}
+                      className="grid gap-2 py-3 text-sm sm:grid-cols-[170px_1fr_1fr_1fr] sm:items-center"
+                    >
+                      <div className="text-default-500">
+                        {new Date(item.startedAt).toLocaleString("zh-CN", {
+                          hour12: false,
+                        })}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Download className="h-4 w-4 text-primary" />
+                        <span className="font-medium">
+                          {formatSpeed(item.download?.averageMbps)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Upload className="h-4 w-4 text-secondary" />
+                        <span className="font-medium">
+                          {formatSpeed(item.upload?.averageMbps)}
+                        </span>
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2 text-default-500">
+                        <Globe2 className="h-4 w-4 shrink-0 text-success" />
+                        <span className="truncate">
+                          {item.meta?.ip || "-"} · {item.meta?.colo || "-"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Tab>
+            <Tab key="download" title="下载分档">
+              {renderQualityPointRows(qualityRows.download)}
+            </Tab>
+            <Tab key="upload" title="上传分档">
+              {renderQualityPointRows(qualityRows.upload)}
+            </Tab>
+          </Tabs>
+        </CardBody>
+      </Card>
+
+      <Modal
+        isOpen={settingsOpen}
+        scrollBehavior="inside"
+        size="lg"
+        onOpenChange={setSettingsOpen}
+      >
+        <ModalContent>
+          <ModalHeader>测速设置</ModalHeader>
+          <ModalBody className="gap-5 pb-6">
             <div className="space-y-2">
               <p className="text-xs font-medium uppercase tracking-wide text-default-500">
                 测速档位
@@ -1352,360 +1752,16 @@ export default function ClientSpeedTestPage() {
                 </Select>
               )}
             </div>
-
-            <div className="space-y-3 border-t border-divider pt-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-default-500">
-                操作
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  color="primary"
-                  isDisabled={running}
-                  startContent={<Play size={17} />}
-                  onPress={run}
-                >
-                  开始测速
-                </Button>
-                <Button
-                  isDisabled={!running}
-                  startContent={<Square size={16} />}
-                  variant="flat"
-                  onPress={stop}
-                >
-                  停止
-                </Button>
-                <Button
-                  startContent={<RotateCcw size={16} />}
-                  variant="light"
-                  onPress={reset}
-                >
-                  重置
-                </Button>
-              </div>
-            </div>
-
-            {qualityPhase && phase === "quality" && (
-              <p className="border border-secondary-200 bg-secondary-50 px-3 py-2 text-sm text-secondary-700 dark:border-secondary-500/20 dark:bg-secondary-500/10">
-                Cloudflare质量测量：{qualityPhase}
-              </p>
-            )}
-            {error && (
-              <p className="border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger dark:border-danger-500/20 dark:bg-danger-500/10">
-                {error}
-              </p>
-            )}
-            <div className="flex gap-2 border border-warning-200 bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700 dark:border-warning-500/20 dark:bg-warning-500/10">
+            <div className="flex gap-2 rounded-xl bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700 dark:bg-warning-500/10">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
-                HTTP失败率来自浏览器请求失败/超时统计；严格 UDP 丢包需要 TURN
-                服务，后续可在资源中心接入。
+                HTTP 失败率来自浏览器请求失败/超时统计；严格 UDP 丢包需要 TURN
+                服务。
               </span>
             </div>
-          </CardBody>
-        </Card>
-
-        <div className="space-y-5">
-          <Card className="border border-divider shadow-none" radius="sm">
-            <CardBody className="gap-5 p-4 sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm text-default-500">
-                    {phase === "metadata"
-                      ? "读取网络身份"
-                      : phase === "latency"
-                        ? "延迟探测中"
-                        : phase === "download"
-                          ? "单线程下载中"
-                          : phase === "upload"
-                            ? "单线程上传中"
-                            : phase === "quality"
-                              ? "Cloudflare质量测量中"
-                              : phase === "done"
-                                ? "最近结果"
-                                : "等待测速"}
-                  </p>
-                  <p className="mt-2 text-4xl font-semibold tracking-normal sm:text-5xl">
-                    {formatSpeed(displaySpeed)}
-                  </p>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
-                    右侧集中展示当前结果、曲线、网络身份、质量结果和历史记录。
-                  </p>
-                </div>
-                <div className="flex h-16 w-16 items-center justify-center rounded-full border border-divider bg-content2/40">
-                  {phase === "upload" ? (
-                    <Upload className="h-8 w-8 text-secondary" />
-                  ) : phase === "download" ? (
-                    <Download className="h-8 w-8 text-primary" />
-                  ) : phase === "latency" || phase === "quality" ? (
-                    <Wifi className="h-8 w-8 text-success" />
-                  ) : (
-                    <Gauge className="h-8 w-8 text-default-500" />
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                {summary.map(([label, value]) => renderMetric(label, value))}
-              </div>
-            </CardBody>
-          </Card>
-
-          <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
-            <Card className="border border-divider shadow-none" radius="sm">
-              <CardBody className="gap-4 p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-semibold">单线程速度曲线</h2>
-                    <p className="mt-1 text-xs text-default-500">
-                      下载与上传都会画在同一张实时曲线上。
-                    </p>
-                  </div>
-                  <Chip size="sm" variant="flat">
-                    {download?.samples.length || upload?.samples.length || 0} 点
-                  </Chip>
-                </div>
-                <div className="h-64 w-full">
-                  {chartData.length === 0 ? (
-                    <div className="flex h-full items-center justify-center border border-divider text-sm text-default-500">
-                      开始测速后显示实时速度曲线
-                    </div>
-                  ) : (
-                    <ResponsiveContainer height="100%" width="100%">
-                      <AreaChart data={chartData}>
-                        <XAxis
-                          dataKey="name"
-                          minTickGap={28}
-                          tick={{ fontSize: 11 }}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 11 }}
-                          tickFormatter={(value) =>
-                            Number(value) >= 1000
-                              ? `${(Number(value) / 1000).toFixed(1)}G`
-                              : `${Number(value).toFixed(0)}M`
-                          }
-                        />
-                        <Tooltip
-                          formatter={(value) => formatSpeed(Number(value))}
-                          labelFormatter={(value) => `时间 ${value}`}
-                        />
-                        <Area
-                          dataKey="download"
-                          fill="#3b82f6"
-                          fillOpacity={0.18}
-                          name="下载"
-                          stroke="#2563eb"
-                          strokeWidth={2}
-                          type="monotone"
-                        />
-                        <Area
-                          dataKey="upload"
-                          fill="#a855f7"
-                          fillOpacity={0.16}
-                          name="上传"
-                          stroke="#9333ea"
-                          strokeWidth={2}
-                          type="monotone"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </CardBody>
-            </Card>
-
-            <Card className="border border-divider shadow-none" radius="sm">
-              <CardBody className="gap-4 p-4 sm:p-5">
-                <div>
-                  <h2 className="text-sm font-semibold">网络身份</h2>
-                  <p className="mt-1 text-xs text-default-500">
-                    这里显示浏览器连到 Cloudflare 时实际看到的出口信息。
-                  </p>
-                </div>
-                <div className="grid gap-3">
-                  {renderMetric(
-                    "公网IP",
-                    edgeMeta?.ip
-                      ? `${edgeMeta.ip}${edgeMeta.ipVersion ? ` · ${edgeMeta.ipVersion}` : ""}`
-                      : "-",
-                    <Globe2 className="h-3.5 w-3.5" />,
-                  )}
-                  {renderMetric(
-                    "Cloudflare机房",
-                    [edgeMeta?.colo, edgeMeta?.city || edgeMeta?.country]
-                      .filter(Boolean)
-                      .join(" · ") || "-",
-                    <MapPin className="h-3.5 w-3.5" />,
-                  )}
-                  {renderMetric(
-                    "ASN / 协议",
-                    [
-                      edgeMeta?.asn ? `AS${edgeMeta.asn}` : "",
-                      edgeMeta?.http,
-                      edgeMeta?.tls,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "-",
-                    <Activity className="h-3.5 w-3.5" />,
-                  )}
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-
-          <Card className="border border-divider shadow-none" radius="sm">
-            <CardBody className="gap-4 p-4 sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold">Cloudflare 质量结果</h2>
-                  <p className="mt-1 text-xs text-default-500">
-                    Cloudflare 端点补充下载、上传、丢包与流媒体评分。
-                  </p>
-                </div>
-                <Chip size="sm" variant="flat">
-                  {quality?.summary?.packetLoss !== undefined
-                    ? "原生丢包"
-                    : "HTTP近似丢包"}
-                </Chip>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {renderMetric(
-                  "Cloudflare下载",
-                  formatBps(quality?.summary?.download),
-                  <Download className="h-3.5 w-3.5" />,
-                )}
-                {renderMetric(
-                  "Cloudflare上传",
-                  formatBps(quality?.summary?.upload),
-                  <Upload className="h-3.5 w-3.5" />,
-                )}
-                {renderMetric(
-                  quality?.summary?.packetLoss !== undefined
-                    ? "Cloudflare丢包"
-                    : "HTTP近似丢包",
-                  quality?.summary?.packetLoss !== undefined
-                    ? formatPacketLossRatio(quality.summary.packetLoss)
-                    : formatPercent(httpLoss?.lossPercent),
-                  <Wifi className="h-3.5 w-3.5" />,
-                )}
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                {(["streaming", "gaming", "rtc"] as const).map((key) => {
-                  const label =
-                    key === "streaming"
-                      ? "视频流媒体"
-                      : key === "gaming"
-                        ? "在线游戏"
-                        : "视频通话";
-                  const score = quality?.scores?.[key];
-
-                  return (
-                    <div
-                      key={key}
-                      className="border border-divider bg-content2/30 px-3 py-3"
-                    >
-                      <p className="text-xs text-default-500">{label}</p>
-                      <p
-                        className={`mt-2 text-2xl font-semibold ${scoreColor(
-                          score?.classificationName,
-                        )}`}
-                      >
-                        {scoreText(score?.classificationName)}
-                      </p>
-                      <p className="mt-1 text-xs text-default-500">
-                        {score ? `${score.points} 分` : "等待质量测量"}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardBody>
-          </Card>
-
-          <Card className="border border-divider shadow-none" radius="sm">
-            <CardBody className="gap-4 p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold">测量明细与历史</h2>
-                  <p className="mt-1 text-xs text-default-500">
-                    这里放单线程明细和历史记录，按需切换，不再一屏铺满。
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  startContent={<Copy size={15} />}
-                  variant="flat"
-                  onPress={copyResult}
-                >
-                  复制结果
-                </Button>
-              </div>
-              <Tabs
-                aria-label="测速结果明细"
-                classNames={{
-                  tabList: "gap-2",
-                  tab: "h-10 px-4",
-                }}
-                color="primary"
-                variant="underlined"
-              >
-                <Tab key="download" title="下载明细">
-                  <div className="pt-4">
-                    {renderQualityPointRows(qualityRows.download)}
-                  </div>
-                </Tab>
-                <Tab key="upload" title="上传明细">
-                  <div className="pt-4">
-                    {renderQualityPointRows(qualityRows.upload)}
-                  </div>
-                </Tab>
-                <Tab key="history" title="最近测速">
-                  {history.length === 0 ? (
-                    <div className="mt-4 flex min-h-24 items-center justify-center border-y border-divider text-sm text-default-500">
-                      暂无本机测速记录
-                    </div>
-                  ) : (
-                    <div className="mt-4 divide-y divide-divider border-y border-divider">
-                      {history.map((item) => (
-                        <div
-                          key={item.startedAt}
-                          className="grid gap-2 py-3 text-sm lg:grid-cols-[180px_1fr_1fr_1fr]"
-                        >
-                          <div className="text-default-500">
-                            {new Date(item.startedAt).toLocaleString("zh-CN", {
-                              hour12: false,
-                            })}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Activity className="h-4 w-4 text-primary" />
-                            <span>
-                              下载 {formatSpeed(item.download?.averageMbps)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Upload className="h-4 w-4 text-secondary" />
-                            <span>
-                              上传 {formatSpeed(item.upload?.averageMbps)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Globe2 className="h-4 w-4 text-success" />
-                            <span>
-                              {item.meta?.ip || "-"} · {item.meta?.colo || "-"}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Tab>
-              </Tabs>
-            </CardBody>
-          </Card>
-        </div>
-      </section>
-    </div>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+    </PageShell>
   );
 }

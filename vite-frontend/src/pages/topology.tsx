@@ -259,10 +259,10 @@ function TopologyCanvas() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-divider pb-4">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-sm text-default-500">资源关系与故障定位</p>
-          <h1 className="mt-1 text-2xl font-semibold">全链路拓扑</h1>
+          <h1 className="text-2xl font-bold text-foreground">全链路拓扑</h1>
+          <p className="mt-1 text-sm text-default-500">资源关系与故障定位</p>
         </div>
         <div className="flex items-center gap-2">
           <Tabs

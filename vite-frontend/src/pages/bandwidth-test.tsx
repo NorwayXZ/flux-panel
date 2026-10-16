@@ -20,6 +20,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -34,6 +35,9 @@ import {
   type BandwidthTestTask,
   type BandwidthTestTaskInput,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
 type FormState = {
@@ -206,14 +210,13 @@ export default function BandwidthTestPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">实用工具</p>
-          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
+          <h1 className="text-2xl font-bold text-foreground">
             真实带宽测试中心
           </h1>
-          <p className="mt-2 text-sm text-default-500">
+          <p className="mt-1 text-sm text-default-500">
             两台在线 Agent 直接传输真实数据，测试端口仅在本轮测试期间开放。
           </p>
         </div>
@@ -235,55 +238,36 @@ export default function BandwidthTestPage() {
           </Button>
         </div>
       </header>
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          [
-            "测试任务",
-            loading ? "-" : data.summary.total,
-            <Gauge size={18} />,
-            "text-primary bg-primary/10",
-          ],
-          [
-            "运行中",
-            loading ? "-" : data.summary.running,
-            <Activity size={18} />,
-            "text-warning bg-warning/10",
-          ],
-          [
-            "成功 / 失败",
-            loading ? "-" : `${data.summary.success} / ${data.summary.failed}`,
-            <History size={18} />,
-            "text-success bg-success/10",
-          ],
-          [
-            "历史峰值",
-            loading ? "-" : speed(data.summary.peakMbps),
-            <ArrowUp size={18} />,
-            "text-secondary bg-secondary/10",
-          ],
-        ].map(([label, value, icon, tone]) => (
-          <div
-            key={String(label)}
-            className="border border-divider bg-content1 p-4"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-default-500">
-                {label as string}
-              </span>
-              <span
-                className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone}`}
-              >
-                {icon}
-              </span>
-            </div>
-            <p className="mt-3 text-2xl font-semibold">
-              {value as string | number}
-            </p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatsCard
+          color="primary"
+          icon={<Gauge size={20} />}
+          title="测试任务"
+          value={loading ? "-" : data.summary.total}
+        />
+        <StatsCard
+          color="warning"
+          icon={<Activity size={20} />}
+          title="运行中"
+          value={loading ? "-" : data.summary.running}
+        />
+        <StatsCard
+          color="success"
+          icon={<History size={20} />}
+          title="成功 / 失败"
+          value={
+            loading ? "-" : `${data.summary.success} / ${data.summary.failed}`
+          }
+        />
+        <StatsCard
+          color="secondary"
+          icon={<ArrowUp size={20} />}
+          title="历史峰值"
+          value={loading ? "-" : speed(data.summary.peakMbps)}
+        />
       </section>
       {data.tasks.length === 0 && !loading ? (
-        <div className="flex min-h-72 flex-col items-center justify-center gap-3 border-y border-divider text-default-400">
+        <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-400">
           <Gauge size={36} />
           <p>尚未创建真实带宽测试</p>
           <Button size="sm" variant="flat" onPress={openCreate}>
@@ -291,152 +275,119 @@ export default function BandwidthTestPage() {
           </Button>
         </div>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-2">
+        <ResourceCardGrid>
           {data.tasks.map((task) => {
             const state = stateMeta(task);
             const udp = task.protocol === "udp";
+            const running = bool(task.running);
 
             return (
-              <article
+              <ResourceCard
                 key={task.id}
-                className="border border-divider bg-content1 p-4 sm:p-5"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate font-semibold">{task.name}</h2>
-                      <Chip color={state.color} size="sm" variant="flat">
-                        {state.label}
-                      </Chip>
-                      <Chip size="sm" variant="flat">
-                        {(task.protocol || "tcp").toUpperCase()} ·{" "}
-                        {directionText(task.direction)} · {task.streams} 流
-                      </Chip>
-                    </div>
-                    <p className="mt-2 truncate text-sm text-default-500">
-                      {task.sourceNodeName} → {task.targetNodeName}:
-                      {task.listenPort}
-                    </p>
-                    <p className="mt-1 text-xs text-default-400">
-                      {task.durationSeconds} 秒 · 最多 {task.maximumMegabytes}{" "}
-                      MB · Agent {data.minimumAgentVersion}+
-                    </p>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      isIconOnly
-                      isDisabled={bool(task.running)}
-                      isLoading={busy === `run-${task.id}`}
-                      size="sm"
-                      title="开始测试"
-                      variant="light"
-                      onPress={() => void run(task)}
-                    >
-                      <Play size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      isLoading={busy === `history-${task.id}`}
-                      size="sm"
-                      title="历史结果"
-                      variant="light"
-                      onPress={() => void history(task)}
-                    >
-                      <History size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      isDisabled={bool(task.running)}
-                      size="sm"
-                      title="编辑"
-                      variant="light"
-                      onPress={() => openEdit(task)}
-                    >
-                      <Pencil size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      color="danger"
-                      isDisabled={bool(task.running)}
-                      isLoading={busy === `delete-${task.id}`}
-                      size="sm"
-                      title="删除"
-                      variant="light"
-                      onPress={() => void remove(task)}
-                    >
-                      <Trash2 size={16} />
-                    </Button>
-                  </div>
-                </div>
-                <div className="mt-4 grid grid-cols-3 divide-x divide-divider border-y border-divider py-3 text-center">
-                  <div>
-                    <p className="text-xs text-default-500">上传</p>
-                    <p className="mt-1 font-semibold">
-                      {speed(task.uploadMbps)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">下载</p>
-                    <p className="mt-1 font-semibold">
-                      {speed(task.downloadMbps)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">总吞吐</p>
-                    <p className="mt-1 font-semibold">
-                      {speed(task.totalMbps)}
-                    </p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 divide-x divide-divider border-b border-divider py-3 text-center">
-                  <div>
-                    <p className="text-xs text-default-500">
-                      {udp ? "丢包率" : "RTT"}
-                    </p>
-                    <p className="mt-1 text-sm font-medium">
-                      {udp
-                        ? percentText(task.packetLossPercent)
-                        : latencyText(task.rttMs)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">
-                      {udp ? "抖动" : "重传率"}
-                    </p>
-                    <p className="mt-1 text-sm font-medium">
-                      {udp
-                        ? latencyText(task.jitterMs)
-                        : percentText(task.retransmissionRate)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">
-                      {udp ? "乱序包" : "重传次数"}
-                    </p>
-                    <p className="mt-1 text-sm font-medium">
-                      {udp
-                        ? Number(task.outOfOrderPackets || 0).toLocaleString()
-                        : Number(task.retransmits || 0).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-start justify-between gap-3 text-xs text-default-500">
-                  <span>
-                    {timeText(task.latestStartedAt || task.lastRunAt)}
-                  </span>
-                  {task.lastError && (
-                    <span
-                      className="max-w-[65%] truncate text-danger"
-                      title={task.lastError}
-                    >
-                      {task.lastError}
-                    </span>
-                  )}
-                </div>
-              </article>
+                actions={[
+                  {
+                    label: "开始",
+                    icon: <Play size={14} />,
+                    color: "primary",
+                    isDisabled: running,
+                    isLoading: busy === `run-${task.id}`,
+                    onPress: () => void run(task),
+                  },
+                  {
+                    label: "历史",
+                    icon: <History size={14} />,
+                    isLoading: busy === `history-${task.id}`,
+                    onPress: () => void history(task),
+                  },
+                  {
+                    label: "编辑",
+                    icon: <Pencil size={14} />,
+                    isDisabled: running,
+                    onPress: () => openEdit(task),
+                  },
+                  {
+                    label: "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    isDisabled: running,
+                    isLoading: busy === `delete-${task.id}`,
+                    onPress: () => void remove(task),
+                  },
+                ]}
+                blocks={[
+                  {
+                    label: "吞吐",
+                    rows: [
+                      { label: "上传", value: speed(task.uploadMbps) },
+                      { label: "下载", value: speed(task.downloadMbps) },
+                      { label: "总计", value: speed(task.totalMbps) },
+                    ],
+                  },
+                ]}
+                chips={[
+                  {
+                    text: `${(task.protocol || "tcp").toUpperCase()} · ${directionText(task.direction)} · ${task.streams} 流`,
+                    color: "primary",
+                  },
+                ]}
+                danger={state.color === "danger"}
+                facts={
+                  udp
+                    ? [
+                        {
+                          label: "丢包率",
+                          value: percentText(task.packetLossPercent),
+                        },
+                        { label: "抖动", value: latencyText(task.jitterMs) },
+                        {
+                          label: "乱序包",
+                          value: Number(
+                            task.outOfOrderPackets || 0,
+                          ).toLocaleString(),
+                        },
+                        {
+                          label: "最近运行",
+                          value: timeText(task.latestStartedAt || task.lastRunAt),
+                        },
+                      ]
+                    : [
+                        { label: "RTT", value: latencyText(task.rttMs) },
+                        {
+                          label: "重传率",
+                          value: percentText(task.retransmissionRate),
+                        },
+                        {
+                          label: "重传次数",
+                          value: Number(task.retransmits || 0).toLocaleString(),
+                        },
+                        {
+                          label: "最近运行",
+                          value: timeText(task.latestStartedAt || task.lastRunAt),
+                        },
+                      ]
+                }
+                notice={
+                  task.lastError
+                    ? {
+                        icon: <TriangleAlert size={14} />,
+                        label: "最近错误",
+                        value: (
+                          <span title={task.lastError}>{task.lastError}</span>
+                        ),
+                        tone: "danger",
+                      }
+                    : undefined
+                }
+                status={{ text: state.label, color: state.color }}
+                subtitles={[
+                  `${task.sourceNodeName} → ${task.targetNodeName}:${task.listenPort}`,
+                  `${task.durationSeconds} 秒 · 最多 ${task.maximumMegabytes} MB`,
+                ]}
+                title={task.name}
+              />
             );
           })}
-        </section>
+        </ResourceCardGrid>
       )}
 
       <Modal isOpen={formOpen} size="2xl" onOpenChange={setFormOpen}>
@@ -688,6 +639,6 @@ export default function BandwidthTestPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }

@@ -459,11 +459,10 @@ export default function SourceIpEntryPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">不依赖 DNS 的入口规则引擎</p>
-          <h1 className="mt-1 text-2xl font-semibold">来源 IP 分流</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">来源 IP 分流</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             一个公网入口端口按客户端真实来源 IP
             选择运营商、地区、ASN、VIP、客户专线、灰度或风险隔离线路。它不依赖客户端
             DNS，也不会终止 VLESS、Reality、Trojan 等上层协议。
@@ -696,7 +695,7 @@ export default function SourceIpEntryPage() {
             </div>
           </div>
         </article>
-        <article className="border border-divider bg-content1 p-4 sm:p-5">
+        <article className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4 sm:p-5">
           <div className="flex items-start gap-3">
             <ShieldCheck className="mt-0.5 shrink-0 text-secondary" size={19} />
             <div>
@@ -727,7 +726,7 @@ export default function SourceIpEntryPage() {
           {(data?.capabilities || []).map((item, index) => (
             <article
               key={item.key}
-              className="border border-divider bg-content1 p-4"
+              className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4"
             >
               <div className="flex items-center justify-between gap-3">
                 {index === 0 ? (
@@ -767,7 +766,7 @@ export default function SourceIpEntryPage() {
             诊断工具
           </Chip>
         </div>
-        <div className="border border-divider bg-content1 p-4 sm:p-5">
+        <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4 sm:p-5">
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_220px_auto]">
             <Input
               label="来源 IP"

@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
+import PageShell from "@/components/page-shell";
+
 import {
   getNodeList,
   runNetworkDiagnostic,
@@ -77,13 +79,15 @@ export default function NetworkToolsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-5 p-4 md:p-6">
-      <header className="border-b border-divider pb-5">
-        <p className="text-sm text-default-500">实用工具</p>
-        <h1 className="mt-1 text-2xl font-semibold">网络诊断</h1>
+    <PageShell className="space-y-5">
+      <header>
+        <h1 className="text-2xl font-bold text-foreground">网络诊断</h1>
+        <p className="mt-1 text-sm text-default-500">
+          从指定节点执行 Ping、TCP 连接和 DNS 解析
+        </p>
       </header>
       <section className="grid gap-5 lg:grid-cols-[420px_1fr]">
-        <div className="space-y-4 rounded-lg border border-divider p-4">
+        <div className="space-y-4 rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-5">
           <Select
             label="执行节点"
             placeholder="选择在线节点"
@@ -172,7 +176,7 @@ export default function NetworkToolsPage() {
           </Button>
         </div>
 
-        <div className="min-h-[420px] overflow-hidden rounded-lg border border-divider">
+        <div className="min-h-[420px] overflow-hidden rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100">
           <div className="flex min-h-14 items-center justify-between gap-3 border-b border-divider px-4">
             <div className="flex items-center gap-2">
               <Activity className="text-primary" size={18} />
@@ -224,6 +228,6 @@ export default function NetworkToolsPage() {
           )}
         </div>
       </section>
-    </div>
+    </PageShell>
   );
 }

@@ -237,11 +237,10 @@ export default function PortResourcesPage() {
   return (
     <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
-      <header className="flex items-end justify-between border-b border-divider pb-5">
+      <header className="flex items-end justify-between">
         <div>
-          <p className="text-sm text-default-500">资源中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">资源中心</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">资源中心</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             统一管理端口、域名、DDNS、AWS
             凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。
           </p>
@@ -298,7 +297,7 @@ export default function PortResourcesPage() {
           <Spinner />
         </div>
       ) : pools.length === 0 ? (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <Boxes size={30} />
           <span>暂无端口池</span>
         </div>

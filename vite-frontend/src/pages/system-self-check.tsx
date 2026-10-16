@@ -10,6 +10,8 @@ import {
   SearchCheck,
   TriangleAlert,
   XCircle,
+  ListChecks,
+  SkipForward,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -21,6 +23,8 @@ import {
   type SystemSelfCheckFinding,
   type SystemSelfCheckOverview,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import StatsCard from "@/components/ui/stats-card";
 
 const statusMeta: Record<
   SelfCheckStatus,
@@ -162,12 +166,11 @@ export default function SystemSelfCheckPage() {
   const run = data?.run;
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-5 p-4 md:p-6">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 lg:flex-row lg:items-end lg:justify-between">
+    <PageShell className="space-y-5" width="wide">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm text-default-500">系统管理</p>
-          <h1 className="mt-1 text-2xl font-semibold">全系统自检中心</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">全系统自检中心</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             服务器节点由 Agent 检查自身配置；Windows、macOS、Linux 接入设备由
             Connector 检查本机
             DNS、IPv4/IPv6、默认路由，以及到面板和已登记入口端口的实际 TCP
@@ -198,26 +201,41 @@ export default function SystemSelfCheckPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 border-y border-divider sm:grid-cols-5">
-        {[
-          ["检查项", run?.totalChecks || 0, "text-foreground"],
-          ["正常", run?.healthyCount || 0, "text-success"],
-          ["注意", run?.warningCount || 0, "text-warning"],
-          ["故障", run?.failedCount || 0, "text-danger"],
-          ["跳过", run?.skippedCount || 0, "text-default-500"],
-        ].map(([label, value, color], index) => (
-          <div
-            key={String(label)}
-            className={`px-4 py-4 ${index > 0 ? "border-l border-divider" : ""}`}
-          >
-            <p className="text-xs text-default-500">{label}</p>
-            <p className={`mt-1 text-2xl font-semibold ${color}`}>{value}</p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <StatsCard
+          color="primary"
+          icon={<ListChecks size={20} />}
+          title="检查项"
+          value={run?.totalChecks || 0}
+        />
+        <StatsCard
+          color="success"
+          icon={<CircleCheck size={20} />}
+          title="正常"
+          value={run?.healthyCount || 0}
+        />
+        <StatsCard
+          color="warning"
+          icon={<TriangleAlert size={20} />}
+          title="注意"
+          value={run?.warningCount || 0}
+        />
+        <StatsCard
+          color="danger"
+          icon={<XCircle size={20} />}
+          title="故障"
+          value={run?.failedCount || 0}
+        />
+        <StatsCard
+          color="default"
+          icon={<SkipForward size={20} />}
+          title="跳过"
+          value={run?.skippedCount || 0}
+        />
       </section>
 
       {run && (
-        <section className="flex flex-col gap-3 border-b border-divider pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <section className="flex flex-col gap-3 rounded-large border border-transparent bg-content1 px-5 py-4 shadow-small dark:border-default-100 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             {run.status === "running" ? (
               <RefreshCw className="animate-spin text-primary" size={18} />
@@ -358,7 +376,7 @@ export default function SystemSelfCheckPage() {
           </div>
         )}
       </section>
-    </div>
+    </PageShell>
   );
 }
 

@@ -266,11 +266,10 @@ export default function DockerAppsPage() {
     <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">接入与发布</p>
-          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
+          <h1 className="text-2xl font-bold text-foreground">
             Docker 应用中心
           </h1>
-          <p className="mt-2 text-sm text-default-500">
+          <p className="mt-1 text-sm text-default-500">
             识别节点
             Docker，一键部署常用应用，并保留升级、备份、迁移和回退操作记录。
           </p>

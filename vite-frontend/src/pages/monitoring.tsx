@@ -51,6 +51,7 @@ import {
   type MonitoringStatus,
   type TelegramNotificationSettings,
 } from "@/api";
+import StatsCard from "@/components/ui/stats-card";
 import { notifyAlertCountChanged } from "@/hooks/use-alert-unread-count";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 
@@ -373,7 +374,7 @@ export default function MonitoringPage() {
       value: overview.summary.openAlerts,
       meta: `${overview.summary.unreadAlerts} 条未读`,
       icon: <BellRing className="h-5 w-5" />,
-      tone: "text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-500/10",
+      color: "warning" as const,
     },
     {
       label: "严重告警",
@@ -381,43 +382,40 @@ export default function MonitoringPage() {
       meta:
         overview.summary.criticalAlerts > 0 ? "需要立即处理" : "当前无严重故障",
       icon: <AlertTriangle className="h-5 w-5" />,
-      tone: "text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-500/10",
+      color: "danger" as const,
     },
     {
       label: "健康资源",
       value: `${overview.summary.healthy}/${overview.summary.totalResources}`,
       meta: `${overview.summary.degraded} 个性能下降`,
       icon: <CircleCheck className="h-5 w-5" />,
-      tone: "text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-500/10",
+      color: "success" as const,
     },
     {
       label: "综合在线率",
       value: `${overview.summary.availability.toFixed(2)}%`,
       meta: RANGE_LABELS[range],
       icon: <Clock3 className="h-5 w-5" />,
-      tone: "text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-500/10",
+      color: "primary" as const,
     },
   ];
 
   return (
-    <div className="min-h-full bg-gray-100 px-3 py-4 dark:bg-black sm:px-5 lg:px-7 lg:py-6">
-      <div className="mx-auto max-w-[1500px] space-y-5">
+    <div className="mx-auto w-full max-w-[1680px] px-4 pb-4 pt-5 sm:px-6 sm:pt-8">
+      <div className="space-y-5">
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-medium text-default-500">运行状态</p>
-            <h1 className="mt-1 text-2xl font-semibold text-foreground">
-              告警中心
-            </h1>
+            <h1 className="text-2xl font-bold text-foreground">告警中心</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-950">
+            <div className="inline-flex rounded-xl bg-default-100 p-1">
               {(Object.keys(RANGE_LABELS) as MonitoringRange[]).map((item) => (
                 <button
                   key={item}
                   className={`min-h-9 rounded-md px-3 text-sm font-medium transition-colors ${
                     range === item
-                      ? "bg-gray-900 text-white dark:bg-white dark:text-black"
-                      : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-default-600 hover:bg-default-200/60"
                   }`}
                   type="button"
                   onClick={() => setRange(item)}
@@ -444,39 +442,20 @@ export default function MonitoringPage() {
           className="grid grid-cols-2 gap-3 lg:grid-cols-4"
         >
           {summaryCards.map((card) => (
-            <Card
+            <StatsCard
               key={card.label}
-              className="border border-gray-200 dark:border-gray-800 dark:bg-gray-950"
-              radius="sm"
-              shadow="sm"
-            >
-              <CardBody className="gap-3 p-4 sm:p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-default-500">
-                    {card.label}
-                  </span>
-                  <span
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg ${card.tone}`}
-                  >
-                    {card.icon}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-2xl font-semibold text-foreground sm:text-3xl">
-                    {loading ? "-" : card.value}
-                  </p>
-                  <p className="mt-1 truncate text-xs text-default-500 sm:text-sm">
-                    {card.meta}
-                  </p>
-                </div>
-              </CardBody>
-            </Card>
+              color={card.color}
+              hint={card.meta}
+              icon={card.icon}
+              title={card.label}
+              value={loading ? "-" : card.value}
+            />
           ))}
         </section>
 
         <section
           aria-label="在线率趋势"
-          className="border-y border-gray-200 bg-white px-3 py-5 dark:border-gray-800 dark:bg-gray-950 sm:px-5"
+          className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-5"
         >
           <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -586,9 +565,9 @@ export default function MonitoringPage() {
 
         <section className="space-y-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="inline-flex w-fit rounded-lg bg-gray-200/70 p-1 dark:bg-gray-900">
+            <div className="inline-flex w-fit rounded-xl bg-default-100 p-1">
               <button
-                className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "alerts" ? "bg-white shadow-sm dark:bg-gray-800" : "text-default-500"}`}
+                className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "alerts" ? "bg-content1 shadow-sm" : "text-default-500"}`}
                 type="button"
                 onClick={() => setView("alerts")}
               >
@@ -597,7 +576,7 @@ export default function MonitoringPage() {
                   `(${overview.summary.openAlerts})`}
               </button>
               <button
-                className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "resources" ? "bg-white shadow-sm dark:bg-gray-800" : "text-default-500"}`}
+                className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "resources" ? "bg-content1 shadow-sm" : "text-default-500"}`}
                 type="button"
                 onClick={() => setView("resources")}
               >
@@ -605,7 +584,7 @@ export default function MonitoringPage() {
               </button>
               {isAdmin && (
                 <button
-                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "notifications" ? "bg-white shadow-sm dark:bg-gray-800" : "text-default-500"}`}
+                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "notifications" ? "bg-content1 shadow-sm" : "text-default-500"}`}
                   type="button"
                   onClick={() => setView("notifications")}
                 >
@@ -614,7 +593,7 @@ export default function MonitoringPage() {
               )}
               {isAdmin && (
                 <button
-                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "timing" ? "bg-white shadow-sm dark:bg-gray-800" : "text-default-500"}`}
+                  className={`min-h-9 rounded-md px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === "timing" ? "bg-content1 shadow-sm" : "text-default-500"}`}
                   type="button"
                   onClick={() => setView("timing")}
                 >
@@ -705,7 +684,7 @@ function ApiTimingPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 border-y border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-950 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-semibold text-foreground">慢接口自动排名</h2>
           <p className="mt-1 text-sm text-default-500">
@@ -728,10 +707,8 @@ function ApiTimingPanel({
         {summaryCards.map(([label, value, detail]) => (
           <Card
             key={String(label)}
-            className="border border-gray-200 dark:border-gray-800 dark:bg-gray-950"
-            radius="sm"
-            shadow="sm"
-          >
+            className="border border-transparent dark:border-default-100"
+                      >
             <CardBody className="p-4">
               <div className="text-sm text-default-500">{label}</div>
               <div className="mt-2 text-2xl font-semibold text-foreground">
@@ -744,11 +721,11 @@ function ApiTimingPanel({
       </div>
 
       {loading && data.routes.length === 0 ? (
-        <div className="flex min-h-48 items-center justify-center border-y border-divider bg-content1">
+        <div className="flex min-h-48 items-center justify-center rounded-xl border border-dashed border-divider bg-content1">
           <Spinner />
         </div>
       ) : data.routes.length === 0 ? (
-        <div className="flex min-h-48 flex-col items-center justify-center gap-2 border-y border-divider bg-content1 text-default-500">
+        <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-content1 text-default-500">
           <Clock3 className="h-7 w-7" />
           <span>当前窗口还没有接口请求样本</span>
         </div>
@@ -928,7 +905,7 @@ function NotificationSettings() {
   ];
 
   return (
-    <div className="overflow-hidden border-y border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+    <div className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100">
       <div className="flex flex-col gap-4 border-b border-divider px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div>
           <h2 className="font-semibold text-foreground">Telegram 通知</h2>
@@ -1140,7 +1117,7 @@ function AlertList(props: AlertListProps) {
     Math.ceil(props.alerts.total / props.alerts.size),
   );
   const controlClass =
-    "h-10 rounded-md border border-gray-200 bg-white px-3 text-sm text-foreground outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-950";
+    "h-10 rounded-xl border border-default-200 bg-default-50 px-3 text-sm text-foreground outline-none focus:border-primary dark:bg-default-100/60";
 
   return (
     <div className="space-y-3">
@@ -1217,7 +1194,7 @@ function AlertList(props: AlertListProps) {
         </form>
       </div>
 
-      <div className="overflow-hidden border-y border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 sm:rounded-md sm:border">
+      <div className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100">
         {props.alerts.items.length === 0 ? (
           <div className="flex min-h-48 flex-col items-center justify-center px-4 text-center text-default-500">
             <CircleCheck className="mb-3 h-8 w-8 text-emerald-500" />
@@ -1229,8 +1206,8 @@ function AlertList(props: AlertListProps) {
           props.alerts.items.map((alert, index) => (
             <button
               key={alert.id}
-              className={`grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-900/70 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center ${
-                index > 0 ? "border-t border-gray-100 dark:border-gray-800" : ""
+              className={`grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-default-50 dark:hover:bg-default-100/50 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center ${
+                index > 0 ? "border-t border-divider" : ""
               } ${!alert.read ? "bg-blue-50/45 dark:bg-blue-500/5" : ""}`}
               type="button"
               onClick={() => props.onRead(alert)}
@@ -1331,8 +1308,8 @@ function ResourceList({
   range: MonitoringRange;
 }) {
   return (
-    <div className="overflow-hidden border-y border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950 sm:rounded-md sm:border">
-      <div className="hidden grid-cols-[minmax(180px,1.4fr)_100px_minmax(170px,1fr)_110px_90px] gap-4 border-b border-gray-200 px-4 py-3 text-xs font-semibold text-default-500 dark:border-gray-800 lg:grid">
+    <div className="overflow-hidden rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100">
+      <div className="hidden grid-cols-[minmax(180px,1.4fr)_100px_minmax(170px,1fr)_110px_90px] gap-4 border-b border-divider px-4 py-3 text-xs font-semibold text-default-500 lg:grid">
         <span>资源</span>
         <span>状态</span>
         <span>说明</span>
@@ -1348,11 +1325,11 @@ function ResourceList({
           <div
             key={`${resource.type}-${resource.id}`}
             className={`grid gap-3 px-4 py-4 lg:grid-cols-[minmax(180px,1.4fr)_100px_minmax(170px,1fr)_110px_90px] lg:items-center lg:gap-4 ${
-              index > 0 ? "border-t border-gray-100 dark:border-gray-800" : ""
+              index > 0 ? "border-t border-divider" : ""
             }`}
           >
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-600 dark:bg-gray-900 dark:text-gray-300">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-default-100 text-default-600">
                 {resourceIcon(resource.type)}
               </span>
               <span className="min-w-0">
@@ -1384,7 +1361,7 @@ function ResourceList({
               <p className="text-sm font-semibold text-foreground">
                 {resource.availability.toFixed(2)}%
               </p>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded bg-gray-100 dark:bg-gray-800">
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded bg-default-100">
                 <div
                   className={`h-full rounded ${resource.availability >= 99 ? "bg-emerald-500" : resource.availability >= 95 ? "bg-amber-400" : "bg-rose-500"}`}
                   style={{

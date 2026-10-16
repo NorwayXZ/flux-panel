@@ -482,11 +482,10 @@ export default function HomeAccessPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">接入与发布</p>
-          <h1 className="mt-1 text-2xl font-semibold">家庭网络中转</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">家庭网络中转</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             公司设备连接这里生成的 SOCKS5
             地址后，流量会先经过家庭宽带，再从指定服务器或已有隧道访问目标地址。家庭到出口可选择轻量
             SOCKS5，或使用 VLESS + REALITY 保护跨境首跳。
@@ -553,7 +552,7 @@ export default function HomeAccessPage() {
           <Spinner />
         </div>
       ) : routes.length === 0 ? (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <Home size={32} />
           <span>暂无家庭网络中转</span>
         </div>
@@ -818,7 +817,7 @@ export default function HomeAccessPage() {
         </ResourceCardGrid>
       )}
 
-      <div className="rounded-lg border border-divider bg-content1 px-4 py-4 text-sm leading-6 text-default-500">
+      <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 px-4 py-4 text-sm leading-6 text-default-500">
         <div className="flex items-center gap-2 font-medium text-foreground">
           <Route size={16} /> 使用方式
         </div>

@@ -2418,7 +2418,13 @@ export default function ForwardPage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between mb-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">转发管理</h1>
+        <p className="mt-1 text-sm text-default-500">
+          入口端口经隧道转发到落地地址，支持单线路、主备、低延迟和多线路策略
+        </p>
+      </div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Chip className="text-xs" color="primary" size="sm" variant="flat">
             {tunnelGroups.length} 个隧道

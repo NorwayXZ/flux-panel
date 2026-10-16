@@ -326,10 +326,9 @@ export default function HomeDevicesPage() {
   return (
     <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">资源中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">家庭设备</h1>
+          <h1 className="text-2xl font-bold text-foreground">家庭设备</h1>
         </div>
         <div className="flex gap-2">
           <Button
@@ -732,7 +731,7 @@ export default function HomeDevicesPage() {
                     </Button>
                   </div>
                   {discovery.services.length === 0 ? (
-                    <div className="flex min-h-36 flex-col items-center justify-center gap-2 border-y border-divider text-default-500">
+                    <div className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-divider text-default-500">
                       <Radar size={26} />
                       <span className="text-sm">暂无候选服务</span>
                     </div>
@@ -741,7 +740,7 @@ export default function HomeDevicesPage() {
                       {discovery.services.map((service) => (
                         <article
                           key={`${service.host}:${service.port}`}
-                          className="rounded-md border border-divider bg-content1 p-4"
+                          className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">

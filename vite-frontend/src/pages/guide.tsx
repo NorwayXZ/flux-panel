@@ -1095,11 +1095,10 @@ export default function GuidePage() {
 
   return (
     <div className="mx-auto w-full max-w-[1560px] space-y-6 p-4 md:p-6">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm text-default-500">帮助中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">使用教程</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-default-500">
+          <h1 className="text-2xl font-bold text-foreground">使用教程</h1>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
             从节点接入到入口容灾，按真实依赖关系了解每个模块为什么存在、如何配置，以及配置完成后会得到什么。
           </p>
         </div>
@@ -1216,7 +1215,7 @@ export default function GuidePage() {
 
         <main className="min-w-0">
           {filteredEntries.length === 0 ? (
-            <div className="flex min-h-64 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+            <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
               <BookOpen size={30} />
               <p>没有找到相关教程</p>
               <Button

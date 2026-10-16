@@ -793,10 +793,9 @@ export default function PrivateProxyPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">独立服务</p>
-          <h1 className="mt-1 text-2xl font-semibold">私人代理</h1>
+          <h1 className="text-2xl font-bold text-foreground">私人代理</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           {isAdmin && hasResidentialExit && (
@@ -851,7 +850,7 @@ export default function PrivateProxyPage() {
           <Spinner />
         </div>
       ) : items.length === 0 ? (
-        <div className="flex min-h-40 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+        <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <ShieldCheck size={30} />
           <span>暂无私人代理</span>
         </div>

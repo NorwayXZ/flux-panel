@@ -660,9 +660,9 @@ export default function PrivateNetworkPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-divider pb-5">
+      <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">内网组建与出口</h1>
+          <h1 className="text-2xl font-bold text-foreground">内网组建与出口</h1>
           <p className="mt-1 text-sm text-default-500">
             先把能走内网的服务器组起来，再创建“本地连 B，C/D
             出口”的代理入口。能走内网的跳点优先走内网，减少公网绕路和双边流量。
@@ -706,7 +706,7 @@ export default function PrivateNetworkPage() {
         {scenarioGuides.map((item, index) => (
           <div
             key={item.title}
-            className="border border-divider bg-content1 p-4"
+            className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4"
           >
             <div className="flex items-center gap-2">
               <Chip
@@ -729,7 +729,7 @@ export default function PrivateNetworkPage() {
       </section>
 
       <section className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="border border-divider bg-content1 p-4">
+        <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4">
           <div className="flex items-center gap-2 font-medium">
             <BookOpen size={17} />
             最常用玩法
@@ -754,7 +754,7 @@ export default function PrivateNetworkPage() {
             这一跳选择内网。C→D 没有内网时继续走公网，有内网也可以继续选择内网。
           </p>
         </div>
-        <div className="border border-divider bg-content1 p-4">
+        <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4">
           <div className="font-medium">它解决什么问题</div>
           <ul className="mt-3 space-y-2 text-sm leading-6 text-default-500">
             <li>避免本来可以内网互通的 B、C 继续走公网绕路。</li>
@@ -789,7 +789,7 @@ export default function PrivateNetworkPage() {
           <h2 className="font-semibold">Agent 自动组网</h2>
         </div>
         {automatic.networks.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider py-8 text-center text-sm text-default-500">
             <p>
               还没有自动组网。没有云厂商内网时，用它自动创建 WireGuard
               虚拟内网。
@@ -964,7 +964,7 @@ export default function PrivateNetworkPage() {
           <h2 className="font-semibold">原生 VPC、云骨干与专线</h2>
         </div>
         {native.groups.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider py-8 text-center text-sm text-default-500">
             <p>
               还没有登记原生内网。如果 B、C 已在同一
               VPC、云骨干或专线里，先把它们的内网 IP 登记进来。
@@ -1115,7 +1115,7 @@ export default function PrivateNetworkPage() {
           <h2 className="font-semibold">代理出口应用</h2>
         </div>
         {applications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 border-y border-divider py-8 text-center text-sm text-default-500">
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider py-8 text-center text-sm text-default-500">
             <p>
               还没有出口应用。创建后，本地只连接 B 入口端口，最终由 C 或 D
               访问网站。

@@ -1882,8 +1882,11 @@ export default function NodePage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex-1" />
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-bold text-foreground">节点管理</h1>
+          <p className="mt-1 text-sm text-default-500">服务器 Agent 的接入、状态、升级和端口范围</p>
+        </div>
 
         <div className="flex gap-2">
           <div className="flex rounded-medium bg-default-100 p-0.5">
@@ -2356,7 +2359,7 @@ export default function NodePage() {
           </ModalHeader>
           <ModalBody className="pb-6">
             {!discoveryResult && !discoveryLoading && (
-              <div className="flex min-h-56 flex-col items-center justify-center gap-3 border-y border-divider text-default-500">
+              <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
                 <Radar size={30} />
                 <span className="text-sm">点击“开始扫描”读取当前监听服务</span>
               </div>
@@ -2398,7 +2401,7 @@ export default function NodePage() {
                   </div>
                 </div>
                 {discoveryResult.services.length === 0 ? (
-                  <div className="flex min-h-40 items-center justify-center border-y border-divider text-sm text-default-500">
+                  <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-divider text-sm text-default-500">
                     没有发现正在监听的 TCP 服务
                   </div>
                 ) : (
@@ -2411,7 +2414,7 @@ export default function NodePage() {
                       return (
                         <article
                           key={`${service.host}:${service.port}`}
-                          className="rounded-md border border-divider bg-content1 p-4"
+                          className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">

@@ -362,10 +362,9 @@ export default function ConfigPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1200px] space-y-8 p-4 sm:p-6">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">系统管理</p>
-          <h1 className="mt-1 text-2xl font-semibold">网站设置</h1>
+          <h1 className="text-2xl font-bold text-foreground">网站设置</h1>
         </div>
         <div className="flex gap-2">
           <Button
@@ -448,7 +447,7 @@ export default function ConfigPage() {
         </div>
 
         {panelRoutes.length === 0 ? (
-          <div className="flex min-h-36 flex-col items-center justify-center gap-3 border-y border-divider px-4 text-center text-default-500">
+          <div className="flex min-h-36 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider px-4 text-center text-default-500">
             <LockKeyhole size={28} />
             <p className="text-sm">
               当前访问地址尚未关联面板托管的 DNS 与 HTTPS 证书

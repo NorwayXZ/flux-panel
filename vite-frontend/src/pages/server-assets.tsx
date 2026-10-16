@@ -192,10 +192,9 @@ export default function ServerAssetsPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">资产与成本</p>
-          <h1 className="mt-1 text-2xl font-semibold">服务器资产</h1>
+          <h1 className="text-2xl font-bold text-foreground">服务器资产</h1>
         </div>
         <div className="flex gap-2">
           <Button isIconOnly aria-label="刷新" variant="flat" onPress={load}>

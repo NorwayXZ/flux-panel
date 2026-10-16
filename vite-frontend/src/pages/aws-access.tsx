@@ -127,10 +127,9 @@ export default function AwsAccessPage() {
   return (
     <PageShell className="space-y-5" width="wide">
       <AccessResourceTabs />
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">资源中心</p>
-          <h1 className="mt-1 text-2xl font-semibold">AWS 账号</h1>
+          <h1 className="text-2xl font-bold text-foreground">AWS 账号</h1>
         </div>
         <div className="flex gap-2">
           <Button

@@ -1,3 +1,13 @@
+## 2.74.0 Consistent pages, new routing overview and a speedtest-style client speed test
+
+- Page headers: every page now opens with a bold title and a one-line description, as on the dashboard. The small grey category line above titles and the divider under headers are gone; 转发管理, 节点管理, 隧道组建 and 用户管理 gain titles too.
+- 本机测速 is redesigned after speedtest.net: a large start button, then an animated speedometer with a needle and a non-linear scale up to 10 Gbps, live ping, jitter, download and upload readouts, a live speed curve, and your network and the Cloudflare test location underneath. Settings move into a dialog; measurement logic is unchanged.
+- 线路调度中心: module counts are stat cards, the configuration check moves to the top, and each module is one card combining its role, capability facts (Agent, relay traffic, DNS, UDP, user grants) and boundary, instead of the same modules listed twice.
+- 三网优化: carrier entries are compact three-line tiles and strategies sit two or three per row, so each strategy card is about half as tall.
+- 真实带宽测试, IP 质量与解锁检测 and UDP / QUIC 诊断 show tasks and nodes as standard resource cards with stat cards on top.
+- 告警中心, 网络质量实验室, 全系统自检 and 网络诊断 drop their own grey boxes for the panel's cards and stat cards; empty states across the panel use the same dashed card.
+- Panel-only update; Agents stay at 2.66.0. No database change. 2.73.0 remains available for rollback.
+
 ## 2.73.0 Dashboard in the NodePassDash layout
 
 - The dashboard is rebuilt after NodePassDash: a title with a live clock and node, tunnel and forward counts; four status tiles (running, paused, error, offline nodes); a 24-hour traffic chart with gradient areas beside a node list; this week's traffic, today's traffic and quick actions; and a recent-activity table of open alerts and route switches. 异常与待处理, 转发流量排行 and 额度与到期风险 stay below in the same card style.

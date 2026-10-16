@@ -289,7 +289,7 @@ export default function UpdatePage() {
           </Button>
         </div>
 
-        <Card className="border border-default-200 shadow-sm">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="grid gap-5 p-5 sm:grid-cols-3">
             <div>
               <p className="text-xs text-default-500">当前版本</p>
@@ -316,7 +316,7 @@ export default function UpdatePage() {
           </CardBody>
         </Card>
 
-        <Card className="border border-default-200 shadow-sm">
+        <Card className="border border-transparent dark:border-default-100">
           <CardBody className="space-y-4 p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -395,7 +395,7 @@ export default function UpdatePage() {
         </Card>
 
         {(systemStatus || statusUnavailable) && (
-          <Card className="border border-default-200 shadow-sm">
+          <Card className="border border-transparent dark:border-default-100">
             <CardBody className="space-y-4 p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

@@ -347,7 +347,7 @@ export default function NodeTerminalPage() {
 
   return (
     <div className="mx-auto w-full max-w-[1680px] space-y-5 p-4 md:p-6">
-      <header className="flex flex-col gap-4 border-b border-divider pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             isIconOnly
@@ -358,10 +358,7 @@ export default function NodeTerminalPage() {
             <ArrowLeft size={20} />
           </Button>
           <div className="min-w-0">
-            <p className="text-sm text-default-500">节点远程终端</p>
-            <h1 className="mt-1 truncate text-2xl font-semibold">
-              {node.name}
-            </h1>
+            <h1 className="text-2xl font-bold text-foreground">{node.name}</h1>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">

@@ -517,10 +517,10 @@ export default function AuthorizedEntryPage() {
 
   return (
     <PageShell width="wide" className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-divider pb-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm text-default-500">隐藏入口池授权给用户</p>
-          <h1 className="mt-1 text-2xl font-semibold">授权入口</h1>
+          <h1 className="text-2xl font-bold text-foreground">授权入口</h1>
+          <p className="mt-1 text-sm text-default-500">隐藏入口池授权给用户</p>
           {selectedUser && (
             <p className="mt-1 text-sm text-primary">
               当前查看：{selectedUser.name || selectedUser.user}

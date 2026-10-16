@@ -19,7 +19,9 @@ import {
   Plus,
   RefreshCw,
   RadioTower,
+  CircleX,
   Trash2,
+  TriangleAlert,
   Waves,
 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -35,6 +37,9 @@ import {
   type UdpQuicDiagnosticRun,
   type UdpQuicDiagnosticTask,
 } from "@/api";
+import PageShell from "@/components/page-shell";
+import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
 type FormState = {
@@ -287,11 +292,10 @@ export default function UdpQuicDiagnosticPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] space-y-6 p-4 sm:p-6">
+    <PageShell className="space-y-6" width="wide">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm text-default-500">实用工具</p>
-          <h1 className="mt-1 text-xl font-semibold sm:text-2xl">
+          <h1 className="text-2xl font-bold text-foreground">
             UDP / QUIC 诊断
           </h1>
         </div>
@@ -314,69 +318,48 @@ export default function UdpQuicDiagnosticPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {[
-          [
-            "任务",
-            loading ? "-" : data.summary.total,
-            <RadioTower size={18} />,
-            "text-primary bg-primary/10",
-          ],
-          [
-            "运行中",
-            loading ? "-" : data.summary.running,
-            <Activity size={18} />,
-            "text-warning bg-warning/10",
-          ],
-          [
-            "正常",
-            loading ? "-" : data.summary.success,
-            <Waves size={18} />,
-            "text-success bg-success/10",
-          ],
-          [
-            "不稳定",
-            loading ? "-" : data.summary.degraded,
-            <History size={18} />,
-            "text-warning bg-warning/10",
-          ],
-          [
-            "失败",
-            loading ? "-" : data.summary.failed,
-            <Trash2 size={18} />,
-            "text-danger bg-danger/10",
-          ],
-        ].map(([label, value, icon, tone]) => (
-          <div
-            key={String(label)}
-            className="border border-divider bg-content1 p-4"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-default-500">
-                {label as string}
-              </span>
-              <span
-                className={`flex h-9 w-9 items-center justify-center rounded-lg ${tone}`}
-              >
-                {icon}
-              </span>
-            </div>
-            <p className="mt-3 text-2xl font-semibold">
-              {value as string | number}
-            </p>
-          </div>
-        ))}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <StatsCard
+          color="primary"
+          icon={<RadioTower size={20} />}
+          title="任务"
+          value={loading ? "-" : data.summary.total}
+        />
+        <StatsCard
+          color="secondary"
+          icon={<Activity size={20} />}
+          title="运行中"
+          value={loading ? "-" : data.summary.running}
+        />
+        <StatsCard
+          color="success"
+          icon={<Waves size={20} />}
+          title="正常"
+          value={loading ? "-" : data.summary.success}
+        />
+        <StatsCard
+          color="warning"
+          icon={<TriangleAlert size={20} />}
+          title="不稳定"
+          value={loading ? "-" : data.summary.degraded}
+        />
+        <StatsCard
+          color="danger"
+          icon={<CircleX size={20} />}
+          title="失败"
+          value={loading ? "-" : data.summary.failed}
+        />
       </section>
 
       {noCompatibleNodes && (
-        <section className="border border-warning-200 bg-warning-50 p-4 text-sm text-warning-700 dark:border-warning-800 dark:bg-warning-900/20 dark:text-warning-300">
+        <section className="rounded-xl border border-warning-200 bg-warning-50 p-4 text-sm text-warning-700 dark:border-warning-800 dark:bg-warning-900/20 dark:text-warning-300">
           当前在线节点 Agent 均低于 {data.minimumAgentVersion}，UDP / QUIC
           诊断需要先升级 Agent 后才能执行。
         </section>
       )}
 
       {data.tasks.length === 0 && !loading ? (
-        <div className="flex min-h-72 flex-col items-center justify-center gap-3 border-y border-divider text-default-400">
+        <div className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-400">
           <RadioTower size={36} />
           <p>尚未创建 UDP / QUIC 诊断</p>
           <Button size="sm" variant="flat" onPress={openCreate}>
@@ -384,145 +367,109 @@ export default function UdpQuicDiagnosticPage() {
           </Button>
         </div>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-2">
+        <ResourceCardGrid>
           {data.tasks.map((task) => {
             const state = stateMeta(task);
             const blockReason = taskRunBlockReason(task);
+            const running = bool(task.running);
+            const message = task.diagnosis || task.lastError;
 
             return (
-              <article
+              <ResourceCard
                 key={task.id}
-                className="border border-divider bg-content1 p-4 sm:p-5"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate font-semibold">{task.name}</h2>
-                      <Chip color={state.color} size="sm" variant="flat">
-                        {state.label}
-                      </Chip>
-                      <Chip size="sm" variant="flat">
-                        {modeText(task.mode)} · {task.ipFamily.toUpperCase()}
-                      </Chip>
-                      {blockReason && (
-                        <Chip
-                          color="warning"
-                          size="sm"
-                          title={blockReason}
-                          variant="flat"
-                        >
-                          需升级 Agent
-                        </Chip>
-                      )}
-                    </div>
-                    <p className="mt-2 truncate text-sm text-default-500">
-                      {task.sourceNodeName} →{" "}
-                      {task.targetType === "node"
-                        ? task.targetNodeName
-                        : task.targetHost}
-                      :{task.port}
-                    </p>
-                    <p className="mt-1 text-xs text-default-400">
-                      Agent {data.minimumAgentVersion}+ · {task.sampleCount} 次
-                      · {task.timeoutMs} ms
-                    </p>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      isIconOnly
-                      isDisabled={bool(task.running) || Boolean(blockReason)}
-                      isLoading={busy === `run-${task.id}`}
-                      size="sm"
-                      title={blockReason || "开始诊断"}
-                      variant="light"
-                      onPress={() => void run(task)}
-                    >
-                      <Play size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      isLoading={busy === `history-${task.id}`}
-                      size="sm"
-                      title="历史结果"
-                      variant="light"
-                      onPress={() => void history(task)}
-                    >
-                      <History size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      isDisabled={bool(task.running)}
-                      size="sm"
-                      title="编辑"
-                      variant="light"
-                      onPress={() => openEdit(task)}
-                    >
-                      <Pencil size={16} />
-                    </Button>
-                    <Button
-                      isIconOnly
-                      color="danger"
-                      isDisabled={bool(task.running)}
-                      isLoading={busy === `delete-${task.id}`}
-                      size="sm"
-                      title="删除"
-                      variant="light"
-                      onPress={() => void remove(task)}
-                    >
-                      <Trash2 size={16} />
-                    </Button>
-                  </div>
-                </div>
-                <div className="mt-4 grid grid-cols-4 divide-x divide-divider border-y border-divider py-3 text-center">
-                  <div>
-                    <p className="text-xs text-default-500">成功</p>
-                    <p className="mt-1 font-semibold">
-                      {Number(task.successCount || 0)}/
-                      {Number(task.latestSampleCount || task.sampleCount || 0)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">丢包</p>
-                    <p className="mt-1 font-semibold">
-                      {percentText(task.packetLossPercent ?? task.failureRate)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">
-                      {task.mode === "quic" ? "握手" : "RTT"}
-                    </p>
-                    <p className="mt-1 font-semibold">
-                      {latencyText(task.quicHandshakeAvgMs || task.rttAvgMs)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-default-500">抖动</p>
-                    <p className="mt-1 font-semibold">
-                      {latencyText(task.jitterMs)}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-start justify-between gap-3 text-xs text-default-500">
-                  <span>
-                    {timeText(task.latestStartedAt || task.lastRunAt)}
-                  </span>
-                  {task.diagnosis || task.lastError ? (
-                    <span
-                      className={
-                        task.lastStatus === "success"
-                          ? "max-w-[68%] truncate"
-                          : "max-w-[68%] truncate text-warning-600 dark:text-warning-400"
-                      }
-                      title={task.diagnosis || task.lastError}
-                    >
-                      {task.diagnosis || task.lastError}
-                    </span>
-                  ) : null}
-                </div>
-              </article>
+                actions={[
+                  {
+                    label: "诊断",
+                    icon: <Play size={14} />,
+                    color: "primary",
+                    isDisabled: running || Boolean(blockReason),
+                    isLoading: busy === `run-${task.id}`,
+                    onPress: () => void run(task),
+                  },
+                  {
+                    label: "历史",
+                    icon: <History size={14} />,
+                    isLoading: busy === `history-${task.id}`,
+                    onPress: () => void history(task),
+                  },
+                  {
+                    label: "编辑",
+                    icon: <Pencil size={14} />,
+                    isDisabled: running,
+                    onPress: () => openEdit(task),
+                  },
+                  {
+                    label: "删除",
+                    icon: <Trash2 size={14} />,
+                    color: "danger",
+                    isDisabled: running,
+                    isLoading: busy === `delete-${task.id}`,
+                    onPress: () => void remove(task),
+                  },
+                ]}
+                blocks={[
+                  {
+                    label: "目标",
+                    rows: [
+                      {
+                        value: `${task.targetType === "node" ? task.targetNodeName : task.targetHost}:${task.port}`,
+                      },
+                    ],
+                  },
+                ]}
+                chips={[
+                  {
+                    text: `${modeText(task.mode)} · ${task.ipFamily.toUpperCase()}`,
+                    color: "primary",
+                  },
+                  ...(blockReason
+                    ? [{ text: "需升级 Agent", color: "warning" as const }]
+                    : []),
+                ]}
+                danger={state.color === "danger"}
+                facts={[
+                  {
+                    label: "成功",
+                    value: `${Number(task.successCount || 0)} / ${Number(task.latestSampleCount || task.sampleCount || 0)}`,
+                  },
+                  {
+                    label: "丢包",
+                    value: percentText(
+                      task.packetLossPercent ?? task.failureRate,
+                    ),
+                  },
+                  {
+                    label: task.mode === "quic" ? "握手" : "RTT",
+                    value: latencyText(
+                      task.quicHandshakeAvgMs || task.rttAvgMs,
+                    ),
+                  },
+                  { label: "抖动", value: latencyText(task.jitterMs) },
+                ]}
+                notice={{
+                  icon: <Waves size={14} />,
+                  label: timeText(task.latestStartedAt || task.lastRunAt),
+                  value: message ? (
+                    <span title={message}>{message}</span>
+                  ) : (
+                    "暂无诊断结论"
+                  ),
+                  tone:
+                    task.lastStatus === "success"
+                      ? "success"
+                      : message
+                        ? "warning"
+                        : "default",
+                }}
+                status={{ text: state.label, color: state.color }}
+                subtitles={[
+                  `${task.sourceNodeName} 发起 · ${task.sampleCount} 次 · ${task.timeoutMs} ms`,
+                ]}
+                title={task.name}
+              />
             );
           })}
-        </section>
+        </ResourceCardGrid>
       )}
 
       <Modal
@@ -858,6 +805,6 @@ export default function UdpQuicDiagnosticPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
+    </PageShell>
   );
 }
