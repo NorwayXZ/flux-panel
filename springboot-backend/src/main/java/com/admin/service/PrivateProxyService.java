@@ -80,13 +80,15 @@ public class PrivateProxyService {
     private final JdbcTemplate jdbcTemplate;
     private final ProxyRoutingService routing;
     private final ProxyExitService exitService;
+    private final ProxyRuleSourceService ruleSources;
 
     public PrivateProxyService(PrivateProxyMapper proxyMapper, NodeMapper nodeMapper, UserMapper userMapper,
                                PortAllocationLockMapper allocationLockMapper, PortLedgerService portLedgerService,
                                UserQuotaService userQuotaService, ExitPoolService exitPoolService,
                                PlatformTransactionManager transactionManager, JdbcTemplate jdbcTemplate,
-                               ProxyRoutingService routing, ProxyExitService exitService,
+                               ProxyRoutingService routing, ProxyExitService exitService, ProxyRuleSourceService ruleSources,
                                @Value("${jwt-secret}") String secret) {
+        this.ruleSources = ruleSources;
         this.jdbcTemplate = jdbcTemplate;
         this.routing = routing;
         this.exitService = exitService;
@@ -906,6 +908,8 @@ public class PrivateProxyService {
                 return R.err("自定义出口 #" + exitId + " 不存在或不能使用");
             }
         }
+        String listError = ruleSources.prepare(parsedRules, JwtUtil.getUserIdFromToken(), isAdmin());
+        if (listError != null) return R.err(listError);
         if (!"active".equals(proxy.getState())) return R.err("只有运行中的代理可以修改出口，请先恢复代理");
         Node node = nodeMapper.selectById(proxy.getNodeId());
         if (node == null || !WebSocketServer.isNodeOnline(node.getId())) return R.err("节点离线，无法修改出口");

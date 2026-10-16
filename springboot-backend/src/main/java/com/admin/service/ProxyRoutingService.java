@@ -21,7 +21,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.regex.Pattern;
 
 /**
  * Default exit plus per-domain rules for a private proxy. When a proxy uses a custom exit or has
@@ -30,14 +29,20 @@ import java.util.regex.Pattern;
  */
 @Service
 public class ProxyRoutingService {
-    static final int MAX_RULES = 100;
-    static final int MAX_VALUES = 500;
-    /** The node router's limit per match field in one rule. */
+    static final int MAX_RULES = 200;
+    static final int MAX_VALUES = 2000;
+    /** The node router's limit per match field in one rule (regular expressions: 500). */
     static final int ROUTER_RULE_VALUES = 2000;
+    static final int ROUTER_REGEX_VALUES = 500;
+    /** Values one router may hold after expanding groups, lists and rule sets. */
+    static final int ROUTER_TOTAL_VALUES = 120_000;
     private static final String EXIT_ROUTE_USER = "exit";
-    private static final Set<String> MATCHES = Set.of("domain_suffix", "domain_keyword", "domain", "ip_cidr", "preset");
-    private static final Pattern DOMAIN = Pattern.compile("^(?=.{1,253}$)[a-z0-9_*]([a-z0-9_.-]*[a-z0-9])?$");
-    private static final Pattern CIDR = Pattern.compile("^[0-9a-fA-F:.]+(/\\d{1,3})?$");
+    private static final Set<String> MATCHES = Set.of("domain_suffix", "domain_keyword", "domain", "domain_regex", "ip_cidr",
+            "port", "network", "preset", "geosite", "geoip", "ruleset");
+    /** Matches that work on the destination address, so a domain is resolved for them unless noResolve. */
+    private static final Set<String> IP_MATCHES = Set.of("ip_cidr", "geoip", "ruleset");
+    /** Router fields that need Agent ROUTER_RULES_AGENT_VERSION. */
+    private static final Set<String> NEWER_ROUTER_FIELDS = Set.of("domain_regex", "port", "port_range", "network", "ip_is_private");
 
     /** Where the proxy's own runtime should send traffic: the router's loopback SOCKS5. */
     public static final class Endpoint {
@@ -70,16 +75,28 @@ public class ProxyRoutingService {
      * refreshed list takes effect. Returns how many routers were updated.
      */
     public int reapplyForPresets(Set<String> presetKeys) {
+        return reapplyMatching(rule -> "preset".equals(rule.getString("match"))
+                && rule.getJSONArray("values").toJavaList(String.class).stream().anyMatch(presetKeys::contains));
+    }
+
+    /** Re-applies the routers of running proxies with a rule the predicate accepts. */
+    public int reapplyMatching(java.util.function.Predicate<JSONObject> uses) {
+        return reapplyWhere(proxy -> rules(proxy.getRouteRules()).stream().anyMatch(uses));
+    }
+
+    /** Re-applies the routers of running proxies that use the exit as default or in a rule. */
+    public int reapplyForExit(Long exitId) {
+        String key = "custom:" + exitId;
+        return reapplyWhere(proxy -> "custom".equals(proxy.getExitType()) && exitId.equals(proxy.getExitCustomId())
+                || rules(proxy.getRouteRules()).stream().anyMatch(rule -> key.equals(rule.getString("exit"))));
+    }
+
+    private int reapplyWhere(java.util.function.Predicate<PrivateProxy> uses) {
         int applied = 0;
         List<PrivateProxy> proxies = proxyMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PrivateProxy>()
-                .eq("state", "active").like("route_rules", "\"preset\""));
+                .eq("state", "active"));
         for (PrivateProxy proxy : proxies) {
-            boolean uses = false;
-            for (JSONObject rule : rules(proxy.getRouteRules())) {
-                if (!"preset".equals(rule.getString("match"))) continue;
-                for (String key : rule.getJSONArray("values").toJavaList(String.class)) if (presetKeys.contains(key)) uses = true;
-            }
-            if (!uses || !active(proxy)) continue;
+            if (!active(proxy) || !uses.test(proxy)) continue;
             Node node = nodeMapper.selectById(proxy.getNodeId());
             if (node == null || !WebSocketServer.isNodeOnline(node.getId())
                     || !com.admin.common.utils.AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.ROUTER_AGENT_VERSION)) continue;
@@ -134,15 +151,8 @@ public class ProxyRoutingService {
             }
             Set<String> cleaned = new LinkedHashSet<>();
             for (String value : values) {
-                String item = value.trim().toLowerCase(Locale.ROOT);
-                if (item.isEmpty()) continue;
-                if ("domain_suffix".equals(match)) item = StringUtils.removeStart(item, "*.");
-                if ("domain_suffix".equals(match)) item = StringUtils.removeStart(item, ".");
-                boolean valid = "preset".equals(match) ? ProxyRoutePresets.get(item) != null
-                        : "ip_cidr".equals(match) ? CIDR.matcher(item).matches()
-                        : "domain_keyword".equals(match) ? item.length() <= 100 && !item.contains(" ")
-                        : DOMAIN.matcher(item).matches();
-                if (!valid) throw new IllegalArgumentException(label + "里有不正确的值：" + value.trim());
+                String item = validValue(match, value);
+                if (item == null) throw new IllegalArgumentException(label + "里有不正确的值：" + value.trim());
                 cleaned.add(item);
             }
             if (cleaned.isEmpty()) throw new IllegalArgumentException(label + "没有填写匹配内容");
@@ -153,9 +163,32 @@ public class ProxyRoutingService {
             stored.put("match", match);
             stored.put("values", new ArrayList<>(cleaned));
             stored.put("exit", exit.startsWith("residential:") ? exit.toUpperCase(Locale.ROOT).replace("RESIDENTIAL:", "residential:") : exit);
+            if (IP_MATCHES.contains(match) && Boolean.TRUE.equals(rule.get("noResolve"))) stored.put("noResolve", true);
             result.add(stored);
         }
         return result.toJSONString();
+    }
+
+    /** The cleaned value for a rule match, or null when it is not valid. */
+    static String validValue(String match, String value) {
+        String item = value.trim();
+        if (item.isEmpty()) return null;
+        switch (match) {
+            case "preset":
+                item = item.toLowerCase(Locale.ROOT);
+                return ProxyRoutePresets.get(item) != null ? item : null;
+            case "geosite":
+                item = item.toLowerCase(Locale.ROOT);
+                return ProxyRuleSourceService.GEOSITE_NAME.matcher(item).matches() ? item : null;
+            case "geoip":
+                item = item.toLowerCase(Locale.ROOT);
+                if ("lan".equals(item)) item = "private";
+                return ProxyRuleSourceService.GEOIP_NAME.matcher(item).matches() ? item : null;
+            case "ruleset":
+                return item.matches("\\d{1,18}") ? item : null;
+            default:
+                return RouteMatchSet.normalize(match, item);
+        }
     }
 
     static boolean validExit(String exit) {
@@ -195,6 +228,17 @@ public class ProxyRoutingService {
      */
     static JSONObject routerRequest(String name, String exitType, String exitCountry, Long exitCustomId, List<JSONObject> rules,
                                     Map<String, Integer> residentialPorts, String routePassword, Map<Long, JSONObject> customOutbounds) {
+        return routerRequest(name, exitType, exitCountry, exitCustomId, rules, residentialPorts, routePassword, customOutbounds, false);
+    }
+
+    /**
+     * With resolveForIp, a domain is looked up before the first IP rule (as Clash does), which
+     * Agents before ROUTER_RULES_AGENT_VERSION do not support; without it IP rules only match
+     * connections made to an address.
+     */
+    static JSONObject routerRequest(String name, String exitType, String exitCountry, Long exitCustomId, List<JSONObject> rules,
+                                    Map<String, Integer> residentialPorts, String routePassword, Map<Long, JSONObject> customOutbounds,
+                                    boolean resolveForIp) {
         JSONArray outbounds = new JSONArray();
         for (Map.Entry<String, Integer> entry : residentialPorts.entrySet()) {
             JSONObject outbound = new JSONObject(true);
@@ -215,39 +259,54 @@ public class ProxyRoutingService {
             outbounds.add(outbound);
         }
         JSONArray routerRules = new JSONArray();
+        boolean resolved = false;
+        int total = 0;
         for (JSONObject rule : rules) {
-            String match = rule.getString("match");
-            List<String> values = rule.getJSONArray("values").toJavaList(String.class);
-            Map<String, List<String>> matches = new LinkedHashMap<>();
-            if ("preset".equals(match)) {
-                Set<String> suffix = new LinkedHashSet<>();
-                Set<String> domain = new LinkedHashSet<>();
-                Set<String> keyword = new LinkedHashSet<>();
-                for (String key : values) {
-                    ProxyRoutePresets.Preset preset = ProxyRoutePresets.get(key);
-                    if (preset == null) continue;
-                    suffix.addAll(preset.domainSuffix);
-                    domain.addAll(preset.domain);
-                    keyword.addAll(preset.domainKeyword);
-                }
-                if (!suffix.isEmpty()) matches.put("domain_suffix", new ArrayList<>(suffix));
-                if (!domain.isEmpty()) matches.put("domain", new ArrayList<>(domain));
-                if (!keyword.isEmpty()) matches.put("domain_keyword", new ArrayList<>(keyword));
-            } else {
-                matches.put(match, values);
+            RouteMatchSet set = expand(rule.getString("match"), rule.getJSONArray("values").toJavaList(String.class));
+            if (set.size() == 0) continue;
+            total += set.size();
+            if (total > ROUTER_TOTAL_VALUES) {
+                throw new IllegalStateException("分流规则展开后超过 " + ROUTER_TOTAL_VALUES + " 条，请减少大型 GEOIP、GEOSITE 或规则集");
+            }
+            // Like Clash, an IP rule looks up the domain first unless it says no-resolve.
+            if (resolveForIp && set.hasIpMatch() && !resolved && !rule.getBooleanValue("noResolve")) {
+                JSONObject resolve = new JSONObject(true);
+                resolve.put("action", "resolve");
+                routerRules.add(resolve);
+                resolved = true;
             }
             String exit = rule.getString("exit");
-            // The router accepts up to ROUTER_RULE_VALUES entries per field; larger groups become
-            // several consecutive rules with the same exit.
-            for (Map.Entry<String, List<String>> field : matches.entrySet()) {
-                List<String> list = field.getValue();
-                for (int from = 0; from < list.size(); from += ROUTER_RULE_VALUES) {
+            // One field per router rule: sing-box ANDs different kinds of fields in one rule.
+            Map<String, List<Object>> fields = new LinkedHashMap<>();
+            putField(fields, "domain_suffix", set.domainSuffix);
+            putField(fields, "domain", set.domain);
+            putField(fields, "domain_keyword", set.domainKeyword);
+            putField(fields, "domain_regex", set.domainRegex);
+            putField(fields, "ip_cidr", set.ipCidr);
+            List<Object> ports = new ArrayList<>();
+            List<Object> ranges = new ArrayList<>();
+            for (String port : set.port) {
+                if (port.contains("-")) ranges.add(port.replace('-', ':'));
+                else ports.add(Integer.parseInt(port));
+            }
+            if (!ports.isEmpty()) fields.put("port", ports);
+            if (!ranges.isEmpty()) fields.put("port_range", ranges);
+            putField(fields, "network", set.network);
+            for (Map.Entry<String, List<Object>> field : fields.entrySet()) {
+                List<Object> list = field.getValue();
+                int chunk = "domain_regex".equals(field.getKey()) || "port_range".equals(field.getKey()) ? ROUTER_REGEX_VALUES : ROUTER_RULE_VALUES;
+                for (int from = 0; from < list.size(); from += chunk) {
                     JSONObject converted = new JSONObject(true);
-                    converted.put(field.getKey(), new ArrayList<>(list.subList(from, Math.min(list.size(), from + ROUTER_RULE_VALUES))));
-                    if ("block".equals(exit)) converted.put("action", "reject");
-                    else converted.put("outbound", tagOf(exit));
+                    converted.put(field.getKey(), new ArrayList<>(list.subList(from, Math.min(list.size(), from + chunk))));
+                    routeTo(converted, exit);
                     routerRules.add(converted);
                 }
+            }
+            if (set.ipPrivate) {
+                JSONObject converted = new JSONObject(true);
+                converted.put("ip_is_private", true);
+                routeTo(converted, exit);
+                routerRules.add(converted);
             }
         }
         JSONObject request = new JSONObject(true);
@@ -258,6 +317,61 @@ public class ProxyRoutingService {
                 : "residential".equals(exitType) && StringUtils.isNotBlank(exitCountry) ? "res-" + exitCountry.toLowerCase(Locale.ROOT)
                 : "direct");
         return request;
+    }
+
+    private static void putField(Map<String, List<Object>> fields, String key, Set<String> values) {
+        if (!values.isEmpty()) fields.put(key, new ArrayList<>(values));
+    }
+
+    private static void routeTo(JSONObject rule, String exit) {
+        if ("block".equals(exit)) rule.put("action", "reject");
+        else rule.put("outbound", tagOf(exit));
+    }
+
+    /** Everything a rule matches, with groups, lists and rule sets expanded. */
+    static RouteMatchSet expand(String match, List<String> values) {
+        RouteMatchSet set = new RouteMatchSet();
+        for (String value : values) {
+            switch (match) {
+                case "preset": {
+                    ProxyRoutePresets.Preset preset = ProxyRoutePresets.get(value);
+                    if (preset == null) break;
+                    set.domainSuffix.addAll(preset.domainSuffix);
+                    set.domain.addAll(preset.domain);
+                    set.domainKeyword.addAll(preset.domainKeyword);
+                    break;
+                }
+                case "geosite":
+                case "geoip":
+                case "ruleset": {
+                    RouteMatchSet list = ProxyRuleSourceService.list(match + ":" + value);
+                    if (list != null) set.addAll(list);
+                    break;
+                }
+                case "domain": set.domain.add(value); break;
+                case "domain_suffix": set.domainSuffix.add(value); break;
+                case "domain_keyword": set.domainKeyword.add(value); break;
+                case "domain_regex": set.domainRegex.add(value); break;
+                case "ip_cidr": set.ipCidr.add(value); break;
+                case "port": set.port.add(value); break;
+                case "network": set.network.add(value); break;
+                default: break;
+            }
+        }
+        return set;
+    }
+
+    /** True when the router command uses fields or exit groups that older Agents reject. */
+    static boolean needsNewerRouter(JSONObject request) {
+        JSONArray outbounds = request.getJSONArray("outbounds");
+        for (int i = 0; i < outbounds.size(); i++) if ("urltest".equals(outbounds.getJSONObject(i).getString("type"))) return true;
+        JSONArray rules = request.getJSONArray("rules");
+        for (int i = 0; i < rules.size(); i++) {
+            JSONObject rule = rules.getJSONObject(i);
+            if ("resolve".equals(rule.getString("action"))) return true;
+            for (String key : rule.keySet()) if (NEWER_ROUTER_FIELDS.contains(key)) return true;
+        }
+        return false;
     }
 
     private static String tagOf(String exit) {
@@ -277,7 +391,28 @@ public class ProxyRoutingService {
         for (Long id : customExitIds(proxy.getExitType(), proxy.getExitCustomId(), rules)) {
             JSONObject outbound = exits.usableOutbound(id, proxy.getUserId(), admin);
             if (outbound == null) throw new IllegalStateException("自定义出口 #" + id + " 不存在或不能使用");
-            customs.put(id, outbound);
+            if (!ProxyExitService.GROUP_TYPE.equals(outbound.getString("type"))) {
+                customs.put(id, outbound);
+                continue;
+            }
+            // An exit group becomes a sing-box urltest over its members.
+            JSONArray members = new JSONArray();
+            for (Long member : outbound.getJSONArray("members").toJavaList(Long.class)) {
+                JSONObject memberOutbound = customs.containsKey(member) ? customs.get(member) : exits.usableOutbound(member, proxy.getUserId(), admin);
+                if (memberOutbound == null || ProxyExitService.GROUP_TYPE.equals(memberOutbound.getString("type"))) {
+                    throw new IllegalStateException("出口组 #" + id + " 的成员 #" + member + " 不存在或不能使用");
+                }
+                customs.put(member, memberOutbound);
+                members.add("custom-" + member);
+            }
+            if (outbound.getBooleanValue("direct")) members.add("direct");
+            JSONObject group = new JSONObject(true);
+            group.put("type", "urltest");
+            group.put("outbounds", members);
+            group.put("url", outbound.getString("url"));
+            group.put("interval", outbound.getIntValue("intervalMinutes") + "m");
+            group.put("tolerance", outbound.getIntValue("tolerance"));
+            customs.put(id, group);
         }
         Map<String, Integer> previous = routeExitPorts(proxy.getRouteExitPorts());
         Map<String, Integer> ports = new TreeMap<>();
@@ -289,8 +424,13 @@ public class ProxyRoutingService {
         }
         proxy.setRouteExitPorts(ports.isEmpty() ? null : JSON.toJSONString(ports));
         proxy.setRouteCountries(routeCountriesColumn(countries));
+        boolean newerAgent = com.admin.common.utils.AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.ROUTER_RULES_AGENT_VERSION);
         JSONObject request = routerRequest(routerName(proxy), proxy.getExitType(), proxy.getExitCountry(), proxy.getExitCustomId(),
-                rules, ports, routePassword(proxy), customs);
+                rules, ports, routePassword(proxy), customs, newerAgent);
+        if (needsNewerRouter(request) && !newerAgent) {
+            throw new IllegalStateException("出口组和正则、端口、网络、GEOIP 等规则需要节点 Agent " + ProxyExitService.ROUTER_RULES_AGENT_VERSION
+                    + " 或更高版本，请先升级该节点");
+        }
         GostDto response = WebSocketServer.send_msg(node.getId(), request, "ApplyProxyRouter", 30);
         if (response == null || !"OK".equals(response.getMsg())) {
             throw new IllegalStateException("下发分流规则失败：" + (response == null ? "节点无响应" : response.getMsg()));

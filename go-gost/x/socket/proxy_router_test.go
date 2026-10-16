@@ -24,13 +24,21 @@ func sampleRouterRequest() proxyRouterRequest {
 			 "transport": {"type": "ws", "path": "/ws", "headers": {"Host": "a.example.com"}}},
 			{"type": "trojan", "tag": "custom-5", "server": "1.2.3.4", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "a.example.com"}},
 			{"type": "tuic", "tag": "custom-6", "server": "1.2.3.4", "server_port": 443, "uuid": "11111111-2222-3333-4444-555555555555", "password": "p", "congestion_control": "bbr", "tls": {"enabled": true, "alpn": ["h3"]}},
-			{"type": "anytls", "tag": "custom-7", "server": "1.2.3.4", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "a.example.com"}}
+			{"type": "anytls", "tag": "custom-7", "server": "1.2.3.4", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "a.example.com"}},
+			{"type": "urltest", "tag": "custom-8", "outbounds": ["custom-1", "custom-2", "direct"], "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50}
 		],
 		"rules": [
 			{"domain_suffix": ["openai.com", "chatgpt.com"], "outbound": "res-us"},
 			{"domain_keyword": ["netflix"], "outbound": "custom-1"},
 			{"ip_cidr": ["10.0.0.0/8"], "action": "reject"},
-			{"domain": ["example.org"], "outbound": "direct"}
+			{"domain": ["example.org"], "outbound": "direct"},
+			{"domain_regex": ["^chatgpt-[a-z0-9]+\\.example\\.com$"], "outbound": "custom-8"},
+			{"port": [443, 8443], "outbound": "custom-8"},
+			{"port_range": ["8000:9000"], "outbound": "direct"},
+			{"network": ["udp"], "action": "reject"},
+			{"ip_is_private": true, "outbound": "direct"},
+			{"action": "resolve"},
+			{"ip_cidr": ["1.0.1.0/24"], "outbound": "custom-8"}
 		],
 		"final": "custom-2"
 	}`), &request)
@@ -79,6 +87,18 @@ func TestRouterConfigRejectsUnsafeInput(t *testing.T) {
 		"unknown field":    func(r *proxyRouterRequest) { r.Rules[0]["process_name"] = []interface{}{"x"} },
 		"no match":         func(r *proxyRouterRequest) { r.Rules = append(r.Rules, map[string]interface{}{"outbound": "direct"}) },
 		"unknown final":    func(r *proxyRouterRequest) { r.Final = "nope" },
+		"group in group": func(r *proxyRouterRequest) {
+			r.Outbounds = append(r.Outbounds, map[string]interface{}{"type": "urltest", "tag": "custom-9", "outbounds": []interface{}{"custom-8"}})
+		},
+		"group unknown member": func(r *proxyRouterRequest) { r.Outbounds[8]["outbounds"] = []interface{}{"missing"} },
+		"group extra field":    func(r *proxyRouterRequest) { r.Outbounds[8]["default"] = "custom-1" },
+		"group bad interval":   func(r *proxyRouterRequest) { r.Outbounds[8]["interval"] = "soon" },
+		"group bad url":        func(r *proxyRouterRequest) { r.Outbounds[8]["url"] = "file:///etc/passwd" },
+		"bad regex":            func(r *proxyRouterRequest) { r.Rules[4]["domain_regex"] = []interface{}{"(("} },
+		"bad port":             func(r *proxyRouterRequest) { r.Rules[5]["port"] = []interface{}{float64(70000)} },
+		"bad port range":       func(r *proxyRouterRequest) { r.Rules[6]["port_range"] = []interface{}{"1-2"} },
+		"bad network":          func(r *proxyRouterRequest) { r.Rules[7]["network"] = []interface{}{"icmp"} },
+		"resolve with match":   func(r *proxyRouterRequest) { r.Rules[9]["domain"] = []interface{}{"a.com"} },
 	}
 	for name, mutate := range cases {
 		request := sampleRouterRequest()

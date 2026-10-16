@@ -60,9 +60,11 @@ public class ProxyRulesetService {
         final Set<String> suffix = new LinkedHashSet<>();
         final Set<String> domain = new LinkedHashSet<>();
         final Set<String> keyword = new LinkedHashSet<>();
+        /** Regular expressions; kept for GEOSITE lists, not used by the built-in groups. */
+        final Set<String> regex = new LinkedHashSet<>();
 
         int size() {
-            return suffix.size() + domain.size() + keyword.size();
+            return suffix.size() + domain.size() + keyword.size() + regex.size();
         }
     }
 
@@ -165,6 +167,11 @@ public class ProxyRulesetService {
      * (tagged @ads) are skipped.
      */
     static void parse(String name, Function<String, String> fetch, Lists out, Set<String> visited, int[] files) {
+        parse(name, null, fetch, out, visited, files);
+    }
+
+    /** With an attribute (e.g. "cn" for google@cn), keeps only the entries tagged with it. */
+    static void parse(String name, String attribute, Function<String, String> fetch, Lists out, Set<String> visited, int[] files) {
         if (!visited.add(name)) return;
         if (++files[0] > MAX_FILES) throw new IllegalStateException("引用的清单太多");
         String text = fetch.apply(name);
@@ -177,12 +184,21 @@ public class ProxyRulesetService {
             String[] parts = line.split("\\s+");
             String entry = parts[0];
             boolean ads = false;
-            for (int i = 1; i < parts.length; i++) if ("@ads".equals(parts[i])) ads = true;
+            boolean tagged = attribute == null;
+            for (int i = 1; i < parts.length; i++) {
+                if ("@ads".equals(parts[i])) ads = true;
+                if (attribute != null && parts[i].equals("@" + attribute)) tagged = true;
+            }
             if (entry.startsWith("include:")) {
-                parse(entry.substring("include:".length()), fetch, out, visited, files);
+                parse(entry.substring("include:".length()), attribute, fetch, out, visited, files);
                 continue;
             }
-            if (ads || entry.startsWith("regexp:")) continue;
+            if (entry.startsWith("regexp:") && !ads && tagged) {
+                String pattern = entry.substring("regexp:".length());
+                if (RouteMatchSet.validRegex(pattern)) out.regex.add(pattern);
+                continue;
+            }
+            if (ads || !tagged || entry.startsWith("regexp:")) continue;
             String value;
             Set<String> target;
             if (entry.startsWith("full:")) {
@@ -202,7 +218,7 @@ public class ProxyRulesetService {
         }
     }
 
-    private String fetch(String name, Map<String, String> cache) {
+    String fetch(String name, Map<String, String> cache) {
         String cached = cache.get(name);
         if (cached != null) return cached;
         if (!name.matches("[a-z0-9!._-]+")) throw new IllegalStateException("清单名不正确：" + name);

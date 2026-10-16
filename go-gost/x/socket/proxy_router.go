@@ -61,6 +61,9 @@ var (
 	routerTagPattern     = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 	routerOutboundTypes  = map[string]bool{"direct": true, "socks": true, "http": true, "shadowsocks": true, "vmess": true, "vless": true, "trojan": true, "hysteria2": true, "tuic": true, "anytls": true}
 	routerRuleMatchKeys  = map[string]bool{"domain": true, "domain_suffix": true, "domain_keyword": true, "ip_cidr": true}
+	routerPortRange      = regexp.MustCompile(`^\d{1,5}:\d{1,5}$`)
+	routerGroupFields    = map[string]bool{"type": true, "tag": true, "outbounds": true, "url": true, "interval": true, "tolerance": true}
+	routerDuration       = regexp.MustCompile(`^\d{1,4}[smh]$`)
 	proxyExitTraceURL    = "https://www.cloudflare.com/cdn-cgi/trace"
 	proxyExitTestTimeout = 12 * time.Second
 )
@@ -87,10 +90,11 @@ func newProxyRouterManager(runtime *privateProxyRuntimeManager) *proxyRouterMana
 func buildRouterConfig(request proxyRouterRequest, port int, username, password string) (map[string]interface{}, error) {
 	tags := map[string]bool{}
 	outbounds := make([]interface{}, 0, len(request.Outbounds)+1)
+	var groups []map[string]interface{}
 	for _, outbound := range request.Outbounds {
 		kind, _ := outbound["type"].(string)
 		tag, _ := outbound["tag"].(string)
-		if !routerOutboundTypes[kind] {
+		if !routerOutboundTypes[kind] && kind != "urltest" {
 			return nil, fmt.Errorf("unsupported router outbound type %q", kind)
 		}
 		if !routerTagPattern.MatchString(tag) || tags[tag] {
@@ -100,11 +104,20 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 			return nil, errors.New("router outbounds cannot chain through other outbounds")
 		}
 		tags[tag] = true
+		if kind == "urltest" {
+			groups = append(groups, outbound)
+		}
 		outbounds = append(outbounds, outbound)
 	}
 	if !tags["direct"] {
 		outbounds = append(outbounds, map[string]interface{}{"type": "direct", "tag": "direct"})
 		tags["direct"] = true
+	}
+	// An automatic group picks the fastest of plain outbounds defined above.
+	for _, group := range groups {
+		if err := validateRouterGroup(group, tags, groups); err != nil {
+			return nil, err
+		}
 	}
 	if request.Final == "" {
 		request.Final = "direct"
@@ -117,35 +130,9 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 	// connects by address, so domain rules still apply.
 	rules := []interface{}{map[string]interface{}{"action": "sniff"}}
 	for index, rule := range request.Rules {
-		next := map[string]interface{}{}
-		matched := false
-		for key, value := range rule {
-			switch {
-			case routerRuleMatchKeys[key]:
-				values, ok := stringList(value)
-				if !ok || len(values) == 0 || len(values) > 2000 {
-					return nil, fmt.Errorf("router rule %d: invalid %s", index+1, key)
-				}
-				next[key] = values
-				matched = true
-			case key == "outbound":
-				tag, _ := value.(string)
-				if !tags[tag] {
-					return nil, fmt.Errorf("router rule %d: unknown outbound %q", index+1, tag)
-				}
-				next["action"] = "route"
-				next["outbound"] = tag
-			case key == "action":
-				if value != "reject" {
-					return nil, fmt.Errorf("router rule %d: unsupported action", index+1)
-				}
-				next["action"] = "reject"
-			default:
-				return nil, fmt.Errorf("router rule %d: unsupported field %s", index+1, key)
-			}
-		}
-		if !matched || next["action"] == nil {
-			return nil, fmt.Errorf("router rule %d needs a match and an outbound", index+1)
+		next, err := buildRouterRule(rule, tags)
+		if err != nil {
+			return nil, fmt.Errorf("router rule %d: %w", index+1, err)
 		}
 		rules = append(rules, next)
 	}
@@ -162,7 +149,159 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 	}, nil
 }
 
+func validateRouterGroup(group map[string]interface{}, tags map[string]bool, groups []map[string]interface{}) error {
+	tag, _ := group["tag"].(string)
+	for key := range group {
+		if !routerGroupFields[key] {
+			return fmt.Errorf("router group %s: unsupported field %s", tag, key)
+		}
+	}
+	members, ok := stringList(group["outbounds"])
+	if !ok || len(members) == 0 || len(members) > 50 {
+		return fmt.Errorf("router group %s needs 1 to 50 outbounds", tag)
+	}
+	for _, member := range members {
+		if !tags[member] {
+			return fmt.Errorf("router group %s: unknown outbound %q", tag, member)
+		}
+		for _, other := range groups {
+			if other["tag"] == member {
+				return fmt.Errorf("router group %s cannot contain another group", tag)
+			}
+		}
+	}
+	if raw, set := group["url"]; set {
+		text, _ := raw.(string)
+		parsed, err := url.Parse(text)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("router group %s: invalid test url", tag)
+		}
+	}
+	if raw, set := group["interval"]; set {
+		text, _ := raw.(string)
+		if !routerDuration.MatchString(text) {
+			return fmt.Errorf("router group %s: invalid interval", tag)
+		}
+	}
+	if raw, set := group["tolerance"]; set {
+		number, ok := raw.(float64)
+		if !ok {
+			if integer, isInt := raw.(int); isInt {
+				number, ok = float64(integer), true
+			}
+		}
+		if !ok || number < 0 || number > 10000 {
+			return fmt.Errorf("router group %s: invalid tolerance", tag)
+		}
+	}
+	return nil
+}
+
+// buildRouterRule converts one panel rule. Match fields of different kinds in
+// one rule are ANDed by sing-box, so the panel sends one kind per rule.
+func buildRouterRule(rule map[string]interface{}, tags map[string]bool) (map[string]interface{}, error) {
+	next := map[string]interface{}{}
+	matched := false
+	for key, value := range rule {
+		switch {
+		case routerRuleMatchKeys[key]:
+			values, ok := stringList(value)
+			if !ok || len(values) == 0 || len(values) > 2000 {
+				return nil, fmt.Errorf("invalid %s", key)
+			}
+			next[key] = values
+			matched = true
+		case key == "domain_regex":
+			values, ok := stringListMax(value, 1000)
+			if !ok || len(values) == 0 || len(values) > 500 {
+				return nil, errors.New("invalid domain_regex")
+			}
+			for _, pattern := range values {
+				if _, err := regexp.Compile(pattern); err != nil {
+					return nil, fmt.Errorf("invalid domain_regex %q", pattern)
+				}
+			}
+			next[key] = values
+			matched = true
+		case key == "port":
+			items, ok := value.([]interface{})
+			if !ok || len(items) == 0 || len(items) > 2000 {
+				return nil, errors.New("invalid port")
+			}
+			ports := make([]int, 0, len(items))
+			for _, item := range items {
+				number, ok := item.(float64)
+				if !ok || number < 1 || number > 65535 || number != float64(int(number)) {
+					return nil, errors.New("invalid port")
+				}
+				ports = append(ports, int(number))
+			}
+			next[key] = ports
+			matched = true
+		case key == "port_range":
+			values, ok := stringList(value)
+			if !ok || len(values) == 0 || len(values) > 500 {
+				return nil, errors.New("invalid port_range")
+			}
+			for _, item := range values {
+				if !routerPortRange.MatchString(item) {
+					return nil, fmt.Errorf("invalid port_range %q", item)
+				}
+			}
+			next[key] = values
+			matched = true
+		case key == "network":
+			values, ok := stringList(value)
+			if !ok || len(values) == 0 || len(values) > 2 {
+				return nil, errors.New("invalid network")
+			}
+			for _, item := range values {
+				if item != "tcp" && item != "udp" {
+					return nil, fmt.Errorf("invalid network %q", item)
+				}
+			}
+			next[key] = values
+			matched = true
+		case key == "ip_is_private":
+			if value != true {
+				return nil, errors.New("invalid ip_is_private")
+			}
+			next[key] = true
+			matched = true
+		case key == "outbound":
+			tag, _ := value.(string)
+			if !tags[tag] {
+				return nil, fmt.Errorf("unknown outbound %q", tag)
+			}
+			next["action"] = "route"
+			next["outbound"] = tag
+		case key == "action":
+			if value != "reject" && value != "resolve" {
+				return nil, errors.New("unsupported action")
+			}
+			next["action"] = value
+		default:
+			return nil, fmt.Errorf("unsupported field %s", key)
+		}
+	}
+	// A bare resolve looks up the domain so the IP rules after it can match.
+	if next["action"] == "resolve" {
+		if len(next) != 1 {
+			return nil, errors.New("resolve takes no other fields")
+		}
+		return next, nil
+	}
+	if !matched || next["action"] == nil {
+		return nil, errors.New("needs a match and an outbound")
+	}
+	return next, nil
+}
+
 func stringList(value interface{}) ([]string, bool) {
+	return stringListMax(value, 253)
+}
+
+func stringListMax(value interface{}, maxLength int) ([]string, bool) {
 	items, ok := value.([]interface{})
 	if !ok {
 		if typed, ok := value.([]string); ok {
@@ -174,7 +313,7 @@ func stringList(value interface{}) ([]string, bool) {
 	for _, item := range items {
 		text, ok := item.(string)
 		text = strings.TrimSpace(text)
-		if !ok || text == "" || len(text) > 253 {
+		if !ok || text == "" || len(text) > maxLength {
 			return nil, false
 		}
 		out = append(out, text)

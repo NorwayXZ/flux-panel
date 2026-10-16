@@ -40,6 +40,7 @@ import PageShell from "@/components/page-shell";
 import PageHelp from "@/components/page-help";
 import CustomExitsPanel from "@/components/custom-exits-panel";
 import RoutePresetsPanel from "@/components/route-presets-panel";
+import RulesetsPanel from "@/components/rulesets-panel";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
@@ -546,7 +547,7 @@ export default function ExitManagementPage() {
   const tabs = [
     ...(admin ? [{ key: "residential", title: "家宽出口" }] : []),
     { key: "custom", title: "自定义出口" },
-    { key: "presets", title: "规则分组" },
+    { key: "presets", title: "规则库" },
   ];
   const [tab, setTab] = useState(() => {
     try {
@@ -566,7 +567,7 @@ export default function ExitManagementPage() {
         <div className="flex items-center gap-1.5">
           <h1 className="text-2xl font-bold text-foreground">出口管理</h1>
           <PageHelp>
-            私人代理可以用的出口：各国家宽、你自己添加的节点，以及分流规则可选的域名分组
+            私人代理可以用的出口：各国家宽、你自己添加的节点和出口组，以及分流规则用到的规则集和内置分组
           </PageHelp>
         </div>
       </header>
@@ -590,7 +591,10 @@ export default function ExitManagementPage() {
       {tab === "residential" && admin ? (
         <ResidentialExits />
       ) : tab === "presets" ? (
-        <RoutePresetsPanel canRefresh={admin} />
+        <div className="space-y-8">
+          <RulesetsPanel />
+          <RoutePresetsPanel canRefresh={admin} />
+        </div>
       ) : (
         <CustomExitsPanel />
       )}

@@ -62,11 +62,13 @@ export default function RoutePresetsPanel({
   const presets = status?.presets || [];
 
   return (
-    <div className="space-y-4">
+    <section className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="max-w-3xl space-y-1 text-sm text-default-500">
+          <h2 className="text-base font-semibold text-foreground">内置分组</h2>
           <p>
-            私人代理“出口与分流”里“按分组”可选的域名分组。标着“自动更新”的分组每{" "}
+            分流规则里“内置分组”可选的域名分组。GEOSITE、GEOIP
+            规则用到的社区清单也按同样的方式下载和更新。标着“自动更新”的分组每{" "}
             {status?.intervalDays || 3} 天从 v2fly
             社区域名清单同步一次，由面板下载，节点不需要访问
             GitHub；有变化时，用到它的代理会自动重新下发。
@@ -131,6 +133,6 @@ export default function RoutePresetsPanel({
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }

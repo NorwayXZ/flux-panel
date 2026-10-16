@@ -27,6 +27,11 @@ import java.util.Objects;
 @Service
 public class ProxyExitService {
     public static final String ROUTER_AGENT_VERSION = "2.76.0";
+    /** Exit groups and the regex, port, network and GEOIP rules. */
+    public static final String ROUTER_RULES_AGENT_VERSION = "2.79.0";
+    /** Stored outbound type of an exit group; the router gets a sing-box urltest. */
+    public static final String GROUP_TYPE = "group";
+    static final String DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204";
     private static final int MAX_EXITS_PER_USER = 200;
 
     private final JdbcTemplate jdbc;
@@ -51,7 +56,58 @@ public class ProxyExitService {
         result.put("exits", exits);
         result.put("presets", ProxyRoutePresets.list());
         result.put("minimumAgentVersion", ROUTER_AGENT_VERSION);
+        result.put("rulesAgentVersion", ROUTER_RULES_AGENT_VERSION);
         return R.ok(result);
+    }
+
+    /**
+     * Creates or updates an exit group: the router keeps testing its members and uses the
+     * fastest one that answers.
+     */
+    public R saveGroup(Long id, String name, List<Long> members, boolean direct, String url, Integer intervalMinutes, Integer tolerance) {
+        if (name == null || name.isBlank()) return R.err("请输入名称");
+        java.util.LinkedHashSet<Long> unique = new java.util.LinkedHashSet<>(members == null ? List.of() : members);
+        if (unique.size() + (direct ? 1 : 0) < 2) return R.err("出口组至少需要两个成员");
+        if (unique.size() > 30) return R.err("出口组最多 30 个成员");
+        String testUrl = url == null || url.isBlank() ? DEFAULT_TEST_URL : url.trim();
+        if (!testUrl.matches("https?://[^\\s/]+(/\\S*)?") || testUrl.length() > 500) return R.err("测速地址需要以 http:// 或 https:// 开头");
+        int interval = intervalMinutes == null ? 3 : intervalMinutes;
+        if (interval < 1 || interval > 1440) return R.err("测速间隔需要在 1 到 1440 分钟之间");
+        int toleranceMs = tolerance == null ? 50 : tolerance;
+        if (toleranceMs < 0 || toleranceMs > 5000) return R.err("切换容差需要在 0 到 5000 毫秒之间");
+        Integer userId = currentUserId();
+        for (Long member : unique) {
+            Map<String, Object> row = owned(member);
+            if (row == null) return R.err("出口 #" + member + " 不存在或不能使用");
+            if (GROUP_TYPE.equals(row.get("protocol"))) return R.err("出口组不能包含另一个出口组");
+            if (id != null && id.equals(member)) return R.err("出口组不能包含自己");
+        }
+        JSONObject outbound = new JSONObject(true);
+        outbound.put("type", GROUP_TYPE);
+        outbound.put("members", new ArrayList<>(unique));
+        outbound.put("direct", direct);
+        outbound.put("url", testUrl);
+        outbound.put("intervalMinutes", interval);
+        outbound.put("tolerance", toleranceMs);
+        String memberColumn = "," + String.join(",", unique.stream().map(String::valueOf).toList()) + ",";
+        long now = System.currentTimeMillis();
+        if (id == null) {
+            Long count = jdbc.queryForObject("SELECT COUNT(*) FROM proxy_exit WHERE user_id = ?", Long.class, userId);
+            if (count != null && count >= MAX_EXITS_PER_USER) return R.err("自定义出口最多 " + MAX_EXITS_PER_USER + " 个");
+            jdbc.update("INSERT INTO proxy_exit (user_id,name,protocol,server,port,outbound,members,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?)",
+                    userId, truncate(name.trim(), 100), GROUP_TYPE, "", 0, crypto.encrypt(outbound.toJSONString()), memberColumn, now, now);
+            return R.ok();
+        }
+        Map<String, Object> row = owned(id);
+        if (row == null || !GROUP_TYPE.equals(row.get("protocol"))) return R.err("出口组不存在");
+        jdbc.update("UPDATE proxy_exit SET name=?, outbound=?, members=?, updated_time=? WHERE id=?",
+                truncate(name.trim(), 100), crypto.encrypt(outbound.toJSONString()), memberColumn, now, id);
+        return R.ok();
+    }
+
+    /** Running proxies using this exit, directly or through a group, so a group edit can be re-applied. */
+    public List<Long> groupsContaining(Long id) {
+        return jdbc.queryForList("SELECT id FROM proxy_exit WHERE protocol = ? AND members LIKE ?", Long.class, GROUP_TYPE, "%," + id + ",%");
     }
 
     /** Shows what a pasted text contains without saving it. */
@@ -103,6 +159,8 @@ public class ProxyExitService {
 
     public R delete(Long id) {
         if (owned(id) == null) return R.err("出口不存在");
+        List<Long> groups = groupsContaining(id);
+        if (!groups.isEmpty()) return R.err("出口组“" + exitName(groups.get(0)) + "”包含这个出口，请先把它从组里移除");
         Long used = jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE state <> 'deleted' AND (exit_custom_id = ? "
                 + "OR route_rules LIKE ?)", Long.class, id, "%\"custom:" + id + "\"%");
         if (used != null && used > 0) return R.err("还有 " + used + " 个代理在使用这个出口，请先在代理的出口设置里换掉它");
@@ -121,6 +179,7 @@ public class ProxyExitService {
             return R.err("自检需要节点 Agent " + ROUTER_AGENT_VERSION + " 或更高版本");
         }
         JSONObject outbound = outbound(row);
+        if (GROUP_TYPE.equals(outbound.getString("type"))) return testGroup(id, outbound, node);
         GostDto response = WebSocketServer.send_msg(node.getId(), Map.of("outbound", outbound), "TestProxyExit", 25);
         long now = System.currentTimeMillis();
         if (response == null || !"OK".equals(response.getMsg())) {
@@ -137,6 +196,41 @@ public class ProxyExitService {
         result.put("country", data.getString("country"));
         result.put("latencyMs", data.getInteger("latencyMs"));
         result.put("nodeName", node.getName());
+        return R.ok(result);
+    }
+
+    /** Tests every member of a group; the group counts as usable when one member is. */
+    private R testGroup(Long id, JSONObject group, Node node) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        Map<String, Object> best = null;
+        for (Long member : group.getJSONArray("members").toJavaList(Long.class)) {
+            R tested = test(member, node.getId());
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", member);
+            item.put("name", exitName(member));
+            item.put("ok", tested.getCode() == 0);
+            if (tested.getCode() == 0) {
+                @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) tested.getData();
+                item.putAll(data);
+                if (best == null || ((Number) data.get("latencyMs")).intValue() < ((Number) best.get("latencyMs")).intValue()) best = item;
+            } else {
+                item.put("error", tested.getMsg());
+            }
+            results.add(item);
+        }
+        long now = System.currentTimeMillis();
+        if (best == null) {
+            jdbc.update("UPDATE proxy_exit SET last_test_at=?, last_test_ok=0, last_test_error=? WHERE id=?", now, "所有成员都不可用", id);
+            return R.err("出口组的成员都不可用");
+        }
+        jdbc.update("UPDATE proxy_exit SET last_test_at=?, last_test_ok=1, last_test_ip=?, last_test_country=?, last_test_latency=?, "
+                + "last_test_error=NULL WHERE id=?", now, best.get("ip"), best.get("country"), best.get("latencyMs"), id);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ip", best.get("ip"));
+        result.put("country", best.get("country"));
+        result.put("latencyMs", best.get("latencyMs"));
+        result.put("nodeName", node.getName());
+        result.put("members", results);
         return R.ok(result);
     }
 
@@ -192,6 +286,14 @@ public class ProxyExitService {
         item.put("lastTestCountry", row.get("last_test_country"));
         item.put("lastTestLatency", row.get("last_test_latency"));
         item.put("lastTestError", row.get("last_test_error"));
+        if (GROUP_TYPE.equals(row.get("protocol"))) {
+            JSONObject group = outbound(row);
+            List<Long> members = group.getJSONArray("members").toJavaList(Long.class);
+            List<Map<String, Object>> memberViews = new ArrayList<>();
+            for (Long member : members) memberViews.add(Map.of("id", member, "name", Objects.requireNonNullElse(exitName(member), "#" + member)));
+            item.put("group", Map.of("members", memberViews, "direct", group.getBooleanValue("direct"), "url", group.getString("url"),
+                    "intervalMinutes", group.getIntValue("intervalMinutes"), "tolerance", group.getIntValue("tolerance")));
+        }
         item.put("usedBy", jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE state <> 'deleted' AND (exit_custom_id = ? "
                 + "OR route_rules LIKE ?)", Long.class, id, "%\"custom:" + id + "\"%"));
         return item;

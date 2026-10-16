@@ -79,6 +79,18 @@ public class PrivateProxySchemaInitializer {
                     + "preset_key varchar(32) NOT NULL, domain_suffix mediumtext, domain mediumtext, domain_keyword text, "
                     + "updated_at bigint NOT NULL, checked_at bigint NOT NULL, last_error varchar(500) DEFAULT NULL, "
                     + "PRIMARY KEY (preset_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            SchemaSupport.ensureColumn(jdbcTemplate, "proxy_exit", "members", "varchar(1000) DEFAULT NULL");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS route_list_cache ("
+                    + "list_key varchar(100) NOT NULL, data mediumtext, entry_count int NOT NULL DEFAULT 0, "
+                    + "updated_at bigint NOT NULL, checked_at bigint NOT NULL, last_error varchar(500) DEFAULT NULL, "
+                    + "PRIMARY KEY (list_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS route_ruleset ("
+                    + "id bigint NOT NULL AUTO_INCREMENT, user_id int NOT NULL, name varchar(100) NOT NULL, url varchar(1000) NOT NULL, "
+                    + "behavior varchar(16) NOT NULL, interval_hours int NOT NULL DEFAULT 72, data mediumtext, "
+                    + "entry_count int NOT NULL DEFAULT 0, skipped int NOT NULL DEFAULT 0, updated_at bigint DEFAULT NULL, "
+                    + "checked_at bigint DEFAULT NULL, last_error varchar(500) DEFAULT NULL, created_time bigint NOT NULL, "
+                    + "PRIMARY KEY (id), KEY idx_route_ruleset_user (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ensureMediumText("route_rules");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {
             log.error("Private proxy storage initialization failed", e);
@@ -91,6 +103,15 @@ public class PrivateProxySchemaInitializer {
 
     private void ensureColumn(String column, String definition) {
         SchemaSupport.ensureColumn(jdbcTemplate, "private_proxy", column, definition);
+    }
+
+    /** Imported Clash rules can be larger than a text column holds. */
+    private void ensureMediumText(String column) {
+        String type = jdbcTemplate.queryForObject("SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'private_proxy' AND COLUMN_NAME = ?", String.class, column);
+        if ("text".equalsIgnoreCase(type)) {
+            jdbcTemplate.execute("ALTER TABLE private_proxy MODIFY COLUMN `" + column + "` mediumtext DEFAULT NULL");
+        }
     }
 
     private void ensureVarcharLength(String column, int minimumLength) {

@@ -59,6 +59,7 @@ import {
   getProxyExits,
   type ProxyExit,
   type RoutePreset,
+  type RouteRuleset,
   type RouteRule,
   type ExitCountriesResponse,
   type PrivateProxyClientConfig,
@@ -166,6 +167,8 @@ const ROUTED_EXIT_PROXY_TYPES: PrivateProxyType[] = [
 const PROTOCOL_AGENT_VERSION = "2.62.0";
 // 自定义出口和分流规则由节点上的分流路由承载
 const ROUTER_AGENT_VERSION = "2.76.0";
+/** Exit groups and the regex, port, network and GEOIP rules. */
+const ROUTER_RULES_AGENT_VERSION = "2.79.0";
 const NEW_PROTOCOLS: PrivateProxyType[] = [
   "shadowsocks2022",
   "vless_xhttp",
@@ -358,6 +361,7 @@ export default function PrivateProxyPage() {
   const [exitSaving, setExitSaving] = useState(false);
   const [proxyExits, setProxyExits] = useState<ProxyExit[]>([]);
   const [routePresets, setRoutePresets] = useState<RoutePreset[]>([]);
+  const [routeRulesets, setRouteRulesets] = useState<RouteRuleset[]>([]);
   const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
     groupId: number;
@@ -646,13 +650,27 @@ export default function PrivateProxyPage() {
     setRouteRules(item.routing?.rules || []);
     setSwitchLink("");
     setExitTarget(item);
-    if (ROUTED_EXIT_PROXY_TYPES.includes(item.proxyType))
-      void getProxyExits().then((response) => {
-        if (response.code === 0 && response.data) {
-          setProxyExits(response.data.exits || []);
-          setRoutePresets(response.data.presets || []);
-        }
-      });
+    if (ROUTED_EXIT_PROXY_TYPES.includes(item.proxyType)) loadRoutingOptions();
+  };
+
+  const loadRoutingOptions = () =>
+    void getProxyExits().then((response) => {
+      if (response.code === 0 && response.data) {
+        setProxyExits(response.data.exits || []);
+        setRoutePresets(response.data.presets || []);
+        setRouteRulesets(response.data.rulesets || []);
+      }
+    });
+
+  /** Why the node cannot run exit groups and the newer rule types, or "". */
+  const newerRulesBlocked = (item: PrivateProxyItem) => {
+    const node = nodes.find(
+      (entry) => String(entry.id) === String(item.nodeId),
+    );
+
+    return node && !agentSupportsExit(node.version, ROUTER_RULES_AGENT_VERSION)
+      ? `出口组和正则、GEOIP、端口、网络类型规则需要节点 Agent ${ROUTER_RULES_AGENT_VERSION} 或更高版本（当前 ${node.version || "未知"}），请先升级节点。`
+      : "";
   };
 
   /** Why this proxy cannot use custom exits or rules, or "" when it can. */
@@ -696,10 +714,11 @@ export default function PrivateProxyPage() {
           exitChoice.exitType === "custom"
             ? exitChoice.exitCustomId
             : undefined,
-        rules: routeRules.map(({ match, values, exit }) => ({
+        rules: routeRules.map(({ match, values, exit, noResolve }) => ({
           match,
           values,
           exit,
+          ...(noResolve ? { noResolve } : {}),
         })),
       });
 
@@ -1752,9 +1771,12 @@ export default function PrivateProxyPage() {
                   }
                   countries={exitInfo?.countries || []}
                   customExits={proxyExits}
+                  newerRulesBlocked={newerRulesBlocked(exitTarget)}
                   presets={routePresets}
                   rules={routeRules}
+                  rulesets={routeRulesets}
                   onChange={setRouteRules}
+                  onRulesetsChanged={loadRoutingOptions}
                 />
                 {routeRules.length > 0 && (
                   <p className="mt-2 text-xs text-default-500">

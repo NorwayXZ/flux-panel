@@ -1063,13 +1063,67 @@ export type RouteRuleMatch =
   | "domain_suffix"
   | "domain_keyword"
   | "domain"
-  | "ip_cidr";
+  | "domain_regex"
+  | "geosite"
+  | "geoip"
+  | "ip_cidr"
+  | "ruleset"
+  | "port"
+  | "network";
 
 export interface RouteRule {
   match: RouteRuleMatch;
   values: string[];
   /** direct, block, residential:CC or custom:ID */
   exit: string;
+  /** IP rules: match only connections made to an address, without looking up the domain. */
+  noResolve?: boolean;
+}
+
+/** A subscribed Clash rule provider. */
+export interface RouteRuleset {
+  id: number;
+  name: string;
+  url: string;
+  behavior: "auto" | "domain" | "ipcidr" | "classical";
+  intervalHours: number;
+  count: number;
+  skipped: number;
+  updatedAt?: number | null;
+  checkedAt?: number | null;
+  lastError?: string | null;
+  ownerUserName?: string;
+  sample: string[];
+  usedBy: number;
+}
+
+export interface ExitGroupSettings {
+  members: Array<{ id: number; name: string }>;
+  direct: boolean;
+  url: string;
+  intervalMinutes: number;
+  tolerance: number;
+}
+
+export interface ClashImportResult {
+  rules: Array<{
+    match: RouteRuleMatch;
+    values: string[];
+    policy: string;
+    noResolve?: boolean;
+  }>;
+  policies: Array<{ name: string; suggested?: string | null }>;
+  providers: Array<{
+    name: string;
+    url?: string;
+    behavior?: RouteRuleset["behavior"];
+    intervalHours?: number;
+    existingId?: number;
+  }>;
+  finalPolicy?: string | null;
+  lines: number;
+  skipped: number;
+  skippedSamples: string[];
 }
 
 export interface PrivateProxyRouting {
@@ -1096,6 +1150,8 @@ export interface ProxyExit {
   lastTestLatency?: number;
   lastTestError?: string;
   usedBy: number;
+  /** Set for an exit group, which uses the fastest member automatically. */
+  group?: ExitGroupSettings;
 }
 
 export interface RoutePreset {
@@ -1120,8 +1176,61 @@ export const getProxyExits = () =>
   Network.post<{
     exits: ProxyExit[];
     presets: RoutePreset[];
+    rulesets: RouteRuleset[];
     minimumAgentVersion: string;
+    /** Needed for exit groups and the regex, port, network and GEOIP rules. */
+    rulesAgentVersion: string;
   }>("/proxy-exit/list");
+export const saveExitGroup = (data: {
+  id?: number;
+  name: string;
+  members: number[];
+  direct: boolean;
+  url?: string;
+  intervalMinutes?: number;
+  tolerance?: number;
+}) => Network.mutate("/proxy-exit/group/save", data, ["/proxy-exit/list"]);
+export const getRouteRulesets = () =>
+  Network.post<RouteRuleset[]>("/proxy-exit/ruleset/list");
+export const createRouteRuleset = (data: {
+  name: string;
+  url: string;
+  behavior: RouteRuleset["behavior"];
+  intervalHours: number;
+}) =>
+  Network.mutate<{ id: number; count: number; skipped: number }>(
+    "/proxy-exit/ruleset/create",
+    data,
+    ["/proxy-exit/ruleset/list", "/proxy-exit/list"],
+    90_000,
+  );
+export const updateRouteRuleset = (data: {
+  id: number;
+  name: string;
+  url: string;
+  behavior: RouteRuleset["behavior"];
+  intervalHours: number;
+}) =>
+  Network.mutate(
+    "/proxy-exit/ruleset/update",
+    data,
+    ["/proxy-exit/ruleset/list", "/proxy-exit/list"],
+    90_000,
+  );
+export const deleteRouteRuleset = (id: number) =>
+  Network.mutate("/proxy-exit/ruleset/delete", { id }, [
+    "/proxy-exit/ruleset/list",
+    "/proxy-exit/list",
+  ]);
+export const refreshRouteRuleset = (id: number) =>
+  Network.mutate<{ changed: boolean; reapplied: number; count: number }>(
+    "/proxy-exit/ruleset/refresh",
+    { id },
+    ["/proxy-exit/ruleset/list", "/proxy-exit/list"],
+    90_000,
+  );
+export const parseClashRules = (text: string) =>
+  Network.post<ClashImportResult>("/proxy-exit/clash-import", { text });
 export const getRoutePresets = () =>
   Network.post<RoutePresetStatus>("/proxy-exit/presets");
 export const refreshRoutePresets = () =>
@@ -1130,10 +1239,12 @@ export const refreshRoutePresets = () =>
     reapplied: number;
     errors: string[];
     presets: RoutePreset[];
-  }>("/proxy-exit/presets/refresh", {}, [
-    "/proxy-exit/presets",
-    "/proxy-exit/list",
-  ]);
+  }>(
+    "/proxy-exit/presets/refresh",
+    {},
+    ["/proxy-exit/presets", "/proxy-exit/list"],
+    180_000,
+  );
 export const parseProxyExits = (text: string) =>
   Network.post<Array<{ name: string; protocol: string; server: string; port: number }>>(
     "/proxy-exit/parse",
@@ -1159,9 +1270,13 @@ export const updatePrivateProxyRouting = (data: {
   exitCustomId?: number;
   rules: RouteRule[];
 }) =>
-  Network.mutate<PrivateProxyItem>("/private-proxy/routing", data, [
-    "/private-proxy/list",
-  ]);
+  // The first use of a GEOSITE or GEOIP list downloads it, which can take a while.
+  Network.mutate<PrivateProxyItem>(
+    "/private-proxy/routing",
+    data,
+    ["/private-proxy/list"],
+    120_000,
+  );
 
 export const updatePrivateProxyExit = (
   id: number,

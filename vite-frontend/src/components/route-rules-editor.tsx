@@ -4,17 +4,23 @@ import type {
   RoutePreset,
   RouteRule,
   RouteRuleMatch,
+  RouteRuleset,
 } from "@/api";
 
+import { useState } from "react";
 import { Button } from "@heroui/button";
+import { Checkbox } from "@heroui/checkbox";
 import { Chip } from "@heroui/chip";
-import { Select, SelectItem } from "@heroui/select";
+import { Select, SelectItem, SelectSection } from "@heroui/select";
 import { Textarea } from "@heroui/input";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FileInput, Plus, Trash2 } from "lucide-react";
+
+import ClashImportModal from "@/components/clash-import-modal";
 
 /**
- * Per-domain routing rules: matched top to bottom, the first hit decides the exit; everything
- * else uses the proxy's default exit.
+ * Routing rules: matched top to bottom, the first hit decides the exit; everything else uses the
+ * proxy's default exit. Match types follow Clash: domains, GEOSITE, rule sets, IP ranges,
+ * GEOIP, destination ports and network.
  */
 
 /** While editing, a rule keeps the text as typed so separators are not swallowed. */
@@ -22,20 +28,58 @@ type EditableRule = RouteRule & { text?: string };
 
 export const matchLabel: Record<RouteRuleMatch, string> = {
   preset: "内置分组",
+  geosite: "GEOSITE",
+  ruleset: "规则集订阅",
   domain_suffix: "域名后缀",
-  domain_keyword: "域名关键词",
   domain: "完整域名",
+  domain_keyword: "域名关键词",
+  domain_regex: "域名正则",
+  geoip: "GEOIP",
   ip_cidr: "IP 段",
+  port: "目标端口",
+  network: "网络类型",
 };
 
-const matchHint: Record<RouteRuleMatch, string> = {
-  preset: "",
+const matchSections: Array<{ title: string; keys: RouteRuleMatch[] }> = [
+  { title: "现成清单", keys: ["preset", "geosite", "ruleset"] },
+  {
+    title: "按域名",
+    keys: ["domain_suffix", "domain", "domain_keyword", "domain_regex"],
+  },
+  { title: "按 IP", keys: ["geoip", "ip_cidr"] },
+  { title: "其他", keys: ["port", "network"] },
+];
+
+const matchHint: Partial<Record<RouteRuleMatch, string>> = {
+  geosite:
+    "v2fly 社区清单名，例如 netflix、openai、category-games；google@cn 表示只取带 @cn 标记的部分。首次保存时由面板下载，之后每 3 天更新",
   domain_suffix:
     "例如 openai.com，会同时匹配它的所有子域名；多个用空格、逗号或换行分隔",
   domain_keyword: "域名里包含这个词就匹配，例如 netflix",
   domain: "只匹配这个域名本身，例如 api.example.com",
+  domain_regex: "每行一个正则表达式，例如 ^chatgpt-.+\\.example\\.com$",
+  geoip:
+    "国家或地区代码，例如 cn、us、jp；private 表示局域网和保留地址。首次保存时由面板下载",
   ip_cidr: "例如 8.8.8.0/24 或 2001:db8::/32",
+  port: "例如 443、8443 或范围 8000-9000",
 };
+
+const placeholder: Partial<Record<RouteRuleMatch, string>> = {
+  geosite: "netflix",
+  domain_regex: "^chatgpt-.+\\.example\\.com$",
+  geoip: "cn",
+  ip_cidr: "8.8.8.0/24",
+  port: "443",
+};
+
+/** Rule types that only Agent 2.79.0 or newer can run. */
+const newerMatches = new Set<RouteRuleMatch>([
+  "domain_regex",
+  "geoip",
+  "port",
+  "network",
+]);
+const ipMatches = new Set<RouteRuleMatch>(["ip_cidr", "geoip", "ruleset"]);
 
 export function exitLabel(
   exit: string,
@@ -51,8 +95,9 @@ export function exitLabel(
   }
   if (exit.startsWith("custom:")) {
     const id = Number(exit.slice("custom:".length));
+    const custom = customExits.find((item) => item.id === id);
 
-    return `自定义 · ${customExits.find((item) => item.id === id)?.name || `#${id}`}`;
+    return `${custom?.group ? "出口组" : "自定义"} · ${custom?.name || `#${id}`}`;
   }
 
   return exit;
@@ -62,20 +107,29 @@ export default function RouteRulesEditor({
   rules,
   onChange,
   presets,
+  rulesets = [],
   countries,
   customExits,
   allowResidential,
   defaultExit,
+  newerRulesBlocked,
+  onRulesetsChanged,
 }: {
   /** The proxy's default exit as a rule exit key, to flag rules that change nothing. */
   defaultExit?: string;
   rules: RouteRule[];
   onChange: (rules: RouteRule[]) => void;
   presets: RoutePreset[];
+  rulesets?: RouteRuleset[];
   countries: ExitCountry[];
   customExits: ProxyExit[];
   allowResidential: boolean;
+  /** Why the node cannot run exit groups and the newer rule types, or empty. */
+  newerRulesBlocked?: string;
+  /** Called after an import added rule-set subscriptions. */
+  onRulesetsChanged?: () => void;
 }) {
+  const [importOpen, setImportOpen] = useState(false);
   const exitOptions = [
     { key: "direct", label: "节点自身 IP" },
     ...(allowResidential
@@ -88,12 +142,12 @@ export default function RouteRulesEditor({
       : []),
     ...customExits.map((exit) => ({
       key: `custom:${exit.id}`,
-      label: `自定义 · ${exit.name}`,
+      label: `${exit.group ? "出口组" : "自定义"} · ${exit.name}`,
     })),
     { key: "block", label: "拒绝连接" },
   ];
 
-  const update = (index: number, patch: Partial<RouteRule>) =>
+  const update = (index: number, patch: Partial<EditableRule>) =>
     onChange(
       rules.map((rule, current) =>
         current === index ? { ...rule, ...patch } : rule,
@@ -106,27 +160,69 @@ export default function RouteRulesEditor({
     next.splice(index + delta, 0, item);
     onChange(next);
   };
+  const add = (match: RouteRuleMatch) =>
+    onChange([...rules, { match, values: [], exit: exitOptions[0].key }]);
+  const toggle = (index: number, rule: RouteRule, value: string) =>
+    update(index, {
+      values: rule.values.includes(value)
+        ? rule.values.filter((item) => item !== value)
+        : [...rule.values, value],
+    });
+  const groupExit = (exit: string) =>
+    exit.startsWith("custom:") &&
+    customExits.some(
+      (item) => `custom:${item.id}` === exit && Boolean(item.group),
+    );
+
+  const chips = (
+    index: number,
+    rule: RouteRule,
+    items: Array<{
+      key: string;
+      label: string;
+      count?: number;
+      title?: string;
+    }>,
+  ) => (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => {
+        const selected = rule.values.includes(item.key);
+
+        return (
+          <Chip
+            key={item.key}
+            className="cursor-pointer"
+            color={selected ? "primary" : "default"}
+            size="sm"
+            title={item.title}
+            variant={selected ? "solid" : "flat"}
+            onClick={() => toggle(index, rule, item.key)}
+          >
+            {item.label}
+            {item.count ? (
+              <span className="ml-1 opacity-60">{item.count}</span>
+            ) : null}
+          </Chip>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">分流规则</div>
           <p className="mt-0.5 text-xs text-default-500">
             从上往下匹配，命中第一条就走它的出口；没有命中任何规则的流量走上面的“默认出口”。
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Button
             size="sm"
             startContent={<Plus size={14} />}
             variant="flat"
-            onPress={() =>
-              onChange([
-                ...rules,
-                { match: "preset", values: [], exit: exitOptions[0].key },
-              ])
-            }
+            onPress={() => add("preset")}
           >
             按分组
           </Button>
@@ -134,18 +230,17 @@ export default function RouteRulesEditor({
             size="sm"
             startContent={<Plus size={14} />}
             variant="flat"
-            onPress={() =>
-              onChange([
-                ...rules,
-                {
-                  match: "domain_suffix",
-                  values: [],
-                  exit: exitOptions[0].key,
-                },
-              ])
-            }
+            onPress={() => add("domain_suffix")}
           >
             按域名
+          </Button>
+          <Button
+            size="sm"
+            startContent={<FileInput size={14} />}
+            variant="flat"
+            onPress={() => setImportOpen(true)}
+          >
+            导入 Clash 规则
           </Button>
         </div>
       </div>
@@ -153,7 +248,9 @@ export default function RouteRulesEditor({
       {rules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-divider px-4 py-5 text-center text-xs text-default-500">
           还没有规则，所有流量都走默认出口。点“按分组”选 ChatGPT、Netflix
-          等现成分组，或点“按域名”填写你自己的域名，再选它们走哪个出口。
+          等现成分组，点“按域名”填写你自己的域名，或者直接导入 Clash
+          配置里的规则。每条规则还可以改成 GEOSITE、GEOIP、规则集订阅、IP
+          段、端口等匹配方式。
         </div>
       ) : (
         <ol className="space-y-2">
@@ -182,11 +279,16 @@ export default function RouteRulesEditor({
                       match,
                       values: [],
                       text: "",
-                    } as Partial<EditableRule>);
+                      noResolve: undefined,
+                    });
                   }}
                 >
-                  {(Object.keys(matchLabel) as RouteRuleMatch[]).map((key) => (
-                    <SelectItem key={key}>{matchLabel[key]}</SelectItem>
+                  {matchSections.map((section) => (
+                    <SelectSection key={section.title} title={section.title}>
+                      {section.keys.map((key) => (
+                        <SelectItem key={key}>{matchLabel[key]}</SelectItem>
+                      ))}
+                    </SelectSection>
                   ))}
                 </Select>
                 <span className="text-xs text-default-400">→</span>
@@ -245,66 +347,92 @@ export default function RouteRulesEditor({
                 </div>
               </div>
               {rule.match === "preset" ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {presets.map((preset) => {
-                    const selected = rule.values.includes(preset.key);
-
-                    return (
-                      <Chip
-                        key={preset.key}
-                        className="cursor-pointer"
-                        color={selected ? "primary" : "default"}
-                        size="sm"
-                        title={
-                          preset.domains.join("、") +
-                          (preset.count && preset.count > preset.domains.length
-                            ? ` 等 ${preset.count} 条`
-                            : "")
-                        }
-                        variant={selected ? "solid" : "flat"}
-                        onClick={() =>
-                          update(index, {
-                            values: selected
-                              ? rule.values.filter(
-                                  (value) => value !== preset.key,
-                                )
-                              : [...rule.values, preset.key],
-                          })
-                        }
-                      >
-                        {preset.name}
-                        {preset.count ? (
-                          <span className="ml-1 opacity-60">
-                            {preset.count}
-                          </span>
-                        ) : null}
-                      </Chip>
-                    );
-                  })}
+                <div className="space-y-1.5">
+                  {chips(
+                    index,
+                    rule,
+                    presets.map((preset) => ({
+                      key: preset.key,
+                      label: preset.name,
+                      count: preset.count,
+                      title:
+                        preset.domains.join("、") +
+                        (preset.count && preset.count > preset.domains.length
+                          ? ` 等 ${preset.count} 条`
+                          : ""),
+                    })),
+                  )}
                   {presets.some((preset) => preset.autoUpdate) && (
-                    <p className="w-full text-xs text-default-400">
-                      分组清单每 3 天自动更新，数字是分组里的域名条数；没有的网站可以再加一条“按域名”规则。
+                    <p className="text-xs text-default-400">
+                      分组清单每 3
+                      天自动更新，数字是分组里的域名条数；没有的网站可以再加一条“按域名”规则。
                     </p>
                   )}
                 </div>
+              ) : rule.match === "ruleset" ? (
+                rulesets.length === 0 ? (
+                  <p className="text-xs text-default-500">
+                    还没有规则集订阅。到“出口管理 → 规则库”添加 Clash
+                    规则集地址，或者导入带 rule-providers 的 Clash 配置。
+                  </p>
+                ) : (
+                  chips(
+                    index,
+                    rule,
+                    rulesets.map((ruleset) => ({
+                      key: String(ruleset.id),
+                      label: ruleset.name,
+                      count: ruleset.count,
+                      title: ruleset.url,
+                    })),
+                  )
+                )
+              ) : rule.match === "network" ? (
+                chips(index, rule, [
+                  { key: "tcp", label: "TCP" },
+                  { key: "udp", label: "UDP（含 QUIC）" },
+                ])
               ) : (
                 <Textarea
                   description={matchHint[rule.match]}
                   maxRows={6}
                   minRows={1}
-                  placeholder={
-                    rule.match === "ip_cidr" ? "8.8.8.0/24" : "example.com"
-                  }
+                  placeholder={placeholder[rule.match] || "example.com"}
                   size="sm"
                   value={(rule as EditableRule).text ?? rule.values.join("\n")}
                   onValueChange={(text) =>
                     update(index, {
                       text,
-                      values: text.split(/[\s,，]+/).filter(Boolean),
-                    } as Partial<EditableRule>)
+                      values: text
+                        .split(
+                          rule.match === "domain_regex" ? /\r?\n/ : /[\s,，]+/,
+                        )
+                        .map((value) => value.trim())
+                        .filter(Boolean),
+                    })
                   }
                 />
               )}
+              {ipMatches.has(rule.match) && (
+                <Checkbox
+                  isSelected={Boolean(rule.noResolve)}
+                  size="sm"
+                  onValueChange={(selected) =>
+                    update(index, { noResolve: selected || undefined })
+                  }
+                >
+                  <span className="text-xs text-default-500">
+                    不解析域名（no-resolve）：只匹配直接用 IP
+                    连接的流量。不勾选时会先查出域名的 IP 再匹配，和 Clash 一致
+                  </span>
+                </Checkbox>
+              )}
+              {newerRulesBlocked &&
+                (newerMatches.has(rule.match) || groupExit(rule.exit)) && (
+                  <p className="text-xs text-warning-600 dark:text-warning-400">
+                    {newerRulesBlocked}
+                  </p>
+                )}
               {defaultExit && rule.exit === defaultExit && (
                 <p className="text-xs text-warning-600 dark:text-warning-400">
                   {defaultExit === "direct"
@@ -316,6 +444,18 @@ export default function RouteRulesEditor({
           ))}
         </ol>
       )}
+
+      <ClashImportModal
+        exitOptions={exitOptions}
+        isOpen={importOpen}
+        rulesets={rulesets}
+        onClose={() => setImportOpen(false)}
+        onImport={(imported, replace) => {
+          onChange(replace ? imported : [...rules, ...imported]);
+          setImportOpen(false);
+        }}
+        onRulesetsChanged={onRulesetsChanged}
+      />
     </div>
   );
 }

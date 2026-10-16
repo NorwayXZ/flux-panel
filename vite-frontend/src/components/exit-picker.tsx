@@ -126,7 +126,7 @@ export default function ExitPicker({
             <span>
               <span className="block text-sm font-medium">自定义出口</span>
               <span className="mt-0.5 block text-xs text-default-500">
-                经你添加的 VLESS、Trojan 等节点出去
+                经你添加的 VLESS、Trojan 等节点或出口组出去
               </span>
             </span>
           </button>
@@ -163,7 +163,9 @@ export default function ExitPicker({
             >
               {customExits.map((exit) => (
                 <SelectItem key={String(exit.id)} textValue={exit.name}>
-                  {exit.name} · {exit.protocol.toUpperCase()} · {exit.server}
+                  {exit.group
+                    ? `${exit.name} · 出口组（自动选最快的 ${exit.group.members.length + (exit.group.direct ? 1 : 0)} 个成员之一）`
+                    : `${exit.name} · ${exit.protocol.toUpperCase()} · ${exit.server}`}
                 </SelectItem>
               ))}
             </Select>
