@@ -1,8 +1,10 @@
 package com.admin.controller;
 
+import com.admin.common.annotation.RequireRole;
 import com.admin.common.aop.LogAnnotation;
 import com.admin.common.lang.R;
 import com.admin.service.ProxyExitService;
+import com.admin.service.ProxyRulesetService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,9 +17,24 @@ import java.util.Map;
 @RequestMapping("/api/v1/proxy-exit")
 public class ProxyExitController {
     private final ProxyExitService service;
+    private final ProxyRulesetService rulesets;
 
-    public ProxyExitController(ProxyExitService service) {
+    public ProxyExitController(ProxyExitService service, ProxyRulesetService rulesets) {
         this.service = service;
+        this.rulesets = rulesets;
+    }
+
+    /** Built-in domain groups, their sizes and when they were last refreshed. */
+    @PostMapping("/presets")
+    public R presets() {
+        return R.ok(rulesets.status());
+    }
+
+    @RequireRole
+    @LogAnnotation
+    @PostMapping("/presets/refresh")
+    public R refreshPresets() {
+        return rulesets.refreshNow();
     }
 
     @PostMapping("/list")

@@ -116,25 +116,44 @@ export default function RouteRulesEditor({
             从上往下匹配，命中第一条就走它的出口；没有命中任何规则的流量走上面的“默认出口”。
           </p>
         </div>
-        <Button
-          size="sm"
-          startContent={<Plus size={14} />}
-          variant="flat"
-          onPress={() =>
-            onChange([
-              ...rules,
-              { match: "preset", values: [], exit: exitOptions[0].key },
-            ])
-          }
-        >
-          添加规则
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            size="sm"
+            startContent={<Plus size={14} />}
+            variant="flat"
+            onPress={() =>
+              onChange([
+                ...rules,
+                { match: "preset", values: [], exit: exitOptions[0].key },
+              ])
+            }
+          >
+            按分组
+          </Button>
+          <Button
+            size="sm"
+            startContent={<Plus size={14} />}
+            variant="flat"
+            onPress={() =>
+              onChange([
+                ...rules,
+                {
+                  match: "domain_suffix",
+                  values: [],
+                  exit: exitOptions[0].key,
+                },
+              ])
+            }
+          >
+            按域名
+          </Button>
+        </div>
       </div>
 
       {rules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-divider px-4 py-5 text-center text-xs text-default-500">
-          还没有规则，所有流量都走默认出口。例如加一条“内置分组 ChatGPT / OpenAI
-          → 家宽 美国”，只有这些网站走家宽。
+          还没有规则，所有流量都走默认出口。点“按分组”选 ChatGPT、Netflix
+          等现成分组，或点“按域名”填写你自己的域名，再选它们走哪个出口。
         </div>
       ) : (
         <ol className="space-y-2">
@@ -236,7 +255,12 @@ export default function RouteRulesEditor({
                         className="cursor-pointer"
                         color={selected ? "primary" : "default"}
                         size="sm"
-                        title={preset.domains.join("、")}
+                        title={
+                          preset.domains.join("、") +
+                          (preset.count && preset.count > preset.domains.length
+                            ? ` 等 ${preset.count} 条`
+                            : "")
+                        }
                         variant={selected ? "solid" : "flat"}
                         onClick={() =>
                           update(index, {
@@ -249,9 +273,19 @@ export default function RouteRulesEditor({
                         }
                       >
                         {preset.name}
+                        {preset.count ? (
+                          <span className="ml-1 opacity-60">
+                            {preset.count}
+                          </span>
+                        ) : null}
                       </Chip>
                     );
                   })}
+                  {presets.some((preset) => preset.autoUpdate) && (
+                    <p className="w-full text-xs text-default-400">
+                      分组清单每 3 天自动更新，数字是分组里的域名条数；没有的网站可以再加一条“按域名”规则。
+                    </p>
+                  )}
                 </div>
               ) : (
                 <Textarea

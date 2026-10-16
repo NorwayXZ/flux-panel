@@ -32,6 +32,8 @@ import java.util.regex.Pattern;
 public class ProxyRoutingService {
     static final int MAX_RULES = 100;
     static final int MAX_VALUES = 500;
+    /** The node router's limit per match field in one rule. */
+    static final int ROUTER_RULE_VALUES = 2000;
     private static final String EXIT_ROUTE_USER = "exit";
     private static final Set<String> MATCHES = Set.of("domain_suffix", "domain_keyword", "domain", "ip_cidr", "preset");
     private static final Pattern DOMAIN = Pattern.compile("^(?=.{1,253}$)[a-z0-9_*]([a-z0-9_.-]*[a-z0-9])?$");
@@ -52,10 +54,44 @@ public class ProxyRoutingService {
 
     private final JdbcTemplate jdbc;
     private final ProxyExitService exits;
+    private final com.admin.mapper.PrivateProxyMapper proxyMapper;
+    private final com.admin.mapper.NodeMapper nodeMapper;
 
-    public ProxyRoutingService(JdbcTemplate jdbc, ProxyExitService exits) {
+    public ProxyRoutingService(JdbcTemplate jdbc, ProxyExitService exits, com.admin.mapper.PrivateProxyMapper proxyMapper,
+                               com.admin.mapper.NodeMapper nodeMapper) {
         this.jdbc = jdbc;
         this.exits = exits;
+        this.proxyMapper = proxyMapper;
+        this.nodeMapper = nodeMapper;
+    }
+
+    /**
+     * Re-applies the routers of running proxies whose rules use one of the given groups, so a
+     * refreshed list takes effect. Returns how many routers were updated.
+     */
+    public int reapplyForPresets(Set<String> presetKeys) {
+        int applied = 0;
+        List<PrivateProxy> proxies = proxyMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PrivateProxy>()
+                .eq("state", "active").like("route_rules", "\"preset\""));
+        for (PrivateProxy proxy : proxies) {
+            boolean uses = false;
+            for (JSONObject rule : rules(proxy.getRouteRules())) {
+                if (!"preset".equals(rule.getString("match"))) continue;
+                for (String key : rule.getJSONArray("values").toJavaList(String.class)) if (presetKeys.contains(key)) uses = true;
+            }
+            if (!uses || !active(proxy)) continue;
+            Node node = nodeMapper.selectById(proxy.getNodeId());
+            if (node == null || !WebSocketServer.isNodeOnline(node.getId())
+                    || !com.admin.common.utils.AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.ROUTER_AGENT_VERSION)) continue;
+            try {
+                apply(proxy, node, true);
+                applied++;
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(ProxyRoutingService.class)
+                        .warn("Re-applying router for proxy {} failed: {}", proxy.getId(), e.getMessage());
+            }
+        }
+        return applied;
     }
 
     /** A proxy needs a router when it uses a custom exit or has any rule. */
@@ -180,24 +216,39 @@ public class ProxyRoutingService {
         }
         JSONArray routerRules = new JSONArray();
         for (JSONObject rule : rules) {
-            JSONObject converted = new JSONObject(true);
             String match = rule.getString("match");
             List<String> values = rule.getJSONArray("values").toJavaList(String.class);
+            Map<String, List<String>> matches = new LinkedHashMap<>();
             if ("preset".equals(match)) {
-                List<String> domains = new ArrayList<>();
+                Set<String> suffix = new LinkedHashSet<>();
+                Set<String> domain = new LinkedHashSet<>();
+                Set<String> keyword = new LinkedHashSet<>();
                 for (String key : values) {
                     ProxyRoutePresets.Preset preset = ProxyRoutePresets.get(key);
-                    if (preset != null) domains.addAll(preset.domainSuffix);
+                    if (preset == null) continue;
+                    suffix.addAll(preset.domainSuffix);
+                    domain.addAll(preset.domain);
+                    keyword.addAll(preset.domainKeyword);
                 }
-                if (domains.isEmpty()) continue;
-                converted.put("domain_suffix", new ArrayList<>(new LinkedHashSet<>(domains)));
+                if (!suffix.isEmpty()) matches.put("domain_suffix", new ArrayList<>(suffix));
+                if (!domain.isEmpty()) matches.put("domain", new ArrayList<>(domain));
+                if (!keyword.isEmpty()) matches.put("domain_keyword", new ArrayList<>(keyword));
             } else {
-                converted.put(match, values);
+                matches.put(match, values);
             }
             String exit = rule.getString("exit");
-            if ("block".equals(exit)) converted.put("action", "reject");
-            else converted.put("outbound", tagOf(exit));
-            routerRules.add(converted);
+            // The router accepts up to ROUTER_RULE_VALUES entries per field; larger groups become
+            // several consecutive rules with the same exit.
+            for (Map.Entry<String, List<String>> field : matches.entrySet()) {
+                List<String> list = field.getValue();
+                for (int from = 0; from < list.size(); from += ROUTER_RULE_VALUES) {
+                    JSONObject converted = new JSONObject(true);
+                    converted.put(field.getKey(), new ArrayList<>(list.subList(from, Math.min(list.size(), from + ROUTER_RULE_VALUES))));
+                    if ("block".equals(exit)) converted.put("action", "reject");
+                    else converted.put("outbound", tagOf(exit));
+                    routerRules.add(converted);
+                }
+            }
         }
         JSONObject request = new JSONObject(true);
         request.put("name", name);

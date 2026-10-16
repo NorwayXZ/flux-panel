@@ -1,3 +1,12 @@
+## 2.78.0 Routing groups that update themselves, and quicker custom-domain rules
+
+- The built-in routing groups (ChatGPT/OpenAI, Claude, Gemini, Google, YouTube, Netflix, Disney+, Spotify, Telegram, X, Meta, TikTok, GitHub, Microsoft, Apple, Steam, Discord) are now synced every 3 days from the v2fly domain-list-community lists, so new AI and streaming domains are picked up without a panel update. The panel downloads the lists (jsDelivr first, GitHub as fallback); nodes need no access to GitHub. When a group changes, private proxies whose rules use it are re-applied automatically. Until the first sync, and whenever a download fails, the built-in lists keep working.
+- New group "AI 服务合集" covers the common AI services outside China in one rule.
+- 出口管理 has a new "规则分组" tab listing every group with its size and last update. Admins can sync them immediately with "立即更新".
+- In 出口与分流, "添加规则" is split into "按分组" and "按域名", so adding your own domains for a chosen exit is one click. Group chips show how many domains each group holds.
+- Large groups are split into several router rules so they stay within the Agent's per-rule limit.
+- Panel-only update; Agents stay at 2.76.0. Adds the route_preset_data table (created at startup; migrations/20261017_route_preset_data.sql for manual setups). 2.77.2 remains available for rollback.
+
 ## 2.77.2 Clearer default exit in proxy routing
 
 - In 出口与分流 the top choice is now labelled 默认出口 and explains that it carries the traffic no rule matches. To send only some sites through a custom or residential exit, keep the default on the node's own IP and add rules for those sites.

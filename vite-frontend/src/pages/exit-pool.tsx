@@ -39,6 +39,7 @@ import { formatBytes, formatDateTime } from "@/utils/format";
 import PageShell from "@/components/page-shell";
 import PageHelp from "@/components/page-help";
 import CustomExitsPanel from "@/components/custom-exits-panel";
+import RoutePresetsPanel from "@/components/route-presets-panel";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
@@ -542,14 +543,21 @@ function ResidentialExits() {
 /** Exits a private proxy can use: residential exits (admins) and custom exits. */
 export default function ExitManagementPage() {
   const admin = isAdminUser();
+  const tabs = [
+    ...(admin ? [{ key: "residential", title: "家宽出口" }] : []),
+    { key: "custom", title: "自定义出口" },
+    { key: "presets", title: "规则分组" },
+  ];
   const [tab, setTab] = useState(() => {
     try {
       const saved = localStorage.getItem("cloudnest.exit-tab");
 
-      return admin && saved !== "custom" ? "residential" : "custom";
+      if (saved && tabs.some((item) => item.key === saved)) return saved;
     } catch {
-      return admin ? "residential" : "custom";
+      // Remembering the tab is optional.
     }
+
+    return tabs[0].key;
   });
 
   return (
@@ -557,29 +565,32 @@ export default function ExitManagementPage() {
       <header>
         <div className="flex items-center gap-1.5">
           <h1 className="text-2xl font-bold text-foreground">出口管理</h1>
-          <PageHelp>私人代理可以用的出口：各国家宽，和你自己添加的节点</PageHelp>
+          <PageHelp>
+            私人代理可以用的出口：各国家宽、你自己添加的节点，以及分流规则可选的域名分组
+          </PageHelp>
         </div>
       </header>
-      {admin ? (
-        <Tabs
-          aria-label="出口类型"
-          selectedKey={tab}
-          variant="underlined"
-          onSelectionChange={(key) => {
-            setTab(String(key));
-            try {
-              localStorage.setItem("cloudnest.exit-tab", String(key));
-            } catch {
-              // Remembering the tab is optional.
-            }
-          }}
-        >
-          <Tab key="residential" title="家宽出口" />
-          <Tab key="custom" title="自定义出口" />
-        </Tabs>
-      ) : null}
-      {admin && tab === "residential" ? (
+      <Tabs
+        aria-label="出口类型"
+        selectedKey={tab}
+        variant="underlined"
+        onSelectionChange={(key) => {
+          setTab(String(key));
+          try {
+            localStorage.setItem("cloudnest.exit-tab", String(key));
+          } catch {
+            // Remembering the tab is optional.
+          }
+        }}
+      >
+        {tabs.map((item) => (
+          <Tab key={item.key} title={item.title} />
+        ))}
+      </Tabs>
+      {tab === "residential" && admin ? (
         <ResidentialExits />
+      ) : tab === "presets" ? (
+        <RoutePresetsPanel canRefresh={admin} />
       ) : (
         <CustomExitsPanel />
       )}

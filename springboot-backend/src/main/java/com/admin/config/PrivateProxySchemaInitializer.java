@@ -75,6 +75,10 @@ public class PrivateProxySchemaInitializer {
                     + "created_time bigint NOT NULL, updated_time bigint NOT NULL, "
                     + "PRIMARY KEY (id), KEY idx_proxy_exit_user (user_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS route_preset_data ("
+                    + "preset_key varchar(32) NOT NULL, domain_suffix mediumtext, domain mediumtext, domain_keyword text, "
+                    + "updated_at bigint NOT NULL, checked_at bigint NOT NULL, last_error varchar(500) DEFAULT NULL, "
+                    + "PRIMARY KEY (preset_key)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {
             log.error("Private proxy storage initialization failed", e);

@@ -1101,7 +1101,19 @@ export interface ProxyExit {
 export interface RoutePreset {
   key: string;
   name: string;
+  /** A sample of the group's domains. */
   domains: string[];
+  count?: number;
+  /** Refreshed from the community rule lists every few days. */
+  autoUpdate?: boolean;
+  updatedAt?: number | null;
+}
+
+export interface RoutePresetStatus {
+  intervalDays: number;
+  lastRunAt?: number | null;
+  lastError?: string | null;
+  presets: RoutePreset[];
 }
 
 export const getProxyExits = () =>
@@ -1110,6 +1122,18 @@ export const getProxyExits = () =>
     presets: RoutePreset[];
     minimumAgentVersion: string;
   }>("/proxy-exit/list");
+export const getRoutePresets = () =>
+  Network.post<RoutePresetStatus>("/proxy-exit/presets");
+export const refreshRoutePresets = () =>
+  Network.mutate<{
+    updated: number;
+    reapplied: number;
+    errors: string[];
+    presets: RoutePreset[];
+  }>("/proxy-exit/presets/refresh", {}, [
+    "/proxy-exit/presets",
+    "/proxy-exit/list",
+  ]);
 export const parseProxyExits = (text: string) =>
   Network.post<Array<{ name: string; protocol: string; server: string; port: number }>>(
     "/proxy-exit/parse",
