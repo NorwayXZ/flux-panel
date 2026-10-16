@@ -2921,6 +2921,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      * @param excludeForwardId 要排除的转发ID
      * @return 可用端口号，如果没有可用端口则返回null
      */
+    @Override
+    public Integer previewHopPort(Long nodeId) {
+        return allocatePortForNode(nodeId, null);
+    }
+
     private Integer allocatePortForNode(Long nodeId, Long excludeForwardId) {
         return allocatePortForNode(nodeId, excludeForwardId, Collections.emptySet());
     }

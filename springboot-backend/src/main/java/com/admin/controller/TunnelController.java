@@ -125,6 +125,11 @@ public class TunnelController extends BaseController {
      * @param params 包含tunnelId的参数
      * @return 诊断结果
      */
+    @PostMapping("/precheck")
+    public R precheck(@RequestBody TunnelDto tunnelDto) {
+        return tunnelService.precheckTunnel(tunnelDto);
+    }
+
     @LogAnnotation
     @PostMapping("/diagnose")
     public R diagnoseTunnel(@RequestBody Map<String, Object> params) {

@@ -1,3 +1,12 @@
+## 2.75.0 Tunnel link diagram with checks before creating
+
+- The tunnel form has a live link diagram on the right: user device → entry → relays → exit → internet. A moment after the nodes, hops or protocol change, the panel checks the path and colours each node and hop green, amber or red with the reason, so a broken hop shows before the tunnel is saved.
+- Hops are tested on the real port: the next node opens a temporary listener for a few seconds on the port the next forward would get from its range, and the previous node connects to it. A timeout is reported as a security group, firewall or port mapping that does not allow the node's port range; a port taken by another program and a full port range are reported too. Both Agents need 2.44.1 or later; older ones still get online checks.
+- When the check fails the create button turns into "仍然创建" rather than blocking, since some setups open the port afterwards.
+- Tunnel cards show the same diagram in compact form, with the result of the last diagnosis on each hop; the diagnosis dialog shows the full diagram above the per-hop list.
+- Diagnosis of a tunnel without any forward now probes the real hop port with a temporary listener instead of port 22. The existing result list is unchanged for the MCP tool and older clients.
+- New endpoint `POST /api/v1/tunnel/precheck`. Panel-only update; Agents stay at 2.66.0. No database change. 2.74.0 remains available for rollback.
+
 ## 2.74.0 Consistent pages, new routing overview and a speedtest-style client speed test
 
 - Page headers: every page now opens with a bold title and a one-line description, as on the dashboard. The small grey category line above titles and the divider under headers are gone; 转发管理, 节点管理, 隧道组建 and 用户管理 gain titles too.

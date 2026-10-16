@@ -17,6 +17,9 @@ import java.util.Map;
  */
 public interface ForwardService extends IService<Forward> {
 
+    /** The port the next forward would get as a hop port on this node, or null when the range is full. */
+    Integer previewHopPort(Long nodeId);
+
     /**
      * 创建端口转发
      * @param forwardDto 转发数据

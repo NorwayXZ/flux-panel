@@ -489,6 +489,11 @@ export const deleteTunnel = (id: number) =>
   Network.mutate("/tunnel/delete", { id }, ["/tunnel/list"]);
 export const diagnoseTunnel = (tunnelId: number) =>
   Network.post("/tunnel/diagnose", { tunnelId });
+export const precheckTunnel = (data: Record<string, unknown>) =>
+  Network.post<import("@/components/tunnel-link-diagram").LinkCheck>(
+    "/tunnel/precheck",
+    data,
+  );
 
 // 用户隧道权限管理操作 - 全部使用POST请求
 export const assignUserTunnel = (data: any) =>

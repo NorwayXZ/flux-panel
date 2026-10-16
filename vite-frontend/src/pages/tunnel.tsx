@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
@@ -16,10 +16,18 @@ import { Divider } from "@heroui/divider";
 import { Switch } from "@heroui/switch";
 import { Alert } from "@heroui/alert";
 import toast from "react-hot-toast";
+import { RefreshCw } from "lucide-react";
 
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import TunnelLinkDiagram, {
+  diagramFromCheck,
+  edgeFromLink,
+  type DiagramEdge,
+  type DiagramNode,
+  type LinkCheck,
+} from "@/components/tunnel-link-diagram";
 import CnixTunnelDiagnosis, {
   type CnixDiagnosticReport,
 } from "@/components/cnix-tunnel-diagnosis";
@@ -30,7 +38,18 @@ import {
   deleteTunnel,
   getNodeList,
   diagnoseTunnel,
+  precheckTunnel,
 } from "@/api";
+
+const LINK_CHECK_KEY = "cloudnest.tunnel.link-checks";
+
+const loadLinkChecks = (): Record<number, LinkCheck> => {
+  try {
+    return JSON.parse(localStorage.getItem(LINK_CHECK_KEY) || "{}");
+  } catch {
+    return {};
+  }
+};
 
 interface Tunnel {
   sharedRelay?: {
@@ -112,7 +131,7 @@ interface TunnelForm {
   status: number;
 }
 
-interface DiagnosisResult extends CnixDiagnosticReport {
+interface DiagnosisResult extends CnixDiagnosticReport, Partial<LinkCheck> {
   diagnosticMode?: string;
   tunnelName: string;
   tunnelType: string;
@@ -215,6 +234,27 @@ export default function TunnelPage() {
 
   // 表单验证错误
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [precheck, setPrecheck] = useState<LinkCheck | null>(null);
+  const [precheckLoading, setPrecheckLoading] = useState(false);
+  const [precheckError, setPrecheckError] = useState("");
+  const [precheckNonce, setPrecheckNonce] = useState(0);
+  const precheckSeq = useRef(0);
+  const [linkChecks, setLinkChecks] =
+    useState<Record<number, LinkCheck>>(loadLinkChecks);
+
+  const rememberLinkCheck = (tunnelId: number, check: LinkCheck) => {
+    setLinkChecks((current) => {
+      const next = { ...current, [tunnelId]: check };
+
+      try {
+        localStorage.setItem(LINK_CHECK_KEY, JSON.stringify(next));
+      } catch {
+        // Keep the result for this page only.
+      }
+
+      return next;
+    });
+  };
 
   useEffect(() => {
     loadData();
@@ -428,16 +468,7 @@ export default function TunnelPage() {
 
     setSubmitLoading(true);
     try {
-      const path = normalizeFormPath(
-        form.inNodeId,
-        form.nodePath,
-        form.outNodeId,
-      ).filter((nodeId): nodeId is number => nodeId !== null);
-      const data = {
-        ...form,
-        nodePath: form.type === 2 ? path : [form.inNodeId],
-        outNodeId: form.type === 2 ? path[path.length - 1] : form.inNodeId,
-      };
+      const data = buildTunnelPayload();
 
       const response = isEdit
         ? await updateTunnel(data)
@@ -470,6 +501,8 @@ export default function TunnelPage() {
 
       if (response.code === 0) {
         setDiagnosisResult(response.data);
+        if (response.data?.links && response.data?.nodes)
+          rememberLinkCheck(tunnel.id, response.data as LinkCheck);
       } else {
         toast.error(response.msg || "诊断失败");
         setDiagnosisResult({
@@ -562,6 +595,114 @@ export default function TunnelPage() {
     return path;
   };
 
+  const buildTunnelPayload = () => {
+    const path = normalizeFormPath(
+      form.inNodeId,
+      form.nodePath,
+      form.outNodeId,
+    ).filter((nodeId): nodeId is number => nodeId !== null);
+
+    return {
+      ...form,
+      nodePath: form.type === 2 ? path : [form.inNodeId],
+      outNodeId: form.type === 2 ? path[path.length - 1] : form.inNodeId,
+    };
+  };
+
+  const formPath = normalizeFormPath(
+    form.inNodeId,
+    form.nodePath,
+    form.outNodeId,
+  ).filter((nodeId): nodeId is number => nodeId !== null);
+  const precheckReady =
+    Boolean(form.inNodeId) && (form.type !== 2 || formPath.length >= 2);
+  const precheckKey = JSON.stringify([
+    form.type,
+    formPath,
+    form.protocol,
+    Boolean(form.sharedRelay),
+  ]);
+
+  // Re-check the path a moment after the nodes, hops or protocol change.
+  useEffect(() => {
+    if (!modalOpen) return;
+    const sequence = ++precheckSeq.current;
+
+    if (!precheckReady) {
+      setPrecheck(null);
+      setPrecheckError("");
+      setPrecheckLoading(false);
+
+      return;
+    }
+    setPrecheckLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await precheckTunnel(buildTunnelPayload());
+
+        if (sequence !== precheckSeq.current) return;
+        if (response.code === 0) {
+          setPrecheck(response.data);
+          setPrecheckError("");
+        } else {
+          setPrecheck(null);
+          setPrecheckError(response.msg || "链路检测失败");
+        }
+      } catch {
+        if (sequence === precheckSeq.current) setPrecheckError("网络错误");
+      } finally {
+        if (sequence === precheckSeq.current) setPrecheckLoading(false);
+      }
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+    // buildTunnelPayload reads the same fields precheckKey tracks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalOpen, precheckKey, precheckNonce]);
+
+  /** Nodes picked in the form, shown before the first check returns. */
+  const pendingDiagram = (): { nodes: DiagramNode[]; edges: DiagramEdge[] } => {
+    const ids =
+      form.type === 2 ? formPath : form.inNodeId ? [form.inNodeId] : [];
+    const middle: DiagramNode[] = ids.map((id, index) => ({
+      key: id,
+      name: getNodeName(id),
+      role:
+        ids.length === 1
+          ? "single"
+          : index === 0
+            ? "entry"
+            : index === ids.length - 1
+              ? "exit"
+              : "relay",
+      status: precheckLoading ? "checking" : "idle",
+      statusText: precheckLoading ? "检测中" : "",
+    }));
+
+    return {
+      nodes: [
+        { key: "client", name: "用户设备", role: "client", status: "idle" },
+        ...middle,
+        {
+          key: "internet",
+          name: "目标 / 外网",
+          role: "internet",
+          status: precheckLoading ? "checking" : "idle",
+          statusText: "",
+        },
+      ],
+      edges: [
+        { status: "idle", label: "连接转发入口端口" },
+        ...middle.slice(1).map(() => ({
+          status: (precheckLoading
+            ? "checking"
+            : "idle") as DiagramEdge["status"],
+        })),
+        { status: precheckLoading ? "checking" : "idle" },
+      ],
+    };
+  };
+
   const getTunnelNodePath = (tunnel: Tunnel): number[] => {
     if (tunnel.nodePath) {
       const path = tunnel.nodePath
@@ -621,17 +762,6 @@ export default function TunnelPage() {
   const isTunnelNodeOffline = (tunnel: Tunnel): boolean => {
     return getTunnelPathNodes(tunnel).some((item) => item.status !== 1);
   };
-
-  const getNodeBlockClassName = (offline: boolean): string => {
-    return offline
-      ? "p-2 bg-danger-100/90 rounded border border-danger-300"
-      : "p-2 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300";
-  };
-
-  const getNodeStatusChip = (offline: boolean) => ({
-    color: offline ? "danger" : "success",
-    text: offline ? "离线" : "在线",
-  });
 
   const getLinkStatusText = (tunnel: Tunnel): string => {
     const pathNodes = getTunnelPathNodes(tunnel);
@@ -1031,120 +1161,76 @@ export default function TunnelPage() {
                     </div>
                   </div>
                 )}
-                {/* 流程展示 */}
-                <div className="space-y-1.5">
-                  {pathNodes.map((pathNode, index) => {
-                    const nodeOffline = pathNode.status !== 1;
-                    const nodeChip = getNodeStatusChip(nodeOffline);
+                {/* 链路图 */}
+                {(() => {
+                  const cached = linkChecks[tunnel.id];
+                  const cachedHops = (cached?.links || []).filter(
+                    (link) => link.kind === "hop",
+                  );
+                  const nodes: DiagramNode[] = pathNodes.map(
+                    (pathNode, index) => ({
+                      key: `${pathNode.nodeId}-${index}`,
+                      name: pathNode.name,
+                      role:
+                        tunnel.type === 1
+                          ? "single"
+                          : index === 0
+                            ? "entry"
+                            : index === pathNodes.length - 1
+                              ? "exit"
+                              : "relay",
+                      detail: pathNode.ip
+                        ? getDisplayIp(pathNode.ip)
+                        : undefined,
+                      status: pathNode.status === 1 ? "ok" : "fail",
+                      statusText: pathNode.status === 1 ? "在线" : "离线",
+                    }),
+                  );
+                  const edges: DiagramEdge[] = pathNodes
+                    .slice(1)
+                    .map((_, index) => {
+                      if (tunnel.sharedRelay)
+                        return {
+                          status: sharedPending ? "warn" : "ok",
+                          label: `CNIX · ${tunnel.sharedRelay.externalAddress || "待补录加速入口"}`,
+                          message: sharedPending
+                            ? tunnel.sharedRelay.lastError || "共享通道待验证"
+                            : undefined,
+                        };
+                      if (cachedHops[index])
+                        return edgeFromLink(cachedHops[index]);
+                      const hop = tunnel.hopDetails?.[index];
 
-                    return (
-                      <div
-                        key={`${tunnel.id}-${pathNode.nodeId}-${index}`}
-                        className="space-y-1.5"
-                      >
-                        <div className={getNodeBlockClassName(nodeOffline)}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span
-                              className={
-                                nodeOffline
-                                  ? "text-xs font-medium text-danger-700 dark:text-danger-300"
-                                  : "text-xs font-medium text-default-600"
-                              }
-                            >
-                              {pathNode.label}
-                            </span>
-                            <Chip
-                              className={
-                                nodeOffline
-                                  ? "text-xs offline-status-chip"
-                                  : "text-xs"
-                              }
-                              color={nodeChip.color as any}
-                              size="sm"
-                              variant="flat"
-                            >
-                              {nodeChip.text}
-                            </Chip>
-                          </div>
-                          <code
-                            className={
-                              nodeOffline
-                                ? "text-xs font-mono text-danger-800 dark:text-danger-200 block truncate"
-                                : "text-xs font-mono text-foreground block truncate"
-                            }
-                          >
-                            {pathNode.name}
-                          </code>
-                          <code
-                            className={
-                              nodeOffline
-                                ? "text-xs font-mono text-danger-600 dark:text-danger-300 block truncate"
-                                : "text-xs font-mono text-default-500 block truncate"
-                            }
-                          >
-                            {getDisplayIp(pathNode.ip)}
-                          </code>
-                        </div>
-                        {index < pathNodes.length - 1 && (
-                          <div className="py-0.5 text-center">
-                            <svg
-                              className="w-3 h-3 text-default-400 mx-auto"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M19 14l-7 7m0 0l-7-7m7 7V3"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                              />
-                            </svg>
-                            {tunnel.sharedRelay ? (
-                              <>
-                                <div
-                                  className={
-                                    tunnel.sharedRelay.externalAddress
-                                      ? "mt-1 truncate text-[10px] text-default-500"
-                                      : "mt-1 truncate text-[10px] text-warning-600 dark:text-warning-400"
-                                  }
-                                  title={sharedTitle}
-                                >
-                                  CNIX ·{" "}
-                                  {tunnel.sharedRelay.externalAddress ||
-                                    "待补录加速入口"}
-                                </div>
-                                {sharedPending &&
-                                  tunnel.sharedRelay.externalAddress &&
-                                  tunnel.sharedRelay.lastError && (
-                                    <div
-                                      className="mt-0.5 truncate text-[10px] text-warning-600 dark:text-warning-400"
-                                      title={tunnel.sharedRelay.lastError}
-                                    >
-                                      {tunnel.sharedRelay.lastError}
-                                    </div>
-                                  )}
-                              </>
-                            ) : (
-                              tunnel.hopDetails?.[index] && (
-                                <div
-                                  className="mt-1 truncate text-[10px] text-default-500"
-                                  title={`${tunnel.hopDetails[index].addressModeName} ${tunnel.hopDetails[index].targetAddress}`}
-                                >
-                                  {tunnel.hopDetails[index].addressModeName} ·{" "}
-                                  {tunnel.hopDetails[index].targetAddress}
-                                  {tunnel.hopDetails[index].fallbackAddress
-                                    ? " · 公网备用"
-                                    : ""}
-                                </div>
-                              )
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                      return {
+                        status: "idle",
+                        label: hop
+                          ? `${hop.addressModeName} · ${hop.targetAddress}${hop.fallbackAddress ? " · 公网备用" : ""}`
+                          : undefined,
+                      };
+                    });
+
+                  return (
+                    <div className="space-y-1.5">
+                      <TunnelLinkDiagram compact edges={edges} nodes={nodes} />
+                      {cached && !tunnel.sharedRelay && (
+                        <p
+                          className={`truncate text-[11px] ${cached.status === "fail" ? "text-danger" : cached.status === "warn" ? "text-warning-600 dark:text-warning-400" : "text-default-500"}`}
+                          title={cached.message}
+                        >
+                          上次诊断{" "}
+                          {new Date(cached.checkedAt).toLocaleString("zh-CN", {
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false,
+                          })}{" "}
+                          · {cached.message}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* 配置信息 */}
                 <div
@@ -1316,7 +1402,9 @@ export default function TunnelPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold text-foreground">隧道组建</h1>
-          <p className="mt-1 text-sm text-default-500">入口到出口的转发链路，供转发和调度模块使用</p>
+          <p className="mt-1 text-sm text-default-500">
+            入口到出口的转发链路，供转发和调度模块使用
+          </p>
         </div>
 
         <Button color="primary" size="sm" variant="flat" onPress={handleAdd}>
@@ -1438,7 +1526,7 @@ export default function TunnelPage() {
         isOpen={modalOpen}
         placement="center"
         scrollBehavior="outside"
-        size="2xl"
+        size="5xl"
         onOpenChange={setModalOpen}
       >
         <ModalContent>
@@ -1453,267 +1541,110 @@ export default function TunnelPage() {
                 </p>
               </ModalHeader>
               <ModalBody>
-                <div className="space-y-4">
-                  <Input
-                    errorMessage={errors.name}
-                    isInvalid={!!errors.name}
-                    label="隧道名称"
-                    placeholder="请输入隧道名称"
-                    value={form.name}
-                    variant="bordered"
-                    onChange={(e) =>
-                      setForm((prev) => ({ ...prev, name: e.target.value }))
-                    }
-                  />
-
-                  <Select
-                    errorMessage={errors.type}
-                    isDisabled={isEdit}
-                    isInvalid={!!errors.type}
-                    label="隧道类型"
-                    placeholder="请选择隧道类型"
-                    selectedKeys={[form.type.toString()]}
-                    variant="bordered"
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as string;
-
-                      if (selectedKey) {
-                        handleTypeChange(parseInt(selectedKey));
+                <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+                  <div className="space-y-4">
+                    <Input
+                      errorMessage={errors.name}
+                      isInvalid={!!errors.name}
+                      label="隧道名称"
+                      placeholder="请输入隧道名称"
+                      value={form.name}
+                      variant="bordered"
+                      onChange={(e) =>
+                        setForm((prev) => ({ ...prev, name: e.target.value }))
                       }
-                    }}
-                  >
-                    <SelectItem key="1">端口转发</SelectItem>
-                    <SelectItem key="2">隧道转发</SelectItem>
-                  </Select>
+                    />
 
-                  {form.type === 2 && (
-                    <section className="space-y-3 rounded-lg border border-divider p-3">
-                      <Switch
-                        isDisabled={isEdit}
-                        isSelected={Boolean(form.sharedRelay)}
-                        onValueChange={(enabled) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            sharedRelay: enabled
-                              ? { externalAddress: "" }
-                              : undefined,
-                            protocol: enabled ? "tls" : prev.protocol,
-                          }))
-                        }
-                      >
-                        CNIX共享隧道（单跳 TCP · relay/TLS）
-                      </Switch>
-                      {form.sharedRelay && (
-                        <>
-                          <Input
-                            type="number"
-                            label="出口本机共享服务端口"
-                            placeholder="留空自动分配"
-                            isReadOnly={isEdit}
-                            value={
-                              form.sharedRelay.servicePort?.toString() || ""
-                            }
-                            onValueChange={(value) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                sharedRelay: {
-                                  ...prev.sharedRelay,
-                                  servicePort: value
-                                    ? Number(value)
-                                    : undefined,
-                                },
-                              }))
-                            }
-                          />
-                          <Input
-                            label="CNIX外部加速入口"
-                            placeholder="加速IP:端口，可先留空，创建映射后补录"
-                            value={form.sharedRelay.externalAddress || ""}
-                            onValueChange={(value) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                sharedRelay: {
-                                  ...prev.sharedRelay,
-                                  externalAddress: value,
-                                },
-                              }))
-                            }
-                          />
-                          <p className="text-xs text-default-500">
-                            在 CNIX
-                            控制台将此入口映射到出口节点的共享服务端口，并放行云防火墙和供应商白名单。两个端口可以不同。每条转发只需独立入口端口与落地地址。首版仅支持两个节点与
-                            TCP 业务，认证由面板自动管理。
-                          </p>
-                        </>
-                      )}
-                    </section>
-                  )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Select
-                      errorMessage={errors.flow}
-                      isInvalid={!!errors.flow}
-                      label="流量计算"
-                      placeholder="请选择流量计算方式"
-                      selectedKeys={[form.flow.toString()]}
+                      errorMessage={errors.type}
+                      isDisabled={isEdit}
+                      isInvalid={!!errors.type}
+                      label="隧道类型"
+                      placeholder="请选择隧道类型"
+                      selectedKeys={[form.type.toString()]}
                       variant="bordered"
                       onSelectionChange={(keys) => {
                         const selectedKey = Array.from(keys)[0] as string;
 
                         if (selectedKey) {
-                          setForm((prev) => ({
-                            ...prev,
-                            flow: parseInt(selectedKey),
-                          }));
+                          handleTypeChange(parseInt(selectedKey));
                         }
                       }}
                     >
-                      <SelectItem key="1">单向计算（仅上传）</SelectItem>
-                      <SelectItem key="2">双向计算（上传+下载）</SelectItem>
+                      <SelectItem key="1">端口转发</SelectItem>
+                      <SelectItem key="2">隧道转发</SelectItem>
                     </Select>
 
-                    <Input
-                      endContent={
-                        <div className="pointer-events-none flex items-center">
-                          <span className="text-default-400 text-small">x</span>
-                        </div>
-                      }
-                      errorMessage={errors.trafficRatio}
-                      isInvalid={!!errors.trafficRatio}
-                      label="流量倍率"
-                      placeholder="请输入流量倍率"
-                      type="number"
-                      value={form.trafficRatio.toString()}
-                      variant="bordered"
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          trafficRatio: parseFloat(e.target.value) || 0,
-                        }))
-                      }
-                    />
-                  </div>
+                    {form.type === 2 && (
+                      <section className="space-y-3 rounded-lg border border-divider p-3">
+                        <Switch
+                          isDisabled={isEdit}
+                          isSelected={Boolean(form.sharedRelay)}
+                          onValueChange={(enabled) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              sharedRelay: enabled
+                                ? { externalAddress: "" }
+                                : undefined,
+                              protocol: enabled ? "tls" : prev.protocol,
+                            }))
+                          }
+                        >
+                          CNIX共享隧道（单跳 TCP · relay/TLS）
+                        </Switch>
+                        {form.sharedRelay && (
+                          <>
+                            <Input
+                              type="number"
+                              label="出口本机共享服务端口"
+                              placeholder="留空自动分配"
+                              isReadOnly={isEdit}
+                              value={
+                                form.sharedRelay.servicePort?.toString() || ""
+                              }
+                              onValueChange={(value) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  sharedRelay: {
+                                    ...prev.sharedRelay,
+                                    servicePort: value
+                                      ? Number(value)
+                                      : undefined,
+                                  },
+                                }))
+                              }
+                            />
+                            <Input
+                              label="CNIX外部加速入口"
+                              placeholder="加速IP:端口，可先留空，创建映射后补录"
+                              value={form.sharedRelay.externalAddress || ""}
+                              onValueChange={(value) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  sharedRelay: {
+                                    ...prev.sharedRelay,
+                                    externalAddress: value,
+                                  },
+                                }))
+                              }
+                            />
+                            <p className="text-xs text-default-500">
+                              在 CNIX
+                              控制台将此入口映射到出口节点的共享服务端口，并放行云防火墙和供应商白名单。两个端口可以不同。每条转发只需独立入口端口与落地地址。首版仅支持两个节点与
+                              TCP 业务，认证由面板自动管理。
+                            </p>
+                          </>
+                        )}
+                      </section>
+                    )}
 
-                  <Divider />
-                  <h3 className="text-lg font-semibold">入口配置</h3>
-
-                  <Select
-                    errorMessage={errors.inNodeId}
-                    isDisabled={isEdit}
-                    isInvalid={!!errors.inNodeId}
-                    label="入口节点"
-                    placeholder="请选择入口节点"
-                    selectedKeys={
-                      form.inNodeId ? [form.inNodeId.toString()] : []
-                    }
-                    variant="bordered"
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as string;
-
-                      if (selectedKey) {
-                        const nodeId = parseInt(selectedKey);
-
-                        setForm((prev) => {
-                          const nextPath = normalizeFormPath(
-                            nodeId,
-                            prev.nodePath,
-                            prev.outNodeId,
-                          );
-
-                          return {
-                            ...prev,
-                            inNodeId: nodeId,
-                            nodePath: nextPath,
-                          };
-                        });
-                      }
-                    }}
-                  >
-                    {renderNodeSelectItems()}
-                  </Select>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input
-                      errorMessage={errors.tcpListenAddr}
-                      isInvalid={!!errors.tcpListenAddr}
-                      label="TCP监听地址"
-                      placeholder="请输入TCP监听地址"
-                      startContent={
-                        <div className="pointer-events-none flex items-center">
-                          <span className="text-default-400 text-small">
-                            TCP
-                          </span>
-                        </div>
-                      }
-                      value={form.tcpListenAddr}
-                      variant="bordered"
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          tcpListenAddr: e.target.value,
-                        }))
-                      }
-                    />
-
-                    <Input
-                      errorMessage={errors.udpListenAddr}
-                      isInvalid={!!errors.udpListenAddr}
-                      label="UDP监听地址"
-                      placeholder="请输入UDP监听地址"
-                      startContent={
-                        <div className="pointer-events-none flex items-center">
-                          <span className="text-default-400 text-small">
-                            UDP
-                          </span>
-                        </div>
-                      }
-                      value={form.udpListenAddr}
-                      variant="bordered"
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          udpListenAddr: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  {/* 隧道转发时显示出口网卡配置 */}
-                  {form.type === 2 && (
-                    <Input
-                      errorMessage={errors.interfaceName}
-                      isInvalid={!!errors.interfaceName}
-                      label="出口网卡名或IP"
-                      placeholder="请输入出口网卡名或IP"
-                      value={form.interfaceName}
-                      variant="bordered"
-                      onChange={(e) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          interfaceName: e.target.value,
-                        }))
-                      }
-                    />
-                  )}
-
-                  {/* 隧道转发时显示出口配置 */}
-                  {form.type === 2 && (
-                    <>
-                      <Divider />
-                      <h3 className="text-lg font-semibold">出口配置</h3>
-
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <Select
-                        errorMessage={errors.protocol}
-                        isInvalid={!!errors.protocol}
-                        description={
-                          form.protocol === "quic"
-                            ? "QUIC 基于 UDP，丢包较多的线路更稳；出口节点需要放行对应的 UDP 端口"
-                            : undefined
-                        }
-                        label="协议类型"
-                        isDisabled={Boolean(form.sharedRelay)}
-                        placeholder="请选择协议类型"
-                        selectedKeys={[form.protocol]}
+                        errorMessage={errors.flow}
+                        isInvalid={!!errors.flow}
+                        label="流量计算"
+                        placeholder="请选择流量计算方式"
+                        selectedKeys={[form.flow.toString()]}
                         variant="bordered"
                         onSelectionChange={(keys) => {
                           const selectedKey = Array.from(keys)[0] as string;
@@ -1721,149 +1652,389 @@ export default function TunnelPage() {
                           if (selectedKey) {
                             setForm((prev) => ({
                               ...prev,
-                              protocol: selectedKey,
+                              flow: parseInt(selectedKey),
                             }));
                           }
                         }}
                       >
-                        <SelectItem key="tls">TLS</SelectItem>
-                        <SelectItem key="wss">WSS</SelectItem>
-                        <SelectItem key="tcp">TCP</SelectItem>
-                        <SelectItem key="mtls">MTLS</SelectItem>
-                        <SelectItem key="mwss">MWSS</SelectItem>
-                        <SelectItem key="mtcp">MTCP</SelectItem>
-                        <SelectItem key="quic">QUIC</SelectItem>
+                        <SelectItem key="1">单向计算（仅上传）</SelectItem>
+                        <SelectItem key="2">双向计算（上传+下载）</SelectItem>
                       </Select>
 
-                      {form.protocol === "tls" && !form.sharedRelay && (
+                      <Input
+                        endContent={
+                          <div className="pointer-events-none flex items-center">
+                            <span className="text-default-400 text-small">
+                              x
+                            </span>
+                          </div>
+                        }
+                        errorMessage={errors.trafficRatio}
+                        isInvalid={!!errors.trafficRatio}
+                        label="流量倍率"
+                        placeholder="请输入流量倍率"
+                        type="number"
+                        value={form.trafficRatio.toString()}
+                        variant="bordered"
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            trafficRatio: parseFloat(e.target.value) || 0,
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <Divider />
+                    <h3 className="text-lg font-semibold">入口配置</h3>
+
+                    <Select
+                      errorMessage={errors.inNodeId}
+                      isDisabled={isEdit}
+                      isInvalid={!!errors.inNodeId}
+                      label="入口节点"
+                      placeholder="请选择入口节点"
+                      selectedKeys={
+                        form.inNodeId ? [form.inNodeId.toString()] : []
+                      }
+                      variant="bordered"
+                      onSelectionChange={(keys) => {
+                        const selectedKey = Array.from(keys)[0] as string;
+
+                        if (selectedKey) {
+                          const nodeId = parseInt(selectedKey);
+
+                          setForm((prev) => {
+                            const nextPath = normalizeFormPath(
+                              nodeId,
+                              prev.nodePath,
+                              prev.outNodeId,
+                            );
+
+                            return {
+                              ...prev,
+                              inNodeId: nodeId,
+                              nodePath: nextPath,
+                            };
+                          });
+                        }
+                      }}
+                    >
+                      {renderNodeSelectItems()}
+                    </Select>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Input
+                        errorMessage={errors.tcpListenAddr}
+                        isInvalid={!!errors.tcpListenAddr}
+                        label="TCP监听地址"
+                        placeholder="请输入TCP监听地址"
+                        startContent={
+                          <div className="pointer-events-none flex items-center">
+                            <span className="text-default-400 text-small">
+                              TCP
+                            </span>
+                          </div>
+                        }
+                        value={form.tcpListenAddr}
+                        variant="bordered"
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            tcpListenAddr: e.target.value,
+                          }))
+                        }
+                      />
+
+                      <Input
+                        errorMessage={errors.udpListenAddr}
+                        isInvalid={!!errors.udpListenAddr}
+                        label="UDP监听地址"
+                        placeholder="请输入UDP监听地址"
+                        startContent={
+                          <div className="pointer-events-none flex items-center">
+                            <span className="text-default-400 text-small">
+                              UDP
+                            </span>
+                          </div>
+                        }
+                        value={form.udpListenAddr}
+                        variant="bordered"
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            udpListenAddr: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+
+                    {/* 隧道转发时显示出口网卡配置 */}
+                    {form.type === 2 && (
+                      <Input
+                        errorMessage={errors.interfaceName}
+                        isInvalid={!!errors.interfaceName}
+                        label="出口网卡名或IP"
+                        placeholder="请输入出口网卡名或IP"
+                        value={form.interfaceName}
+                        variant="bordered"
+                        onChange={(e) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            interfaceName: e.target.value,
+                          }))
+                        }
+                      />
+                    )}
+
+                    {/* 隧道转发时显示出口配置 */}
+                    {form.type === 2 && (
+                      <>
+                        <Divider />
+                        <h3 className="text-lg font-semibold">出口配置</h3>
+
                         <Select
-                          description="入口提前和出口握手好几条连接，新连接直接使用，首包更快；只在隧道最近 1 分钟有流量时保持"
-                          label="连接池预热"
-                          selectedKeys={[String(form.poolSize || 0)]}
+                          errorMessage={errors.protocol}
+                          isInvalid={!!errors.protocol}
+                          description={
+                            form.protocol === "quic"
+                              ? "QUIC 基于 UDP，丢包较多的线路更稳；出口节点需要放行对应的 UDP 端口"
+                              : undefined
+                          }
+                          label="协议类型"
+                          isDisabled={Boolean(form.sharedRelay)}
+                          placeholder="请选择协议类型"
+                          selectedKeys={[form.protocol]}
                           variant="bordered"
                           onSelectionChange={(keys) => {
-                            const value = Number(Array.from(keys)[0] ?? 0);
+                            const selectedKey = Array.from(keys)[0] as string;
 
-                            setForm((prev) => ({ ...prev, poolSize: value }));
+                            if (selectedKey) {
+                              setForm((prev) => ({
+                                ...prev,
+                                protocol: selectedKey,
+                              }));
+                            }
                           }}
                         >
-                          <SelectItem key="0">关闭</SelectItem>
-                          <SelectItem key="1">1 条</SelectItem>
-                          <SelectItem key="2">2 条</SelectItem>
-                          <SelectItem key="4">4 条</SelectItem>
-                          <SelectItem key="8">8 条</SelectItem>
+                          <SelectItem key="tls">TLS</SelectItem>
+                          <SelectItem key="wss">WSS</SelectItem>
+                          <SelectItem key="tcp">TCP</SelectItem>
+                          <SelectItem key="mtls">MTLS</SelectItem>
+                          <SelectItem key="mwss">MWSS</SelectItem>
+                          <SelectItem key="mtcp">MTCP</SelectItem>
+                          <SelectItem key="quic">QUIC</SelectItem>
                         </Select>
-                      )}
 
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <h4 className="text-sm font-semibold text-foreground">
-                            节点路径
-                          </h4>
-                          <Button
-                            color="primary"
-                            isDisabled={isEdit || Boolean(form.sharedRelay)}
-                            size="sm"
-                            variant="flat"
-                            onPress={addTransitNode}
+                        {form.protocol === "tls" && !form.sharedRelay && (
+                          <Select
+                            description="入口提前和出口握手好几条连接，新连接直接使用，首包更快；只在隧道最近 1 分钟有流量时保持"
+                            label="连接池预热"
+                            selectedKeys={[String(form.poolSize || 0)]}
+                            variant="bordered"
+                            onSelectionChange={(keys) => {
+                              const value = Number(Array.from(keys)[0] ?? 0);
+
+                              setForm((prev) => ({ ...prev, poolSize: value }));
+                            }}
                           >
-                            添加中转节点
-                          </Button>
+                            <SelectItem key="0">关闭</SelectItem>
+                            <SelectItem key="1">1 条</SelectItem>
+                            <SelectItem key="2">2 条</SelectItem>
+                            <SelectItem key="4">4 条</SelectItem>
+                            <SelectItem key="8">8 条</SelectItem>
+                          </Select>
+                        )}
+
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <h4 className="text-sm font-semibold text-foreground">
+                              节点路径
+                            </h4>
+                            <Button
+                              color="primary"
+                              isDisabled={isEdit || Boolean(form.sharedRelay)}
+                              size="sm"
+                              variant="flat"
+                              onPress={addTransitNode}
+                            >
+                              添加中转节点
+                            </Button>
+                          </div>
+                          {normalizeFormPath(
+                            form.inNodeId,
+                            form.nodePath,
+                            form.outNodeId,
+                          )
+                            .slice(1)
+                            .map((nodeId, offset, tail) => {
+                              const pathIndex = offset + 1;
+                              const isLast = offset === tail.length - 1;
+
+                              return (
+                                <div
+                                  key={`path-${pathIndex}`}
+                                  className="grid grid-cols-[1fr_auto] gap-2 items-start"
+                                >
+                                  <Select
+                                    errorMessage={
+                                      isLast ? errors.nodePath : undefined
+                                    }
+                                    isDisabled={isEdit}
+                                    isInvalid={!!errors.nodePath}
+                                    label={
+                                      isLast
+                                        ? "出口节点"
+                                        : `中转节点 ${pathIndex}`
+                                    }
+                                    placeholder={
+                                      isLast
+                                        ? "请选择出口节点"
+                                        : "请选择中转节点"
+                                    }
+                                    selectedKeys={
+                                      nodeId ? [nodeId.toString()] : []
+                                    }
+                                    variant="bordered"
+                                    onSelectionChange={(keys) => {
+                                      const selectedKey = Array.from(
+                                        keys,
+                                      )[0] as string;
+
+                                      updateFormPathNode(
+                                        pathIndex,
+                                        selectedKey
+                                          ? parseInt(selectedKey)
+                                          : null,
+                                      );
+                                    }}
+                                  >
+                                    {renderNodeSelectItems()}
+                                  </Select>
+                                  <Button
+                                    className="mt-6 min-w-10 px-0"
+                                    color="danger"
+                                    isDisabled={
+                                      isEdit ||
+                                      normalizeFormPath(
+                                        form.inNodeId,
+                                        form.nodePath,
+                                        form.outNodeId,
+                                      ).length <= 2
+                                    }
+                                    size="sm"
+                                    variant="flat"
+                                    onPress={() => removePathNode(pathIndex)}
+                                  >
+                                    ×
+                                  </Button>
+                                </div>
+                              );
+                            })}
                         </div>
-                        {normalizeFormPath(
-                          form.inNodeId,
-                          form.nodePath,
-                          form.outNodeId,
-                        )
-                          .slice(1)
-                          .map((nodeId, offset, tail) => {
-                            const pathIndex = offset + 1;
-                            const isLast = offset === tail.length - 1;
+                      </>
+                    )}
 
-                            return (
-                              <div
-                                key={`path-${pathIndex}`}
-                                className="grid grid-cols-[1fr_auto] gap-2 items-start"
-                              >
-                                <Select
-                                  errorMessage={
-                                    isLast ? errors.nodePath : undefined
-                                  }
-                                  isDisabled={isEdit}
-                                  isInvalid={!!errors.nodePath}
-                                  label={
-                                    isLast
-                                      ? "出口节点"
-                                      : `中转节点 ${pathIndex}`
-                                  }
-                                  placeholder={
-                                    isLast ? "请选择出口节点" : "请选择中转节点"
-                                  }
-                                  selectedKeys={
-                                    nodeId ? [nodeId.toString()] : []
-                                  }
-                                  variant="bordered"
-                                  onSelectionChange={(keys) => {
-                                    const selectedKey = Array.from(
-                                      keys,
-                                    )[0] as string;
-
-                                    updateFormPathNode(
-                                      pathIndex,
-                                      selectedKey
-                                        ? parseInt(selectedKey)
-                                        : null,
-                                    );
-                                  }}
-                                >
-                                  {renderNodeSelectItems()}
-                                </Select>
-                                <Button
-                                  className="mt-6 min-w-10 px-0"
-                                  color="danger"
-                                  isDisabled={
-                                    isEdit ||
-                                    normalizeFormPath(
-                                      form.inNodeId,
-                                      form.nodePath,
-                                      form.outNodeId,
-                                    ).length <= 2
-                                  }
-                                  size="sm"
-                                  variant="flat"
-                                  onPress={() => removePathNode(pathIndex)}
-                                >
-                                  ×
-                                </Button>
-                              </div>
-                            );
-                          })}
+                    <Alert
+                      className="mt-4"
+                      color="primary"
+                      description="V6或者双栈填写[::],V4填写0.0.0.0。不懂的就去看文档网站内的说明"
+                      title="TCP,UDP监听地址"
+                      variant="flat"
+                    />
+                    <Alert
+                      className="mt-4"
+                      color="primary"
+                      description="用于多IP服务器指定使用那个IP和出口服务器通讯，不懂的默认为空就行"
+                      title="出口网卡名或IP"
+                      variant="flat"
+                    />
+                  </div>
+                  <aside className="self-start rounded-large bg-default-50 p-4 dark:bg-default-100/50 lg:sticky lg:top-0">
+                    <div className="mb-4 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-foreground">
+                          链路预览
+                        </h3>
+                        <p
+                          className={`mt-0.5 text-xs ${
+                            precheckLoading
+                              ? "text-primary"
+                              : precheckError
+                                ? "text-danger"
+                                : precheck?.status === "fail"
+                                  ? "text-danger"
+                                  : precheck?.status === "warn"
+                                    ? "text-warning-600 dark:text-warning-400"
+                                    : precheck
+                                      ? "text-success"
+                                      : "text-default-500"
+                          }`}
+                        >
+                          {precheckLoading
+                            ? "正在检测每一跳…"
+                            : precheckError ||
+                              precheck?.message ||
+                              "选好节点后自动检测"}
+                        </p>
                       </div>
-                    </>
-                  )}
+                      <Button
+                        isIconOnly
+                        aria-label="重新检测链路"
+                        isDisabled={!precheckReady || precheckLoading}
+                        size="sm"
+                        title="重新检测"
+                        variant="light"
+                        onPress={() => setPrecheckNonce((value) => value + 1)}
+                      >
+                        <RefreshCw
+                          className={precheckLoading ? "animate-spin" : ""}
+                          size={15}
+                        />
+                      </Button>
+                    </div>
+                    {precheckReady ? (
+                      (() => {
+                        const view =
+                          precheck && !precheckLoading
+                            ? diagramFromCheck(precheck, { withEnds: true })
+                            : pendingDiagram();
 
-                  <Alert
-                    className="mt-4"
-                    color="primary"
-                    description="V6或者双栈填写[::],V4填写0.0.0.0。不懂的就去看文档网站内的说明"
-                    title="TCP,UDP监听地址"
-                    variant="flat"
-                  />
-                  <Alert
-                    className="mt-4"
-                    color="primary"
-                    description="用于多IP服务器指定使用那个IP和出口服务器通讯，不懂的默认为空就行"
-                    title="出口网卡名或IP"
-                    variant="flat"
-                  />
+                        return (
+                          <TunnelLinkDiagram
+                            edges={view.edges}
+                            nodes={view.nodes}
+                          />
+                        );
+                      })()
+                    ) : (
+                      <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-divider px-4 text-center text-xs text-default-500">
+                        {form.type === 2
+                          ? "选择入口和出口节点后，这里会画出整条链路并逐跳检测"
+                          : "选择节点后，这里会检测节点在线和出网情况"}
+                      </div>
+                    )}
+                    <p className="mt-4 text-[11px] leading-4 text-default-400">
+                      出口会在下一个转发将使用的端口上临时监听几秒，入口实际去连，能提前发现安全组、防火墙或端口映射没放行。
+                    </p>
+                  </aside>
                 </div>
               </ModalBody>
-              <ModalFooter>
+              <ModalFooter className="items-center">
+                {precheck?.status === "fail" && !precheckLoading && (
+                  <p className="mr-auto text-xs text-danger">
+                    链路检测未通过，建好后可能不通
+                  </p>
+                )}
                 <Button variant="light" onPress={onClose}>
                   取消
                 </Button>
                 <Button
-                  color="primary"
+                  color={
+                    precheck?.status === "fail" && !precheckLoading
+                      ? "warning"
+                      : "primary"
+                  }
                   isLoading={submitLoading}
                   onPress={handleSubmit}
                 >
@@ -1871,9 +2042,13 @@ export default function TunnelPage() {
                     ? isEdit
                       ? "更新中..."
                       : "创建中..."
-                    : isEdit
-                      ? "更新"
-                      : "创建"}
+                    : precheck?.status === "fail" && !precheckLoading
+                      ? isEdit
+                        ? "仍然更新"
+                        : "仍然创建"
+                      : isEdit
+                        ? "更新"
+                        : "创建"}
                 </Button>
               </ModalFooter>
             </>
@@ -2033,6 +2208,34 @@ export default function TunnelPage() {
                         </Card>
                       );
                     })()}
+                    {diagnosisResult.nodes && diagnosisResult.links && (
+                      <Card className="border border-transparent dark:border-default-100">
+                        <CardBody className="p-4">
+                          <div className="mb-3 flex items-center justify-between gap-2">
+                            <h3 className="text-sm font-semibold">链路图</h3>
+                            <span
+                              className={`min-w-0 truncate text-xs ${diagnosisResult.status === "fail" ? "text-danger" : diagnosisResult.status === "warn" ? "text-warning-600 dark:text-warning-400" : "text-success"}`}
+                              title={diagnosisResult.message}
+                            >
+                              {diagnosisResult.message}
+                            </span>
+                          </div>
+                          {(() => {
+                            const view = diagramFromCheck(
+                              diagnosisResult as LinkCheck,
+                              { withEnds: true },
+                            );
+
+                            return (
+                              <TunnelLinkDiagram
+                                edges={view.edges}
+                                nodes={view.nodes}
+                              />
+                            );
+                          })()}
+                        </CardBody>
+                      </Card>
+                    )}
                     {diagnosisResult.results.map((result, index) => {
                       const quality = getQualityDisplay(
                         result.averageTime,

@@ -25,6 +25,7 @@ import com.admin.service.ForwardService;
 import com.admin.service.NodeService;
 import com.admin.service.SpeedLimitService;
 import com.admin.service.TunnelService;
+import com.admin.service.TunnelLinkCheckService;
 import com.admin.service.TunnelTransportService;
 import com.admin.service.UserTunnelService;
 import com.admin.service.UserQuotaService;
@@ -136,6 +137,7 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
     JdbcTemplate jdbcTemplate;
     @Resource com.admin.service.CnixSharedRelayService cnixSharedRelayService;
     @Resource com.admin.mapper.PortAllocationLockMapper portAllocationLockMapper;
+    @Resource com.admin.service.TunnelLinkCheckService tunnelLinkCheckService;
 
     // ========== 公共接口实现 ==========
 
@@ -979,68 +981,120 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
      */
     @Override
     public R diagnoseTunnel(Long tunnelId) {
-        // 1. 验证隧道是否存在
         Tunnel tunnel = this.getById(tunnelId);
         if (tunnel == null || !canAccessTunnel(tunnel)) {
             return R.err(ERROR_TUNNEL_NOT_FOUND);
         }
         if(cnixSharedRelayService.isShared(tunnel))return R.ok(cnixSharedRelayService.diagnose(tunnel));
 
-        // 2. 获取入口和出口节点信息
         Node inNode = nodeService.getById(tunnel.getInNodeId());
         if (inNode == null) {
             return R.err(ERROR_IN_NODE_NOT_FOUND);
         }
 
-        Node outNode = null;
-        if (tunnel.getType() == TUNNEL_TYPE_TUNNEL_FORWARD) {
-            outNode = nodeService.getById(tunnel.getOutNodeId());
-            if (outNode == null) {
+        List<Node> pathNodes;
+        List<TunnelLinkCheckService.Hop> hops = new ArrayList<>();
+        if (tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD) {
+            pathNodes = Collections.singletonList(inNode);
+        } else {
+            pathNodes = getTunnelPathNodes(tunnel);
+            if (pathNodes.size() < 2) {
                 return R.err(ERROR_OUT_NODE_NOT_FOUND);
             }
-        }
-
-        List<DiagnosisResult> results = new ArrayList<>();
-
-        // 3. 根据隧道类型执行不同的诊断策略
-        if (tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD) {
-            // 端口转发：只给入口节点发送诊断指令，TCP ping谷歌443端口
-            DiagnosisResult inResult = performTcpPingDiagnosisWithConnectionCheck(inNode, "www.google.com", 443, "入口->外网");
-            results.add(inResult);
-        } else {
-            List<Node> pathNodes = getTunnelPathNodes(tunnel);
             List<TunnelTransportService.ResolvedHop> resolvedHops;
             try {
                 resolvedHops = tunnelTransportService.resolve(tunnel, pathNodes);
             } catch (IllegalArgumentException | IllegalStateException e) {
                 return R.err(e.getMessage());
             }
-            List<Integer> hopPorts = getTunnelSampleHopPorts(tunnel, pathNodes.size() - 1);
+            // Ports of an existing forward are listening; without one, probe the port the next forward would get.
+            List<Integer> livePorts = getTunnelLiveHopPorts(tunnel, pathNodes.size() - 1);
             for (int i = 0; i < pathNodes.size() - 1; i++) {
-                Node fromNode = pathNodes.get(i);
-                Node toNode = pathNodes.get(i + 1);
-                DiagnosisResult segmentResult = performTcpPingDiagnosisWithConnectionCheck(
-                        fromNode,
-                        resolvedHops.get(i).primaryAddress(),
-                        hopPorts.get(i),
-                        fromNode.getName() + "->" + toNode.getName() + "（" + resolvedHops.get(i).mode() + "）"
-                );
-                results.add(segmentResult);
+                Node to = pathNodes.get(i + 1);
+                hops.add(new TunnelLinkCheckService.Hop(pathNodes.get(i), to, resolvedHops.get(i).primaryAddress(),
+                        resolvedHops.get(i).mode(), livePorts == null ? null : livePorts.get(i),
+                        livePorts == null ? forwardService.previewHopPort(to.getId()) : null));
             }
-
-            DiagnosisResult outToExternalResult = performTcpPingDiagnosisWithConnectionCheck(outNode, "www.google.com", 443, "出口->外网");
-            results.add(outToExternalResult);
         }
 
-        // 4. 构建诊断报告
-        Map<String, Object> diagnosisReport = new HashMap<>();
+        Map<String, Object> check = tunnelLinkCheckService.check(pathNodes, hops, tunnel.getProtocol(), false);
+        Map<String, Object> diagnosisReport = new LinkedHashMap<>(check);
         diagnosisReport.put("tunnelId", tunnelId);
         diagnosisReport.put("tunnelName", tunnel.getName());
         diagnosisReport.put("tunnelType", tunnel.getType() == TUNNEL_TYPE_PORT_FORWARD ? "端口转发" : "隧道转发");
-        diagnosisReport.put("results", results);
+        diagnosisReport.put("results", toDiagnosisResults(pathNodes, check));
         diagnosisReport.put("timestamp", System.currentTimeMillis());
-
         return R.ok(diagnosisReport);
+    }
+
+    @Override
+    public R precheckTunnel(TunnelDto tunnelDto) {
+        int type = tunnelDto.getType() == null ? TUNNEL_TYPE_TUNNEL_FORWARD : tunnelDto.getType();
+        if (tunnelDto.getInNodeId() == null) {
+            return R.err("请选择入口节点");
+        }
+        List<Long> nodeIds = type == TUNNEL_TYPE_PORT_FORWARD
+                ? Collections.singletonList(tunnelDto.getInNodeId())
+                : resolveCreateNodePath(tunnelDto);
+        if (type == TUNNEL_TYPE_TUNNEL_FORWARD) {
+            R pathValidation = validateTunnelForwardCreate(tunnelDto);
+            if (pathValidation.getCode() != 0) {
+                return pathValidation;
+            }
+        }
+        List<Node> pathNodes = new ArrayList<>();
+        for (Long nodeId : nodeIds) {
+            Node node = nodeService.getById(nodeId);
+            if (node == null || !canUseNode(nodeId)) {
+                return R.err("节点不可用或没有权限使用：" + nodeId);
+            }
+            pathNodes.add(node);
+        }
+
+        List<TunnelLinkCheckService.Hop> hops = new ArrayList<>();
+        if (pathNodes.size() > 1) {
+            Tunnel draft = new Tunnel();
+            try {
+                draft.setHopConfig(tunnelTransportService.validateAndSerialize(pathNodes, tunnelDto.getHopConfigs()));
+                List<TunnelTransportService.ResolvedHop> resolvedHops = tunnelTransportService.resolve(draft, pathNodes);
+                for (int i = 0; i < pathNodes.size() - 1; i++) {
+                    Node to = pathNodes.get(i + 1);
+                    hops.add(new TunnelLinkCheckService.Hop(pathNodes.get(i), to, resolvedHops.get(i).primaryAddress(),
+                            resolvedHops.get(i).mode(), null, forwardService.previewHopPort(to.getId())));
+                }
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                return R.err(e.getMessage());
+            }
+        }
+        String protocol = type == TUNNEL_TYPE_TUNNEL_FORWARD
+                ? (StrUtil.isNotBlank(tunnelDto.getProtocol()) ? tunnelDto.getProtocol() : "tls")
+                : null;
+        return R.ok(tunnelLinkCheckService.check(pathNodes, hops, protocol, tunnelDto.getSharedRelay() != null));
+    }
+
+    /** Keeps the flat result list that older clients and the MCP tool read. */
+    @SuppressWarnings("unchecked")
+    private List<DiagnosisResult> toDiagnosisResults(List<Node> pathNodes, Map<String, Object> check) {
+        List<DiagnosisResult> results = new ArrayList<>();
+        for (Map<String, Object> link : (List<Map<String, Object>>) check.get("links")) {
+            Node from = pathNodes.get((Integer) link.get("from"));
+            DiagnosisResult result = new DiagnosisResult();
+            result.setNodeId(from.getId());
+            result.setNodeName(from.getName());
+            result.setTargetIp((String) link.get("address"));
+            result.setTargetPort((Integer) link.get("port"));
+            String mode = (String) link.get("mode");
+            result.setDescription(link.get("label") + (mode == null ? "" : "（" + mode + "）"));
+            boolean ok = "ok".equals(link.get("status"));
+            result.setSuccess(ok);
+            result.setMessage((String) link.get("message"));
+            Object latency = link.get("latencyMs");
+            result.setAverageTime(ok && latency instanceof Number ? ((Number) latency).doubleValue() : -1.0);
+            result.setPacketLoss(ok ? 0.0 : 100.0);
+            result.setTimestamp(System.currentTimeMillis());
+            results.add(result);
+        }
+        return results;
     }
 
     /**
@@ -1070,10 +1124,10 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         return pathNodes;
     }
 
-    private List<Integer> getTunnelSampleHopPorts(Tunnel tunnel, int expectedHopCount) {
+    /** Hop ports of an active forward on this tunnel, or null when no forward is listening yet. */
+    private List<Integer> getTunnelLiveHopPorts(Tunnel tunnel, int expectedHopCount) {
         List<Forward> forwards = forwardService.list(new QueryWrapper<Forward>().eq("tunnel_id", tunnel.getId()).eq("status", TUNNEL_STATUS_ACTIVE));
-        if (!forwards.isEmpty()) {
-            Forward forward = forwards.get(0);
+        for (Forward forward : forwards) {
             List<Integer> hopPorts = TunnelRouteUtil.parseHopPorts(forward.getHopPorts());
             if (hopPorts.size() == expectedHopCount) {
                 return hopPorts;
@@ -1082,126 +1136,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
                 return Collections.singletonList(forward.getOutPort());
             }
         }
-        List<Integer> fallbackPorts = new ArrayList<>();
-        for (int i = 0; i < expectedHopCount; i++) {
-            fallbackPorts.add(22);
-        }
-        return fallbackPorts;
+        return null;
     }
-
-    /**
-     * 执行TCP ping诊断
-     * 
-     * @param node 执行TCP ping的节点
-     * @param targetIp 目标IP地址
-     * @param port 目标端口
-     * @param description 诊断描述
-     * @return 诊断结果
-     */
-    private DiagnosisResult performTcpPingDiagnosis(Node node, String targetIp, int port, String description) {
-        try {
-            // 构建TCP ping请求数据
-            JSONObject tcpPingData = new JSONObject();
-            tcpPingData.put("ip", targetIp);
-            tcpPingData.put("port", port);
-            tcpPingData.put("count", 4);
-            tcpPingData.put("timeout", 5000); // 5秒超时
-
-            // 发送TCP ping命令到节点
-            GostDto gostResult = WebSocketServer.send_msg(node.getId(), tcpPingData, "TcpPing");
-            
-            DiagnosisResult result = new DiagnosisResult();
-            result.setNodeId(node.getId());
-            result.setNodeName(node.getName());
-            result.setTargetIp(targetIp);
-            result.setTargetPort(port);
-            result.setDescription(description);
-            result.setTimestamp(System.currentTimeMillis());
-
-            if (gostResult != null && "OK".equals(gostResult.getMsg())) {
-                // 尝试解析TCP ping响应数据
-                try {
-                    if (gostResult.getData() != null) {
-                        JSONObject tcpPingResponse = (JSONObject) gostResult.getData();
-                        boolean success = tcpPingResponse.getBooleanValue("success");
-                        
-                        result.setSuccess(success);
-                        if (success) {
-                            result.setMessage("TCP连接成功");
-                            result.setAverageTime(tcpPingResponse.getDoubleValue("averageTime"));
-                            result.setPacketLoss(tcpPingResponse.getDoubleValue("packetLoss"));
-                        } else {
-                            result.setMessage(tcpPingResponse.getString("errorMessage"));
-                            result.setAverageTime(-1.0);
-                            result.setPacketLoss(100.0);
-                        }
-                    } else {
-                        // 没有详细数据，使用默认值
-                        result.setSuccess(true);
-                        result.setMessage("TCP连接成功");
-                        result.setAverageTime(0.0);
-                        result.setPacketLoss(0.0);
-                    }
-                } catch (Exception e) {
-                    // 解析响应数据失败，但TCP ping命令本身成功了
-                    result.setSuccess(true);
-                    result.setMessage("TCP连接成功，但无法解析详细数据");
-                    result.setAverageTime(0.0);
-                    result.setPacketLoss(0.0);
-                }
-            } else {
-                result.setSuccess(false);
-                result.setMessage(gostResult != null ? gostResult.getMsg() : "节点无响应");
-                result.setAverageTime(-1.0);
-                result.setPacketLoss(100.0);
-            }
-
-            return result;
-        } catch (Exception e) {
-            DiagnosisResult result = new DiagnosisResult();
-            result.setNodeId(node.getId());
-            result.setNodeName(node.getName());
-            result.setTargetIp(targetIp);
-            result.setTargetPort(port);
-            result.setDescription(description);
-            result.setSuccess(false);
-            result.setMessage("诊断执行异常: " + e.getMessage());
-            result.setTimestamp(System.currentTimeMillis());
-            result.setAverageTime(-1.0);
-            result.setPacketLoss(100.0);
-            return result;
-        }
-    }
-
-    /**
-     * 执行TCP ping诊断（带连接状态检查）
-     * 
-     * @param node 执行TCP ping的节点
-     * @param targetIp 目标IP地址
-     * @param port 目标端口
-     * @param description 诊断描述
-     * @return 诊断结果
-     */
-    private DiagnosisResult performTcpPingDiagnosisWithConnectionCheck(Node node, String targetIp, int port, String description) {
-        DiagnosisResult result = new DiagnosisResult();
-        result.setNodeId(node.getId());
-        result.setNodeName(node.getName());
-        result.setTargetIp(targetIp);
-        result.setTargetPort(port);
-        result.setDescription(description);
-        result.setTimestamp(System.currentTimeMillis());
-
-        try {
-            return performTcpPingDiagnosis(node, targetIp, port, description);
-        } catch (Exception e) {
-            result.setSuccess(false);
-            result.setMessage("连接检查异常: " + e.getMessage());
-            result.setAverageTime(-1.0);
-            result.setPacketLoss(100.0);
-            return result;
-        }
-    }
-
 
     // ========== 内部数据类 ==========
 
