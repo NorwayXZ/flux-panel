@@ -1,10 +1,11 @@
-## 2.77.0 A cleaner, more professional look
+## 2.77.1 A cleaner, more professional look
 
 - Page headers are a bold title with its actions on the same line. The explanation that used to sit under each title now opens from a help icon beside it.
 - 转发管理, 节点管理, 隧道管理 and 用户管理 show the item count beside the title and use full-size buttons with icons; the main action is a solid "新建" button.
 - Menu items and page titles use short, consistent names: 仪表盘, 调度总览, 节点管理, 隧道管理, Docker 应用, 质量实验室, 带宽测试, 本机测速, 链路拓扑, 系统自检, 内网组网, IP 质量检测.
 - Cards use larger type and more spacing, and grids show at most three cards per row (four on very wide screens).
 - Long explanations inside pages (来源 IP 分流, 内网组网, 三网优化) are folded into a "使用说明" section that opens on demand.
+- Release checks follow the new page names (2.77.0 was built but not published because of them).
 - Panel-only update; Agents stay at 2.76.0. No database change. 2.76.0 remains available for rollback.
 
 ## 2.76.0 Custom exits and per-domain routing for private proxies (Agent 2.76.0)
