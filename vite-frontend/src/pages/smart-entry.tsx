@@ -51,6 +51,7 @@ import {
   type SmartEntryProviderOption,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import StatsCard from "@/components/ui/stats-card";
 import { groupForwardOptionsByPort } from "@/utils/forward-option-groups";
 import SmartEntryRouters from "@/components/smart-entry-routers";
@@ -793,12 +794,12 @@ export default function SmartEntryPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">三网优化</h1>
-          <p className="mt-1 text-sm text-default-500">
-            客户只填一个域名和端口，电信、联通、移动自动走各自的入口
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">三网优化</h1>
+            <PageHelp>客户只填一个域名和端口，电信、联通、移动自动走各自的入口</PageHelp>
+          </div>
         </div>
         <Button
           color="primary"
@@ -879,7 +880,7 @@ export default function SmartEntryPage() {
             </div>
           </section>
 
-          <details className="rounded-lg border border-divider p-4">
+          <details className="rounded-large border border-transparent bg-content1 px-5 py-4 shadow-small dark:border-default-100">
             <summary className="cursor-pointer text-sm font-medium">
               使用说明与调度边界
             </summary>

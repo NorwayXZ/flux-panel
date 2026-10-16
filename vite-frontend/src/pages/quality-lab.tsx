@@ -57,6 +57,7 @@ import {
   type QualityProbeTaskInput,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
 
@@ -412,13 +413,12 @@ export default function QualityLabPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-foreground">网络质量实验室</h1>
-          <p className="mt-1 max-w-3xl text-sm text-default-500">
-            由现有 Agent
-            定时建立线路画像。任务默认关闭，不创建任务就不会产生探测流量。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">质量实验室</h1>
+            <PageHelp>由现有 Agent 定时建立线路画像。任务默认关闭，不创建任务就不会产生探测流量。</PageHelp>
+          </div>
         </div>
         <div className="grid w-full grid-cols-[44px_minmax(0,1fr)] gap-2 sm:flex sm:w-auto">
           <Button

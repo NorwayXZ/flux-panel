@@ -38,9 +38,9 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   const { count: unreadAlertCount } = useAlertUnreadCount();
 
   const pageTitles: Record<string, string> = {
-    "/dashboard": "仪表板",
+    "/dashboard": "仪表盘",
     "/forward": "转发管理",
-    "/tunnel": "隧道组建",
+    "/tunnel": "隧道管理",
     "/node": "节点管理",
     "/profile": "我的",
     "/service-publishing": "内网映射",

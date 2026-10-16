@@ -39,6 +39,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { isAdmin } from "@/utils/auth";
+import PageHelp from "@/components/page-help";
 
 type GuideCategory = "core" | "access" | "tools" | "system";
 
@@ -1095,12 +1096,12 @@ export default function GuidePage() {
 
   return (
     <div className="mx-auto w-full max-w-[1560px] space-y-6 p-4 md:p-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">使用教程</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
-            从节点接入到入口容灾，按真实依赖关系了解每个模块为什么存在、如何配置，以及配置完成后会得到什么。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">使用教程</h1>
+            <PageHelp>从节点接入到入口容灾，按真实依赖关系了解每个模块为什么存在、如何配置，以及配置完成后会得到什么。</PageHelp>
+          </div>
         </div>
         <Input
           isClearable

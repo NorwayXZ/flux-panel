@@ -29,7 +29,7 @@ import { Tabs, Tab } from "@heroui/tabs";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { parseDate } from "@internationalized/date";
-import { KeyRound, RotateCcw } from "lucide-react";
+import { KeyRound, Plus, RotateCcw } from "lucide-react";
 
 import {
   User,
@@ -76,6 +76,7 @@ import { SearchIcon, EditIcon, DeleteIcon, UserIcon } from "@/components/icons";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import CamouflagePicker, {
   AUTO_CAMOUFLAGE,
 } from "@/components/camouflage-picker";
@@ -1297,8 +1298,10 @@ export default function UserPage() {
       {/* 页面头部 */}
       <div className="flex flex-col gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-foreground">用户管理</h1>
-          <p className="mt-1 text-sm text-default-500">账号、流量额度、到期时间和资源授权</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">用户管理</h1>
+            <PageHelp>账号、流量额度、到期时间和资源授权</PageHelp>
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
@@ -1328,8 +1331,12 @@ export default function UserPage() {
             </Button>
           </div>
 
-          <Button color="primary" variant="flat" onPress={handleAdd}>
-            新增
+          <Button
+            color="primary"
+            startContent={<Plus className="h-4 w-4" />}
+            onPress={handleAdd}
+          >
+            新建用户
           </Button>
         </div>
       </div>

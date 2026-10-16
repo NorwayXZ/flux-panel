@@ -54,6 +54,7 @@ import {
 import { isAdmin } from "@/utils/auth";
 import { formatDateTime } from "@/utils/format";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
 
@@ -482,14 +483,12 @@ export default function HomeAccessPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">家庭网络中转</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
-            公司设备连接这里生成的 SOCKS5
-            地址后，流量会先经过家庭宽带，再从指定服务器或已有隧道访问目标地址。家庭到出口可选择轻量
-            SOCKS5，或使用 VLESS + REALITY 保护跨境首跳。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">家庭网络中转</h1>
+            <PageHelp>公司设备连接这里生成的 SOCKS5 地址后，流量会先经过家庭宽带，再从指定服务器或已有隧道访问目标地址。家庭到出口可选择轻量 SOCKS5，或使用 VLESS + REALITY 保护跨境首跳。</PageHelp>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button

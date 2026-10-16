@@ -22,18 +22,21 @@ import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from "react-hot-toast";
 import { useSearchParams } from "react-router-dom";
 import {
+  Download,
   History,
   LayoutGrid,
   List,
   Pause,
   Pencil,
   Play,
+  Plus,
   Route,
   Search,
   ShieldAlert,
   ShieldCheck,
   Stethoscope,
   Trash2,
+  Upload,
 } from "lucide-react";
 import {
   Table,
@@ -49,6 +52,7 @@ import { Tooltip } from "@heroui/tooltip";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import {
   createForward,
   getForwardList,
@@ -1744,7 +1748,7 @@ export default function ForwardPage() {
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start w-full">
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-foreground truncate text-sm">
+              <h3 className="font-semibold text-foreground truncate text-base">
                 {forward.name}
               </h3>
               <p className="text-xs text-default-500 truncate">
@@ -1938,13 +1942,13 @@ export default function ForwardPage() {
               }
             >
               <div className="min-w-0">
-                <div className="text-[11px] text-default-400">线路策略</div>
+                <div className="text-xs text-default-400">线路策略</div>
                 <div className="text-xs font-medium truncate">
                   {getRouteModeDisplay(forward.routeMode)} · {routes.length} 条
                 </div>
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] text-default-400">
+                <div className="text-xs text-default-400">
                   {forward.routeMode === "balance" ? "负载池" : "当前线路"}
                 </div>
                 <div
@@ -1967,13 +1971,13 @@ export default function ForwardPage() {
                 </div>
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] text-default-400">入口协议</div>
+                <div className="text-xs text-default-400">入口协议</div>
                 <div className="text-xs font-medium truncate">
                   {getProtocolDisplay(forward.protocolMode)}
                 </div>
               </div>
               <div className="min-w-0">
-                <div className="text-[11px] text-default-400">健康目标</div>
+                <div className="text-xs text-default-400">健康目标</div>
                 <div className="text-xs font-medium truncate">
                   {targetHealth.length > 0
                     ? `${healthyTargetCount}/${targetHealth.length}`
@@ -1993,10 +1997,10 @@ export default function ForwardPage() {
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-default-400">
+                <div className="text-xs text-default-400">
                   {forward.routeMode === "balance" ? "调度状态" : "容灾状态"}
                 </div>
-                <div className="truncate text-xs font-medium">
+                <div className="truncate text-sm font-medium">
                   {forward.routeMode === "balance"
                     ? `${forward.routeBalanceStrategy === "hash" ? "来源 IP 固定" : forward.routeBalanceStrategy === "weighted" ? "按权重分配" : forward.routeBalanceStrategy === "rand" ? "随机分配" : "依次轮询"} · 仅调度新连接`
                     : routes.length > 1
@@ -2418,19 +2422,45 @@ export default function ForwardPage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">转发管理</h1>
-        <p className="mt-1 text-sm text-default-500">
-          入口端口经隧道转发到落地地址，支持单线路、主备、低延迟和多线路策略
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-foreground">转发管理</h1>
+          <Chip size="sm" variant="flat">
+            {totalForwardCount}
+          </Chip>
+          <PageHelp>
+            入口端口经隧道转发到落地地址，支持单线路、主备、低延迟和多线路策略
+          </PageHelp>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            startContent={<Upload className="h-4 w-4" />}
+            variant="flat"
+            onPress={handleImport}
+          >
+            导入
+          </Button>
+          <Button
+            isLoading={exportLoading}
+            startContent={!exportLoading && <Download className="h-4 w-4" />}
+            variant="flat"
+            onPress={handleExport}
+          >
+            导出
+          </Button>
+          <Button
+            color="primary"
+            startContent={<Plus className="h-4 w-4" />}
+            onPress={handleAdd}
+          >
+            新建转发
+          </Button>
+        </div>
       </div>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Chip className="text-xs" color="primary" size="sm" variant="flat">
             {tunnelGroups.length} 个隧道
-          </Chip>
-          <Chip className="text-xs" color="default" size="sm" variant="flat">
-            {totalForwardCount} 个转发
           </Chip>
           <Chip className="text-xs" color="success" size="sm" variant="flat">
             运行 {totalRunningForwardCount}
@@ -2457,7 +2487,7 @@ export default function ForwardPage() {
             </Chip>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* 表格 / 卡片切换 */}
           <div className="flex rounded-medium bg-default-100 p-0.5">
             {(
@@ -2521,31 +2551,6 @@ export default function ForwardPage() {
               )}
             </Button>
           )}
-
-          {/* 导入按钮 */}
-          <Button
-            size="sm"
-            variant="flat"
-            color="warning"
-            onPress={handleImport}
-          >
-            导入
-          </Button>
-
-          {/* 导出按钮 */}
-          <Button
-            size="sm"
-            variant="flat"
-            color="success"
-            onPress={handleExport}
-            isLoading={exportLoading}
-          >
-            导出
-          </Button>
-
-          <Button size="sm" variant="flat" color="primary" onPress={handleAdd}>
-            新增
-          </Button>
         </div>
       </div>
 
@@ -2667,7 +2672,7 @@ export default function ForwardPage() {
                       items={tunnelGroup.forwards}
                       getId={(forward) => forward.id}
                       onMove={forwardCardOrder.moveCard}
-                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 py-4"
+                      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 py-4"
                       renderItem={(forward, dragHandle) =>
                         renderForwardCard(forward, dragHandle)
                       }
@@ -3825,7 +3830,7 @@ export default function ForwardPage() {
                               >
                                 {getRouteStatusText(route)}
                               </div>
-                              <div className="text-[11px] text-default-400">
+                              <div className="text-xs text-default-400">
                                 {typeof route.latency === "number"
                                   ? `${route.latency.toFixed(0)} ms`
                                   : "-"}
@@ -3882,7 +3887,7 @@ export default function ForwardPage() {
                                 >
                                   {event.status === "success" ? "成功" : "失败"}
                                 </Chip>
-                                <div className="mt-1 text-[11px] text-default-400">
+                                <div className="mt-1 text-xs text-default-400">
                                   {formatRouteEventTime(event.createdAt)}
                                 </div>
                               </div>

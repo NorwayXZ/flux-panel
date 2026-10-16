@@ -34,6 +34,7 @@ import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
 import { getTopologyGraph, type TopologyResourceNode } from "@/api";
+import PageHelp from "@/components/page-help";
 
 const nodeWidth = 220;
 const nodeHeight = 82;
@@ -261,8 +262,10 @@ function TopologyCanvas() {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">全链路拓扑</h1>
-          <p className="mt-1 text-sm text-default-500">资源关系与故障定位</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">链路拓扑</h1>
+            <PageHelp>资源关系与故障定位</PageHelp>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Tabs

@@ -16,6 +16,7 @@ import {
 import toast from "react-hot-toast";
 
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 
 import {
   getNodeList,
@@ -81,10 +82,10 @@ export default function NetworkToolsPage() {
   return (
     <PageShell className="space-y-5">
       <header>
-        <h1 className="text-2xl font-bold text-foreground">网络诊断</h1>
-        <p className="mt-1 text-sm text-default-500">
-          从指定节点执行 Ping、TCP 连接和 DNS 解析
-        </p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-bold text-foreground">网络诊断</h1>
+          <PageHelp>从指定节点执行 Ping、TCP 连接和 DNS 解析</PageHelp>
+        </div>
       </header>
       <section className="grid gap-5 lg:grid-cols-[420px_1fr]">
         <div className="space-y-4 rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-5">

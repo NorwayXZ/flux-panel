@@ -35,6 +35,7 @@ import {
   LayoutGrid,
   List,
   Pencil,
+  Plus,
   Radar,
   RefreshCw,
   ServerCog,
@@ -46,6 +47,7 @@ import { useNavigate } from "react-router-dom";
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import { isAdmin } from "@/utils/auth";
 import {
   createNode,
@@ -1348,8 +1350,8 @@ export default function NodePage() {
                     <h3
                       className={
                         nodeOffline
-                          ? "font-semibold text-rose-800 dark:text-rose-200 truncate text-sm flex-1 min-w-0"
-                          : "font-semibold text-foreground truncate text-sm flex-1 min-w-0"
+                          ? "font-semibold text-rose-800 dark:text-rose-200 truncate text-base flex-1 min-w-0"
+                          : "font-semibold text-foreground truncate text-base flex-1 min-w-0"
                       }
                     >
                       {node.name}
@@ -1882,10 +1884,12 @@ export default function NodePage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold text-foreground">节点管理</h1>
-          <p className="mt-1 text-sm text-default-500">服务器 Agent 的接入、状态、升级和端口范围</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">节点管理</h1>
+            <PageHelp>服务器 Agent 的接入、状态、升级和端口范围</PageHelp>
+          </div>
         </div>
 
         <div className="flex gap-2">
@@ -1921,7 +1925,6 @@ export default function NodePage() {
                 batchEligibleCount === 0 ||
                 upgradeBatchStatus?.state === "running"
               }
-              size="sm"
               startContent={<RefreshCw size={15} />}
               variant="flat"
               onPress={openBatchUpgrade}
@@ -1930,7 +1933,6 @@ export default function NodePage() {
             </Button>
           )}
           <Button
-            size="sm"
             variant="flat"
             color="default"
             onPress={handleCheckNodeStatus}
@@ -1938,8 +1940,12 @@ export default function NodePage() {
           >
             刷新状态
           </Button>
-          <Button size="sm" variant="flat" color="primary" onPress={handleAdd}>
-            新增
+          <Button
+            color="primary"
+            startContent={<Plus className="h-4 w-4" />}
+            onPress={handleAdd}
+          >
+            添加节点
           </Button>
         </div>
       </div>

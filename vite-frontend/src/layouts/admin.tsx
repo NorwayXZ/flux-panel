@@ -109,7 +109,7 @@ export default function AdminLayout({
   const menuItems: MenuItem[] = [
     {
       path: "/dashboard",
-      label: "仪表板",
+      label: "仪表盘",
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" />
@@ -118,7 +118,7 @@ export default function AdminLayout({
     },
     {
       path: "/routing-overview",
-      label: "线路调度中心",
+      label: "调度总览",
       icon: <Waypoints className="h-5 w-5" />,
       adminOnly: true,
     },
@@ -171,7 +171,7 @@ export default function AdminLayout({
     },
     {
       path: "/topology",
-      label: "全链路拓扑",
+      label: "链路拓扑",
       icon: <Network className="h-5 w-5" />,
     },
     {
@@ -181,7 +181,7 @@ export default function AdminLayout({
     },
     {
       path: "/docker-apps",
-      label: "Docker 应用中心",
+      label: "Docker 应用",
       icon: <Boxes className="h-5 w-5" />,
       adminOnly: true,
     },
@@ -208,19 +208,19 @@ export default function AdminLayout({
     },
     {
       path: "/quality-lab",
-      label: "网络质量实验室",
+      label: "质量实验室",
       icon: <FlaskConical className="h-5 w-5" />,
       adminOnly: true,
     },
     {
       path: "/bandwidth-test",
-      label: "真实带宽测试",
+      label: "带宽测试",
       icon: <Gauge className="h-5 w-5" />,
       adminOnly: true,
     },
     {
       path: "/client-speed-test",
-      label: "本机单线程测速",
+      label: "本机测速",
       icon: <Activity className="h-5 w-5" />,
       adminOnly: true,
     },
@@ -244,14 +244,14 @@ export default function AdminLayout({
     },
     {
       path: "/private-network",
-      label: "内网组建与出口",
+      label: "内网组网",
       icon: <Waypoints className="h-5 w-5" />,
       activePaths: ["/private-network", "/virtual-lan"],
       adminOnly: true,
     },
     {
       path: "/tunnel",
-      label: "隧道组建",
+      label: "隧道管理",
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path
@@ -264,7 +264,7 @@ export default function AdminLayout({
     },
     {
       path: "/node",
-      label: "添加节点",
+      label: "节点管理",
       icon: (
         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
           <path
@@ -296,7 +296,7 @@ export default function AdminLayout({
     },
     {
       path: "/system-self-check",
-      label: "全系统自检",
+      label: "系统自检",
       icon: <SearchCheck className="h-5 w-5" />,
       adminOnly: true,
     },

@@ -123,10 +123,10 @@ export default function ResourceCard({
       } h-full overflow-hidden transition-shadow duration-200 hover:shadow-md ${className}`}
     >
       {danger && <div className="offline-accent h-0.5 bg-danger" />}
-      <CardHeader className="pb-2">
+      <CardHeader className="px-4 pb-2 pt-4">
         <div className="flex w-full items-start justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold text-foreground">
+            <h3 className="truncate text-base font-semibold text-foreground">
               {title}
             </h3>
             {subtitles.filter(Boolean).map((line, index) => (
@@ -134,7 +134,7 @@ export default function ResourceCard({
                 // Subtitles are static per render.
                 // eslint-disable-next-line react/no-array-index-key
                 key={index}
-                className="truncate text-xs text-default-500"
+                className="mt-0.5 truncate text-xs text-default-500"
               >
                 {line}
               </p>
@@ -165,8 +165,8 @@ export default function ResourceCard({
         </div>
       </CardHeader>
 
-      <CardBody className="flex flex-col pb-3 pt-0">
-        <div className="flex-1 space-y-2">
+      <CardBody className="flex flex-col px-4 pb-4 pt-0">
+        <div className="flex-1 space-y-3">
           {blocks.length > 0 && (
             <div className="space-y-1">
               {blocks.map((block) => {
@@ -202,7 +202,7 @@ export default function ResourceCard({
                           </span>
                         )}
                         <span
-                          className={`min-w-0 truncate text-xs ${row.mono === false ? "" : "font-mono"} ${block.danger ? "text-danger-800 dark:text-danger-200" : "text-foreground"}`}
+                          className={`min-w-0 truncate text-[13px] ${row.mono === false ? "" : "font-mono"} ${block.danger ? "text-danger-800 dark:text-danger-200" : "text-foreground"}`}
                         >
                           {row.value}
                         </span>
@@ -236,15 +236,13 @@ export default function ResourceCard({
 
           {facts.length > 0 && (
             <div
-              className={`grid min-h-[52px] grid-cols-2 gap-x-3 gap-y-1 border-t pt-2 ${divider}`}
+              className={`grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 ${divider}`}
             >
               {facts.map((fact) => (
                 <div key={fact.label} className="min-w-0">
-                  <div className="text-[11px] text-default-400">
-                    {fact.label}
-                  </div>
+                  <div className="text-xs text-default-400">{fact.label}</div>
                   <div
-                    className={`truncate text-xs font-medium ${toneText[fact.tone || "default"]}`}
+                    className={`mt-0.5 truncate text-sm font-medium ${toneText[fact.tone || "default"]}`}
                   >
                     {fact.value}
                   </div>
@@ -265,10 +263,8 @@ export default function ResourceCard({
                 </div>
               )}
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-default-400">
-                  {notice.label}
-                </div>
-                <div className="truncate text-xs font-medium">
+                <div className="text-xs text-default-400">{notice.label}</div>
+                <div className="truncate text-sm font-medium">
                   {notice.value}
                 </div>
               </div>
@@ -297,11 +293,11 @@ export default function ResourceCard({
         </div>
 
         {actions.length > 0 && (
-          <div className="mt-3 flex gap-1.5">
+          <div className="mt-4 flex gap-2">
             {actions.map((action) => (
               <Button
                 key={action.label}
-                className="min-h-8 min-w-0 flex-1 px-2"
+                className="min-h-9 min-w-0 flex-1 px-2"
                 color={action.color || "default"}
                 isDisabled={action.isDisabled}
                 isLoading={action.isLoading}
@@ -323,7 +319,7 @@ export default function ResourceCard({
 /** Responsive grid used for resource cards on every list page. */
 export function ResourceCardGrid({ children }: { children: ReactNode }) {
   return (
-    <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+    <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
       {children}
     </div>
   );

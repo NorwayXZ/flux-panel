@@ -44,6 +44,7 @@ import {
   type DnsZoneOption,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
 import { formatDateTime } from "@/utils/format";
@@ -264,15 +265,12 @@ export default function DockerAppsPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            Docker 应用中心
-          </h1>
-          <p className="mt-1 text-sm text-default-500">
-            识别节点
-            Docker，一键部署常用应用，并保留升级、备份、迁移和回退操作记录。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">Docker 应用</h1>
+            <PageHelp>识别节点 Docker，一键部署常用应用，并保留升级、备份、迁移和回退操作记录。</PageHelp>
+          </div>
         </div>
         <div className="flex gap-2">
           <Button

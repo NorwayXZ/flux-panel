@@ -37,6 +37,7 @@ import {
 } from "@/api";
 import { isAdmin } from "@/utils/auth";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import ResourceCard, {
   ResourceCardGrid,
   type ChipColor,
@@ -519,8 +520,10 @@ export default function AuthorizedEntryPage() {
     <PageShell width="wide" className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">授权入口</h1>
-          <p className="mt-1 text-sm text-default-500">隐藏入口池授权给用户</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">授权入口</h1>
+            <PageHelp>隐藏入口池授权给用户</PageHelp>
+          </div>
           {selectedUser && (
             <p className="mt-1 text-sm text-primary">
               当前查看：{selectedUser.name || selectedUser.user}

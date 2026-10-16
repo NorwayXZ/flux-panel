@@ -48,6 +48,7 @@ import { formatDateTime, truthy } from "@/utils/format";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import StatsCard from "@/components/ui/stats-card";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 
 type Carrier = "default" | "telecom" | "unicom" | "mobile" | "custom";
 type RuleType =
@@ -459,14 +460,12 @@ export default function SourceIpEntryPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">来源 IP 分流</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
-            一个公网入口端口按客户端真实来源 IP
-            选择运营商、地区、ASN、VIP、客户专线、灰度或风险隔离线路。它不依赖客户端
-            DNS，也不会终止 VLESS、Reality、Trojan 等上层协议。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">来源 IP 分流</h1>
+            <PageHelp>一个公网入口端口按客户端真实来源 IP 选择运营商、地区、ASN、VIP、客户专线、灰度或风险隔离线路。它不依赖客户端 DNS，也不会终止 VLESS、Reality、Trojan 等上层协议。</PageHelp>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -676,6 +675,13 @@ export default function SourceIpEntryPage() {
         )}
       </section>
 
+      <details className="group rounded-large border border-transparent bg-content1 px-5 py-4 shadow-small dark:border-default-100">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+          使用说明与规则类型
+          <span className="text-xs font-normal text-default-400 group-open:hidden">展开</span>
+          <span className="hidden text-xs font-normal text-default-400 group-open:inline">收起</span>
+        </summary>
+        <div className="mt-4 space-y-4">
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)]">
         <article className="border border-primary-200 bg-primary-50/50 p-4 dark:border-primary-500/20 dark:bg-primary-500/5 sm:p-5">
           <div className="flex items-start gap-3">
@@ -750,6 +756,8 @@ export default function SourceIpEntryPage() {
           ))}
         </div>
       </section>
+        </div>
+      </details>
 
       <section aria-label="来源 IP 调试中心" className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-2">

@@ -17,6 +17,7 @@ import {
 import { useNavigate } from "react-router-dom";
 
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import StatsCard from "@/components/ui/stats-card";
 import {
   getAggregationOverview,
@@ -617,13 +618,12 @@ export default function RoutingOverviewPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">线路调度中心</h1>
-          <p className="mt-1 max-w-4xl text-sm leading-6 text-default-500">
-            统一查看每个调度模块负责什么、依赖什么，以及当前配置是否存在潜在的
-            DNS 或端口重叠。这里只读检查，不会自动修改线路。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">调度总览</h1>
+            <PageHelp>统一查看每个调度模块负责什么、依赖什么，以及当前配置是否存在潜在的 DNS 或端口重叠。这里只读检查，不会自动修改线路。</PageHelp>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {refreshedAt && (

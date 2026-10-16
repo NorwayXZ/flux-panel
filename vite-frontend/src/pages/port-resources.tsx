@@ -29,6 +29,7 @@ import { useNavigate } from "react-router-dom";
 
 import AccessResourceTabs from "@/components/access-resource-tabs";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
 import {
   createPublishingPortPool,
@@ -239,11 +240,10 @@ export default function PortResourcesPage() {
       <AccessResourceTabs />
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">资源中心</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
-            统一管理端口、域名、DDNS、AWS
-            凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">资源中心</h1>
+            <PageHelp>统一管理端口、域名、DDNS、AWS 凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。</PageHelp>
+          </div>
         </div>
         <Button
           color="primary"

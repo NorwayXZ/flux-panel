@@ -37,6 +37,7 @@ import {
 } from "@/utils/exit-display";
 import { formatBytes, formatDateTime } from "@/utils/format";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import CustomExitsPanel from "@/components/custom-exits-panel";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
@@ -554,10 +555,10 @@ export default function ExitManagementPage() {
   return (
     <PageShell className="space-y-5" width="wide">
       <header>
-        <h1 className="text-2xl font-bold text-foreground">出口管理</h1>
-        <p className="mt-1 text-sm text-default-500">
-          私人代理可以用的出口：各国家宽，和你自己添加的节点
-        </p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-bold text-foreground">出口管理</h1>
+          <PageHelp>私人代理可以用的出口：各国家宽，和你自己添加的节点</PageHelp>
+        </div>
       </header>
       {admin ? (
         <Tabs

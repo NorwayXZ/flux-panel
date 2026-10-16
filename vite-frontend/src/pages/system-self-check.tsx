@@ -24,6 +24,7 @@ import {
   type SystemSelfCheckOverview,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import StatsCard from "@/components/ui/stats-card";
 
 const statusMeta: Record<
@@ -167,15 +168,12 @@ export default function SystemSelfCheckPage() {
 
   return (
     <PageShell className="space-y-5" width="wide">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">全系统自检中心</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-default-500">
-            服务器节点由 Agent 检查自身配置；Windows、macOS、Linux 接入设备由
-            Connector 检查本机
-            DNS、IPv4/IPv6、默认路由，以及到面板和已登记入口端口的实际 TCP
-            可达性。所有检查均为只读。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">系统自检</h1>
+            <PageHelp>服务器节点由 Agent 检查自身配置；Windows、macOS、Linux 接入设备由 Connector 检查本机 DNS、IPv4/IPv6、默认路由，以及到面板和已登记入口端口的实际 TCP 可达性。所有检查均为只读。</PageHelp>
+          </div>
         </div>
         <div className="grid w-full gap-3 sm:grid-cols-[260px_auto] lg:w-auto">
           <Select

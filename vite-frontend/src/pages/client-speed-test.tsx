@@ -38,6 +38,7 @@ import {
 import toast from "react-hot-toast";
 
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import SpeedGauge, {
   formatGaugeSpeed,
   GoButton,
@@ -1248,13 +1249,12 @@ export default function ClientSpeedTestPage() {
 
   return (
     <PageShell className="space-y-6" width="wide">
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">本机测速</h1>
-          <p className="mt-1 max-w-4xl text-sm leading-6 text-default-500">
-            浏览器直连 Cloudflare 单线程大包测速，显示真实 Mbps /
-            Gbps；质量引擎补充延迟、抖动和加载中延迟。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">本机测速</h1>
+            <PageHelp>浏览器直连 Cloudflare 单线程大包测速，显示真实 Mbps / Gbps；质量引擎补充延迟、抖动和加载中延迟。</PageHelp>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Chip variant="flat">{browserNetworkType}</Chip>

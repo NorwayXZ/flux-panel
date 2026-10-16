@@ -62,6 +62,7 @@ import {
   DnsZoneOption,
 } from "@/api";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import { formatDateTime } from "@/utils/format";
 
 type NativeMemberForm = {
@@ -662,11 +663,10 @@ export default function PrivateNetworkPage() {
     <PageShell className="space-y-6" width="wide">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">内网组建与出口</h1>
-          <p className="mt-1 text-sm text-default-500">
-            先把能走内网的服务器组起来，再创建“本地连 B，C/D
-            出口”的代理入口。能走内网的跳点优先走内网，减少公网绕路和双边流量。
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">内网组网</h1>
+            <PageHelp>先把能走内网的服务器组起来，再创建“本地连 B，C/D 出口”的代理入口。能走内网的跳点优先走内网，减少公网绕路和双边流量。</PageHelp>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -702,6 +702,13 @@ export default function PrivateNetworkPage() {
         </div>
       </header>
 
+      <details className="group rounded-large border border-transparent bg-content1 px-5 py-4 shadow-small dark:border-default-100">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+          三种组网方式怎么选
+          <span className="text-xs font-normal text-default-400 group-open:hidden">展开</span>
+          <span className="hidden text-xs font-normal text-default-400 group-open:inline">收起</span>
+        </summary>
+        <div className="mt-4 space-y-4">
       <section className="grid gap-3 lg:grid-cols-3">
         {scenarioGuides.map((item, index) => (
           <div
@@ -727,6 +734,8 @@ export default function PrivateNetworkPage() {
           </div>
         ))}
       </section>
+        </div>
+      </details>
 
       <section className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-large border border-transparent bg-content1 shadow-small dark:border-default-100 p-4">

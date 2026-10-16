@@ -16,11 +16,12 @@ import { Divider } from "@heroui/divider";
 import { Switch } from "@heroui/switch";
 import { Alert } from "@heroui/alert";
 import toast from "react-hot-toast";
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 
 import { SortableCardGrid } from "@/components/sortable-card-grid";
 import { useCardOrder } from "@/hooks/use-card-order";
 import PageShell from "@/components/page-shell";
+import PageHelp from "@/components/page-help";
 import TunnelLinkDiagram, {
   diagramFromCheck,
   edgeFromLink,
@@ -1012,7 +1013,7 @@ export default function TunnelPage() {
 
   const renderTunnelGrid = (tunnelList: Tunnel[]) => (
     <SortableCardGrid
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 items-start gap-4"
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 items-start gap-4"
       getId={(tunnel) => tunnel.id}
       items={tunnelList}
       renderItem={(tunnel, dragHandle) => {
@@ -1051,7 +1052,7 @@ export default function TunnelPage() {
               <div className="flex justify-between items-start w-full">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <h3 className="font-semibold text-foreground truncate text-sm flex-1 min-w-0">
+                    <h3 className="font-semibold text-foreground truncate text-base flex-1 min-w-0">
                       {tunnel.name}
                     </h3>
                     <Chip
@@ -1399,16 +1400,20 @@ export default function TunnelPage() {
   return (
     <PageShell width="wide" className="space-y-6">
       {/* 页面头部 */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold text-foreground">隧道组建</h1>
-          <p className="mt-1 text-sm text-default-500">
-            入口到出口的转发链路，供转发和调度模块使用
-          </p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-2xl font-bold text-foreground">隧道管理</h1>
+            <PageHelp>入口到出口的转发链路，供转发和调度模块使用</PageHelp>
+          </div>
         </div>
 
-        <Button color="primary" size="sm" variant="flat" onPress={handleAdd}>
-          新增
+        <Button
+          color="primary"
+          startContent={<Plus className="h-4 w-4" />}
+          onPress={handleAdd}
+        >
+          新建隧道
         </Button>
       </div>
 
