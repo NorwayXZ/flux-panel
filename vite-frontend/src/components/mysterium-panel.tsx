@@ -256,7 +256,7 @@ export default function MysteriumPanel() {
               国家”即可使用：保存时面板会在该节点自动连接这个国家质量最好的家宽节点，连不通会自动换一个。费用约每
               GB {(5.0 * rate).toFixed(2)}～{(5.5 * rate).toFixed(2)}{" "}
               美元（上传和下载都计费），从节点的 Mysterium
-              账户余额里扣；每台节点一个账户，需要分别充值。只支持 TCP，UDP（如
+              账户余额里扣；默认使用独立账户，也可在下方绑定共享余额统一充值。只支持 TCP，UDP（如
               QUIC、语音）走不了这个出口。需要节点 Agent{" "}
               {settings?.agentVersion} 或更高版本。
             </p>
@@ -534,6 +534,7 @@ export default function MysteriumPanel() {
                         <span className="font-semibold text-foreground">
                           {account.nodeName}
                         </span>
+                        {account.sharedBilling && <Chip size="sm" variant="flat" color="primary">共享余额 · 付款节点 #{account.billingOwnerNodeId}</Chip>}
                         {account.suspended ? (
                           <Chip color="danger" size="sm" variant="flat">
                             本月超预算，已暂停
@@ -584,7 +585,7 @@ export default function MysteriumPanel() {
                         </div>
                       </div>
                       <div>
-                        <div className="text-xs text-default-500">本月已花</div>
+                        <div className="text-xs text-default-500">{account.sharedBilling ? "花费由付款账户统计" : "本月已花"}</div>
                         <div className="font-semibold">
                           ${account.monthSpentUsd.toFixed(2)}
                         </div>
