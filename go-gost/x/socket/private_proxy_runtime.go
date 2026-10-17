@@ -129,6 +129,9 @@ type privateProxyRuntimeManager struct {
 	mu         sync.Mutex
 	directory  string
 	binary     string
+	// binaryMu guards binaryUsable, set once the binary is known to start.
+	binaryMu     sync.Mutex
+	binaryUsable bool
 	processes  map[string]*exec.Cmd
 	stopping   map[string]bool
 	wireguards map[string]*wireGuardRuntime
@@ -471,8 +474,21 @@ func (m *privateProxyRuntimeManager) validateConfig(state privateProxyRuntimeSta
 }
 
 func (m *privateProxyRuntimeManager) ensureBinary() error {
-	if info, err := os.Stat(m.binary); err == nil && info.Mode().IsRegular() {
+	m.binaryMu.Lock()
+	defer m.binaryMu.Unlock()
+	if m.binaryUsable {
 		return nil
+	}
+	if info, err := os.Stat(m.binary); err == nil && info.Mode().IsRegular() {
+		// Builds before Agent 2.82.2 downloaded sing-box's default Linux build,
+		// which needs glibc. On systems without it (Alpine, slim containers)
+		// the file exists but cannot start, so it is replaced with the static
+		// build below.
+		if exec.Command(m.binary, "version").Run() == nil {
+			m.binaryUsable = true
+			return nil
+		}
+		_ = os.Remove(m.binary)
 	}
 	if runtime.GOOS != "linux" {
 		return errors.New("advanced private proxy runtime is supported only on Linux")
@@ -498,7 +514,14 @@ func (m *privateProxyRuntimeManager) ensureBinary() error {
 	if err := os.Chmod(temporary, 0755); err != nil {
 		return err
 	}
-	return os.Rename(temporary, m.binary)
+	if err := os.Rename(temporary, m.binary); err != nil {
+		return err
+	}
+	if output, err := exec.Command(m.binary, "version").CombinedOutput(); err != nil {
+		return fmt.Errorf("sing-box runtime cannot start on this system: %v %s", err, strings.TrimSpace(string(output)))
+	}
+	m.binaryUsable = true
+	return nil
 }
 
 func newPrivateProxyRuntimeState(request privateProxyRuntimeRequest) (privateProxyRuntimeState, error) {
@@ -1011,11 +1034,13 @@ func singBoxAssetName() (string, error) {
 	if runtime.GOOS != "linux" {
 		return "", fmt.Errorf("sing-box runtime is not supported on %s", runtime.GOOS)
 	}
+	// The musl builds are statically linked and run on any Linux; the default
+	// builds need glibc.
 	switch runtime.GOARCH {
 	case "amd64", "arm64":
-		return fmt.Sprintf("sing-box-%s-linux-%s.tar.gz", singBoxRuntimeVersion, runtime.GOARCH), nil
+		return fmt.Sprintf("sing-box-%s-linux-%s-musl.tar.gz", singBoxRuntimeVersion, runtime.GOARCH), nil
 	case "arm":
-		return fmt.Sprintf("sing-box-%s-linux-armv7.tar.gz", singBoxRuntimeVersion), nil
+		return fmt.Sprintf("sing-box-%s-linux-armv7-musl.tar.gz", singBoxRuntimeVersion), nil
 	}
 	return "", fmt.Errorf("sing-box runtime is not supported on linux/%s", runtime.GOARCH)
 }

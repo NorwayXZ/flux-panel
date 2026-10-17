@@ -202,7 +202,7 @@ public class WarpService {
             String error = response == null ? "节点无响应" : response.getMsg();
             jdbc.update("UPDATE warp_account SET last_test_at=?, last_test_ok=0, fail_count=fail_count+1, last_error=? WHERE node_id=?", now,
                     error.length() > 500 ? error.substring(0, 500) : error, node.getId());
-            return R.err("WARP 自检失败：" + error);
+            return R.err("WARP 自检失败：" + explainRuntimeError(error));
         }
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
         jdbc.update("UPDATE warp_account SET last_test_at=?, last_test_ok=1, last_test_ip=?, last_test_country=?, last_test_latency=?, "
@@ -213,6 +213,18 @@ public class WarpService {
         result.put("latencyMs", data.getInteger("latencyMs"));
         result.put("nodeName", node.getName());
         return R.ok(result);
+    }
+
+    /**
+     * Agents before 2.82.2 downloaded a sing-box build that needs glibc; on systems without it the
+     * file exists but "no such file or directory" comes back when it starts.
+     */
+    public static String explainRuntimeError(String error) {
+        if (error != null && error.contains("sing-box") && error.contains("no such file or directory")) {
+            return "节点系统缺少 glibc，旧版 Agent 下载的 sing-box 无法运行。请把节点 Agent 升级到 2.82.2 或更高版本，"
+                    + "会自动换成不依赖系统库的版本。（原始错误：" + error + "）";
+        }
+        return error;
     }
 
     /** Every node with its WARP state. */
@@ -242,7 +254,7 @@ public class WarpService {
                 item.put("lastTestIp", row.get("last_test_ip"));
                 item.put("lastTestCountry", row.get("last_test_country"));
                 item.put("lastTestLatency", row.get("last_test_latency"));
-                item.put("lastError", row.get("last_error"));
+                item.put("lastError", explainRuntimeError((String) row.get("last_error")));
             }
             result.add(item);
         }

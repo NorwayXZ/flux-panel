@@ -1,3 +1,11 @@
+## 2.82.2 sing-box runs on systems without glibc (Agent 2.82.2)
+
+- Since 1.13, sing-box's default Linux build depends on glibc. On Alpine, slim containers and other systems without it, the file was there but would not start ("fork/exec .../sing-box-1.13.15: no such file or directory"). That broke WARP self-tests, routers and sing-box private proxies on those nodes.
+- The Agent now downloads sing-box's statically linked (musl) build, which runs on any Linux. On start it checks that the existing sing-box runs; a copy that cannot start is replaced, and nodes where it already works are left alone.
+- With an older Agent, this error now appears in the panel with an explanation and an upgrade hint.
+- The WARP list shows only the nodes already using WARP. The others fold into one line saying how many have not used it yet and how many need an Agent upgrade.
+- Agent and panel are both 2.82.2. No database change. 2.82.1 remains available for rollback.
+
 ## 2.82.1 WARP endpoint selection, self-repair and WARP+
 
 - "优选接入点" tries eight Cloudflare WARP endpoints (different addresses and ports, including 500, 854 and 1701 for networks that block 2408) from the node, keeps the fastest that works, and re-applies the node's routers when it changes.

@@ -119,8 +119,12 @@ export default function WarpPanel() {
     void load();
   };
 
-  const used = nodes.filter((node) => node.registered).length;
-  const shown = expanded ? nodes : nodes.slice(0, 4);
+  // Nodes already using WARP are always listed; the rest fold into one line.
+  const active = nodes.filter((node) => node.registered);
+  const idle = nodes.filter((node) => !node.registered);
+  const outdated = idle.filter((node) => !node.supported).length;
+  const used = active.length;
+  const shown = expanded ? [...active, ...idle] : active;
 
   return (
     <section className="space-y-3 rounded-2xl border border-divider bg-content1 p-4">
@@ -169,7 +173,7 @@ export default function WarpPanel() {
           )}
         </div>
       </div>
-      {nodes.length > 0 && (
+      {shown.length > 0 && (
         <div className="divide-y divide-divider rounded-xl border border-divider">
           {shown.map((node) => (
             <div
@@ -257,14 +261,22 @@ export default function WarpPanel() {
           ))}
         </div>
       )}
-      {nodes.length > 4 && (
-        <Button
-          size="sm"
-          variant="light"
-          onPress={() => setExpanded(!expanded)}
-        >
-          {expanded ? "收起" : `显示全部 ${nodes.length} 个节点`}
-        </Button>
+      {idle.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-default-500">
+          <span>
+            {active.length === 0
+              ? "还没有节点用过 WARP：在“出口与分流”里选 Cloudflare WARP，或展开后对任意节点点“自检”即可启用。"
+              : `另外 ${idle.length} 个节点还没用过 WARP`}
+            {outdated > 0 ? `（其中 ${outdated} 个节点 Agent 版本过低）` : ""}
+          </span>
+          <Button
+            size="sm"
+            variant="light"
+            onPress={() => setExpanded(!expanded)}
+          >
+            {expanded ? "收起" : "展开"}
+          </Button>
+        </div>
       )}
 
       <Modal isOpen={licenseOpen} size="lg" onOpenChange={setLicenseOpen}>

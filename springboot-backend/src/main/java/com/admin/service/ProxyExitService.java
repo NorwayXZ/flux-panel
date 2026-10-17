@@ -193,7 +193,7 @@ public class ProxyExitService {
         if (response == null || !"OK".equals(response.getMsg())) {
             String error = response == null ? "节点无响应" : response.getMsg();
             jdbc.update("UPDATE proxy_exit SET last_test_at=?, last_test_ok=0, last_test_error=? WHERE id=?", now, truncate(error, 500), id);
-            return R.err("自检失败：" + error);
+            return R.err("自检失败：" + WarpService.explainRuntimeError(error));
         }
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
         jdbc.update("UPDATE proxy_exit SET last_test_at=?, last_test_ok=1, last_test_ip=?, last_test_country=?, last_test_latency=?, "
@@ -295,7 +295,7 @@ public class ProxyExitService {
         item.put("lastTestIp", row.get("last_test_ip"));
         item.put("lastTestCountry", row.get("last_test_country"));
         item.put("lastTestLatency", row.get("last_test_latency"));
-        item.put("lastTestError", row.get("last_test_error"));
+        item.put("lastTestError", WarpService.explainRuntimeError((String) row.get("last_test_error")));
         if (GROUP_TYPE.equals(row.get("protocol"))) {
             JSONObject group = outbound(row);
             List<Long> members = group.getJSONArray("members").toJavaList(Long.class);
