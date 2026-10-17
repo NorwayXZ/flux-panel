@@ -24,6 +24,7 @@ import {
   type ProxyExit,
 } from "@/api";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
+import WarpPanel from "@/components/warp-panel";
 import { formatDateTime } from "@/utils/format";
 
 const protocolName: Record<string, string> = {
@@ -51,6 +52,7 @@ export default function CustomExitsPanel() {
     name: "",
     members: [] as string[],
     direct: false,
+    warp: false,
     url: "",
     intervalMinutes: "3",
     tolerance: "50",
@@ -155,6 +157,7 @@ export default function CustomExitsPanel() {
       name: exit?.name || "",
       members: exit?.group?.members.map((member) => String(member.id)) || [],
       direct: exit?.group?.direct || false,
+      warp: exit?.group?.warp || false,
       url: exit?.group?.url || "",
       intervalMinutes: String(exit?.group?.intervalMinutes || 3),
       tolerance: String(exit?.group?.tolerance ?? 50),
@@ -169,6 +172,7 @@ export default function CustomExitsPanel() {
       name: groupForm.name.trim(),
       members: groupForm.members.map(Number),
       direct: groupForm.direct,
+      warp: groupForm.warp,
       url: groupForm.url.trim() || undefined,
       intervalMinutes: Number(groupForm.intervalMinutes) || 3,
       tolerance: Number(groupForm.tolerance) || 0,
@@ -203,6 +207,7 @@ export default function CustomExitsPanel() {
 
   return (
     <div className="space-y-4">
+      <WarpPanel />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-3xl text-sm text-default-500">
           把你在别处的 VLESS、Trojan、Hysteria2
@@ -278,6 +283,7 @@ export default function CustomExitsPanel() {
                           value: [
                             ...exit.group.members.map((member) => member.name),
                             ...(exit.group.direct ? ["节点自身 IP"] : []),
+                            ...(exit.group.warp ? ["Cloudflare WARP"] : []),
                           ].join("、"),
                         },
                       ],
@@ -453,6 +459,17 @@ export default function CustomExitsPanel() {
               </CheckboxGroup>
             )}
             <Checkbox
+              isSelected={groupForm.warp}
+              onValueChange={(warp) => setGroupForm({ ...groupForm, warp })}
+            >
+              <span className="text-sm">
+                Cloudflare WARP 也作为成员
+                <span className="ml-2 text-xs text-default-400">
+                  免费，节点 Agent 需要 2.82.0 或更高
+                </span>
+              </span>
+            </Checkbox>
+            <Checkbox
               isSelected={groupForm.direct}
               onValueChange={(direct) => setGroupForm({ ...groupForm, direct })}
             >
@@ -507,7 +524,10 @@ export default function CustomExitsPanel() {
               color="primary"
               isDisabled={
                 !groupForm.name.trim() ||
-                groupForm.members.length + (groupForm.direct ? 1 : 0) < 2
+                groupForm.members.length +
+                  (groupForm.direct ? 1 : 0) +
+                  (groupForm.warp ? 1 : 0) <
+                  2
               }
               isLoading={groupSaving}
               onPress={saveGroup}

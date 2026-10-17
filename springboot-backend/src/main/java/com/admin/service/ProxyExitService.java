@@ -29,6 +29,8 @@ public class ProxyExitService {
     public static final String ROUTER_AGENT_VERSION = "2.76.0";
     /** Exit groups and the regex, port, network and GEOIP rules. */
     public static final String ROUTER_RULES_AGENT_VERSION = "2.79.0";
+    /** Cloudflare WARP exits (WireGuard endpoints in the router). */
+    public static final String WARP_AGENT_VERSION = "2.82.0";
     /** Stored outbound type of an exit group; the router gets a sing-box urltest. */
     public static final String GROUP_TYPE = "group";
     static final String DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204";
@@ -38,7 +40,10 @@ public class ProxyExitService {
     private final NodeMapper nodeMapper;
     private final AESCrypto crypto;
 
-    public ProxyExitService(JdbcTemplate jdbc, NodeMapper nodeMapper, @Value("${jwt-secret}") String secret) {
+    private final WarpService warp;
+
+    public ProxyExitService(JdbcTemplate jdbc, NodeMapper nodeMapper, WarpService warp, @Value("${jwt-secret}") String secret) {
+        this.warp = warp;
         this.jdbc = jdbc;
         this.nodeMapper = nodeMapper;
         this.crypto = new AESCrypto(secret + ":proxy-exit");
@@ -57,6 +62,7 @@ public class ProxyExitService {
         result.put("presets", ProxyRoutePresets.list());
         result.put("minimumAgentVersion", ROUTER_AGENT_VERSION);
         result.put("rulesAgentVersion", ROUTER_RULES_AGENT_VERSION);
+        result.put("warpAgentVersion", WARP_AGENT_VERSION);
         return R.ok(result);
     }
 
@@ -64,10 +70,11 @@ public class ProxyExitService {
      * Creates or updates an exit group: the router keeps testing its members and uses the
      * fastest one that answers.
      */
-    public R saveGroup(Long id, String name, List<Long> members, boolean direct, String url, Integer intervalMinutes, Integer tolerance) {
+    public R saveGroup(Long id, String name, List<Long> members, boolean direct, boolean warp, String url, Integer intervalMinutes,
+                       Integer tolerance) {
         if (name == null || name.isBlank()) return R.err("请输入名称");
         java.util.LinkedHashSet<Long> unique = new java.util.LinkedHashSet<>(members == null ? List.of() : members);
-        if (unique.size() + (direct ? 1 : 0) < 2) return R.err("出口组至少需要两个成员");
+        if (unique.size() + (direct ? 1 : 0) + (warp ? 1 : 0) < 2) return R.err("出口组至少需要两个成员");
         if (unique.size() > 30) return R.err("出口组最多 30 个成员");
         String testUrl = url == null || url.isBlank() ? DEFAULT_TEST_URL : url.trim();
         if (!testUrl.matches("https?://[^\\s/]+(/\\S*)?") || testUrl.length() > 500) return R.err("测速地址需要以 http:// 或 https:// 开头");
@@ -86,6 +93,7 @@ public class ProxyExitService {
         outbound.put("type", GROUP_TYPE);
         outbound.put("members", new ArrayList<>(unique));
         outbound.put("direct", direct);
+        outbound.put("warp", warp);
         outbound.put("url", testUrl);
         outbound.put("intervalMinutes", interval);
         outbound.put("tolerance", toleranceMs);
@@ -203,11 +211,13 @@ public class ProxyExitService {
     private R testGroup(Long id, JSONObject group, Node node) {
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, Object> best = null;
-        for (Long member : group.getJSONArray("members").toJavaList(Long.class)) {
-            R tested = test(member, node.getId());
+        List<Long> members = new ArrayList<>(group.getJSONArray("members").toJavaList(Long.class));
+        if (group.getBooleanValue("warp")) members.add(null);
+        for (Long member : members) {
+            R tested = member == null ? warp.testOn(node) : test(member, node.getId());
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", member);
-            item.put("name", exitName(member));
+            item.put("name", member == null ? "Cloudflare WARP" : exitName(member));
             item.put("ok", tested.getCode() == 0);
             if (tested.getCode() == 0) {
                 @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) tested.getData();
@@ -291,8 +301,8 @@ public class ProxyExitService {
             List<Long> members = group.getJSONArray("members").toJavaList(Long.class);
             List<Map<String, Object>> memberViews = new ArrayList<>();
             for (Long member : members) memberViews.add(Map.of("id", member, "name", Objects.requireNonNullElse(exitName(member), "#" + member)));
-            item.put("group", Map.of("members", memberViews, "direct", group.getBooleanValue("direct"), "url", group.getString("url"),
-                    "intervalMinutes", group.getIntValue("intervalMinutes"), "tolerance", group.getIntValue("tolerance")));
+            item.put("group", Map.of("members", memberViews, "direct", group.getBooleanValue("direct"), "warp", group.getBooleanValue("warp"),
+                    "url", group.getString("url"), "intervalMinutes", group.getIntValue("intervalMinutes"), "tolerance", group.getIntValue("tolerance")));
         }
         item.put("usedBy", jdbc.queryForObject("SELECT COUNT(*) FROM private_proxy WHERE state <> 'deleted' AND (exit_custom_id = ? "
                 + "OR route_rules LIKE ?)", Long.class, id, "%\"custom:" + id + "\"%"));

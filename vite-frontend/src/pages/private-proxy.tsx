@@ -174,6 +174,8 @@ const PROTOCOL_AGENT_VERSION = "2.62.0";
 const ROUTER_AGENT_VERSION = "2.76.0";
 /** Exit groups and the regex, port, network and GEOIP rules. */
 const ROUTER_RULES_AGENT_VERSION = "2.79.0";
+/** Cloudflare WARP exits. */
+const WARP_AGENT_VERSION = "2.82.0";
 const NEW_PROTOCOLS: PrivateProxyType[] = [
   "shadowsocks2022",
   "vless_xhttp",
@@ -669,6 +671,17 @@ export default function PrivateProxyPage() {
       }
     });
 
+  /** Why the node cannot use Cloudflare WARP yet, or "". */
+  const warpBlocked = (item: PrivateProxyItem) => {
+    const node = nodes.find(
+      (entry) => String(entry.id) === String(item.nodeId),
+    );
+
+    return node && !agentSupportsExit(node.version, WARP_AGENT_VERSION)
+      ? `Cloudflare WARP 需要节点 Agent ${WARP_AGENT_VERSION} 或更高版本（当前 ${node.version || "未知"}），请先升级节点。`
+      : "";
+  };
+
   /** Why the node cannot run exit groups and the newer rule types, or "". */
   const newerRulesBlocked = (item: PrivateProxyItem) => {
     const node = nodes.find(
@@ -702,10 +715,12 @@ export default function PrivateProxyPage() {
       return toast.error("请选择自定义出口");
     const hadRouting =
       exitTarget.exitType === "custom" ||
+      exitTarget.exitType === "warp" ||
       (exitTarget.routing?.rules?.length || 0) > 0;
 
     if (
       exitChoice.exitType === "custom" ||
+      exitChoice.exitType === "warp" ||
       routeRules.length > 0 ||
       hadRouting
     ) {
@@ -1123,6 +1138,7 @@ export default function PrivateProxyPage() {
                               ]
                             : []),
                           ...(item.exitType === "custom" ||
+                          item.exitType === "warp" ||
                           (item.routing?.rules?.length || 0) > 0
                             ? [
                                 {
@@ -1135,7 +1151,9 @@ export default function PrivateProxyPage() {
                                     {
                                       label: "默认",
                                       value:
-                                        item.exitType === "custom"
+                                        item.exitType === "warp"
+                                          ? "Cloudflare WARP"
+                                          : item.exitType === "custom"
                                           ? `自定义 · ${item.routing?.exitCustomName || `#${item.routing?.exitCustomId}`}`
                                           : item.exitType === "residential"
                                             ? `家宽 · ${item.exit?.countryName || item.exitCountry}`
@@ -1775,6 +1793,7 @@ export default function PrivateProxyPage() {
                   customExits={proxyExits}
                   defaultExit={exitKeyOf(exitChoice)}
                   newerRulesBlocked={newerRulesBlocked(exitTarget)}
+                  warpBlocked={warpBlocked(exitTarget)}
                   presets={routePresets}
                   rules={routeRules}
                   rulesets={routeRulesets}
@@ -1798,6 +1817,7 @@ export default function PrivateProxyPage() {
                         : undefined
                     }
                     value={exitChoice}
+                    warpBlocked={warpBlocked(exitTarget)}
                     onChange={setExitChoice}
                   />
                 </div>

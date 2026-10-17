@@ -26,9 +26,11 @@ public class ProxyExitController {
     private final ProxyRulesetService rulesets;
     private final ProxyRuleSourceService sources;
     private final ProxyRoutingService routing;
+    private final com.admin.service.WarpService warp;
 
     public ProxyExitController(ProxyExitService service, ProxyRulesetService rulesets, ProxyRuleSourceService sources,
-                               ProxyRoutingService routing) {
+                               ProxyRoutingService routing, com.admin.service.WarpService warp) {
+        this.warp = warp;
         this.service = service;
         this.rulesets = rulesets;
         this.sources = sources;
@@ -68,7 +70,8 @@ public class ProxyExitController {
         List<Long> members = new ArrayList<>();
         Object raw = body.get("members");
         if (raw instanceof List) for (Object item : (List<?>) raw) if (item != null) members.add(Long.valueOf(item.toString()));
-        R result = service.saveGroup(id, text(body, "name"), members, Boolean.TRUE.equals(body.get("direct")), text(body, "url"),
+        R result = service.saveGroup(id, text(body, "name"), members, Boolean.TRUE.equals(body.get("direct")),
+                Boolean.TRUE.equals(body.get("warp")), text(body, "url"),
                 integer(body, "intervalMinutes"), integer(body, "tolerance"));
         if (result.getCode() == 0 && id != null) routing.reapplyForExit(id);
         return result;
@@ -81,6 +84,28 @@ public class ProxyExitController {
         Object rules = body.get("rules");
         return sources.testRoute(rules instanceof List ? (List<Map<String, Object>>) rules : List.of(), text(body, "target"),
                 text(body, "network"));
+    }
+
+    /** Cloudflare WARP state on every node. */
+    @PostMapping("/warp")
+    public R warpStatus() {
+        return R.ok(Map.of("nodes", warp.status(), "minimumAgentVersion", ProxyExitService.WARP_AGENT_VERSION));
+    }
+
+    @PostMapping("/warp/test")
+    public R warpTest(@RequestBody Map<String, Object> body) {
+        return warp.test(id(body, "nodeId"));
+    }
+
+    /** Registers a fresh WARP account for the node, e.g. when the old one stopped working. */
+    @RequireRole
+    @LogAnnotation
+    @PostMapping("/warp/reset")
+    public R warpReset(@RequestBody Map<String, Object> body) {
+        Long nodeId = id(body, "nodeId");
+        R result = warp.reset(nodeId);
+        routing.reapplyOnNodeUsingWarp(nodeId);
+        return result;
     }
 
     /** Well-known community rule sets shared by all users. */

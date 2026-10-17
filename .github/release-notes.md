@@ -1,3 +1,13 @@
+## 2.82.0 Cloudflare WARP as a free exit (Agent 2.82.0)
+
+- Cloudflare WARP is a built-in exit, with nothing to add or configure. In 出口与分流 it can be the exit for unmatched traffic, the exit of any rule, or a member of an exit group.
+- Traffic leaves through Cloudflare's network with a Cloudflare IP. That helps with services that refuse data-centre addresses, and gives IPv4-only nodes IPv6 access.
+- The panel registers one free WARP account per node the first time WARP is used there, through Cloudflare's client API. The node only receives the WireGuard settings.
+- 出口管理 → 自定义出口 shows WARP's state on each node: the exit IP, location and latency from the last self-test. It has a self-test button, and admins can re-register a node's account if Cloudflare stops accepting it, after which the proxies on that node are re-applied.
+- Exit groups can include WARP. Testing a group tests WARP alongside the other members.
+- The Agent router accepts WireGuard endpoints. It validates keys, addresses, the single peer and the reserved bytes, and rejects anything that would listen, bind or touch the system network stack.
+- Agent 2.82.0 is required for WARP. Other routing keeps working on older Agents. Adds the warp_account table (created at startup; migrations/20261017_warp_account.sql for manual setups). 2.81.1 remains available for rollback.
+
 ## 2.81.1 Clearer routing page: rules first, then "everything else"
 
 - "出口与分流" now reads in the order traffic is matched:

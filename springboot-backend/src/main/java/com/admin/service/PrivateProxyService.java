@@ -816,7 +816,7 @@ public class PrivateProxyService {
                 && Objects.equals(proxy.getExitCountry(), exitCountry)) {
             return R.ok(view(proxy));
         }
-        if (routing.active(proxy) || "custom".equals(proxy.getExitType())) {
+        if (routing.active(proxy) || "custom".equals(proxy.getExitType()) || WarpService.EXIT_KEY.equals(proxy.getExitType())) {
             // Keep the proxy's rules; only the default exit changes.
             return updateRouting(id, exitType, country, null, rulesForUpdate(proxy));
         }
@@ -883,7 +883,7 @@ public class PrivateProxyService {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
         String type = StringUtils.defaultIfBlank(exitType, "node");
-        if (!Set.of("node", "residential", "custom").contains(type)) return R.err("不支持的出口类型");
+        if (!Set.of("node", "residential", "custom", WarpService.EXIT_KEY).contains(type)) return R.err("不支持的出口类型");
         String routeRules;
         try {
             routeRules = ProxyRoutingService.normalizeRules(rules);
@@ -891,7 +891,7 @@ public class PrivateProxyService {
             return R.err(e.getMessage());
         }
         List<JSONObject> parsedRules = ProxyRoutingService.rules(routeRules);
-        boolean usesRouter = "custom".equals(type) || !parsedRules.isEmpty();
+        boolean usesRouter = "custom".equals(type) || WarpService.EXIT_KEY.equals(type) || !parsedRules.isEmpty();
         if (usesRouter && !ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())) {
             return R.err("这个协议不支持自定义出口和分流，请使用 VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、Shadowsocks 2022、ShadowTLS 或 VLESS REALITY/XHTTP");
         }

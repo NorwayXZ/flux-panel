@@ -25,7 +25,13 @@ func sampleRouterRequest() proxyRouterRequest {
 			{"type": "trojan", "tag": "custom-5", "server": "1.2.3.4", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "a.example.com"}},
 			{"type": "tuic", "tag": "custom-6", "server": "1.2.3.4", "server_port": 443, "uuid": "11111111-2222-3333-4444-555555555555", "password": "p", "congestion_control": "bbr", "tls": {"enabled": true, "alpn": ["h3"]}},
 			{"type": "anytls", "tag": "custom-7", "server": "1.2.3.4", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "a.example.com"}},
-			{"type": "urltest", "tag": "custom-8", "outbounds": ["custom-1", "custom-2", "direct"], "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50}
+			{"type": "urltest", "tag": "custom-8", "outbounds": ["custom-1", "custom-2", "direct", "warp"], "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50}
+		],
+		"endpoints": [
+			{"type": "wireguard", "tag": "warp", "mtu": 1280, "address": ["172.16.0.2/32", "2606:4700:110:8a36::1/128"],
+			 "private_key": "eCtXsJZ27+4PbhDkHnB923tkUn2Gj59wZw5wFA8L1Vc=",
+			 "peers": [{"address": "162.159.192.1", "port": 2408, "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+			   "allowed_ips": ["0.0.0.0/0", "::/0"], "reserved": [183, 189, 219]}]}
 		],
 		"rules": [
 			{"domain_suffix": ["openai.com", "chatgpt.com"], "outbound": "res-us"},
@@ -38,7 +44,8 @@ func sampleRouterRequest() proxyRouterRequest {
 			{"network": ["udp"], "action": "reject"},
 			{"ip_is_private": true, "outbound": "direct"},
 			{"action": "resolve"},
-			{"ip_cidr": ["1.0.1.0/24"], "outbound": "custom-8"}
+			{"ip_cidr": ["1.0.1.0/24"], "outbound": "custom-8"},
+			{"domain_suffix": ["chatgpt.com"], "outbound": "warp"}
 		],
 		"final": "custom-2"
 	}`), &request)
@@ -99,6 +106,16 @@ func TestRouterConfigRejectsUnsafeInput(t *testing.T) {
 		"bad port range":       func(r *proxyRouterRequest) { r.Rules[6]["port_range"] = []interface{}{"1-2"} },
 		"bad network":          func(r *proxyRouterRequest) { r.Rules[7]["network"] = []interface{}{"icmp"} },
 		"resolve with match":   func(r *proxyRouterRequest) { r.Rules[9]["domain"] = []interface{}{"a.com"} },
+		"endpoint listens":     func(r *proxyRouterRequest) { r.Endpoints[0]["listen_port"] = float64(51820) },
+		"endpoint system":      func(r *proxyRouterRequest) { r.Endpoints[0]["system"] = true },
+		"endpoint bad key":     func(r *proxyRouterRequest) { r.Endpoints[0]["private_key"] = "short" },
+		"endpoint type":        func(r *proxyRouterRequest) { r.Endpoints[0]["type"] = "tailscale" },
+		"endpoint duplicate tag": func(r *proxyRouterRequest) {
+			r.Endpoints[0]["tag"] = "direct"
+		},
+		"peer extra field": func(r *proxyRouterRequest) {
+			r.Endpoints[0]["peers"].([]interface{})[0].(map[string]interface{})["detour"] = "direct"
+		},
 	}
 	for name, mutate := range cases {
 		request := sampleRouterRequest()

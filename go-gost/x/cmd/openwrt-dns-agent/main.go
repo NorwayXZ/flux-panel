@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-var version = "2.79.0"
+var version = "2.82.0"
 
 type configuration struct {
 	Addr      string `json:"addr"`

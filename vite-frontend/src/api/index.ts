@@ -725,7 +725,7 @@ export interface PrivateProxyItem {
   createdTime: number;
 }
 
-export type PrivateProxyExitType = "node" | "residential" | "custom";
+export type PrivateProxyExitType = "node" | "residential" | "custom" | "warp";
 
 export type ExitGroupStatus =
   | "ok"
@@ -1118,6 +1118,8 @@ export interface RuleCatalogItem {
 export interface ExitGroupSettings {
   members: Array<{ id: number; name: string }>;
   direct: boolean;
+  /** Cloudflare WARP is also a member. */
+  warp?: boolean;
   url: string;
   intervalMinutes: number;
   tolerance: number;
@@ -1200,12 +1202,41 @@ export const getProxyExits = () =>
     minimumAgentVersion: string;
     /** Needed for exit groups and the regex, port, network and GEOIP rules. */
     rulesAgentVersion: string;
+    warpAgentVersion?: string;
   }>("/proxy-exit/list");
+/** Cloudflare WARP on one node: registered on first use, one free account per node. */
+export interface WarpNodeStatus {
+  nodeId: number;
+  nodeName: string;
+  online: boolean;
+  supported: boolean;
+  registered: boolean;
+  addressV6?: string;
+  lastTestAt?: number | null;
+  lastTestOk?: boolean | null;
+  lastTestIp?: string | null;
+  lastTestCountry?: string | null;
+  lastTestLatency?: number | null;
+  lastError?: string | null;
+}
+export const getWarpStatus = () =>
+  Network.post<{ nodes: WarpNodeStatus[]; minimumAgentVersion: string }>(
+    "/proxy-exit/warp",
+  );
+export const testWarp = (nodeId: number) =>
+  Network.post<{ ip: string; country?: string; latencyMs: number }>(
+    "/proxy-exit/warp/test",
+    { nodeId },
+    60_000,
+  );
+export const resetWarp = (nodeId: number) =>
+  Network.mutate("/proxy-exit/warp/reset", { nodeId }, ["/proxy-exit/warp"]);
 export const saveExitGroup = (data: {
   id?: number;
   name: string;
   members: number[];
   direct: boolean;
+  warp?: boolean;
   url?: string;
   intervalMinutes?: number;
   tolerance?: number;

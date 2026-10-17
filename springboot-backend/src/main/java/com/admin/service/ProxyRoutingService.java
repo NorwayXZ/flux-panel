@@ -61,9 +61,11 @@ public class ProxyRoutingService {
     private final ProxyExitService exits;
     private final com.admin.mapper.PrivateProxyMapper proxyMapper;
     private final com.admin.mapper.NodeMapper nodeMapper;
+    private final WarpService warp;
 
     public ProxyRoutingService(JdbcTemplate jdbc, ProxyExitService exits, com.admin.mapper.PrivateProxyMapper proxyMapper,
-                               com.admin.mapper.NodeMapper nodeMapper) {
+                               com.admin.mapper.NodeMapper nodeMapper, WarpService warp) {
+        this.warp = warp;
         this.jdbc = jdbc;
         this.exits = exits;
         this.proxyMapper = proxyMapper;
@@ -91,6 +93,11 @@ public class ProxyRoutingService {
                 || rules(proxy.getRouteRules()).stream().anyMatch(rule -> key.equals(rule.getString("exit"))));
     }
 
+    /** Re-applies the routers on a node whose proxies may use WARP, after its account changed. */
+    public int reapplyOnNodeUsingWarp(Long nodeId) {
+        return reapplyWhere(proxy -> java.util.Objects.equals(proxy.getNodeId(), nodeId));
+    }
+
     private int reapplyWhere(java.util.function.Predicate<PrivateProxy> uses) {
         int applied = 0;
         List<PrivateProxy> proxies = proxyMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<PrivateProxy>()
@@ -114,7 +121,8 @@ public class ProxyRoutingService {
     /** A proxy needs a router when it uses a custom exit or has any rule. */
     public boolean active(PrivateProxy proxy) {
         return ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())
-                && ("custom".equals(proxy.getExitType()) || !rules(proxy.getRouteRules()).isEmpty());
+                && ("custom".equals(proxy.getExitType()) || WarpService.EXIT_KEY.equals(proxy.getExitType())
+                || !rules(proxy.getRouteRules()).isEmpty());
     }
 
     public static List<JSONObject> rules(String json) {
@@ -194,7 +202,7 @@ public class ProxyRoutingService {
     }
 
     static boolean validExit(String exit) {
-        return "direct".equals(exit) || "block".equals(exit)
+        return "direct".equals(exit) || "block".equals(exit) || WarpService.EXIT_KEY.equals(exit)
                 || exit.matches("residential:[A-Za-z]{2}") || exit.matches("custom:\\d{1,18}");
     }
 
@@ -317,7 +325,8 @@ public class ProxyRoutingService {
         request.put("name", name);
         request.put("outbounds", outbounds);
         request.put("rules", routerRules);
-        request.put("final", "custom".equals(exitType) && exitCustomId != null ? "custom-" + exitCustomId
+        request.put("final", WarpService.EXIT_KEY.equals(exitType) ? "warp"
+                : "custom".equals(exitType) && exitCustomId != null ? "custom-" + exitCustomId
                 : "residential".equals(exitType) && StringUtils.isNotBlank(exitCountry) ? "res-" + exitCountry.toLowerCase(Locale.ROOT)
                 : "direct");
         return request;
@@ -366,6 +375,27 @@ public class ProxyRoutingService {
         return set;
     }
 
+    /** True when the router sends traffic to WARP: as the final exit, from a rule, or in a group. */
+    static boolean usesWarp(JSONObject request) {
+        if ("warp".equals(request.getString("final"))) return true;
+        JSONArray rules = request.getJSONArray("rules");
+        for (int i = 0; i < rules.size(); i++) if ("warp".equals(rules.getJSONObject(i).getString("outbound"))) return true;
+        JSONArray outbounds = request.getJSONArray("outbounds");
+        for (int i = 0; i < outbounds.size(); i++) {
+            JSONArray members = outbounds.getJSONObject(i).getJSONArray("outbounds");
+            if (members != null && members.contains("warp")) return true;
+        }
+        return false;
+    }
+
+    static void attachWarp(JSONObject request, JSONObject endpoint) {
+        JSONObject tagged = new JSONObject(true);
+        tagged.put("type", endpoint.getString("type"));
+        tagged.put("tag", "warp");
+        for (String key : endpoint.keySet()) if (!"type".equals(key)) tagged.put(key, endpoint.get(key));
+        request.put("endpoints", List.of(tagged));
+    }
+
     /** True when the router command uses fields or exit groups that older Agents reject. */
     static boolean needsNewerRouter(JSONObject request) {
         JSONArray outbounds = request.getJSONArray("outbounds");
@@ -382,6 +412,7 @@ public class ProxyRoutingService {
     private static String tagOf(String exit) {
         if (exit.startsWith("residential:")) return "res-" + exit.substring("residential:".length()).toLowerCase(Locale.ROOT);
         if (exit.startsWith("custom:")) return "custom-" + exit.substring("custom:".length());
+        if (WarpService.EXIT_KEY.equals(exit)) return "warp";
         return "direct";
     }
 
@@ -411,6 +442,7 @@ public class ProxyRoutingService {
                 members.add("custom-" + member);
             }
             if (outbound.getBooleanValue("direct")) members.add("direct");
+            if (outbound.getBooleanValue("warp")) members.add("warp");
             JSONObject group = new JSONObject(true);
             group.put("type", "urltest");
             group.put("outbounds", members);
@@ -435,6 +467,12 @@ public class ProxyRoutingService {
         if (needsNewerRouter(request) && !newerAgent) {
             throw new IllegalStateException("出口组和正则、端口、网络、GEOIP 等规则需要节点 Agent " + ProxyExitService.ROUTER_RULES_AGENT_VERSION
                     + " 或更高版本，请先升级该节点");
+        }
+        if (usesWarp(request)) {
+            if (!com.admin.common.utils.AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.WARP_AGENT_VERSION)) {
+                throw new IllegalStateException("Cloudflare WARP 出口需要节点 Agent " + ProxyExitService.WARP_AGENT_VERSION + " 或更高版本，请先升级该节点");
+            }
+            attachWarp(request, warp.endpoint(node.getId()));
         }
         GostDto response = WebSocketServer.send_msg(node.getId(), request, "ApplyProxyRouter", 30);
         if (response == null || !"OK".equals(response.getMsg())) {

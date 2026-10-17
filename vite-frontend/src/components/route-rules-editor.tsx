@@ -104,6 +104,7 @@ export function exitLabel(
   customExits: ProxyExit[],
 ) {
   if (exit === "direct") return "节点自身 IP";
+  if (exit === "warp") return "Cloudflare WARP";
   if (exit === "block") return "拒绝连接";
   if (exit.startsWith("residential:")) {
     const code = exit.slice("residential:".length);
@@ -131,8 +132,11 @@ export default function RouteRulesEditor({
   allowResidential,
   defaultExit,
   newerRulesBlocked,
+  warpBlocked,
   onRulesetsChanged,
 }: {
+  /** Why the node cannot use WARP yet, or empty. */
+  warpBlocked?: string;
   /** The proxy's default exit as a rule exit key, to flag rules that change nothing. */
   defaultExit?: string;
   rules: RouteRule[];
@@ -178,6 +182,7 @@ export default function RouteRulesEditor({
   };
   const exitOptions = [
     { key: "direct", label: "节点自身 IP" },
+    { key: "warp", label: "Cloudflare WARP（免费）" },
     ...(allowResidential
       ? countries
           .filter((country) => country.available > 0)
@@ -520,6 +525,11 @@ export default function RouteRulesEditor({
                     {newerRulesBlocked}
                   </p>
                 )}
+              {warpBlocked && rule.exit === "warp" && (
+                <p className="text-xs text-warning-600 dark:text-warning-400">
+                  {warpBlocked}
+                </p>
+              )}
               {rule.values.length === 0 && (
                 <p className="text-xs text-warning-600 dark:text-warning-400">
                   这条规则还没有选择或填写内容，不会匹配任何流量。

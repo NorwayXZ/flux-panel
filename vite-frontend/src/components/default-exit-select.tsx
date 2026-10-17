@@ -8,25 +8,29 @@ import { sortExitCountries } from "@/utils/exit-display";
 
 /** The rule-exit key ("direct", "residential:CC", "custom:ID") of an exit choice. */
 export const exitKeyOf = (choice: ExitChoice) =>
-  choice.exitType === "custom" && choice.exitCustomId
-    ? `custom:${choice.exitCustomId}`
-    : choice.exitType === "residential" && choice.exitCountry
-      ? `residential:${choice.exitCountry}`
-      : "direct";
+  choice.exitType === "warp"
+    ? "warp"
+    : choice.exitType === "custom" && choice.exitCustomId
+      ? `custom:${choice.exitCustomId}`
+      : choice.exitType === "residential" && choice.exitCountry
+        ? `residential:${choice.exitCountry}`
+        : "direct";
 
 const choiceOf = (key: string): ExitChoice =>
-  key.startsWith("custom:")
-    ? {
-        exitType: "custom",
-        exitCountry: "",
-        exitCustomId: Number(key.slice("custom:".length)),
-      }
-    : key.startsWith("residential:")
+  key === "warp"
+    ? { exitType: "warp", exitCountry: "" }
+    : key.startsWith("custom:")
       ? {
-          exitType: "residential",
-          exitCountry: key.slice("residential:".length),
+          exitType: "custom",
+          exitCountry: "",
+          exitCustomId: Number(key.slice("custom:".length)),
         }
-      : { exitType: "node", exitCountry: "" };
+      : key.startsWith("residential:")
+        ? {
+            exitType: "residential",
+            exitCountry: key.slice("residential:".length),
+          }
+        : { exitType: "node", exitCountry: "" };
 
 /** One line per exit: which rules go where, then where everything else goes. */
 export function RoutingSummary({
@@ -81,7 +85,10 @@ export default function DefaultExitSelect({
   customExits,
   allowResidential,
   residentialBlockedReason,
+  warpBlocked,
 }: {
+  /** Why the node cannot use WARP yet, or empty. */
+  warpBlocked?: string;
   value: ExitChoice;
   onChange: (value: ExitChoice) => void;
   countries: ExitCountry[];
@@ -118,6 +125,11 @@ export default function DefaultExitSelect({
             节点自身 IP（原始 IP，推荐）
           </SelectItem>
         </SelectSection>
+        <SelectSection title="全部改走免费出口">
+          <SelectItem key="warp" textValue="Cloudflare WARP">
+            Cloudflare WARP（免费，Cloudflare 的 IP）
+          </SelectItem>
+        </SelectSection>
         {customExits.length > 0 ? (
           <SelectSection title="全部改走自己添加的节点">
             {customExits.map((exit) => (
@@ -147,6 +159,11 @@ export default function DefaultExitSelect({
         <p className="text-xs text-warning-600 dark:text-warning-400">
           注意：除了上面规则指定的流量，其余所有流量都会走“
           {exitLabel(key, countries, customExits)}”，而不是节点自身 IP。
+        </p>
+      )}
+      {key === "warp" && warpBlocked && (
+        <p className="text-xs text-warning-600 dark:text-warning-400">
+          {warpBlocked}
         </p>
       )}
       {!allowResidential && residentialBlockedReason && (

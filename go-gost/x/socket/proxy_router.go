@@ -28,6 +28,8 @@ import (
 type proxyRouterRequest struct {
 	Name      string                   `json:"name"`
 	Outbounds []map[string]interface{} `json:"outbounds"`
+	// Endpoints are WireGuard tunnels such as Cloudflare WARP; rules and groups use their tags.
+	Endpoints []map[string]interface{} `json:"endpoints"`
 	Rules     []map[string]interface{} `json:"rules"`
 	Final     string                   `json:"final"`
 }
@@ -48,6 +50,8 @@ type proxyRouterState struct {
 
 type proxyExitTestRequest struct {
 	Outbound map[string]interface{} `json:"outbound"`
+	// Endpoint tests a WireGuard exit (WARP) instead of an outbound.
+	Endpoint map[string]interface{} `json:"endpoint"`
 }
 
 type proxyExitTestResponse struct {
@@ -109,6 +113,14 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 		}
 		outbounds = append(outbounds, outbound)
 	}
+	endpoints := make([]interface{}, 0, len(request.Endpoints))
+	for _, endpoint := range request.Endpoints {
+		if err := validateRouterEndpoint(endpoint, tags); err != nil {
+			return nil, err
+		}
+		tags[endpoint["tag"].(string)] = true
+		endpoints = append(endpoints, endpoint)
+	}
 	if !tags["direct"] {
 		outbounds = append(outbounds, map[string]interface{}{"type": "direct", "tag": "direct"})
 		tags["direct"] = true
@@ -137,7 +149,7 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 		rules = append(rules, next)
 	}
 
-	return map[string]interface{}{
+	config := map[string]interface{}{
 		"log": map[string]interface{}{"level": "warn"},
 		"dns": map[string]interface{}{"servers": []interface{}{map[string]interface{}{"type": "local", "tag": "local"}}},
 		"inbounds": []interface{}{map[string]interface{}{
@@ -146,7 +158,103 @@ func buildRouterConfig(request proxyRouterRequest, port int, username, password 
 		}},
 		"outbounds": outbounds,
 		"route":     map[string]interface{}{"rules": rules, "final": request.Final, "default_domain_resolver": "local"},
-	}, nil
+	}
+	// Left out when empty so routers without WARP keep their existing config hash.
+	if len(endpoints) > 0 {
+		config["endpoints"] = endpoints
+	}
+	return config, nil
+}
+
+var (
+	routerEndpointFields = map[string]bool{"type": true, "tag": true, "mtu": true, "address": true, "private_key": true, "peers": true}
+	routerPeerFields     = map[string]bool{"address": true, "port": true, "public_key": true, "allowed_ips": true, "reserved": true, "persistent_keepalive_interval": true}
+	routerWireGuardKey   = regexp.MustCompile(`^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$`)
+	routerCIDR           = regexp.MustCompile(`^[0-9a-fA-F:.]+/\d{1,3}$`)
+	routerPeerAddress    = regexp.MustCompile(`^[0-9a-zA-Z:.\-\[\]]{1,253}$`)
+)
+
+// validateRouterEndpoint accepts a plain WireGuard client endpoint: addresses,
+// a key and peers. Anything that would listen, bind or touch the system
+// network stack is rejected.
+func validateRouterEndpoint(endpoint map[string]interface{}, tags map[string]bool) error {
+	tag, _ := endpoint["tag"].(string)
+	if kind, _ := endpoint["type"].(string); kind != "wireguard" {
+		return fmt.Errorf("unsupported router endpoint type %q", kind)
+	}
+	if !routerTagPattern.MatchString(tag) || tags[tag] || tag == "direct" {
+		return fmt.Errorf("invalid router endpoint tag %q", tag)
+	}
+	for key := range endpoint {
+		if !routerEndpointFields[key] {
+			return fmt.Errorf("router endpoint %s: unsupported field %s", tag, key)
+		}
+	}
+	if key, _ := endpoint["private_key"].(string); !routerWireGuardKey.MatchString(key) {
+		return fmt.Errorf("router endpoint %s: invalid private key", tag)
+	}
+	addresses, ok := stringList(endpoint["address"])
+	if !ok || len(addresses) == 0 || len(addresses) > 4 {
+		return fmt.Errorf("router endpoint %s: invalid address", tag)
+	}
+	for _, address := range addresses {
+		if !routerCIDR.MatchString(address) {
+			return fmt.Errorf("router endpoint %s: invalid address %q", tag, address)
+		}
+	}
+	if raw, set := endpoint["mtu"]; set {
+		if mtu, ok := raw.(float64); !ok || mtu < 576 || mtu > 1500 {
+			return fmt.Errorf("router endpoint %s: invalid mtu", tag)
+		}
+	}
+	peers, ok := endpoint["peers"].([]interface{})
+	if !ok || len(peers) != 1 {
+		return fmt.Errorf("router endpoint %s needs exactly one peer", tag)
+	}
+	peer, ok := peers[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("router endpoint %s: invalid peer", tag)
+	}
+	for key := range peer {
+		if !routerPeerFields[key] {
+			return fmt.Errorf("router endpoint %s: unsupported peer field %s", tag, key)
+		}
+	}
+	if address, _ := peer["address"].(string); !routerPeerAddress.MatchString(address) {
+		return fmt.Errorf("router endpoint %s: invalid peer address", tag)
+	}
+	if port, ok := peer["port"].(float64); !ok || port < 1 || port > 65535 {
+		return fmt.Errorf("router endpoint %s: invalid peer port", tag)
+	}
+	if key, _ := peer["public_key"].(string); !routerWireGuardKey.MatchString(key) {
+		return fmt.Errorf("router endpoint %s: invalid peer public key", tag)
+	}
+	allowed, ok := stringList(peer["allowed_ips"])
+	if !ok || len(allowed) == 0 || len(allowed) > 8 {
+		return fmt.Errorf("router endpoint %s: invalid allowed_ips", tag)
+	}
+	for _, cidr := range allowed {
+		if !routerCIDR.MatchString(cidr) {
+			return fmt.Errorf("router endpoint %s: invalid allowed ip %q", tag, cidr)
+		}
+	}
+	if raw, set := peer["reserved"]; set {
+		values, ok := raw.([]interface{})
+		if !ok || len(values) != 3 {
+			return fmt.Errorf("router endpoint %s: invalid reserved bytes", tag)
+		}
+		for _, value := range values {
+			if number, ok := value.(float64); !ok || number < 0 || number > 255 || number != float64(int(number)) {
+				return fmt.Errorf("router endpoint %s: invalid reserved bytes", tag)
+			}
+		}
+	}
+	if raw, set := peer["persistent_keepalive_interval"]; set {
+		if interval, ok := raw.(float64); !ok || interval < 0 || interval > 3600 {
+			return fmt.Errorf("router endpoint %s: invalid keepalive", tag)
+		}
+	}
+	return nil
 }
 
 func validateRouterGroup(group map[string]interface{}, tags map[string]bool, groups []map[string]interface{}) error {
@@ -476,21 +584,32 @@ func (m *proxyRouterManager) watch(name string, cmd *exec.Cmd) {
 // testExit starts a short-lived router whose only outbound is the exit under
 // test and fetches Cloudflare's trace through it.
 func (m *proxyRouterManager) testExit(request proxyExitTestRequest) (proxyExitTestResponse, error) {
-	if request.Outbound == nil {
+	source := request.Outbound
+	if request.Endpoint != nil {
+		source = request.Endpoint
+	}
+	if source == nil {
 		return proxyExitTestResponse{}, errors.New("missing exit outbound")
 	}
-	outbound := map[string]interface{}{}
-	for key, value := range request.Outbound {
-		outbound[key] = value
+	exit := map[string]interface{}{}
+	for key, value := range source {
+		exit[key] = value
 	}
-	outbound["tag"] = "exit"
+	exit["tag"] = "exit"
+	test := proxyRouterRequest{Final: "exit"}
+	if request.Endpoint != nil {
+		test.Endpoints = []map[string]interface{}{exit}
+	} else {
+		test.Outbounds = []map[string]interface{}{exit}
+	}
 	name := "exit-test-" + randomToken(6)
+	test.Name = name
 	port, err := availableLocalPort()
 	if err != nil {
 		return proxyExitTestResponse{}, err
 	}
 	password := randomToken(18)
-	config, err := buildRouterConfig(proxyRouterRequest{Name: name, Outbounds: []map[string]interface{}{outbound}, Final: "exit"}, port, "test", password)
+	config, err := buildRouterConfig(test, port, "test", password)
 	if err != nil {
 		return proxyExitTestResponse{}, err
 	}

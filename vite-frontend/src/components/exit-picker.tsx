@@ -164,7 +164,7 @@ export default function ExitPicker({
               {customExits.map((exit) => (
                 <SelectItem key={String(exit.id)} textValue={exit.name}>
                   {exit.group
-                    ? `${exit.name} · 出口组（自动选最快的 ${exit.group.members.length + (exit.group.direct ? 1 : 0)} 个成员之一）`
+                    ? `${exit.name} · 出口组（自动选最快的 ${exit.group.members.length + (exit.group.direct ? 1 : 0) + (exit.group.warp ? 1 : 0)} 个成员之一）`
                     : `${exit.name} · ${exit.protocol.toUpperCase()} · ${exit.server}`}
                 </SelectItem>
               ))}
