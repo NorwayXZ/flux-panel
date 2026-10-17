@@ -98,6 +98,10 @@ public class PrivateProxySchemaInitializer {
                     + "last_test_ok tinyint DEFAULT NULL, last_test_ip varchar(64) DEFAULT NULL, last_test_country varchar(8) DEFAULT NULL, "
                     + "last_test_latency int DEFAULT NULL, last_error varchar(500) DEFAULT NULL, "
                     + "PRIMARY KEY (node_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            SchemaSupport.ensureColumn(jdbcTemplate, "warp_account", "token", "varchar(512) DEFAULT NULL");
+            SchemaSupport.ensureColumn(jdbcTemplate, "warp_account", "account_type", "varchar(32) DEFAULT NULL");
+            SchemaSupport.ensureColumn(jdbcTemplate, "warp_account", "license_key", "varchar(255) DEFAULT NULL");
+            SchemaSupport.ensureColumn(jdbcTemplate, "warp_account", "fail_count", "int NOT NULL DEFAULT 0");
             ensureMediumText("route_rules");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

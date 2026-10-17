@@ -97,6 +97,20 @@ public class ProxyExitController {
         return warp.test(id(body, "nodeId"));
     }
 
+    /** Tries every WARP endpoint from the node and keeps the fastest. */
+    @PostMapping("/warp/optimize")
+    public R warpOptimize(@RequestBody Map<String, Object> body) {
+        return warp.optimize(id(body, "nodeId"));
+    }
+
+    /** Binds a WARP+ license to every node's WARP account. */
+    @RequireRole
+    @LogAnnotation
+    @PostMapping("/warp/license")
+    public R warpLicense(@RequestBody Map<String, Object> body) {
+        return warp.applyLicense(text(body, "license"));
+    }
+
     /** Registers a fresh WARP account for the node, e.g. when the old one stopped working. */
     @RequireRole
     @LogAnnotation

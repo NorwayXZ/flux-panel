@@ -102,6 +102,7 @@ public class MonitoringService {
         states.addAll(dynamicDnsStates.values());
         states.addAll(evaluateExitGroups(now).values());
         states.addAll(evaluatePrivateProxies().values());
+        states.addAll(evaluateWarp().values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -222,7 +223,7 @@ public class MonitoringService {
             where.append(" AND a.status = ?");
             args.add(status);
         }
-        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group", "private_proxy").contains(resourceType)) {
+        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group", "private_proxy", "warp").contains(resourceType)) {
             where.append(" AND a.resource_type = ?");
             args.add(resourceType);
         }
@@ -493,6 +494,31 @@ public class MonitoringService {
                     : "success".equals(lastStatus) ? "当前地址：" + stringValue(row.get("last_applied_ip"))
                     : "等待首次检测";
             states.put(id, new ResourceState("dynamic_dns", id, stringValue(row.get("name")), 1, status, detail));
+        }
+        return states;
+    }
+
+    /**
+     * Cloudflare WARP on each node that uses it: an alert only after the self-repair (switching
+     * endpoint, registering again) could not bring it back, i.e. two or more failed checks.
+     */
+    private Map<Long, ResourceState> evaluateWarp() {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList("SELECT w.node_id, w.last_test_ok, w.fail_count, w.last_error, w.last_test_ip, "
+                    + "n.name AS node_name FROM warp_account w LEFT JOIN node n ON n.id = w.node_id WHERE w.last_test_at IS NOT NULL");
+        } catch (Exception e) {
+            return states;
+        }
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("node_id"));
+            boolean ok = intValue(row.get("last_test_ok")) == 1;
+            boolean failing = !ok && intValue(row.get("fail_count")) >= 2;
+            String name = "WARP · " + (row.get("node_name") == null ? "#" + id : stringValue(row.get("node_name")));
+            String status = ok ? HEALTHY : failing ? OFFLINE : UNKNOWN;
+            String detail = ok ? "出口 IP：" + stringValue(row.get("last_test_ip")) : stringValue(row.get("last_error"));
+            states.put(id, new ResourceState("warp", id, name, 1, status, detail));
         }
         return states;
     }
@@ -925,6 +951,7 @@ public class MonitoringService {
             case "dynamic_dns" -> "动态 DNS";
             case "exit_group" -> "家宽出口";
             case "private_proxy" -> "私人代理";
+            case "warp" -> "WARP 出口";
             default -> "资源";
         };
     }

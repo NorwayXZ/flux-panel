@@ -1212,6 +1212,13 @@ export interface WarpNodeStatus {
   supported: boolean;
   registered: boolean;
   addressV6?: string;
+  /** The WARP endpoint in use, e.g. 162.159.192.1:2408. */
+  endpoint?: string;
+  /** free, limited (WARP+) or unlimited. */
+  accountType?: string | null;
+  licensed?: boolean;
+  /** Running proxies on the node that send traffic to WARP. */
+  usedBy?: number;
   lastTestAt?: number | null;
   lastTestOk?: boolean | null;
   lastTestIp?: string | null;
@@ -1229,6 +1236,28 @@ export const testWarp = (nodeId: number) =>
     { nodeId },
     60_000,
   );
+export const optimizeWarp = (nodeId: number) =>
+  Network.post<{
+    changed: boolean;
+    endpoint: string;
+    latencyMs: number;
+    results: Array<{
+      endpoint: string;
+      ok: boolean;
+      latencyMs?: number;
+      error?: string;
+    }>;
+  }>("/proxy-exit/warp/optimize", { nodeId }, 240_000);
+export const bindWarpLicense = (license: string) =>
+  Network.mutate<{
+    bound: number;
+    results: Array<{
+      nodeName: string;
+      ok: boolean;
+      accountType?: string;
+      error?: string;
+    }>;
+  }>("/proxy-exit/warp/license", { license }, ["/proxy-exit/warp"], 120_000);
 export const resetWarp = (nodeId: number) =>
   Network.mutate("/proxy-exit/warp/reset", { nodeId }, ["/proxy-exit/warp"]);
 export const saveExitGroup = (data: {
@@ -3141,7 +3170,8 @@ export type MonitoringResourceType =
   | "certificate"
   | "dynamic_dns"
   | "exit_group"
-  | "private_proxy";
+  | "private_proxy"
+  | "warp";
 export type MonitoringStatus =
   "healthy" | "degraded" | "offline" | "paused" | "unknown";
 

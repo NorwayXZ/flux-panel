@@ -1,3 +1,12 @@
+## 2.82.1 WARP endpoint selection, self-repair and WARP+
+
+- "优选接入点" tries eight Cloudflare WARP endpoints (different addresses and ports, including 500, 854 and 1701 for networks that block 2408) from the node, keeps the fastest that works, and re-applies the node's routers when it changes.
+- In-use WARP is checked every 30 minutes. After two failures in a row the panel switches to another endpoint, then registers a fresh account if no endpoint works. If WARP still fails, the alert centre shows it under the new "WARP 出口" type and sends Telegram alerts like other resources.
+- Admins can bind a WARP+ license. It is applied to every node's WARP account and to accounts registered later. Nodes beyond the license's device limit report the error and stay on free WARP. Re-registering a node keeps its license.
+- The WARP list shows each node's endpoint, WARP+ status and how many running proxies use WARP there.
+- The panel now keeps the account token Cloudflare issues at registration, which a license needs. Accounts registered by 2.82.0 are registered again the first time a license is bound.
+- Panel-only update; Agents stay at 2.82.0. Adds token, account_type, license_key and fail_count columns to warp_account (created at startup; migrations/20261017_warp_account_repair.sql for manual setups). 2.82.0 remains available for rollback.
+
 ## 2.82.0 Cloudflare WARP as a free exit (Agent 2.82.0)
 
 - Cloudflare WARP is a built-in exit, with nothing to add or configure. In 出口与分流 it can be the exit for unmatched traffic, the exit of any rule, or a member of an exit group.
