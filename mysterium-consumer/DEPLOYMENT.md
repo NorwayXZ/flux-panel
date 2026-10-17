@@ -3,6 +3,21 @@
 Use matching panel and Agent releases, starting with `2.84.0-beta.1`.
 This is a prerelease. The stable update channel intentionally does not select it.
 
+## Using the panel host as payer
+
+The panel host can also be the funded node if it runs a matching Agent and
+Mysterium client. Enroll that host as a node, enable Mysterium there, then select
+it as the payer during initial shared-pool configuration. The panel application
+does not automatically create a local wallet or signer.
+
+An existing pool does not need to move. Changing an existing payer is currently
+blocked by the binding API: it requires stopping shared connections and migrating
+the original identity together with the latest payment ledger. Creating a new
+account does not move the funded account's balance. Automated payer migration is
+not implemented.
+
+## Initial setup
+
 1. Back up the panel database and the funded node's Mysterium data directory.
    Keep identity keys private. Never copy an older payment ledger back over an
    active signer.

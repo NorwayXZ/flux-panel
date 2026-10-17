@@ -423,6 +423,14 @@ export default function MysteriumPanel() {
           <div className="mb-5 rounded-xl border border-default-200 bg-default-50 p-4">
             <h2 className="font-semibold">统一余额 · 各节点直连</h2>
             <p className="my-2 text-sm text-default-500">选择已充值的付款节点，其他节点共用其 Mysterium 余额。业务流量由各节点直接连接家宽出口；绑定会重启所选节点的 Mysterium。付款节点需要持续在线。</p>
+            <details className="mb-3 rounded-lg border border-default-200 p-3 text-sm">
+              <summary className="cursor-pointer font-medium">想让面板服务器统一管理充值？</summary>
+              <div className="mt-2 space-y-2 text-default-600">
+                <p>面板服务器也可以作为付款节点：先在该服务器安装 Agent 并接入节点管理，再启用 Mysterium，最后选择它作为付款账户节点。面板程序本身不会自动创建付款账户。</p>
+                <p>首次配置时，只需给付款账户充值一次，其他服务器绑定共享余额后各自直连家宽出口，所有节点的用量从同一余额扣除。面板和付款节点都需要保持在线。</p>
+                <p>已有共享账户时，保留当前付款节点即可，无需迁移。若要改到面板服务器，需要先停止共享连接并迁移原账户身份与最新付款账本；当前绑定按钮不支持更换付款节点，也不能自动转移原余额。请保留原数据，勿通过删除账本或重新创建账户来迁移。</p>
+              </div>
+            </details>
             <div className="flex flex-wrap items-end gap-3">
               <Select aria-label="付款账户节点" label="付款账户节点" className="w-56" selectedKeys={sharedOwner ? [sharedOwner] : []} onSelectionChange={(keys) => setSharedOwner(String(Array.from(keys)[0] || ""))}>
                 {accounts.map((account) => <SelectItem key={String(account.nodeId)}>{account.nodeName}</SelectItem>)}
