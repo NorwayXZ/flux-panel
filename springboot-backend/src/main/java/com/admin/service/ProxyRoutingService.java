@@ -120,9 +120,15 @@ public class ProxyRoutingService {
         return applied;
     }
 
+    public static boolean supports(String proxyType) {
+        return "shadowsocks".equals(proxyType) || ExitPoolService.ROUTED_PROXY_TYPES.contains(proxyType);
+    }
+
+    public static String chainName(PrivateProxy proxy) { return routerName(proxy) + "-chain"; }
+
     /** A proxy needs a router when it uses a custom exit or has any rule. */
     public boolean active(PrivateProxy proxy) {
-        return ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())
+        return supports(proxy.getProxyType())
                 && ("custom".equals(proxy.getExitType()) || WarpService.EXIT_KEY.equals(proxy.getExitType())
                 || "mysterium".equals(proxy.getExitType())
                 || !rules(proxy.getRouteRules()).isEmpty());
@@ -493,12 +499,22 @@ public class ProxyRoutingService {
         }
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
         if (data == null || data.getIntValue("port") < 1) throw new IllegalStateException("节点返回的分流路由不完整");
+        if ("shadowsocks".equals(proxy.getProxyType())) {
+            String name = chainName(proxy);
+            JSONObject chain = GostUtil.createLocalRouterChain(name, data.getIntValue("port"), data.getString("username"), data.getString("password"));
+            GostDto result = WebSocketServer.send_msg(node.getId(), Map.of("chain", name, "data", chain), "UpdateChains");
+            if (result != null && StringUtils.containsIgnoreCase(result.getMsg(), "not found")) {
+                result = WebSocketServer.send_msg(node.getId(), chain, "AddChains");
+            }
+            if (result == null || !"OK".equals(result.getMsg())) throw new IllegalStateException("连接 Shadowsocks 分流路由失败：" + (result == null ? "节点无响应" : result.getMsg()));
+        }
         return new Endpoint(data.getIntValue("port"), data.getString("username"), data.getString("password"));
     }
 
     /** Removes the router and the per-country routes of a proxy. */
     public void remove(PrivateProxy proxy, Node node) {
         if (node == null) return;
+        if ("shadowsocks".equals(proxy.getProxyType())) WebSocketServer.send_msg(node.getId(), Map.of("chain", chainName(proxy)), "DeleteChains");
         WebSocketServer.send_msg(node.getId(), Map.of("name", routerName(proxy)), "DeleteProxyRouter", 10);
         for (String country : routeExitPorts(proxy.getRouteExitPorts()).keySet()) {
             GostUtil.DeleteNamedService(node.getId(), countryRouteName(proxy, country));

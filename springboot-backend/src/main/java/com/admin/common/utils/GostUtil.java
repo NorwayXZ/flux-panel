@@ -102,6 +102,18 @@ public class GostUtil {
     public static GostDto sendShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
                                                 String cipher, String password, String admissionName, String limiterName,
                                                 String exitInterface, String command) {
+        return sendShadowsocksProxy(nodeId, serviceName, bindIp, port, cipher, password, admissionName, limiterName, exitInterface, command, null);
+    }
+
+    public static GostDto sendShadowsocksProxy(Long nodeId, String serviceName, String bindIp, Integer port,
+                                                String cipher, String password, String admissionName, String limiterName,
+                                                String exitInterface, String command, String chainName) {
+        JSONArray services = shadowsocksServices(serviceName, bindIp, port, cipher, password, admissionName, limiterName, exitInterface, chainName);
+        return WebSocketServer.send_msg(nodeId, services, command);
+    }
+
+    static JSONArray shadowsocksServices(String serviceName, String bindIp, Integer port, String cipher, String password,
+                                         String admissionName, String limiterName, String exitInterface, String chainName) {
         JSONArray services = new JSONArray();
         services.add(createAuthenticatedService(serviceName + "-tcp", bindIp, port, "ss", "tcp",
                 cipher, password, admissionName, limiterName));
@@ -110,7 +122,13 @@ public class GostUtil {
         if (StringUtils.isNotBlank(exitInterface)) {
             for (int i = 0; i < services.size(); i++) services.getJSONObject(i).put("interface", exitInterface);
         }
-        return WebSocketServer.send_msg(nodeId, services, command);
+        if (StringUtils.isNotBlank(chainName)) {
+            for (int i = 0; i < services.size(); i++) {
+                services.getJSONObject(i).remove("interface");
+                services.getJSONObject(i).getJSONObject("handler").put("chain", chainName);
+            }
+        }
+        return services;
     }
 
     /**
@@ -560,6 +578,10 @@ public class GostUtil {
         chain.put("name", chainName);
         chain.put("hops", hops);
         return chain;
+    }
+
+    public static JSONObject createLocalRouterChain(String name, int port, String username, String password) {
+        return createPublishingChainData(name, List.of(new PublishingProxyHop("127.0.0.1:" + port, username, password)));
     }
 
     public record PublishingProxyHop(String address, String username, String password) {

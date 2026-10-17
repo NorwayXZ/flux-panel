@@ -96,8 +96,12 @@ func (m *mysteriumManager) ensureRunning() error {
 	if err := os.MkdirAll(m.directory, 0700); err != nil {
 		return err
 	}
-	if err := m.ensureBinary(); err != nil {
+	if cfg, err := m.billingConfig(); err != nil {
 		return err
+	} else if cfg == nil {
+		if err := m.ensureBinary(); err != nil {
+			return err
+		}
 	}
 	m.adoptTrial()
 	for _, dir := range []string{"data", "logs"} {
@@ -111,14 +115,29 @@ func (m *mysteriumManager) ensureRunning() error {
 	}
 	// --proxymode keeps connections as local proxies without touching routes;
 	// --proxy.bind.address keeps them on loopback (myst defaults to 0.0.0.0).
-	cmd := exec.Command(m.binary,
+	binary := m.binary
+	if cfg, err := m.billingConfig(); err != nil {
+		logFile.Close()
+		return err
+	} else if cfg != nil {
+		binary = filepath.Join(m.directory, "bin", "myst-shared")
+		if err := verifyMysteriumBinary(binary, cfg.BinarySHA256); err != nil {
+			logFile.Close()
+			return err
+		}
+	}
+	cmd := exec.Command(binary,
 		"--data-dir="+filepath.Join(m.directory, "data"),
 		"--config-dir="+filepath.Join(m.directory, "bin", "config"),
 		"--log-dir="+filepath.Join(m.directory, "logs"),
 		"--proxymode", "--proxy.bind.address=127.0.0.1",
 		"--tequilapi.address=127.0.0.1", "--tequilapi.port="+strconv.Itoa(mysteriumAPIPort),
 		"--ui.enable=false", "daemon")
-	cmd.Env = mysteriumDaemonEnv()
+	cmd.Env, err = m.billingEnv()
+	if err != nil {
+		logFile.Close()
+		return err
+	}
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		logFile.Close()

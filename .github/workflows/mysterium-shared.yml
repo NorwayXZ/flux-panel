@@ -1,0 +1,36 @@
+name: Build shared Mysterium consumer
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+      - name: Prepare pinned upstream source
+        run: python3 mysterium-consumer/build.py /tmp/myst-shared --prepare-only
+      - name: Test signer and upstream payment engine
+        working-directory: /tmp/myst-shared
+        run: go test ./session/pingpong -count=1
+      - name: Build binaries and retain corresponding source
+        shell: bash
+        run: |
+          mkdir -p shared-release
+          for arch in amd64 arm64; do
+            (cd /tmp/myst-shared && CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$GITHUB_WORKSPACE/shared-release/myst-shared-linux-$arch" ./cmd/mysterium_node)
+          done
+          git -C /tmp/myst-shared diff > shared-release/upstream.patch
+          cp -R mysterium-consumer shared-release/source-overlay
+          cp /tmp/myst-shared/LICENSE shared-release/LICENSE
+          (cd shared-release && sha256sum myst-shared-linux-* > SHA256SUMS)
+          tar -czf shared-release/source-overlay.tar.gz -C shared-release source-overlay
+      - name: Publish client binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view myst-shared-1.39.7-1 >/dev/null 2>&1 || gh release create myst-shared-1.39.7-1 --target "$GITHUB_SHA" --prerelease --title "Mysterium shared billing client 1.39.7-1" --notes "Custom GPL consumer and central signer. Requires the matching panel and Agent. Live multi-node acceptance verification is pending. All traffic is billed against the shared balance."
+          gh release upload myst-shared-1.39.7-1 shared-release/myst-shared-linux-* shared-release/SHA256SUMS shared-release/source-overlay.tar.gz shared-release/upstream.patch shared-release/LICENSE --clobber

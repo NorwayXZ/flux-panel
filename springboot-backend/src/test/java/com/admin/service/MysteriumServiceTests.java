@@ -63,4 +63,39 @@ class MysteriumServiceTests {
         assertEquals(0, MysteriumService.pricePerGib(new JSONObject(), "JP"), 1e-9);
         assertTrue(new JSONArray().isEmpty());
     }
+
+    @Test
+    void switchesAwayFromTheCurrentProviderAndPersistsHistory() {
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        var nodes = org.mockito.Mockito.mock(com.admin.mapper.NodeMapper.class);
+        var service = org.mockito.Mockito.spy(new MysteriumService(jdbc, nodes, null));
+        org.mockito.Mockito.doReturn(true).when(service).enabled();
+        var node = new com.admin.entity.Node(); node.setId(7L);
+        org.mockito.Mockito.when(nodes.selectById(7L)).thenReturn(node);
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_account WHERE node_id = ?", 7L))
+                .thenReturn(List.of(Map.of("balance", 10, "suspended", 0)));
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+                .thenReturn(List.of(Map.of("proxy_port", 47100, "provider_id", "old-provider", "excluded", "earlier-provider")));
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+                .thenReturn(List.of(Map.of("exit_ip", "192.0.2.1")));
+        var response = new com.admin.common.dto.GostDto(); response.setMsg("OK");
+        response.setData(Map.of("providerId", "new-provider", "exitIp", "192.0.2.2", "latencyMs", 15));
+        org.mockito.Mockito.doReturn(true).when(service).nodeOnline(7L);
+        org.mockito.Mockito.doReturn(response).when(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(0, service.reconnect(7L, "US", "远程切换").getCode());
+        org.mockito.Mockito.verify(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.argThat(payload ->
+                List.of("earlier-provider", "old-provider").equals(payload.get("excludeProviders")) && Integer.valueOf(47100).equals(payload.get("proxyPort"))));
+        org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("INSERT INTO mysterium_event"), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("US"), org.mockito.ArgumentMatchers.contains("远程切换"), org.mockito.ArgumentMatchers.eq("192.0.2.1"), org.mockito.ArgumentMatchers.eq("192.0.2.2"), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void doesNotSwitchSuspendedPaidAccounts() {
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        var service = org.mockito.Mockito.spy(new MysteriumService(jdbc, null, null));
+        org.mockito.Mockito.doReturn(true).when(service).enabled();
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_account WHERE node_id = ?", 7L))
+                .thenReturn(List.of(Map.of("balance", 10, "suspended", 1)));
+        assertTrue(service.reconnect(7L, "US").getMsg().contains("预算"));
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.<Object[]>any());
+    }
 }

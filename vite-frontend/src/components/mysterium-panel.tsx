@@ -25,6 +25,8 @@ import toast from "react-hot-toast";
 
 import {
   getMysteriumCountries,
+  configureMysteriumSharedBilling,
+  getMysteriumSharedBilling,
   getMysteriumOverview,
   reconnectMysterium,
   refreshMysterium,
@@ -58,6 +60,10 @@ const traffic = (bytes: number) =>
 
 /** Mysterium residential exits: per-node paid accounts, connections, budget and top-ups. */
 export default function MysteriumPanel() {
+  const [sharedOwner, setSharedOwner] = useState("");
+  const [sharedNodes, setSharedNodes] = useState<Set<string>>(new Set());
+  const [sharedInfo, setSharedInfo] = useState("");
+  const [sharedEndpoint, setSharedEndpoint] = useState(`${window.location.origin}/api/v1/mysterium-shared/pay`);
   const [settings, setSettings] = useState<MysteriumSettings | null>(null);
   const [accounts, setAccounts] = useState<MysteriumAccount[]>([]);
   const [nodes, setNodes] = useState<
@@ -101,6 +107,13 @@ export default function MysteriumPanel() {
 
   useEffect(() => {
     void load();
+    void getMysteriumSharedBilling().then((response) => {
+      if (response.code === 0 && response.data?.owner_node_id) {
+        setSharedOwner(String(response.data.owner_node_id));
+        setSharedEndpoint(response.data.endpoint || `${window.location.origin}/api/v1/mysterium-shared/pay`);
+        setSharedInfo(`共享账户：${response.data.consumer}；已就绪 ${response.data.members.filter((member) => member.state === "ready").length} 台节点`);
+      }
+    });
     void getMysteriumCountries().then((response) => {
       if (response.code === 0) setCountries(response.data || []);
     });
@@ -407,13 +420,38 @@ export default function MysteriumPanel() {
 
       {enabled && (
         <section className="space-y-3">
+          <div className="mb-5 rounded-xl border border-default-200 bg-default-50 p-4">
+            <h2 className="font-semibold">统一余额 · 各节点直连</h2>
+            <p className="my-2 text-sm text-default-500">选择已充值的付款节点，其他节点共用其 Mysterium 余额。业务流量由各节点直接连接家宽出口；绑定会重启所选节点的 Mysterium。付款节点需要持续在线。</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <Select aria-label="付款账户节点" label="付款账户节点" className="w-56" selectedKeys={sharedOwner ? [sharedOwner] : []} onSelectionChange={(keys) => setSharedOwner(String(Array.from(keys)[0] || ""))}>
+                {accounts.map((account) => <SelectItem key={String(account.nodeId)}>{account.nodeName}</SelectItem>)}
+              </Select>
+              <Select aria-label="共用余额的节点" label="共用余额的节点" className="w-72" selectionMode="multiple" selectedKeys={sharedNodes} onSelectionChange={(keys) => {if (keys !== "all") setSharedNodes(new Set(Array.from(keys).map(String)));}}>
+                {nodes.filter((node) => node.online && String(node.id) !== sharedOwner).map((node) => <SelectItem key={String(node.id)}>{node.name}</SelectItem>)}
+              </Select>
+              <Input className="min-w-72 flex-1" label="面板付款地址（HTTPS）" value={sharedEndpoint} onValueChange={setSharedEndpoint} />
+              <Button color="primary" isLoading={busy === "shared"} isDisabled={!sharedOwner || sharedNodes.size === 0 || !!busy} onPress={async () => {
+                setBusy("shared"); setSharedInfo("正在安装共享客户端并绑定账户，请等待节点返回结果。");
+                try {
+                  const response = await configureMysteriumSharedBilling({ownerNodeId: Number(sharedOwner), nodeIds: Array.from(sharedNodes).map(Number), endpoint: sharedEndpoint});
+                  if (response.code !== 0) {setSharedInfo(response.msg || "配置失败"); return;}
+                  const results = response.data?.results || [];
+                  setSharedInfo(results.map((item) => `${nodes.find((node) => node.id === item.nodeId)?.name || item.nodeId}：${item.success ? "已绑定共享余额" : item.error || "失败"}`).join("；"));
+                  void load();
+                } catch (error) {setSharedInfo(error instanceof Error ? error.message : "配置请求失败");}
+                finally {setBusy("");}
+              }}>绑定共享余额</Button>
+            </div>
+            {sharedInfo && <p className="mt-3 break-all text-sm" role="status">{sharedInfo}</p>}
+          </div>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-foreground">
                 节点账户
               </h2>
               <p className="mt-1 text-sm text-default-500">
-                每台用到 Mysterium 的节点有自己的账户和余额。私人代理第一次选
+                默认每台节点使用独立账户；绑定共享余额后只需给付款账户充值。私人代理第一次选
                 Mysterium 家宽时会自动启用，也可以先在这里启用并充值。
               </p>
             </div>

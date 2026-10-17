@@ -79,6 +79,7 @@ public class PrivateProxyService {
     private final TransactionTemplate transactionTemplate;
     private final JdbcTemplate jdbcTemplate;
     private final ProxyRoutingService routing;
+    private final MysteriumService mysterium;
     private final ProxyExitService exitService;
     private final ProxyRuleSourceService ruleSources;
 
@@ -86,8 +87,9 @@ public class PrivateProxyService {
                                PortAllocationLockMapper allocationLockMapper, PortLedgerService portLedgerService,
                                UserQuotaService userQuotaService, ExitPoolService exitPoolService,
                                PlatformTransactionManager transactionManager, JdbcTemplate jdbcTemplate,
-                               ProxyRoutingService routing, ProxyExitService exitService, ProxyRuleSourceService ruleSources,
+                               ProxyRoutingService routing, ProxyExitService exitService, ProxyRuleSourceService ruleSources, MysteriumService mysterium,
                                @Value("${jwt-secret}") String secret) {
+        this.mysterium = mysterium;
         this.ruleSources = ruleSources;
         this.jdbcTemplate = jdbcTemplate;
         this.routing = routing;
@@ -574,8 +576,10 @@ public class PrivateProxyService {
         JSONObject c = new JSONObject();
         switch (proxyType) {
             case "shadowsocks":
+                if (routing.active(proxy)) runtimeRoute(proxy, node, null);
                 requireGost(upsert(command -> GostUtil.sendShadowsocksProxy(node.getId(), proxy.getServiceName(), bindIp,
-                        proxy.getListenPort(), spec.cipher, spec.password, admission, limiterName, exitInterface, command), repair),
+                        proxy.getListenPort(), spec.cipher, spec.password, admission, limiterName, exitInterface, command,
+                        routing.active(proxy) ? ProxyRoutingService.chainName(proxy) : null), repair),
                         "创建 Shadowsocks 失败");
                 c.put("cipher", spec.cipher);
                 c.put("password", spec.password);
@@ -892,8 +896,8 @@ public class PrivateProxyService {
         }
         List<JSONObject> parsedRules = ProxyRoutingService.rules(routeRules);
         boolean usesRouter = "custom".equals(type) || WarpService.EXIT_KEY.equals(type) || "mysterium".equals(type) || !parsedRules.isEmpty();
-        if (usesRouter && !ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())) {
-            return R.err("这个协议不支持自定义出口和分流，请使用 VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、Shadowsocks 2022、ShadowTLS 或 VLESS REALITY/XHTTP");
+        if (usesRouter && !ProxyRoutingService.supports(proxy.getProxyType())) {
+            return R.err("这个协议不支持自定义出口和分流，请使用 Shadowsocks、VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、Shadowsocks 2022、ShadowTLS 或 VLESS REALITY/XHTTP");
         }
         String exitCountry = "residential".equals(type) || "mysterium".equals(type) ? ExitPoolService.normalizeCountry(country) : null;
         if ("mysterium".equals(type) && StringUtils.isBlank(exitCountry)) return R.err("请选择 Mysterium 家宽的国家");
@@ -1023,6 +1027,14 @@ public class PrivateProxyService {
 
     /** 改变独立运行时的出站方式：经出口通道，或直接从节点发出。密钥和客户端配置保持不变。 */
     private void rerouteRuntime(PrivateProxy proxy, Node node, String exitInterface) {
+        if ("shadowsocks".equals(proxy.getProxyType())) {
+            if (routing.active(proxy)) runtimeRoute(proxy, node, null);
+            String limiter = proxy.getGrantedByUserId() != null ? limiterName(proxy) : null;
+            requireGost(GostUtil.sendShadowsocksProxy(node.getId(), proxy.getServiceName(), proxy.getBindIp(), proxy.getListenPort(),
+                    proxy.getAuthUsername(), crypto.decryptString(proxy.getAuthPassword()), proxy.getAdmissionName(), limiter,
+                    exitInterface, "UpdateService", routing.active(proxy) ? ProxyRoutingService.chainName(proxy) : null), "更新 Shadowsocks 出口失败");
+            return;
+        }
         Route route = runtimeRoute(proxy, node, exitInterface);
         Integer routePort = route == null ? null : route.port;
         String routeUser = route == null ? null : route.username;
@@ -1054,7 +1066,7 @@ public class PrivateProxyService {
     public R exitSwitchToken(Long id, boolean reset) {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
-        if (!"residential".equals(proxy.getExitType())) return R.err("这个代理没有使用家宽出口");
+        if (!Set.of("residential", "mysterium").contains(StringUtils.defaultString(proxy.getExitType()))) return R.err("这个代理没有使用可切换的家宽出口");
         if (reset || StringUtils.isBlank(proxy.getExitSwitchToken())) {
             byte[] bytes = new byte[24];
             new java.security.SecureRandom().nextBytes(bytes);
@@ -1069,6 +1081,9 @@ public class PrivateProxyService {
     public R switchOwnExit(Long id) {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
+        if ("mysterium".equals(proxy.getExitType()) && "active".equals(proxy.getState())) {
+            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), isAdmin() ? "手动切换" : "用户切换");
+        }
         if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
             return R.err("这个代理当前没有使用家宽出口");
         }
@@ -1083,6 +1098,9 @@ public class PrivateProxyService {
         PrivateProxy proxy = proxyMapper.selectOne(new QueryWrapper<PrivateProxy>().eq("exit_switch_token", token)
                 .ne("state", "deleted").last("LIMIT 1"));
         if (proxy == null) return R.err("链接无效或已重置");
+        if ("mysterium".equals(proxy.getExitType()) && "active".equals(proxy.getState())) {
+            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), "远程切换");
+        }
         if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
             return R.err("这个代理当前没有使用家宽出口");
         }
@@ -1191,14 +1209,7 @@ public class PrivateProxyService {
         Node node = nodeMapper.selectById(proxy.getNodeId());
         String host = clientHost(proxy, node);
         if (StringUtils.isBlank(host)) return R.err("节点未配置公网地址");
-        Map<String, Object> routingView = new LinkedHashMap<>();
-        routingView.put("supported", ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType()));
-        routingView.put("exitType", StringUtils.defaultIfBlank(proxy.getExitType(), "node"));
-        routingView.put("exitCountry", proxy.getExitCountry());
-        routingView.put("exitCustomId", proxy.getExitCustomId());
-        routingView.put("exitCustomName", proxy.getExitCustomId() == null ? null : exitService.exitName(proxy.getExitCustomId()));
-        routingView.put("rules", ProxyRoutingService.rules(proxy.getRouteRules()));
-        proxy.setRouting(routingView);
+        attachRoutingView(proxy);
         try {
             JSONObject config = clientConfigOf(proxy);
             if (config == null) return R.err("该代理没有可用的连接信息");
@@ -2007,7 +2018,19 @@ public class PrivateProxyService {
         query.exists("SELECT 1 FROM node n WHERE n.id = private_proxy.node_id");
     }
 
+    private void attachRoutingView(PrivateProxy proxy) {
+        Map<String, Object> routingView = new LinkedHashMap<>();
+        routingView.put("supported", ProxyRoutingService.supports(proxy.getProxyType()));
+        routingView.put("exitType", StringUtils.defaultIfBlank(proxy.getExitType(), "node"));
+        routingView.put("exitCountry", proxy.getExitCountry());
+        routingView.put("exitCustomId", proxy.getExitCustomId());
+        routingView.put("exitCustomName", proxy.getExitCustomId() == null ? null : exitService.exitName(proxy.getExitCustomId()));
+        routingView.put("rules", ProxyRoutingService.rules(proxy.getRouteRules()));
+        proxy.setRouting(routingView);
+    }
+
     private PrivateProxy view(PrivateProxy proxy) {
+        attachRoutingView(proxy);
         Node node = nodeMapper.selectById(proxy.getNodeId());
         User owner = userMapper.selectById(proxy.getUserId());
         proxy.setNodeName(node == null ? "节点已删除" : node.getName());
@@ -2030,6 +2053,11 @@ public class PrivateProxyService {
             if (unavailableReason == null && !"ok".equals(exit.get("status"))) {
                 unavailableReason = "当前没有可用的" + exit.get("countryName") + "家宽出口，代理已断开，不会改用节点自身 IP";
             }
+        }
+        if ("mysterium".equals(proxy.getExitType()) && StringUtils.isNotBlank(proxy.getExitCountry())) {
+            Map<String, Object> exit = mysterium.exitView(proxy.getNodeId(), proxy.getExitCountry());
+            proxy.setExit(exit);
+            if (unavailableReason == null && !"ok".equals(exit.get("status"))) unavailableReason = "Mysterium 家宽出口暂不可用，不会改走节点自身 IP";
         }
         try {
             JSONObject config = clientConfigOf(proxy);

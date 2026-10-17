@@ -119,6 +119,11 @@ public class PrivateProxySchemaInitializer {
                     + "latency_ms int DEFAULT NULL, last_check_at bigint DEFAULT NULL, last_ok_at bigint DEFAULT NULL, "
                     + "last_error varchar(500) DEFAULT NULL, bytes_received bigint NOT NULL DEFAULT 0, bytes_sent bigint NOT NULL DEFAULT 0, "
                     + "created_time bigint NOT NULL, PRIMARY KEY (node_id, country)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS mysterium_event ("
+                    + "id bigint NOT NULL AUTO_INCREMENT, node_id bigint NOT NULL, country char(2) NOT NULL, "
+                    + "message varchar(500) NOT NULL, old_ip varchar(64) DEFAULT NULL, new_ip varchar(64) DEFAULT NULL, "
+                    + "created_time bigint NOT NULL, PRIMARY KEY (id), KEY idx_mysterium_event (node_id,country,created_time)"
+                    + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             ensureMediumText("route_rules");
             ensureVarcharLength("proxy_type", 32);
         } catch (DataAccessException e) {

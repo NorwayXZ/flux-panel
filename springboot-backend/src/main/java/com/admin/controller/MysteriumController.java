@@ -44,6 +44,9 @@ public class MysteriumController {
     @RequireRole @LogAnnotation @PostMapping("/reconnect")
     public R reconnect(@RequestBody Map<String, Object> body) { return service.reconnect(id(body), text(body, "country")); }
 
+    @RequireRole @PostMapping("/events")
+    public R events(@RequestBody Map<String, Object> body) { return service.events(id(body), text(body, "country")); }
+
     private static Long id(Map<String, Object> body) {
         Object value = body == null ? null : body.get("nodeId");
         return value == null || value.toString().isBlank() ? null : Long.valueOf(value.toString());

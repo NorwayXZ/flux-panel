@@ -1,6 +1,8 @@
 # Mysterium shared billing investigation
 
-Status: offline prototype; NOT available in the panel or suitable for funding.
+Status: this directory remains the offline accounting investigation. The subsequent
+client, signer and panel implementation is documented in `../../mysterium-consumer/README.md`;
+its real multi-server acceptance verification is still pending.
 
 ## Intended behavior
 

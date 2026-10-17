@@ -2314,6 +2314,25 @@ func (w *WebSocketReporter) runMysteriumCommand(cmd CommandMessage) {
 		err = errors.New("mysterium manager is unavailable")
 	} else {
 		switch cmd.Type {
+		case "MysteriumBillingConfigure":
+			var request mysteriumBillingRequest
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.configureBilling(request)
+			}
+		case "MysteriumBillingExport":
+			var request struct {
+				Passphrase string `json:"passphrase"`
+			}
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.exportBillingIdentity(request.Passphrase)
+			}
+		case "MysteriumBillingPay":
+			var request struct {
+				Payload string `json:"payload"`
+			}
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.signBillingInvoice(json.RawMessage(request.Payload))
+			}
 		case "MysteriumSetup":
 			var request struct {
 				AgreeTerms bool `json:"agreeTerms"`

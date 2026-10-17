@@ -1253,6 +1253,8 @@ export interface MysteriumConnection {
   bytes: number;
 }
 export interface MysteriumAccount {
+  billingOwnerNodeId?: number;
+  sharedBilling?: boolean;
   nodeId: number;
   nodeName: string;
   identity?: string;
@@ -1305,6 +1307,8 @@ export const topupMysterium = (data: {
   }>("/mysterium/topup", data, 90_000);
 export const refreshMysterium = (nodeId: number) =>
   Network.mutate<MysteriumAccount>("/mysterium/refresh", { nodeId }, ["/mysterium/overview"], 90_000);
+export const getMysteriumEvents = (nodeId: number, country: string) =>
+  Network.post<ExitEvent[]>("/mysterium/events", { nodeId, country });
 export const reconnectMysterium = (nodeId: number, country: string) =>
   Network.mutate("/mysterium/reconnect", { nodeId, country }, ["/mysterium/overview"], 200_000);
 export const getWarpStatus = () =>
@@ -1490,7 +1494,7 @@ export const blockExitMember = (memberId: number) =>
 export const switchOwnExit = (id: number) =>
   Network.mutate<ExitStatusView>("/private-proxy/exit-switch", { id }, [
     "/private-proxy/list",
-  ]);
+  ], 200_000);
 export interface ExitPoolSettings {
   maxFraudScore?: number | null;
   checking?: boolean;
@@ -4194,3 +4198,11 @@ export const createApiToken = (name: string, validDays: number) =>
   );
 export const revokeApiToken = (id: number) =>
   Network.mutate("/api-token/revoke", { id }, ["/api-token/list"]);
+
+export const configureMysteriumSharedBilling = (data: {
+  ownerNodeId: number; nodeIds: number[]; endpoint: string;
+}) => Network.post<{results: Array<{nodeId: number; success: boolean; error?: string}>}>("/mysterium-shared/configure", data, 900_000);
+export const getMysteriumSharedBilling = () => Network.post<{
+  owner_node_id?: number; consumer?: string; endpoint?: string;
+  members: Array<{node_id: number; state: string; last_error?: string}>;
+}>("/mysterium-shared/overview");

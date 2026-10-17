@@ -86,4 +86,37 @@ class PrivateProxyServiceTests {
         assertEquals(200L, PrivateProxyService.runtimeTrafficDelta(200L, 1_000L));
         assertEquals(0L, PrivateProxyService.runtimeTrafficDelta(-1L, 500L));
     }
+
+    @Test void classicShadowsocksCanUseMysteriumRoutingAndReturnToDirect() {
+        PrivateProxy proxy = new PrivateProxy();
+        proxy.setProxyType("shadowsocks");
+        proxy.setExitType("mysterium");
+        assertTrue(ProxyRoutingService.supports("shadowsocks"));
+        ProxyRoutingService routing = new ProxyRoutingService(null, null, null, null, null, null);
+        assertTrue(routing.active(proxy));
+        proxy.setExitType("node");
+        assertFalse(routing.active(proxy));
+        proxy.setRouteRules("[{\"match\":\"domain_suffix\",\"values\":[\"example.com\"],\"exit\":\"mysterium:US\"}]");
+        assertTrue(routing.active(proxy));
+        assertFalse(ProxyRoutingService.supports("wireguard"));
+    }
+
+    @Test void existingRemoteTokenCanSwitchMysteriumWithoutResettingTheLink() {
+        var mapper = org.mockito.Mockito.mock(com.admin.mapper.PrivateProxyMapper.class);
+        var mysterium = org.mockito.Mockito.mock(MysteriumService.class);
+        var service = new PrivateProxyService(mapper, null, null, null, null, null, null,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class), null, null, null, null, mysterium, "test-secret");
+        PrivateProxy proxy = new PrivateProxy();
+        proxy.setNodeId(7L); proxy.setExitType("mysterium"); proxy.setExitCountry("US"); proxy.setState("active");
+        proxy.setExitSwitchToken("a".repeat(48));
+        org.mockito.Mockito.when(mapper.selectOne(org.mockito.ArgumentMatchers.any(com.baomidou.mybatisplus.core.conditions.Wrapper.class))).thenReturn(proxy);
+        org.mockito.Mockito.when(mysterium.reconnect(7L, "US", "远程切换")).thenReturn(com.admin.common.lang.R.ok(java.util.Map.of("exitIp", "192.0.2.2")));
+        assertEquals(0, service.switchExitByToken(proxy.getExitSwitchToken()).getCode());
+        assertEquals("a".repeat(48), proxy.getExitSwitchToken());
+        org.mockito.Mockito.verify(mysterium).reconnect(7L, "US", "远程切换");
+        org.mockito.Mockito.verify(mapper, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.<PrivateProxy>any(), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.clearInvocations(mapper);
+        assertNotEquals(0, service.switchExitByToken("bad-token").getCode());
+        org.mockito.Mockito.verifyNoInteractions(mapper);
+    }
 }

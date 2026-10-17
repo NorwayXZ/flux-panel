@@ -185,17 +185,24 @@ public class MysteriumService {
     }
 
     /** Connects (or moves) the connection; returns the agent's result, or null after recording the error. */
-    private JSONObject connect(Node node, String country, int port, String excluded) {
+    private synchronized JSONObject connect(Node node, String country, int port, String excluded) {
+        return connect(node, country, port, excluded, "连接 / 自动恢复");
+    }
+
+    private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason) {
+        List<Map<String, Object>> previous = jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", node.getId(), country);
+        String oldIp = previous.isEmpty() ? null : (String) previous.get(0).get("exit_ip");
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("proxyPort", port);
         request.put("country", country);
         request.put("excludeProviders", splitExcluded(excluded));
-        GostDto response = WebSocketServer.send_msg(node.getId(), request, "MysteriumConnect", 150);
+        GostDto response = sendConnect(node.getId(), request);
         long now = System.currentTimeMillis();
         if (response == null || !"OK".equals(response.getMsg())) {
             String error = response == null ? "节点无响应" : response.getMsg();
             jdbc.update("UPDATE mysterium_connection SET state='failed', last_error=?, last_check_at=? WHERE node_id=? AND country=?",
                     truncate(error), now, node.getId(), country);
+            recordEvent(node.getId(), country, reason + "失败：" + error, oldIp, null);
             return null;
         }
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
@@ -203,7 +210,43 @@ public class MysteriumService {
                         + "last_check_at=?, last_ok_at=?, last_error=NULL WHERE node_id=? AND country=?",
                 data.getString("providerId"), data.getString("exitIp"), StringUtils.left(data.getString("city"), 100),
                 StringUtils.left(data.getString("isp"), 200), data.getInteger("latencyMs"), now, now, node.getId(), country);
+        recordEvent(node.getId(), country, reason + "：" + StringUtils.defaultIfBlank(oldIp, "未连接") + " → " + data.getString("exitIp"), oldIp, data.getString("exitIp"));
         return data;
+    }
+
+    GostDto sendConnect(Long nodeId, Map<String, Object> request) {
+        return WebSocketServer.send_msg(nodeId, request, "MysteriumConnect", 150);
+    }
+
+    boolean nodeOnline(Long nodeId) { return WebSocketServer.isNodeOnline(nodeId); }
+
+    private void recordEvent(Long nodeId, String country, String message, String oldIp, String newIp) {
+        jdbc.update("INSERT INTO mysterium_event (node_id,country,message,old_ip,new_ip,created_time) VALUES (?,?,?,?,?,?)",
+                nodeId, country, truncate(message), oldIp, newIp, System.currentTimeMillis());
+    }
+
+    public R events(Long nodeId, String country) {
+        if (nodeId == null || country == null || !country.matches("[A-Z]{2}")) return R.err("节点或国家不正确");
+        return R.ok(jdbc.queryForList("SELECT id,message,old_ip AS oldIp,new_ip AS newIp,created_time AS createdTime FROM mysterium_event WHERE node_id=? AND country=? ORDER BY id DESC LIMIT 100", nodeId, country));
+    }
+
+    /** Card view shared by proxies using this node and country. */
+    public Map<String, Object> exitView(Long nodeId, String country) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("country", country);
+        view.put("countryName", country);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
+        Map<String, Object> row = rows.isEmpty() ? Map.of() : rows.get(0);
+        Map<String, Object> account = account(nodeId);
+        boolean suspended = account != null && intValue(account.get("suspended")) == 1;
+        view.put("status", suspended ? "no_exit" : "connected".equals(row.get("state")) ? "ok" : "connecting".equals(row.get("state")) ? "searching" : "no_exit");
+        view.put("exitIp", row.get("exit_ip"));
+        view.put("exitOwner", row.get("isp"));
+        view.put("detail", suspended ? "本月预算已达上限" : row.get("last_error"));
+        view.put("checkedAt", row.get("last_check_at"));
+        List<Map<String, Object>> times = jdbc.queryForList("SELECT MAX(created_time) AS active_since FROM mysterium_event WHERE node_id=? AND country=? AND new_ip IS NOT NULL", nodeId, country);
+        view.put("activeSince", times.isEmpty() ? row.get("created_time") : times.get(0).get("active_since"));
+        return view;
     }
 
     static List<String> splitExcluded(String excluded) {
@@ -228,6 +271,16 @@ public class MysteriumService {
         Set<Integer> used = new LinkedHashSet<>(jdbc.queryForList("SELECT proxy_port FROM mysterium_connection WHERE node_id = ?", Integer.class, nodeId));
         for (int port = PORT_BASE; port < PORT_BASE + 400; port++) if (!used.contains(port)) return port;
         throw new IllegalStateException("没有可用的本地端口");
+    }
+
+    private Long sharedOwner(Long nodeId) {
+        if (nodeId == null) return null;
+        // The shared tables are initialized separately so older installations
+        // remain usable before the first shared-account setup.
+        try {
+            List<Map<String,Object>> rows = jdbc.queryForList("SELECT p.owner_node_id FROM mysterium_shared_pool p JOIN mysterium_shared_member m ON m.node_id=? AND m.state='ready' WHERE p.id=1 AND p.enabled=1", nodeId);
+            return rows.isEmpty() ? nodeId : ((Number)rows.get(0).get("owner_node_id")).longValue();
+        } catch (org.springframework.dao.DataAccessException e) { return nodeId; }
     }
 
     private Map<String, Object> account(Long nodeId) {
@@ -264,6 +317,7 @@ public class MysteriumService {
     }
 
     public R topup(Long nodeId, String gateway, Double amountUsd, String country) {
+        nodeId = sharedOwner(nodeId);
         Node node = nodeId == null ? null : nodeMapper.selectById(nodeId);
         if (node == null || account(nodeId) == null) return R.err("这个节点还没有启用 Mysterium");
         if (!Set.of("paypal", "stripe", "coingate").contains(gateway)) return R.err("不支持的付款方式");
@@ -291,13 +345,24 @@ public class MysteriumService {
 
     /** Moves the country's connection to another provider now. */
     public R reconnect(Long nodeId, String country) {
+        return reconnect(nodeId, country, "手动切换");
+    }
+
+    public synchronized R reconnect(Long nodeId, String country, String reason) {
+        if (nodeId == null || country == null || !country.matches("[A-Z]{2}")) return R.err("节点或国家不正确");
+        if (!enabled()) return R.err("Mysterium 家宽还没有启用");
+        Map<String, Object> account = nodeId == null ? null : account(nodeId);
+        if (account == null) return R.err("节点尚未启用 Mysterium");
+        if (intValue(account.get("suspended")) == 1) return R.err("本月预算已达上限，已暂停使用");
+        if (decimal(account.get("balance")) <= 0) return R.err("Mysterium 余额不足，请先充值");
         Node node = nodeId == null ? null : nodeMapper.selectById(nodeId);
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
         if (node == null || rows.isEmpty()) return R.err("连接不存在");
+        if (!nodeOnline(nodeId)) return R.err("节点离线");
         Map<String, Object> row = rows.get(0);
         String excluded = addExcluded((String) row.get("excluded"), (String) row.get("provider_id"));
         jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", excluded, nodeId, country);
-        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded);
+        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded, reason);
         return result == null ? R.err("换节点失败，请稍后再试") : R.ok(result);
     }
 
@@ -315,7 +380,8 @@ public class MysteriumService {
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
         Map<String, Object> account = account(node.getId());
         double balance = data.getDoubleValue("balance");
-        Spend spend = spend(account == null ? balance : decimal(account.get("last_balance")), balance,
+        boolean sharedMember = !Objects.equals(sharedOwner(node.getId()), node.getId());
+        Spend spend = sharedMember ? new Spend(currentMonth(), 0) : spend(account == null ? balance : decimal(account.get("last_balance")), balance,
                 account == null ? currentMonth() : (String) account.get("month"), account == null ? 0 : decimal(account.get("month_spent")), currentMonth());
         jdbc.update("UPDATE mysterium_account SET identity=?, registration=?, channel_address=?, balance=?, last_balance=?, month=?, month_spent=?, "
                         + "last_status_at=?, last_error=NULL WHERE node_id=?", data.getString("identity"), data.getString("registrationStatus"),
@@ -420,7 +486,9 @@ public class MysteriumService {
         String month = currentMonth();
         for (Map<String, Object> account : jdbc.queryForList("SELECT * FROM mysterium_account")) {
             Long nodeId = ((Number) account.get("node_id")).longValue();
-            double spentUsd = Objects.equals(account.get("month"), month) ? decimal(account.get("month_spent")) * rate : 0;
+            Map<String,Object> budgetAccount = account(sharedOwner(nodeId));
+            if (budgetAccount == null) budgetAccount = account;
+            double spentUsd = Objects.equals(budgetAccount.get("month"), month) ? decimal(budgetAccount.get("month_spent")) * rate : 0;
             boolean over = budget > 0 && spentUsd >= budget;
             boolean suspended = intValue(account.get("suspended")) == 1;
             if (over && !suspended) {
@@ -481,6 +549,9 @@ public class MysteriumService {
         double spent = Objects.equals(row.get("month"), currentMonth()) ? decimal(row.get("month_spent")) : 0;
         item.put("nodeId", nodeId);
         item.put("nodeName", node == null ? "#" + nodeId : node.getName());
+        Long billingOwner = sharedOwner(nodeId);
+        item.put("billingOwnerNodeId", billingOwner);
+        item.put("sharedBilling", !Objects.equals(billingOwner, nodeId));
         item.put("identity", row.get("identity"));
         item.put("registration", row.get("registration"));
         item.put("channelAddress", row.get("channel_address"));

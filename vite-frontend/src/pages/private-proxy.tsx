@@ -20,14 +20,12 @@ import {
   BarChart3,
   Copy,
   Globe2,
-  History,
   Home,
   Link2,
   Pencil,
   QrCode,
   RefreshCw,
   Rss,
-  Shuffle,
   KeyRound,
   Pause,
   Play,
@@ -70,6 +68,7 @@ import {
   type PrivateProxyTransport,
   type PrivateProxyType,
 } from "@/api";
+import PrivateProxyExitActions from "@/components/private-proxy-exit-actions";
 import ExitEventsModal from "@/components/exit-events-modal";
 import PageShell from "@/components/page-shell";
 import ResourceCard, {
@@ -160,6 +159,7 @@ const EXIT_PROXY_TYPES: PrivateProxyType[] = [
 ];
 // 由独立运行时承载的协议经节点本机的出口通道使用家宽出口，需要更高的 Agent 版本
 const ROUTED_EXIT_PROXY_TYPES: PrivateProxyType[] = [
+  "shadowsocks",
   "vless_reality",
   "vless_xhttp",
   "vless",
@@ -376,7 +376,9 @@ export default function PrivateProxyPage() {
   const [mysteriumCountries, setMysteriumCountries] = useState<string[]>([]);
   const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
-    groupId: number;
+    groupId?: number;
+    nodeId?: number;
+    country?: string;
     title: string;
   } | null>(null);
   const [editTarget, setEditTarget] = useState<PrivateProxyItem | null>(null);
@@ -464,8 +466,8 @@ export default function PrivateProxyPage() {
   }, []);
 
   // 有代理在用家宽出口时定期刷新，出口状态和切换能及时显示
-  const hasResidentialExit = items.some(
-    (item) => item.exitType === "residential",
+  const hasResidentialExit = items.some((item) =>
+    ["residential", "mysterium"].includes(item.exitType || ""),
   );
 
   useEffect(() => {
@@ -801,7 +803,8 @@ export default function PrivateProxyPage() {
   const [switchLink, setSwitchLink] = useState("");
 
   const changeExit = async (item: PrivateProxyItem) => {
-    if (!item.exit?.groupId) return toast.error("出口还在准备，请稍后再试");
+    if (item.exitType !== "mysterium" && !item.exit?.groupId)
+      return toast.error("出口还在准备，请稍后再试");
     setSwitchingExit(item.id);
     const response = await switchOwnExit(item.id);
 
@@ -835,6 +838,14 @@ export default function PrivateProxyPage() {
   };
 
   const showEvents = (item: PrivateProxyItem) => {
+    if (item.exitType === "mysterium") {
+      setEventsTarget({
+        nodeId: item.nodeId,
+        country: item.exitCountry || "",
+        title: `Mysterium ${regionName(item.exitCountry || "")}家宽出口的切换记录`,
+      });
+      return;
+    }
     if (!item.exit?.groupId) return toast.error("出口还在准备，暂时没有记录");
     setEventsTarget({
       groupId: item.exit.groupId,
@@ -1127,10 +1138,12 @@ export default function PrivateProxyPage() {
                                 : []),
                             ],
                           },
-                          ...(item.exitType === "residential" && item.exit
+                          ...(["residential", "mysterium"].includes(
+                            item.exitType || "",
+                          ) && item.exit
                             ? [
                                 {
-                                  label: `出口 · ${item.exit.countryName}家宽`,
+                                  label: `出口 · ${item.exitType === "mysterium" ? "Mysterium " : ""}${regionName(item.exit.country)}家宽`,
                                   status: {
                                     text: exitStatusMeta(item.exit.status)
                                       .label,
@@ -1175,12 +1188,12 @@ export default function PrivateProxyPage() {
                                         item.exitType === "warp"
                                           ? "Cloudflare WARP"
                                           : item.exitType === "mysterium"
-                                          ? `Mysterium 家宽 · ${regionName(item.exitCountry || "")}`
-                                          : item.exitType === "custom"
-                                          ? `自定义 · ${item.routing?.exitCustomName || `#${item.routing?.exitCustomId}`}`
-                                          : item.exitType === "residential"
-                                            ? `家宽 · ${item.exit?.countryName || item.exitCountry}`
-                                            : "节点自身 IP",
+                                            ? `Mysterium 家宽 · ${regionName(item.exitCountry || "")}`
+                                            : item.exitType === "custom"
+                                              ? `自定义 · ${item.routing?.exitCustomName || `#${item.routing?.exitCustomId}`}`
+                                              : item.exitType === "residential"
+                                                ? `家宽 · ${item.exit?.countryName || item.exitCountry}`
+                                                : "节点自身 IP",
                                       mono: false,
                                     },
                                   ],
@@ -1333,49 +1346,14 @@ export default function PrivateProxyPage() {
                             : undefined
                         }
                       >
-                        {item.exitType === "residential" &&
-                          item.exit &&
-                          item.state === "active" && (
-                            <div className="flex flex-wrap gap-1">
-                              <Button
-                                className="h-7 min-w-0 px-2 text-xs"
-                                isDisabled={!item.exit.standbyReady}
-                                isLoading={switchingExit === item.id}
-                                size="sm"
-                                startContent={
-                                  switchingExit !== item.id && (
-                                    <Shuffle size={13} />
-                                  )
-                                }
-                                variant="flat"
-                                onPress={() => changeExit(item)}
-                              >
-                                换一个出口
-                              </Button>
-                              {!isAdmin && (
-                                <Button
-                                  className="h-7 min-w-0 px-2 text-xs"
-                                  size="sm"
-                                  startContent={<Link2 size={13} />}
-                                  variant="flat"
-                                  onPress={() => copySwitchLink(item)}
-                                >
-                                  切换链接
-                                </Button>
-                              )}
-                              {isAdmin && (
-                                <Button
-                                  className="h-7 min-w-0 px-2 text-xs"
-                                  size="sm"
-                                  startContent={<History size={13} />}
-                                  variant="flat"
-                                  onPress={() => showEvents(item)}
-                                >
-                                  切换记录
-                                </Button>
-                              )}
-                            </div>
-                          )}
+                        <PrivateProxyExitActions
+                          item={item}
+                          isAdmin={isAdmin}
+                          switching={switchingExit === item.id}
+                          onSwitch={() => changeExit(item)}
+                          onLink={() => copySwitchLink(item)}
+                          onEvents={() => showEvents(item)}
+                        />
                       </ResourceCard>
                     );
                   })}
@@ -1828,7 +1806,10 @@ export default function PrivateProxyPage() {
                   <DefaultExitSelect
                     allowResidential={
                       isAdmin &&
-                      !exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)
+                      !exitBlockedReason(
+                        exitTarget.proxyType,
+                        exitTarget.nodeId,
+                      )
                     }
                     countries={exitInfo?.countries || []}
                     customExits={proxyExits}
@@ -1854,50 +1835,61 @@ export default function PrivateProxyPage() {
                 )}
               </div>
             )}
+            {exitChoice.exitType === "mysterium" && (
+              <p className="text-xs text-warning-600">
+                Mysterium 出口只支持 TCP；UDP 流量无法通过，不会回退到节点自身
+                IP。同一节点、同一国家的代理共用出口连接。
+              </p>
+            )}
             <p className="text-xs text-default-500">
               保存后代理会重新启动，正在进行的连接需要重连；设备上填写的地址、端口和密码都不用改。
             </p>
-            {exitTarget?.exitType === "residential" && (
-              <div className="space-y-2 border-t border-divider pt-4">
-                <div className="text-sm font-medium">远程切换链接</div>
-                <p className="text-xs text-default-500">
-                  不用登录面板，打开这个链接就会换到备用出口，并显示新的出口
-                  IP。可以存成浏览器书签或手机快捷指令。拿到链接的人只能触发换出口，请不要公开。
-                </p>
-                {switchLink ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <code className="min-w-0 flex-1 break-all rounded-md bg-default-100 px-3 py-2 text-xs">
-                      {switchLink}
-                    </code>
+            {exitTarget &&
+              ["residential", "mysterium"].includes(
+                exitTarget.exitType || "",
+              ) && (
+                <div className="space-y-2 border-t border-divider pt-4">
+                  <div className="text-sm font-medium">远程切换链接</div>
+                  <p className="text-xs text-default-500">
+                    不用登录面板，打开这个链接就会换到备用出口，并显示新的出口
+                    IP。可以存成浏览器书签或手机快捷指令。拿到链接的人只能触发换出口，请不要公开。
+                    {exitTarget.exitType === "mysterium" &&
+                      "同一节点、同一国家共用连接，切换会影响其他使用该连接的代理，并可能产生连接费用。"}
+                  </p>
+                  {switchLink ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="min-w-0 flex-1 break-all rounded-md bg-default-100 px-3 py-2 text-xs">
+                        {switchLink}
+                      </code>
+                      <Button
+                        size="sm"
+                        startContent={<Copy size={14} />}
+                        variant="flat"
+                        onPress={() => copyText(switchLink, "链接")}
+                      >
+                        复制
+                      </Button>
+                      <Button
+                        size="sm"
+                        startContent={<RefreshCw size={14} />}
+                        variant="light"
+                        onPress={() => loadSwitchLink(exitTarget, true)}
+                      >
+                        重置
+                      </Button>
+                    </div>
+                  ) : (
                     <Button
                       size="sm"
-                      startContent={<Copy size={14} />}
+                      startContent={<Link2 size={14} />}
                       variant="flat"
-                      onPress={() => copyText(switchLink, "链接")}
+                      onPress={() => loadSwitchLink(exitTarget)}
                     >
-                      复制
+                      显示链接
                     </Button>
-                    <Button
-                      size="sm"
-                      startContent={<RefreshCw size={14} />}
-                      variant="light"
-                      onPress={() => loadSwitchLink(exitTarget, true)}
-                    >
-                      重置
-                    </Button>
-                  </div>
-                ) : (
-                  <Button
-                    size="sm"
-                    startContent={<Link2 size={14} />}
-                    variant="flat"
-                    onPress={() => loadSwitchLink(exitTarget)}
-                  >
-                    显示链接
-                  </Button>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={() => setExitTarget(null)}>

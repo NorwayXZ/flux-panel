@@ -12,12 +12,17 @@ import {
 import { Spinner } from "@heroui/spinner";
 import toast from "react-hot-toast";
 
-import { getExitPoolEvents } from "@/api";
+import { getExitPoolEvents, getMysteriumEvents } from "@/api";
 import { formatDateTime } from "@/utils/format";
 
 interface ExitEventsModalProps {
   /** 要查看的出口；为空时弹窗关闭 */
-  target: { groupId: number; title: string } | null;
+  target: {
+    groupId?: number;
+    nodeId?: number;
+    country?: string;
+    title: string;
+  } | null;
   onClose: () => void;
 }
 
@@ -35,7 +40,11 @@ export default function ExitEventsModal({
 
     setEvents([]);
     setLoading(true);
-    getExitPoolEvents(target.groupId)
+    const request =
+      target.nodeId && target.country
+        ? getMysteriumEvents(target.nodeId, target.country)
+        : getExitPoolEvents(target.groupId!);
+    request
       .then((response) => {
         if (cancelled) return;
         if (response.code !== 0) toast.error(response.msg || "读取记录失败");
@@ -47,7 +56,7 @@ export default function ExitEventsModal({
     return () => {
       cancelled = true;
     };
-  }, [target?.groupId]);
+  }, [target?.groupId, target?.nodeId, target?.country]);
 
   return (
     <Modal

@@ -140,4 +140,24 @@ class GostUtilTests {
         assertEquals("route-user", runtime.getString("outboundProxyUsername"));
         assertEquals("route-password", runtime.getString("outboundProxyPassword"));
     }
+
+    @Test void shadowsocksRoutesBothTransportsWithoutLosingAccessControls() {
+        JSONArray services = GostUtil.shadowsocksServices("ss", "0.0.0.0", 10092, "aes-256-gcm", "secret", "allowlist", "speed", "old-interface", "local-router");
+        assertEquals(2, services.size());
+        for (int i = 0; i < services.size(); i++) {
+            JSONObject service = services.getJSONObject(i);
+            assertEquals("local-router", service.getJSONObject("handler").getString("chain"));
+            assertEquals("allowlist", service.getString("admission"));
+            assertEquals("speed", service.getString("limiter"));
+            assertFalse(service.containsKey("interface"));
+        }
+        JSONArray direct = GostUtil.shadowsocksServices("ss", "0.0.0.0", 10092, "aes-256-gcm", "secret", null, null, "exit-us", null);
+        assertEquals("exit-us", direct.getJSONObject(0).getString("interface"));
+        assertFalse(direct.getJSONObject(0).getJSONObject("handler").containsKey("chain"));
+        JSONObject chain = GostUtil.createLocalRouterChain("local-router", 45001, "exit", "password");
+        JSONObject node = chain.getJSONArray("hops").getJSONObject(0).getJSONArray("nodes").getJSONObject(0);
+        assertEquals("127.0.0.1:45001", node.getString("addr"));
+        assertEquals("socks5", node.getJSONObject("connector").getString("type"));
+        assertEquals("password", node.getJSONObject("connector").getJSONObject("auth").getString("password"));
+    }
 }

@@ -11,6 +11,8 @@ import { getMysteriumOverview, setupMysteriumNode } from "@/api";
 
 vi.mock("@/api", () => ({
   getMysteriumOverview: vi.fn(),
+  getMysteriumSharedBilling: vi.fn(async () => ({ code: 0, data: { members: [] } })),
+  configureMysteriumSharedBilling: vi.fn(),
   getMysteriumCountries: vi.fn(async () => ({ code: 0, data: [] })),
   setupMysteriumNode: vi.fn(),
   saveMysteriumSettings: vi.fn(),
@@ -19,9 +21,9 @@ vi.mock("@/api", () => ({
   topupMysterium: vi.fn(),
 }));
 vi.mock("@heroui/select", () => ({
-  Select: ({ children, onSelectionChange, selectedKeys, isDisabled }: any) => (
+  Select: ({ children, onSelectionChange, selectedKeys, isDisabled, "aria-label": ariaLabel }: any) => (
     <select
-      aria-label="选择节点"
+      aria-label={ariaLabel || "选择节点"}
       disabled={isDisabled}
       value={[...selectedKeys][0] || ""}
       onChange={(event) => onSelectionChange(new Set([event.target.value]))}
