@@ -1,3 +1,8 @@
+## 2.83.1 Mysterium guide in the tutorial
+
+- The in-panel tutorial (帮助 → 使用教程) has a "Mysterium 家宽（付费）" section for admins. It covers enabling Mysterium, opening a node account, topping up, using it in a proxy's routing, renewing (prepaid, never charged automatically) and reading spending. Notes cover per-node accounts, the monthly cap, TCP only and keeping the node's account key safe.
+- Panel-only update; Agents stay at 2.83.0. No database change. 2.83.0 remains available for rollback.
+
 ## 2.83.0 Mysterium residential exits (Agent 2.83.0)
 
 - New exit type "Mysterium 家宽 · country": residential connections from the Mysterium network, home broadband run by individuals in over 100 countries.
