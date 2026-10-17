@@ -347,7 +347,7 @@ public class TelegramNotificationService {
             case "certificate" -> settings.forwardEnabled();
             case "exit_group" -> settings.forwardEnabled();
             case "private_proxy" -> settings.forwardEnabled();
-            case "warp" -> settings.forwardEnabled();
+            case "warp", "mysterium" -> settings.forwardEnabled();
             default -> false;
         };
     }
@@ -356,7 +356,7 @@ public class TelegramNotificationService {
         return switch (type) {
             case "node" -> settings.nodeRepeatLimit();
             case "tunnel" -> settings.tunnelRepeatLimit();
-            case "forward", "exit_group", "private_proxy", "warp" -> settings.forwardRepeatLimit();
+            case "forward", "exit_group", "private_proxy", "warp", "mysterium" -> settings.forwardRepeatLimit();
             default -> 0;
         };
     }
@@ -417,6 +417,7 @@ public class TelegramNotificationService {
             case "exit_group" -> "家宽出口";
             case "private_proxy" -> "私人代理";
             case "warp" -> "WARP 出口";
+            case "mysterium" -> "Mysterium 家宽";
             default -> "资源";
         };
     }

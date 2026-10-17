@@ -883,7 +883,7 @@ public class PrivateProxyService {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
         String type = StringUtils.defaultIfBlank(exitType, "node");
-        if (!Set.of("node", "residential", "custom", WarpService.EXIT_KEY).contains(type)) return R.err("不支持的出口类型");
+        if (!Set.of("node", "residential", "custom", WarpService.EXIT_KEY, "mysterium").contains(type)) return R.err("不支持的出口类型");
         String routeRules;
         try {
             routeRules = ProxyRoutingService.normalizeRules(rules);
@@ -891,11 +891,16 @@ public class PrivateProxyService {
             return R.err(e.getMessage());
         }
         List<JSONObject> parsedRules = ProxyRoutingService.rules(routeRules);
-        boolean usesRouter = "custom".equals(type) || WarpService.EXIT_KEY.equals(type) || !parsedRules.isEmpty();
+        boolean usesRouter = "custom".equals(type) || WarpService.EXIT_KEY.equals(type) || "mysterium".equals(type) || !parsedRules.isEmpty();
         if (usesRouter && !ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())) {
             return R.err("这个协议不支持自定义出口和分流，请使用 VLESS、VMess、Trojan、Hysteria2、TUIC、AnyTLS、Shadowsocks 2022、ShadowTLS 或 VLESS REALITY/XHTTP");
         }
-        String exitCountry = "residential".equals(type) ? ExitPoolService.normalizeCountry(country) : null;
+        String exitCountry = "residential".equals(type) || "mysterium".equals(type) ? ExitPoolService.normalizeCountry(country) : null;
+        if ("mysterium".equals(type) && StringUtils.isBlank(exitCountry)) return R.err("请选择 Mysterium 家宽的国家");
+        // Mysterium is paid from the admin's account, like residential exits.
+        if (!MysteriumService.countries(type, exitCountry, parsedRules).isEmpty() && !isAdmin()) {
+            return R.err("Mysterium 家宽目前仅管理员可以配置");
+        }
         if ("residential".equals(type) && StringUtils.isBlank(exitCountry)) return R.err("请选择家宽出口国家");
         if ("custom".equals(type) && customId == null) return R.err("请选择自定义出口");
         Set<String> countries = ProxyRoutingService.residentialCountries(type, exitCountry, parsedRules);
@@ -930,7 +935,7 @@ public class PrivateProxyService {
         proxy.setExitCustomId("custom".equals(type) ? customId : null);
         proxy.setRouteRules(routeRules);
         try {
-            rerouteRuntime(proxy, node, exitCountry == null ? null : ExitPoolService.interfaceName(exitCountry));
+            rerouteRuntime(proxy, node, exitCountry == null || !"residential".equals(type) ? null : ExitPoolService.interfaceName(exitCountry));
             if (wasActive && !usesRouter) {
                 routing.remove(proxy, node);
                 proxy.setRouteCountries(null);

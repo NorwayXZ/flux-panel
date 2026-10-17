@@ -124,6 +124,7 @@ const RESOURCE_LABELS: Record<MonitoringResourceType, string> = {
   exit_group: "家宽出口",
   private_proxy: "私人代理",
   warp: "WARP 出口",
+  mysterium: "Mysterium 家宽",
 };
 
 const STATUS_LABELS: Record<MonitoringStatus, string> = {
@@ -1157,6 +1158,7 @@ function AlertList(props: AlertListProps) {
             <option value="exit_group">家宽出口</option>
             <option value="private_proxy">私人代理</option>
             <option value="warp">WARP 出口</option>
+            <option value="mysterium">Mysterium 家宽</option>
           </select>
           <select
             aria-label="严重程度"

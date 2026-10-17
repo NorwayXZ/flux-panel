@@ -126,15 +126,15 @@ type privateProxyRuntimeState struct {
 }
 
 type privateProxyRuntimeManager struct {
-	mu         sync.Mutex
-	directory  string
-	binary     string
+	mu        sync.Mutex
+	directory string
+	binary    string
 	// binaryMu guards binaryUsable, set once the binary is known to start.
 	binaryMu     sync.Mutex
 	binaryUsable bool
-	processes  map[string]*exec.Cmd
-	stopping   map[string]bool
-	wireguards map[string]*wireGuardRuntime
+	processes    map[string]*exec.Cmd
+	stopping     map[string]bool
+	wireguards   map[string]*wireGuardRuntime
 }
 
 func newPrivateProxyRuntimeManager() *privateProxyRuntimeManager {

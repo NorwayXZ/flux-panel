@@ -1,3 +1,29 @@
+## 2.83.0 Mysterium residential exits (Agent 2.83.0)
+
+- New exit type "Mysterium 家宽 · country": residential connections from the Mysterium network, home broadband run by individuals in over 100 countries.
+  - Admins can pick it as a rule's exit or for everything else in 出口与分流, like the existing residential exits.
+  - Saving the proxy makes the node connect to the best-rated residential provider in that country.
+- The Agent installs Mysterium's node software (myst 1.39.7) when first needed and runs it in proxy mode. Each country is a user-space WireGuard tunnel behind an HTTP proxy on 127.0.0.1, so the node's routes stay untouched and nothing listens publicly. Connections are restored after a restart.
+- A trial install made with scripts/mysterium-poc.sh is taken over with its funded account.
+- Each node has its own Mysterium account. 出口管理 → Mysterium 家宽 handles:
+  - enabling it (with agreement to Mysterium's user terms);
+  - turning it on per node;
+  - balance in MYST and USD, with a top-up link through PayPal, Stripe or CoinGate (payment happens on the provider's page);
+  - this month's spending against the budget;
+  - each country's connection with exit IP, city, ISP, latency and traffic;
+  - the residential node count and price per GB for each country.
+- Upkeep:
+  - Connections in use are checked every 2 minutes. After two failures the connection moves to another residential provider in the same country, keeping its port, so proxies are not re-applied.
+  - Countries no longer used are disconnected.
+- Cost control:
+  - Spending is measured from balance changes every 10 minutes.
+  - A node over the monthly budget (default $20) is suspended until the budget is raised or the month ends.
+  - Low balance, suspension and failing connections appear in the alert centre as "Mysterium 家宽" and go to Telegram.
+- Notes:
+  - Pricing is about $0.40–0.45 per GB, counting upload and download. On a test from Tokyo, a US Verizon residential exit reached about 47 Mbps down and 40 Mbps up.
+  - Only TCP goes through these exits.
+- Agent 2.83.0 is required for Mysterium; everything else works with older Agents. Adds the mysterium_setting, mysterium_account and mysterium_connection tables (created at startup; migrations/20261018_mysterium.sql for manual setups). 2.82.2 remains available for rollback.
+
 ## 2.82.2 sing-box runs on systems without glibc (Agent 2.82.2)
 
 - Since 1.13, sing-box's default Linux build depends on glibc. On Alpine, slim containers and other systems without it, the file was there but would not start ("fork/exec .../sing-box-1.13.15: no such file or directory"). That broke WARP self-tests, routers and sing-box private proxies on those nodes.

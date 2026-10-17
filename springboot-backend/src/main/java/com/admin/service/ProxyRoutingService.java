@@ -62,10 +62,12 @@ public class ProxyRoutingService {
     private final com.admin.mapper.PrivateProxyMapper proxyMapper;
     private final com.admin.mapper.NodeMapper nodeMapper;
     private final WarpService warp;
+    private final MysteriumService mysterium;
 
     public ProxyRoutingService(JdbcTemplate jdbc, ProxyExitService exits, com.admin.mapper.PrivateProxyMapper proxyMapper,
-                               com.admin.mapper.NodeMapper nodeMapper, WarpService warp) {
+                               com.admin.mapper.NodeMapper nodeMapper, WarpService warp, MysteriumService mysterium) {
         this.warp = warp;
+        this.mysterium = mysterium;
         this.jdbc = jdbc;
         this.exits = exits;
         this.proxyMapper = proxyMapper;
@@ -122,6 +124,7 @@ public class ProxyRoutingService {
     public boolean active(PrivateProxy proxy) {
         return ExitPoolService.ROUTED_PROXY_TYPES.contains(proxy.getProxyType())
                 && ("custom".equals(proxy.getExitType()) || WarpService.EXIT_KEY.equals(proxy.getExitType())
+                || "mysterium".equals(proxy.getExitType())
                 || !rules(proxy.getRouteRules()).isEmpty());
     }
 
@@ -166,6 +169,7 @@ public class ProxyRoutingService {
             if (cleaned.isEmpty()) throw new IllegalArgumentException(label + "没有填写匹配内容");
             if (cleaned.size() > MAX_VALUES) throw new IllegalArgumentException(label + "的内容太多（最多 " + MAX_VALUES + " 个）");
             String exit = String.valueOf(rule.getOrDefault("exit", ""));
+            if (exit.toLowerCase(Locale.ROOT).startsWith("mysterium:")) exit = "mysterium:" + exit.substring("mysterium:".length()).toUpperCase(Locale.ROOT);
             if (!validExit(exit)) throw new IllegalArgumentException(label + "没有选择出口");
             JSONObject stored = new JSONObject(true);
             stored.put("match", match);
@@ -202,7 +206,7 @@ public class ProxyRoutingService {
     }
 
     static boolean validExit(String exit) {
-        return "direct".equals(exit) || "block".equals(exit) || WarpService.EXIT_KEY.equals(exit)
+        return "direct".equals(exit) || "block".equals(exit) || WarpService.EXIT_KEY.equals(exit) || MysteriumService.isExit(exit)
                 || exit.matches("residential:[A-Za-z]{2}") || exit.matches("custom:\\d{1,18}");
     }
 
@@ -326,6 +330,7 @@ public class ProxyRoutingService {
         request.put("outbounds", outbounds);
         request.put("rules", routerRules);
         request.put("final", WarpService.EXIT_KEY.equals(exitType) ? "warp"
+                : "mysterium".equals(exitType) && StringUtils.isNotBlank(exitCountry) ? MysteriumService.tag(exitCountry)
                 : "custom".equals(exitType) && exitCustomId != null ? "custom-" + exitCustomId
                 : "residential".equals(exitType) && StringUtils.isNotBlank(exitCountry) ? "res-" + exitCountry.toLowerCase(Locale.ROOT)
                 : "direct");
@@ -413,6 +418,7 @@ public class ProxyRoutingService {
         if (exit.startsWith("residential:")) return "res-" + exit.substring("residential:".length()).toLowerCase(Locale.ROOT);
         if (exit.startsWith("custom:")) return "custom-" + exit.substring("custom:".length());
         if (WarpService.EXIT_KEY.equals(exit)) return "warp";
+        if (MysteriumService.isExit(exit)) return MysteriumService.tag(exit.substring("mysterium:".length()));
         return "direct";
     }
 
@@ -467,6 +473,13 @@ public class ProxyRoutingService {
         if (needsNewerRouter(request) && !newerAgent) {
             throw new IllegalStateException("出口组和正则、端口、网络、GEOIP 等规则需要节点 Agent " + ProxyExitService.ROUTER_RULES_AGENT_VERSION
                     + " 或更高版本，请先升级该节点");
+        }
+        // Mysterium residential exits: one local proxy per country, connected on demand.
+        Set<String> mysteriumCountries = MysteriumService.countries(proxy.getExitType(), proxy.getExitCountry(), rules);
+        if (!mysteriumCountries.isEmpty()) {
+            for (Map.Entry<String, Integer> entry : mysterium.ensureCountries(node, mysteriumCountries).entrySet()) {
+                request.getJSONArray("outbounds").add(MysteriumService.outbound(entry.getKey(), entry.getValue()));
+            }
         }
         if (usesWarp(request)) {
             if (!com.admin.common.utils.AgentVersionUtil.isAtLeast(node.getVersion(), ProxyExitService.WARP_AGENT_VERSION)) {

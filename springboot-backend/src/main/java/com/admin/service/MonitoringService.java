@@ -103,6 +103,7 @@ public class MonitoringService {
         states.addAll(evaluateExitGroups(now).values());
         states.addAll(evaluatePrivateProxies().values());
         states.addAll(evaluateWarp().values());
+        states.addAll(evaluateMysterium().values());
 
         Set<ResourceKey> seen = new HashSet<>();
         for (ResourceState state : states) {
@@ -223,7 +224,7 @@ public class MonitoringService {
             where.append(" AND a.status = ?");
             args.add(status);
         }
-        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group", "private_proxy", "warp").contains(resourceType)) {
+        if (Set.of("node", "tunnel", "forward", "certificate", "dynamic_dns", "exit_group", "private_proxy", "warp", "mysterium").contains(resourceType)) {
             where.append(" AND a.resource_type = ?");
             args.add(resourceType);
         }
@@ -519,6 +520,49 @@ public class MonitoringService {
             String status = ok ? HEALTHY : failing ? OFFLINE : UNKNOWN;
             String detail = ok ? "出口 IP：" + stringValue(row.get("last_test_ip")) : stringValue(row.get("last_error"));
             states.put(id, new ResourceState("warp", id, name, 1, status, detail));
+        }
+        return states;
+    }
+
+    /**
+     * Mysterium residential exits per node: an alert when this month's budget stopped them or a
+     * connection still fails after moving providers; low balance is a warning.
+     */
+    private Map<Long, ResourceState> evaluateMysterium() {
+        Map<Long, ResourceState> states = new LinkedHashMap<>();
+        List<Map<String, Object>> rows;
+        double lowBalance;
+        try {
+            rows = jdbcTemplate.queryForList("SELECT a.node_id, a.balance, a.suspended, n.name AS node_name, "
+                    + "(SELECT COUNT(*) FROM mysterium_connection c WHERE c.node_id = a.node_id AND c.state = 'failed' AND c.fail_count >= 3) AS failing, "
+                    + "(SELECT GROUP_CONCAT(CONCAT(c.country, '：', IFNULL(c.last_error, '')) SEPARATOR '；') FROM mysterium_connection c "
+                    + "WHERE c.node_id = a.node_id AND c.state = 'failed') AS errors "
+                    + "FROM mysterium_account a LEFT JOIN node n ON n.id = a.node_id");
+            List<Double> thresholds = jdbcTemplate.queryForList("SELECT low_balance_myst FROM mysterium_setting WHERE id = 1", Double.class);
+            lowBalance = thresholds.isEmpty() ? 10 : thresholds.get(0);
+        } catch (Exception e) {
+            return states;
+        }
+        for (Map<String, Object> row : rows) {
+            long id = longValue(row.get("node_id"));
+            String name = "Mysterium · " + (row.get("node_name") == null ? "#" + id : stringValue(row.get("node_name")));
+            double balance = row.get("balance") == null ? 0 : ((Number) row.get("balance")).doubleValue();
+            String status;
+            String detail;
+            if (intValue(row.get("suspended")) == 1) {
+                status = OFFLINE;
+                detail = "本月花费已达上限，Mysterium 出口已暂停；提高每月预算或下月自动恢复";
+            } else if (longValue(row.get("failing")) > 0) {
+                status = OFFLINE;
+                detail = "连接失败：" + stringValue(row.get("errors"));
+            } else if (balance < lowBalance) {
+                status = DEGRADED;
+                detail = String.format("余额不足：%.2f MYST，请充值", balance);
+            } else {
+                status = HEALTHY;
+                detail = String.format("余额 %.2f MYST", balance);
+            }
+            states.put(id, new ResourceState("mysterium", id, name, 1, status, detail));
         }
         return states;
     }
@@ -952,6 +996,7 @@ public class MonitoringService {
             case "exit_group" -> "家宽出口";
             case "private_proxy" -> "私人代理";
             case "warp" -> "WARP 出口";
+            case "mysterium" -> "Mysterium 家宽";
             default -> "资源";
         };
     }

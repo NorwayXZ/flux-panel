@@ -56,6 +56,8 @@ import {
   testPrivateProxy,
   updatePrivateProxyExit,
   updatePrivateProxyRouting,
+  getMysteriumCountries,
+  getMysteriumOverview,
   getProxyExits,
   type ProxyExit,
   type RoutePreset,
@@ -84,6 +86,7 @@ import DefaultExitSelect, {
   RoutingSummary,
 } from "@/components/default-exit-select";
 import RouteRulesEditor from "@/components/route-rules-editor";
+import { regionName } from "@/utils/region-name";
 import ProxyEditModal from "@/components/proxy-edit-modal";
 import ProxyImport from "@/components/proxy-import";
 import ProxyQr from "@/components/proxy-qr";
@@ -370,6 +373,7 @@ export default function PrivateProxyPage() {
   const [routePresets, setRoutePresets] = useState<RoutePreset[]>([]);
   const [routeRulesets, setRouteRulesets] = useState<RouteRuleset[]>([]);
   const [ruleCatalog, setRuleCatalog] = useState<RuleCatalogItem[]>([]);
+  const [mysteriumCountries, setMysteriumCountries] = useState<string[]>([]);
   const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
     groupId: number;
@@ -661,7 +665,19 @@ export default function PrivateProxyPage() {
     if (ROUTED_EXIT_PROXY_TYPES.includes(item.proxyType)) loadRoutingOptions();
   };
 
-  const loadRoutingOptions = () =>
+  const loadRoutingOptions = () => {
+    // Mysterium residential exits are paid by the admin; only admins can pick them.
+    if (isAdmin)
+      void getMysteriumOverview().then((response) => {
+        if (response.code === 0 && response.data?.settings.enabled)
+          void getMysteriumCountries().then((countries) => {
+            if (countries.code === 0)
+              setMysteriumCountries(
+                (countries.data || []).map((item) => item.country),
+              );
+          });
+        else setMysteriumCountries([]);
+      });
     void getProxyExits().then((response) => {
       if (response.code === 0 && response.data) {
         setProxyExits(response.data.exits || []);
@@ -670,6 +686,7 @@ export default function PrivateProxyPage() {
         setRuleCatalog(response.data.catalog || []);
       }
     });
+  };
 
   /** Why the node cannot use Cloudflare WARP yet, or "". */
   const warpBlocked = (item: PrivateProxyItem) => {
@@ -716,11 +733,13 @@ export default function PrivateProxyPage() {
     const hadRouting =
       exitTarget.exitType === "custom" ||
       exitTarget.exitType === "warp" ||
+      exitTarget.exitType === "mysterium" ||
       (exitTarget.routing?.rules?.length || 0) > 0;
 
     if (
       exitChoice.exitType === "custom" ||
       exitChoice.exitType === "warp" ||
+      exitChoice.exitType === "mysterium" ||
       routeRules.length > 0 ||
       hadRouting
     ) {
@@ -729,7 +748,8 @@ export default function PrivateProxyPage() {
         id: exitTarget.id,
         exitType: exitChoice.exitType,
         exitCountry:
-          exitChoice.exitType === "residential"
+          exitChoice.exitType === "residential" ||
+          exitChoice.exitType === "mysterium"
             ? exitChoice.exitCountry
             : undefined,
         exitCustomId:
@@ -1139,6 +1159,7 @@ export default function PrivateProxyPage() {
                             : []),
                           ...(item.exitType === "custom" ||
                           item.exitType === "warp" ||
+                          item.exitType === "mysterium" ||
                           (item.routing?.rules?.length || 0) > 0
                             ? [
                                 {
@@ -1153,6 +1174,8 @@ export default function PrivateProxyPage() {
                                       value:
                                         item.exitType === "warp"
                                           ? "Cloudflare WARP"
+                                          : item.exitType === "mysterium"
+                                          ? `Mysterium 家宽 · ${regionName(item.exitCountry || "")}`
                                           : item.exitType === "custom"
                                           ? `自定义 · ${item.routing?.exitCustomName || `#${item.routing?.exitCustomId}`}`
                                           : item.exitType === "residential"
@@ -1793,6 +1816,7 @@ export default function PrivateProxyPage() {
                   customExits={proxyExits}
                   defaultExit={exitKeyOf(exitChoice)}
                   newerRulesBlocked={newerRulesBlocked(exitTarget)}
+                  mysteriumCountries={mysteriumCountries}
                   warpBlocked={warpBlocked(exitTarget)}
                   presets={routePresets}
                   rules={routeRules}
@@ -1817,6 +1841,7 @@ export default function PrivateProxyPage() {
                         : undefined
                     }
                     value={exitChoice}
+                    mysteriumCountries={mysteriumCountries}
                     warpBlocked={warpBlocked(exitTarget)}
                     onChange={setExitChoice}
                   />

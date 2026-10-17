@@ -725,7 +725,12 @@ export interface PrivateProxyItem {
   createdTime: number;
 }
 
-export type PrivateProxyExitType = "node" | "residential" | "custom" | "warp";
+export type PrivateProxyExitType =
+  | "node"
+  | "residential"
+  | "custom"
+  | "warp"
+  | "mysterium";
 
 export type ExitGroupStatus =
   | "ok"
@@ -1226,6 +1231,82 @@ export interface WarpNodeStatus {
   lastTestLatency?: number | null;
   lastError?: string | null;
 }
+/** Mysterium residential exits: one paid account per node, one local proxy per country. */
+export interface MysteriumSettings {
+  enabled: boolean;
+  termsAgreedAt?: number | null;
+  monthlyBudgetUsd: number;
+  lowBalanceMyst: number;
+  mystUsd: number;
+  agentVersion: string;
+}
+export interface MysteriumConnection {
+  country: string;
+  proxyPort: number;
+  state: "connecting" | "connected" | "failed" | "suspended";
+  exitIp?: string | null;
+  city?: string | null;
+  isp?: string | null;
+  latencyMs?: number | null;
+  lastOkAt?: number | null;
+  lastError?: string | null;
+  bytes: number;
+}
+export interface MysteriumAccount {
+  nodeId: number;
+  nodeName: string;
+  identity?: string;
+  registration?: string;
+  channelAddress?: string;
+  balance: number;
+  balanceUsd: number;
+  monthSpent: number;
+  monthSpentUsd: number;
+  suspended: boolean;
+  lastStatusAt?: number | null;
+  lastError?: string | null;
+  connections: MysteriumConnection[];
+}
+export interface MysteriumCountry {
+  country: string;
+  nodes: number;
+  goodNodes: number;
+  priceMystPerGib: number;
+  priceUsdPerGib: number;
+}
+export const getMysteriumOverview = () =>
+  Network.post<{
+    settings: MysteriumSettings;
+    accounts: MysteriumAccount[];
+    nodes: Array<{ id: number; name: string; online: boolean; supported: boolean }>;
+  }>("/mysterium/overview");
+export const getMysteriumCountries = () =>
+  Network.post<MysteriumCountry[]>("/mysterium/countries", {}, 90_000);
+export const saveMysteriumSettings = (data: {
+  enabled?: boolean;
+  agreeTerms?: boolean;
+  monthlyBudgetUsd?: number;
+  lowBalanceMyst?: number;
+}) => Network.mutate<MysteriumSettings>("/mysterium/settings", data, ["/mysterium/overview"]);
+export const setupMysteriumNode = (nodeId: number) =>
+  Network.mutate<MysteriumAccount>("/mysterium/setup", { nodeId }, ["/mysterium/overview"], 300_000);
+export const topupMysterium = (data: {
+  nodeId: number;
+  gateway: "paypal" | "stripe" | "coingate";
+  amountUsd: number;
+  country: string;
+}) =>
+  Network.post<{
+    orderId: string;
+    payAmount: string;
+    payCurrency: string;
+    receiveMyst: string;
+    paymentUrl: string;
+  }>("/mysterium/topup", data, 90_000);
+export const refreshMysterium = (nodeId: number) =>
+  Network.mutate<MysteriumAccount>("/mysterium/refresh", { nodeId }, ["/mysterium/overview"], 90_000);
+export const reconnectMysterium = (nodeId: number, country: string) =>
+  Network.mutate("/mysterium/reconnect", { nodeId, country }, ["/mysterium/overview"], 200_000);
 export const getWarpStatus = () =>
   Network.post<{ nodes: WarpNodeStatus[]; minimumAgentVersion: string }>(
     "/proxy-exit/warp",
@@ -3171,7 +3252,8 @@ export type MonitoringResourceType =
   | "dynamic_dns"
   | "exit_group"
   | "private_proxy"
-  | "warp";
+  | "warp"
+  | "mysterium";
 export type MonitoringStatus =
   "healthy" | "degraded" | "offline" | "paused" | "unknown";
 

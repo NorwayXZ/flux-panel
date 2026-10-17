@@ -5,32 +5,37 @@ import { Select, SelectItem, SelectSection } from "@heroui/select";
 
 import { exitLabel } from "@/components/route-rules-editor";
 import { sortExitCountries } from "@/utils/exit-display";
+import { regionName } from "@/utils/region-name";
 
 /** The rule-exit key ("direct", "residential:CC", "custom:ID") of an exit choice. */
 export const exitKeyOf = (choice: ExitChoice) =>
   choice.exitType === "warp"
     ? "warp"
-    : choice.exitType === "custom" && choice.exitCustomId
-      ? `custom:${choice.exitCustomId}`
-      : choice.exitType === "residential" && choice.exitCountry
-        ? `residential:${choice.exitCountry}`
-        : "direct";
+    : choice.exitType === "mysterium" && choice.exitCountry
+      ? `mysterium:${choice.exitCountry}`
+      : choice.exitType === "custom" && choice.exitCustomId
+        ? `custom:${choice.exitCustomId}`
+        : choice.exitType === "residential" && choice.exitCountry
+          ? `residential:${choice.exitCountry}`
+          : "direct";
 
 const choiceOf = (key: string): ExitChoice =>
   key === "warp"
     ? { exitType: "warp", exitCountry: "" }
-    : key.startsWith("custom:")
-      ? {
-          exitType: "custom",
-          exitCountry: "",
-          exitCustomId: Number(key.slice("custom:".length)),
-        }
-      : key.startsWith("residential:")
+    : key.startsWith("mysterium:")
+      ? { exitType: "mysterium", exitCountry: key.slice("mysterium:".length) }
+      : key.startsWith("custom:")
         ? {
-            exitType: "residential",
-            exitCountry: key.slice("residential:".length),
+            exitType: "custom",
+            exitCountry: "",
+            exitCustomId: Number(key.slice("custom:".length)),
           }
-        : { exitType: "node", exitCountry: "" };
+        : key.startsWith("residential:")
+          ? {
+              exitType: "residential",
+              exitCountry: key.slice("residential:".length),
+            }
+          : { exitType: "node", exitCountry: "" };
 
 /** One line per exit: which rules go where, then where everything else goes. */
 export function RoutingSummary({
@@ -86,7 +91,10 @@ export default function DefaultExitSelect({
   allowResidential,
   residentialBlockedReason,
   warpBlocked,
+  mysteriumCountries = [],
 }: {
+  /** Countries offered as Mysterium residential exits. */
+  mysteriumCountries?: string[];
   /** Why the node cannot use WARP yet, or empty. */
   warpBlocked?: string;
   value: ExitChoice;
@@ -138,6 +146,18 @@ export default function DefaultExitSelect({
                 textValue={`${exit.group ? "出口组" : "自定义"} · ${exit.name}`}
               >
                 {exit.group ? "出口组" : "自定义"} · {exit.name}
+              </SelectItem>
+            ))}
+          </SelectSection>
+        ) : null}
+        {allowResidential && mysteriumCountries.length > 0 ? (
+          <SelectSection title="全部改走 Mysterium 家宽（按流量计费）">
+            {mysteriumCountries.map((country) => (
+              <SelectItem
+                key={`mysterium:${country}`}
+                textValue={`Mysterium 家宽 · ${regionName(country)}`}
+              >
+                Mysterium 家宽 · {regionName(country)}
               </SelectItem>
             ))}
           </SelectSection>

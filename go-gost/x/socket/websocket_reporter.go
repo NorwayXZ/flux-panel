@@ -143,6 +143,7 @@ type WebSocketReporter struct {
 	realityManager    *realityRuntimeManager
 	proxyManager      *privateProxyRuntimeManager
 	routerManager     *proxyRouterManager
+	mysteriumManager  *mysteriumManager
 	natManager        *natRuntimeManager
 	nftManager        *nftForwardManager
 	bandwidthManager  *bandwidthTestManager
@@ -181,6 +182,7 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 	reporter.realityManager = newRealityRuntimeManager()
 	reporter.proxyManager = newPrivateProxyRuntimeManager()
 	reporter.routerManager = newProxyRouterManager(reporter.proxyManager)
+	reporter.mysteriumManager = newMysteriumManager()
 	reporter.natManager = newNATRuntimeManager(reporter.sendNATEvent)
 	reporter.nftManager = newNFTForwardManager()
 	reporter.bandwidthManager = newBandwidthTestManager()
@@ -194,6 +196,9 @@ func NewWebSocketReporter(serverURL string, secret string) *WebSocketReporter {
 func (w *WebSocketReporter) Start() {
 	if w.realityManager != nil {
 		go w.realityManager.restore()
+	}
+	if w.mysteriumManager != nil {
+		go w.mysteriumManager.restore()
 	}
 	if w.proxyManager != nil {
 		go func() {
@@ -233,6 +238,9 @@ func (w *WebSocketReporter) Stop() {
 	}
 	if w.routerManager != nil {
 		w.routerManager.stopAll()
+	}
+	if w.mysteriumManager != nil {
+		w.mysteriumManager.stop()
 	}
 	if w.natManager != nil {
 		w.natManager.stopAll()
@@ -646,6 +654,11 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	}
 	if cmd.Type == "TestProxyExit" {
 		go w.runProxyExitTest(cmd)
+		return
+	}
+	if strings.HasPrefix(cmd.Type, "Mysterium") {
+		// Connecting can take a minute; never block other commands.
+		go w.runMysteriumCommand(cmd)
 		return
 	}
 	if strings.HasPrefix(cmd.Type, "ExitPool") {
@@ -2284,6 +2297,62 @@ func (w *WebSocketReporter) runProxyExitTest(cmd CommandMessage) {
 		result, err = w.routerManager.testExit(request)
 		response.Data = result
 	}
+	if err != nil {
+		response.Message = err.Error()
+	} else {
+		response.Success, response.Message = true, "OK"
+	}
+	w.sendResponse(response)
+}
+
+func (w *WebSocketReporter) runMysteriumCommand(cmd CommandMessage) {
+	response := CommandResponse{Type: cmd.Type + "Response", RequestId: cmd.RequestId}
+	manager := w.mysteriumManager
+	var result interface{}
+	var err error
+	if manager == nil {
+		err = errors.New("mysterium manager is unavailable")
+	} else {
+		switch cmd.Type {
+		case "MysteriumSetup":
+			var request struct {
+				AgreeTerms bool `json:"agreeTerms"`
+			}
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.setup(request.AgreeTerms)
+			}
+		case "MysteriumStatus":
+			var request struct {
+				Connections []mysteriumConnection `json:"connections"`
+			}
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.status(request.Connections)
+			}
+		case "MysteriumTopup":
+			var request mysteriumTopupRequest
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.topup(request)
+			}
+		case "MysteriumConnect":
+			var request mysteriumConnection
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.connect(request)
+			}
+		case "MysteriumDisconnect":
+			var request mysteriumConnection
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				err = manager.disconnect(request.ProxyPort)
+			}
+		case "MysteriumCheck":
+			var request mysteriumConnection
+			if err = decodeCommandData(cmd.Data, &request); err == nil {
+				result, err = manager.check(request.ProxyPort)
+			}
+		default:
+			err = fmt.Errorf("unknown mysterium command %s", cmd.Type)
+		}
+	}
+	response.Data = result
 	if err != nil {
 		response.Message = err.Error()
 	} else {

@@ -27,6 +27,7 @@ import toast from "react-hot-toast";
 
 import { testRoute } from "@/api";
 import ClashImportModal from "@/components/clash-import-modal";
+import { regionName } from "@/utils/region-name";
 
 /**
  * Routing rules: matched top to bottom, the first hit decides the exit; everything else uses the
@@ -105,6 +106,8 @@ export function exitLabel(
 ) {
   if (exit === "direct") return "节点自身 IP";
   if (exit === "warp") return "Cloudflare WARP";
+  if (exit.startsWith("mysterium:"))
+    return `Mysterium 家宽 · ${regionName(exit.slice("mysterium:".length))}`;
   if (exit === "block") return "拒绝连接";
   if (exit.startsWith("residential:")) {
     const code = exit.slice("residential:".length);
@@ -133,8 +136,11 @@ export default function RouteRulesEditor({
   defaultExit,
   newerRulesBlocked,
   warpBlocked,
+  mysteriumCountries = [],
   onRulesetsChanged,
 }: {
+  /** Countries offered as Mysterium residential exits (admins only). */
+  mysteriumCountries?: string[];
   /** Why the node cannot use WARP yet, or empty. */
   warpBlocked?: string;
   /** The proxy's default exit as a rule exit key, to flag rules that change nothing. */
@@ -190,6 +196,12 @@ export default function RouteRulesEditor({
             key: `residential:${country.country}`,
             label: `家宽 · ${country.name}`,
           }))
+      : []),
+    ...(allowResidential
+      ? mysteriumCountries.map((country) => ({
+          key: `mysterium:${country}`,
+          label: `Mysterium 家宽 · ${regionName(country)}`,
+        }))
       : []),
     ...customExits.map((exit) => ({
       key: `custom:${exit.id}`,
