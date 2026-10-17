@@ -36,12 +36,12 @@ The production Agent and its port 4450 daemon were left in place.
   the check. Copied identity keystores were then deleted. The validation directory retains
   logs, binary and the durable ledger with root-only access for inspection.
 
-## What this does not establish
+## Limits of the earlier one-machine test
 
-This test ran two real consumers on ONE machine. It does not establish that two
+The earlier test ran two real consumers on ONE machine. By itself it did not establish that two
 separate servers, the public HTTPS payment endpoint, browser binding form and
-Agent command forwarding work together in production. The live panel remains
-2.83.3; matching backend/frontend and Agent deployment is still required. It also
+Agent command forwarding work together in production; that path was subsequently
+exercised below. It also
 does not establish long-run throughput, dozens of concurrent nodes, same-provider
 session compatibility, safe recovery from a lost pending payment, or exact budgets.
 
@@ -49,3 +49,33 @@ The production daemon still held the same identity during this bounded test.
 That is unsuitable as an ongoing deployment; all clients of the shared identity
 must use the coordinator once enabled. The short test is evidence for the custom
 payment path, not a production readiness claim.
+
+
+## Subsequent two-server panel validation
+
+Deployed published `2.84.0-beta.1` through the panel host updater: update succeeded
+and backend health passed. Upgraded NNC Japan (node 8) and Misaka Seattle (node 13)
+to the matching Agent; both reconnected successfully.
+
+- Bound node 13 to node 8 through the public panel HTTPS configure endpoint.
+  The response reported member `ready`, with the same funded identity above.
+- NNC Japan ran `myst-shared` and its existing US connection continued serving
+  HTTPS with exit `165.140.26.94`.
+- Created a temporary Shadowsocks proxy bound only to `127.0.0.1` on node 13,
+  then selected a US Mysterium exit through the panel routing endpoint.
+- Concurrent HTTPS trace requests on the two servers, at Unix timestamp
+  `1792265784`, returned `165.140.26.94` and `72.84.199.11` respectively.
+- Node 13 logged subsequent `invoice_paid` events for the shared identity,
+  including agreement totals `48130115702814` and `88143690214523`. Node 8 also
+  continued paying its independent provider through the same signer.
+- The panel Shadowsocks connection self-check returned `ok: true`, exit
+  `72.84.199.11`, US, 310 ms. This exercised the proxy routing path as well as
+  the node-local Mysterium HTTP proxy.
+- Deleted the temporary proxy and disconnected remote terminal sessions.
+  The shared pool binding remains available for actual use.
+- Full release CI run `39061893056` succeeded, publishing images and Agent assets.
+  A subsequent payment-envelope integer precision test also passed.
+
+This establishes the real two-server HTTPS panel/Agent/signing/traffic path in
+one short validation run. Sustained operation at dozens of nodes, lost pending
+payment recovery, same-provider compatibility and exact budgets remain unproven.

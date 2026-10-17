@@ -54,9 +54,9 @@ commands to preserve all 256-bit integer values.
   administrator; the membership token is not a cryptographic spending restriction.
 - The existing budget sampler has its existing polling delay. It is not an exact
   prepaid ceiling. The signer additionally checks the actual available balance.
-- Real two-server provider acceptance, overlapping sessions, throughput, latency,
-  and recovery under provider failures still require live validation. Unit tests
-  and successful builds do not establish production readiness.
+- A short real two-server panel/Agent/provider validation passed; see VALIDATION.md.
+  Dozens of concurrent nodes, sustained throughput and recovery under provider
+  failures still require validation. This remains a prerelease.
 
 The original accounting investigation remains under
 `experiments/mysterium-shared-billing/`.
