@@ -34,6 +34,7 @@ import {
   Waypoints,
   Wrench,
   type LucideIcon,
+  Wallet,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -672,6 +673,43 @@ const entries: GuideEntry[] = [
     ],
   },
   {
+    id: "mysterium",
+    category: "tools",
+    title: "Mysterium 家宽（付费）",
+    path: "/exit-pool",
+    icon: Wallet,
+    adminOnly: true,
+    summary:
+      "按流量付费的家庭宽带出口，覆盖一百多个国家，可指定国家，花费有上限。",
+    purpose:
+      "Mysterium 是一个去中心化网络，出口由世界各地的个人用自己的家庭宽带运营。和免费的 VPN Gate 相比，可选国家多（美国、英国、日本、香港等），速度和稳定性更好，但按流量收费。费用从你自己节点上的 Mysterium 账户余额里扣，每个面板、每台节点的账户都是独立的：别人安装了这个面板，用的也是他们自己的账户和钱。",
+    prerequisites: [
+      "面板 2.83.0 或更高；要用的节点 Agent 2.83.0 或更高，最好是海外节点（需要能访问 GitHub 和 Mysterium 的服务器）。",
+      "一个能付款的方式：PayPal、Visa/Mastercard 信用卡，或加密货币。",
+      "只有管理员可以启用和使用，因为花的是管理员的钱。",
+    ],
+    steps: [
+      "启用：打开“出口管理”，切到“Mysterium 家宽”标签页，勾选同意 Mysterium 用户条款，填写每台节点的每月预算（默认 20 美元），点“启用 Mysterium 家宽”。",
+      "开账户：在“节点账户”里选一台节点，点“在节点上启用”。节点会自动安装 Mysterium 并生成一个余额为 0 的新账户，第一次约需 1～2 分钟。",
+      "充值：点这台节点卡片上的“充值”，选付款方式、填金额（最低 6.3 美元），点“创建付款链接”，再点“打开付款页”，在 PayPal、Stripe 或 CoinGate 的官方页面付款。一般 5～10 分钟到账，点卡片右上角的刷新按钮可查看余额。",
+      "使用：到“私人代理”，打开代理的“出口与分流”，在规则的出口或最下面的“其余流量”里选“Mysterium 家宽 · 国家”，保存。节点会自动连接该国质量最好的家宽，顶部“现在的效果”会显示哪些流量走它。",
+      "续费：这是预充值，不是订阅，不会自动扣款。余额快用完时，在同一张卡片上再点“充值”付一次款即可，余额会累加。",
+      "查看花费：节点卡片上显示余额（MYST 和约合美元）、本月已花和预算进度条、按余额估算的可用流量，以及每个国家连接的出口 IP、运营商、延迟和已用流量。页面下方的“可用国家”列出各国节点数和每 GB 价格。",
+    ],
+    result:
+      "命中规则（或全部流量）从所选国家的真实家庭宽带出去，按实际流量扣费，本月花费超过预算时自动暂停。",
+    notes: [
+      "费用约每 GB 0.40～0.45 美元，上传和下载都计费；用 PayPal、信用卡充值另有手续费。建议只让需要的网站走它，或者给代理设流量上限。",
+      "每台节点是独立账户，需要分别充值，余额不能在节点之间转移。",
+      "本月花费达到预算后，这台节点的 Mysterium 自动暂停；提高预算或到下个月 1 号会自动恢复。余额低于“余额提醒”额度（默认 10 MYST）、超预算暂停、连接一直失败时，告警中心和 Telegram 会提醒。",
+      "余额用完或连接失败时，走 Mysterium 的那部分流量会断开，其余流量不受影响；连不通时面板会自动换同国家的另一个家宽。",
+      "只支持 TCP。QUIC、语音、游戏等 UDP 流量走不了这个出口。",
+      "账户的钥匙文件只保存在节点上（Agent 目录下的 mysterium/data）。请保护好节点的 root 权限；删除这个目录会丢失余额。",
+      "付款在 PayPal、Stripe、CoinGate 的官方页面完成，面板不经手任何付款信息；付款记录可在对应账单里查看。",
+    ],
+    keywords: "mysterium myst 家宽 住宅 residential 充值 续费 付费 出口",
+  },
+  {
     id: "network-tools",
     category: "tools",
     title: "网络诊断",
@@ -1100,7 +1138,9 @@ export default function GuidePage() {
         <div>
           <div className="flex items-center gap-1.5">
             <h1 className="text-2xl font-bold text-foreground">使用教程</h1>
-            <PageHelp>从节点接入到入口容灾，按真实依赖关系了解每个模块为什么存在、如何配置，以及配置完成后会得到什么。</PageHelp>
+            <PageHelp>
+              从节点接入到入口容灾，按真实依赖关系了解每个模块为什么存在、如何配置，以及配置完成后会得到什么。
+            </PageHelp>
           </div>
         </div>
         <Input
