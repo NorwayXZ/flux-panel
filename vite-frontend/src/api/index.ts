@@ -1068,6 +1068,7 @@ export type RouteRuleMatch =
   | "geoip"
   | "ip_cidr"
   | "ruleset"
+  | "catalog"
   | "port"
   | "network";
 
@@ -1100,6 +1101,20 @@ export interface RouteRuleset {
   usedBy: number;
 }
 
+/** A well-known community rule set shared by all users. */
+export interface RuleCatalogItem {
+  key: string;
+  name: string;
+  category: string;
+  source: string;
+  url: string;
+  /** null until it was first downloaded. */
+  count?: number | null;
+  updatedAt?: number | null;
+  checkedAt?: number | null;
+  lastError?: string | null;
+}
+
 export interface ExitGroupSettings {
   members: Array<{ id: number; name: string }>;
   direct: boolean;
@@ -1121,6 +1136,8 @@ export interface ClashImportResult {
     behavior?: RouteRuleset["behavior"];
     intervalHours?: number;
     existingId?: number;
+    /** The provider is a catalog entry; rules use the shared copy. */
+    catalogKey?: string;
   }>;
   finalPolicy?: string | null;
   lines: number;
@@ -1179,6 +1196,7 @@ export const getProxyExits = () =>
     exits: ProxyExit[];
     presets: RoutePreset[];
     rulesets: RouteRuleset[];
+    catalog: RuleCatalogItem[];
     minimumAgentVersion: string;
     /** Needed for exit groups and the regex, port, network and GEOIP rules. */
     rulesAgentVersion: string;
@@ -1192,6 +1210,15 @@ export const saveExitGroup = (data: {
   intervalMinutes?: number;
   tolerance?: number;
 }) => Network.mutate("/proxy-exit/group/save", data, ["/proxy-exit/list"]);
+export const getRuleCatalog = () =>
+  Network.post<RuleCatalogItem[]>("/proxy-exit/catalog");
+export const refreshRuleCatalog = (key: string) =>
+  Network.mutate<{ changed: boolean; reapplied: number; count: number }>(
+    "/proxy-exit/catalog/refresh",
+    { key },
+    ["/proxy-exit/catalog", "/proxy-exit/list"],
+    90_000,
+  );
 export const getRouteRulesets = () =>
   Network.post<RouteRuleset[]>("/proxy-exit/ruleset/list");
 export const createRouteRuleset = (data: {

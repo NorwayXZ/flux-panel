@@ -60,6 +60,7 @@ import {
   type ProxyExit,
   type RoutePreset,
   type RouteRuleset,
+  type RuleCatalogItem,
   type RouteRule,
   type ExitCountriesResponse,
   type PrivateProxyClientConfig,
@@ -362,6 +363,7 @@ export default function PrivateProxyPage() {
   const [proxyExits, setProxyExits] = useState<ProxyExit[]>([]);
   const [routePresets, setRoutePresets] = useState<RoutePreset[]>([]);
   const [routeRulesets, setRouteRulesets] = useState<RouteRuleset[]>([]);
+  const [ruleCatalog, setRuleCatalog] = useState<RuleCatalogItem[]>([]);
   const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
     groupId: number;
@@ -659,6 +661,7 @@ export default function PrivateProxyPage() {
         setProxyExits(response.data.exits || []);
         setRoutePresets(response.data.presets || []);
         setRouteRulesets(response.data.rulesets || []);
+        setRuleCatalog(response.data.catalog || []);
       }
     });
 
@@ -1774,6 +1777,7 @@ export default function PrivateProxyPage() {
                   newerRulesBlocked={newerRulesBlocked(exitTarget)}
                   presets={routePresets}
                   rules={routeRules}
+                  catalog={ruleCatalog}
                   rulesets={routeRulesets}
                   onChange={setRouteRules}
                   onRulesetsChanged={loadRoutingOptions}

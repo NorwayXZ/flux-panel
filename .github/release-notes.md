@@ -1,3 +1,19 @@
+## 2.80.0 Curated rule sets ready to pick
+
+- 36 well-known community rule sets are built in, ready to pick:
+  - AI: OpenAI, Claude, Gemini, Copilot.
+  - Streaming: Netflix, Disney+, YouTube, Spotify, HBO, Prime Video, TikTok, Twitch, Bilibili.
+  - Social: Telegram, X, Facebook, Instagram, Discord.
+  - Common services: Google, Microsoft, Apple, GitHub, Steam, Epic, Cloudflare, Amazon, PayPal.
+  - Ad and tracker blocking (lite), common sites outside China, GFW, non-China TLDs, China services.
+  - China, Telegram and LAN address ranges.
+- Sources are blackmatrix7/ios_rule_script and Loyalsoldier/clash-rules. Where blackmatrix7 keeps a list's full content in its _Classical file, that file is used.
+- In 出口与分流, "按规则集" adds a rule that picks from these sets by category, with no URL to find. Each set is downloaded once the first time a rule uses it and is shared by every user and proxy.
+- Sets in use are checked for updates every 12 hours, through jsDelivr with a GitHub fallback. When a set changes, the proxies that use it are re-applied.
+- 出口管理 → 规则库 lists the catalog with each set's size and last update. Any set can be downloaded or refreshed from there.
+- When an imported Clash configuration's rule providers point at one of these sets, in any mirror or file variant, the import uses the shared copy instead of creating a subscription.
+- Panel-only update; Agents stay at 2.79.0. No database change. 2.79.1 remains available for rollback.
+
 ## 2.79.1 IP rules keep the domain for exits
 
 - In 2.79.0 an IP rule (IP range, GEOIP or a rule set with addresses) made the node resolve every domain before matching. sing-box then sends the resolved address, not the domain, to the exit for that rule, every later rule and the default exit. This breaks the exit's own DNS and CDN choice and can affect streaming unlocks.

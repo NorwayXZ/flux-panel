@@ -55,6 +55,7 @@ public class ProxyExitController {
         if (result.getCode() == 0) {
             ((Map<String, Object>) result.getData()).put("rulesets",
                     sources.rulesetViews(JwtUtil.getUserIdFromToken(), Objects.equals(JwtUtil.getRoleIdFromToken(), 0)));
+            ((Map<String, Object>) result.getData()).put("catalog", sources.catalogViews());
         }
         return result;
     }
@@ -71,6 +72,17 @@ public class ProxyExitController {
                 integer(body, "intervalMinutes"), integer(body, "tolerance"));
         if (result.getCode() == 0 && id != null) routing.reapplyForExit(id);
         return result;
+    }
+
+    /** Well-known community rule sets shared by all users. */
+    @PostMapping("/catalog")
+    public R catalog() {
+        return R.ok(sources.catalogViews());
+    }
+
+    @PostMapping("/catalog/refresh")
+    public R catalogRefresh(@RequestBody Map<String, Object> body) {
+        return sources.refreshCatalog(text(body, "key"));
     }
 
     @PostMapping("/ruleset/list")

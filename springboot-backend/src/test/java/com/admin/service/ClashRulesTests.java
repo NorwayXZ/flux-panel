@@ -181,4 +181,31 @@ class ClashRulesTests {
             assertTrue(content.set.size() > 0);
         }
     }
+
+    @Test
+    void recognisesCatalogUrlsInAnyForm() {
+        assertEquals("netflix", RuleCatalog.match("https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Netflix/Netflix.yaml").key);
+        assertEquals("netflix", RuleCatalog.match("https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Netflix/Netflix_No_Resolve.yaml").key);
+        assertEquals("google", RuleCatalog.match("https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/Google/Google.yaml").key);
+        assertEquals("cncidr", RuleCatalog.match("https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt").key);
+        assertNull(RuleCatalog.match("https://cdn.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/GoogleFCM/GoogleFCM.yaml"));
+        assertNull(RuleCatalog.match("https://example.com/proxy.txt"));
+        assertEquals("openai", ProxyRoutingService.validValue("catalog", "openai"));
+        assertNull(ProxyRoutingService.validValue("catalog", "nope"));
+    }
+
+    /** With RULESET_LIVE set, downloads every catalog entry and checks it parses within the size limit. */
+    @Test
+    void downloadsTheCatalog() throws Exception {
+        if (System.getenv("RULESET_LIVE") == null) return;
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+        for (RuleCatalog.Item item : RuleCatalog.items()) {
+            java.net.http.HttpResponse<String> response = client.send(java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create(item.urls.get(0))).build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode(), item.key);
+            ClashRules.Content content = ClashRules.parseRuleSet(response.body(), item.behavior);
+            System.out.println("catalog " + item.key + " " + content.set.size() + " skipped " + content.skipped);
+            assertTrue(content.set.size() > 0, item.key);
+        }
+    }
 }

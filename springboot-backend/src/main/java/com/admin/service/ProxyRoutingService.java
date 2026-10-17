@@ -38,9 +38,9 @@ public class ProxyRoutingService {
     static final int ROUTER_TOTAL_VALUES = 120_000;
     private static final String EXIT_ROUTE_USER = "exit";
     private static final Set<String> MATCHES = Set.of("domain_suffix", "domain_keyword", "domain", "domain_regex", "ip_cidr",
-            "port", "network", "preset", "geosite", "geoip", "ruleset");
+            "port", "network", "preset", "geosite", "geoip", "ruleset", "catalog");
     /** Matches that work on the destination address; a rule may ask for the domain to be resolved first. */
-    private static final Set<String> IP_MATCHES = Set.of("ip_cidr", "geoip", "ruleset");
+    private static final Set<String> IP_MATCHES = Set.of("ip_cidr", "geoip", "ruleset", "catalog");
     /** Router fields that need Agent ROUTER_RULES_AGENT_VERSION. */
     private static final Set<String> NEWER_ROUTER_FIELDS = Set.of("domain_regex", "port", "port_range", "network", "ip_is_private");
 
@@ -186,6 +186,8 @@ public class ProxyRoutingService {
                 return ProxyRuleSourceService.GEOIP_NAME.matcher(item).matches() ? item : null;
             case "ruleset":
                 return item.matches("\\d{1,18}") ? item : null;
+            case "catalog":
+                return RuleCatalog.get(item) != null ? item : null;
             default:
                 return RouteMatchSet.normalize(match, item);
         }
@@ -345,7 +347,8 @@ public class ProxyRoutingService {
                 }
                 case "geosite":
                 case "geoip":
-                case "ruleset": {
+                case "ruleset":
+                case "catalog": {
                     RouteMatchSet list = ProxyRuleSourceService.list(match + ":" + value);
                     if (list != null) set.addAll(list);
                     break;

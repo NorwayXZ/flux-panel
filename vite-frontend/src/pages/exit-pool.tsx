@@ -40,6 +40,7 @@ import PageShell from "@/components/page-shell";
 import PageHelp from "@/components/page-help";
 import CustomExitsPanel from "@/components/custom-exits-panel";
 import RoutePresetsPanel from "@/components/route-presets-panel";
+import RuleCatalogPanel from "@/components/rule-catalog-panel";
 import RulesetsPanel from "@/components/rulesets-panel";
 import { isAdmin as isAdminUser } from "@/utils/auth";
 import ResourceCard, { ResourceCardGrid } from "@/components/resource-card";
@@ -592,6 +593,7 @@ export default function ExitManagementPage() {
         <ResidentialExits />
       ) : tab === "presets" ? (
         <div className="space-y-8">
+          <RuleCatalogPanel />
           <RulesetsPanel />
           <RoutePresetsPanel canRefresh={admin} />
         </div>

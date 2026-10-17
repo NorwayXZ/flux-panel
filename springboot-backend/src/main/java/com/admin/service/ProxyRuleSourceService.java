@@ -117,7 +117,7 @@ public class ProxyRuleSourceService {
                         return "规则集 #" + value + " 不存在或不能使用";
                     }
                     if (list("ruleset:" + value) == null) return "规则集“" + row.get("name") + "”还没有下载成功，请先在规则库里更新它";
-                } else if (("geosite".equals(match) || "geoip".equals(match)) && list(match + ":" + value) == null) {
+                } else if (Set.of("geosite", "geoip", "catalog").contains(match) && list(match + ":" + value) == null) {
                     missing.add(match + ":" + value);
                 }
             }
@@ -136,8 +136,8 @@ public class ProxyRuleSourceService {
         RouteMatchSet set = fetchList(key, new HashMap<>());
         long now = System.currentTimeMillis();
         jdbc.update("INSERT INTO route_list_cache (list_key,data,entry_count,updated_at,checked_at,last_error) VALUES (?,?,?,?,?,NULL) "
-                        + "ON DUPLICATE KEY UPDATE data=VALUES(data), entry_count=VALUES(entry_count), updated_at=VALUES(updated_at), "
-                        + "checked_at=VALUES(checked_at), last_error=NULL",
+                        + "ON DUPLICATE KEY UPDATE updated_at=IF(data <=> VALUES(data), updated_at, VALUES(updated_at)), "
+                        + "data=VALUES(data), entry_count=VALUES(entry_count), checked_at=VALUES(checked_at), last_error=NULL",
                 key, set.toJson().toJSONString(), set.size(), now, now);
         LISTS.put(key, set);
     }
@@ -166,18 +166,30 @@ public class ProxyRuleSourceService {
             for (String line : text.split("\\r?\\n")) {
                 if (!line.isBlank()) set.add("ip_cidr", line);
             }
+        } else if ("catalog".equals(kind)) {
+            RuleCatalog.Item item = RuleCatalog.get(name);
+            if (item == null) throw new IllegalArgumentException("没有这个精选规则集");
+            return requireEntries(ClashRules.parseRuleSet(fetchUrls(item.urls), item.behavior).set);
         } else {
             throw new IllegalArgumentException("未知的清单 " + key);
         }
+        return requireEntries(set);
+    }
+
+    private static RouteMatchSet requireEntries(RouteMatchSet set) {
         if (set.size() == 0) throw new IllegalArgumentException("清单为空");
         return set;
     }
 
     private String fetchMirrors(List<String> mirrors, String path) {
+        return fetchUrls(mirrors.stream().map(mirror -> mirror + path).toList());
+    }
+
+    private String fetchUrls(List<String> urls) {
         String lastFailure = null;
-        for (String mirror : mirrors) {
+        for (String url : urls) {
             try {
-                HttpResponse<InputStream> response = http.send(HttpRequest.newBuilder(URI.create(mirror + path))
+                HttpResponse<InputStream> response = http.send(HttpRequest.newBuilder(URI.create(url))
                         .timeout(Duration.ofSeconds(30)).header("User-Agent", "CloudNest-Panel").GET().build(),
                         HttpResponse.BodyHandlers.ofInputStream());
                 if (response.statusCode() == 404) {
@@ -197,15 +209,22 @@ public class ProxyRuleSourceService {
         throw new IllegalStateException("下载失败（" + lastFailure + "）");
     }
 
-    /** Every three days, refreshes the downloaded GEOSITE and GEOIP lists; hourly, due subscriptions. */
+    /**
+     * Refreshes downloaded lists that are in use: catalog rule sets every 12 hours, GEOSITE and
+     * GEOIP every three days; then the subscriptions that are due.
+     */
     @Scheduled(fixedDelay = 3_600_000L, initialDelay = 420_000L)
     public void refreshDue() {
         long now = System.currentTimeMillis();
         try {
             Map<String, String> cache = new HashMap<>();
             Set<String> changed = new HashSet<>();
-            for (Map<String, Object> row : jdbc.queryForList("SELECT list_key FROM route_list_cache WHERE checked_at < ?", now - LIST_REFRESH_MS)) {
+            for (Map<String, Object> row : jdbc.queryForList("SELECT list_key, checked_at FROM route_list_cache WHERE checked_at < ?",
+                    now - RuleCatalog.REFRESH_MS)) {
                 String key = (String) row.get("list_key");
+                boolean catalog = key.startsWith("catalog:");
+                if (!catalog && ((Number) row.get("checked_at")).longValue() >= now - LIST_REFRESH_MS) continue;
+                if (catalog && !inUse(key)) continue;
                 if (!inUse(key)) {
                     jdbc.update("DELETE FROM route_list_cache WHERE list_key=?", key);
                     LISTS.remove(key);
@@ -252,6 +271,56 @@ public class ProxyRuleSourceService {
             }
             return false;
         });
+    }
+
+    // ---- Catalog ----
+
+    /** The catalog with each entry's download state. */
+    public List<Map<String, Object>> catalogViews() {
+        Map<String, Map<String, Object>> rows = new HashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList("SELECT list_key, entry_count, updated_at, checked_at, last_error "
+                + "FROM route_list_cache WHERE list_key LIKE 'catalog:%'")) {
+            rows.put(StringUtils.substringAfter((String) row.get("list_key"), ":"), row);
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (RuleCatalog.Item item : RuleCatalog.items()) {
+            Map<String, Object> view = new LinkedHashMap<>();
+            view.put("key", item.key);
+            view.put("name", item.name);
+            view.put("category", item.category);
+            view.put("source", item.source);
+            view.put("url", item.urls.get(0));
+            Map<String, Object> row = rows.get(item.key);
+            view.put("count", row == null ? null : row.get("entry_count"));
+            view.put("updatedAt", row == null ? null : row.get("updated_at"));
+            view.put("checkedAt", row == null ? null : row.get("checked_at"));
+            view.put("lastError", row == null ? null : row.get("last_error"));
+            result.add(view);
+        }
+        return result;
+    }
+
+    /** Downloads one catalog entry now (at most once every 10 minutes unless admin). */
+    public R refreshCatalog(String key) {
+        RuleCatalog.Item item = RuleCatalog.get(key);
+        if (item == null) return R.err("没有这个精选规则集");
+        String listKey = "catalog:" + key;
+        List<Long> checked = jdbc.queryForList("SELECT checked_at FROM route_list_cache WHERE list_key=?", Long.class, listKey);
+        if (!isAdmin() && !checked.isEmpty() && System.currentTimeMillis() - checked.get(0) < 600_000L && LISTS.containsKey(listKey)) {
+            return R.ok(Map.of("changed", false, "reapplied", 0, "count", LISTS.get(listKey).size()));
+        }
+        RouteMatchSet before = LISTS.get(listKey);
+        try {
+            download(listKey);
+        } catch (RuntimeException e) {
+            jdbc.update("UPDATE route_list_cache SET checked_at=?, last_error=? WHERE list_key=?", System.currentTimeMillis(),
+                    truncate(e.getMessage()), listKey);
+            return R.err("下载失败：" + e.getMessage());
+        }
+        RouteMatchSet after = LISTS.get(listKey);
+        boolean changed = before == null || !before.toJson().equals(after.toJson());
+        int reapplied = changed && before != null ? reapply(Set.of(listKey)) : 0;
+        return R.ok(Map.of("changed", changed, "reapplied", reapplied, "count", after.size()));
     }
 
     // ---- Rule-set subscriptions ----
@@ -551,6 +620,8 @@ public class ProxyRuleSourceService {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("name", name);
             ClashRules.Provider provider = parsed.providers.get(name);
+            RuleCatalog.Item catalog = provider == null ? null : RuleCatalog.match(provider.url);
+            if (catalog != null) item.put("catalogKey", catalog.key);
             if (provider != null) {
                 item.put("url", provider.url);
                 item.put("behavior", BEHAVIORS.contains(provider.behavior) ? provider.behavior : "classical");

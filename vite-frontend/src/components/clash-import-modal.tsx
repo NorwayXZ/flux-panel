@@ -1,4 +1,9 @@
-import type { ClashImportResult, RouteRule, RouteRuleset } from "@/api";
+import type {
+  ClashImportResult,
+  RouteRule,
+  RouteRuleset,
+  RuleCatalogItem,
+} from "@/api";
 
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
@@ -28,6 +33,7 @@ export default function ClashImportModal({
   onClose,
   exitOptions,
   rulesets,
+  catalog = [],
   onImport,
   onRulesetsChanged,
 }: {
@@ -35,6 +41,7 @@ export default function ClashImportModal({
   onClose: () => void;
   exitOptions: Array<{ key: string; label: string }>;
   rulesets: RouteRuleset[];
+  catalog?: RuleCatalogItem[];
   onImport: (rules: RouteRule[], replace: boolean) => void;
   onRulesetsChanged?: () => void;
 }) {
@@ -87,7 +94,7 @@ export default function ClashImportModal({
       Object.fromEntries(
         data.providers.map((provider) => [
           provider.name,
-          !provider.existingId && Boolean(provider.url),
+          !provider.existingId && !provider.catalogKey && Boolean(provider.url),
         ]),
       ),
     );
@@ -101,7 +108,13 @@ export default function ClashImportModal({
     const providerIds: Record<string, number> = {};
     let created = 0;
 
+    const catalogKeys: Record<string, string> = {};
+
     for (const provider of result.providers) {
+      if (provider.catalogKey) {
+        catalogKeys[provider.name] = provider.catalogKey;
+        continue;
+      }
       if (provider.existingId) {
         providerIds[provider.name] = provider.existingId;
         continue;
@@ -135,23 +148,25 @@ export default function ClashImportModal({
         dropped++;
         continue;
       }
-      let values = rule.values;
-
-      if (rule.match === "ruleset") {
-        values = values
-          .map((name) => providerIds[name])
-          .filter(Boolean)
-          .map(String);
-        if (values.length === 0) {
-          dropped++;
-          continue;
-        }
+      if (rule.match !== "ruleset") {
+        rules.push({ match: rule.match, values: rule.values, exit });
+        continue;
       }
-      rules.push({
-        match: rule.match,
-        values,
-        exit,
-      });
+      // Providers that are catalog entries use the shared copy; the rest their subscription.
+      const shared = rule.values
+        .map((name) => catalogKeys[name])
+        .filter(Boolean);
+      const subscribed = rule.values
+        .filter((name) => !catalogKeys[name])
+        .map((name) => providerIds[name])
+        .filter(Boolean)
+        .map(String);
+
+      if (shared.length > 0)
+        rules.push({ match: "catalog", values: shared, exit });
+      if (subscribed.length > 0)
+        rules.push({ match: "ruleset", values: subscribed, exit });
+      if (shared.length + subscribed.length === 0) dropped++;
     }
     if (rules.length === 0) return toast.error("没有可以导入的规则");
     onImport(rules, replace === "replace");
@@ -274,7 +289,18 @@ export default function ClashImportModal({
                   <div className="text-sm font-medium">用到的规则集</div>
                   {result.providers.map((provider) => (
                     <div key={provider.name} className="text-sm">
-                      {provider.existingId ? (
+                      {provider.catalogKey ? (
+                        <span>
+                          {provider.name}
+                          <span className="ml-2 text-xs text-success-600">
+                            使用精选规则集“
+                            {catalog.find(
+                              (item) => item.key === provider.catalogKey,
+                            )?.name || provider.catalogKey}
+                            ”（共享，自动更新）
+                          </span>
+                        </span>
+                      ) : provider.existingId ? (
                         <span>
                           {provider.name}
                           <span className="ml-2 text-xs text-success-600">

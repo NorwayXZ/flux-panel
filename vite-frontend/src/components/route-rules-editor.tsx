@@ -5,6 +5,7 @@ import type {
   RouteRule,
   RouteRuleMatch,
   RouteRuleset,
+  RuleCatalogItem,
 } from "@/api";
 
 import { useState } from "react";
@@ -28,6 +29,7 @@ type EditableRule = RouteRule & { text?: string };
 
 export const matchLabel: Record<RouteRuleMatch, string> = {
   preset: "内置分组",
+  catalog: "精选规则集",
   geosite: "GEOSITE",
   ruleset: "规则集订阅",
   domain_suffix: "域名后缀",
@@ -41,7 +43,7 @@ export const matchLabel: Record<RouteRuleMatch, string> = {
 };
 
 const matchSections: Array<{ title: string; keys: RouteRuleMatch[] }> = [
-  { title: "现成清单", keys: ["preset", "geosite", "ruleset"] },
+  { title: "现成清单", keys: ["catalog", "preset", "geosite", "ruleset"] },
   {
     title: "按域名",
     keys: ["domain_suffix", "domain", "domain_keyword", "domain_regex"],
@@ -79,7 +81,12 @@ const newerMatches = new Set<RouteRuleMatch>([
   "port",
   "network",
 ]);
-const ipMatches = new Set<RouteRuleMatch>(["ip_cidr", "geoip", "ruleset"]);
+const ipMatches = new Set<RouteRuleMatch>([
+  "ip_cidr",
+  "geoip",
+  "ruleset",
+  "catalog",
+]);
 
 export function exitLabel(
   exit: string,
@@ -108,6 +115,7 @@ export default function RouteRulesEditor({
   onChange,
   presets,
   rulesets = [],
+  catalog = [],
   countries,
   customExits,
   allowResidential,
@@ -121,6 +129,7 @@ export default function RouteRulesEditor({
   onChange: (rules: RouteRule[]) => void;
   presets: RoutePreset[];
   rulesets?: RouteRuleset[];
+  catalog?: RuleCatalogItem[];
   countries: ExitCountry[];
   customExits: ProxyExit[];
   allowResidential: boolean;
@@ -162,6 +171,7 @@ export default function RouteRulesEditor({
   };
   const add = (match: RouteRuleMatch) =>
     onChange([...rules, { match, values: [], exit: exitOptions[0].key }]);
+  const hasCatalog = catalog.length > 0;
   const toggle = (index: number, rule: RouteRule, value: string) =>
     update(index, {
       values: rule.values.includes(value)
@@ -222,9 +232,9 @@ export default function RouteRulesEditor({
             size="sm"
             startContent={<Plus size={14} />}
             variant="flat"
-            onPress={() => add("preset")}
+            onPress={() => add(hasCatalog ? "catalog" : "preset")}
           >
-            按分组
+            按规则集
           </Button>
           <Button
             size="sm"
@@ -247,8 +257,8 @@ export default function RouteRulesEditor({
 
       {rules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-divider px-4 py-5 text-center text-xs text-default-500">
-          还没有规则，所有流量都走默认出口。点“按分组”选 ChatGPT、Netflix
-          等现成分组，点“按域名”填写你自己的域名，或者直接导入 Clash
+          还没有规则，所有流量都走默认出口。点“按规则集”选 OpenAI、Netflix
+          等社区维护的现成规则集，点“按域名”填写你自己的域名，或者直接导入 Clash
           配置里的规则。每条规则还可以改成 GEOSITE、GEOIP、规则集订阅、IP
           段、端口等匹配方式。
         </div>
@@ -369,6 +379,38 @@ export default function RouteRulesEditor({
                     </p>
                   )}
                 </div>
+              ) : rule.match === "catalog" ? (
+                <div className="space-y-2">
+                  {Array.from(
+                    new Set(catalog.map((item) => item.category)),
+                  ).map((category) => (
+                    <div
+                      key={category}
+                      className="flex flex-wrap items-center gap-1.5"
+                    >
+                      <span className="w-16 shrink-0 text-xs text-default-400">
+                        {category}
+                      </span>
+                      {chips(
+                        index,
+                        rule,
+                        catalog
+                          .filter((item) => item.category === category)
+                          .map((item) => ({
+                            key: item.key,
+                            label: item.name,
+                            count: item.count ?? undefined,
+                            title: `${item.source} · ${item.url}`,
+                          })),
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-xs text-default-400">
+                    来自 blackmatrix7、Loyalsoldier
+                    等社区维护的规则集，所有用户共用一份，面板每 12
+                    小时检查更新；第一次保存时下载。
+                  </p>
+                </div>
               ) : rule.match === "ruleset" ? (
                 rulesets.length === 0 ? (
                   <p className="text-xs text-default-500">
@@ -454,6 +496,7 @@ export default function RouteRulesEditor({
       <ClashImportModal
         exitOptions={exitOptions}
         isOpen={importOpen}
+        catalog={catalog}
         rulesets={rulesets}
         onClose={() => setImportOpen(false)}
         onImport={(imported, replace) => {
