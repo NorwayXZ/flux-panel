@@ -33,8 +33,8 @@ The production Agent and its port 4450 daemon were left in place.
 - No shared-billing failure appeared during this short check. The production
   connection on proxy port 47100 still returned `Connected` afterwards.
 - Both test connections were deleted and test processes signaled to stop after
-  the check. The validation directory retains the account copy and durable ledger
-  with root-only access for inspection; it must not be reused independently.
+  the check. Copied identity keystores were then deleted. The validation directory retains
+  logs, binary and the durable ledger with root-only access for inspection.
 
 ## What this does not establish
 

@@ -3,6 +3,7 @@ package com.admin.service;
 import com.admin.common.dto.GostDto;
 import com.admin.common.lang.R;
 import com.admin.common.utils.WebSocketServer;
+import com.admin.common.utils.AgentVersionUtil;
 import com.admin.entity.Node;
 import com.admin.mapper.NodeMapper;
 import com.alibaba.fastjson.JSON;
@@ -66,9 +67,14 @@ public class MysteriumSharedBillingService implements ApplicationRunner {
             return R.err("共享账户已绑定另一付款节点，不能直接替换资金账户");
         Node owner=nodes.selectById(ownerId);
         if(owner==null || !WebSocketServer.isNodeOnline(ownerId)) return R.err("付款节点离线或不存在");
+        if (!AgentVersionUtil.isAtLeast(owner.getVersion(), "2.84.0")) return R.err("付款节点需要升级至 Agent 2.84.0-beta.1 或更高版本");
         List<Long> targets = new ArrayList<>(new LinkedHashSet<>(memberIds));
         if (targets.size()>100) return R.err("一次最多绑定100台节点");
-        for(Long id:targets) if(nodes.selectById(id)==null || !WebSocketServer.isNodeOnline(id)) return R.err("共享节点离线或不存在："+id);
+        for(Long id:targets) {
+ Node member=nodes.selectById(id);
+ if(member==null || !WebSocketServer.isNodeOnline(id)) return R.err("共享节点离线或不存在："+id);
+ if(!AgentVersionUtil.isAtLeast(member.getVersion(),"2.84.0")) return R.err("共享节点需要升级至 Agent 2.84.0-beta.1："+member.getName());
+ }
         try {
             Map<String,Object> assets=assets();
             R refreshed=mysterium.refresh(ownerId);

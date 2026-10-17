@@ -150,7 +150,7 @@ jobs:
           push: true
           tags: |
             ${{ env.BACKEND_IMAGE }}:${{ steps.version.outputs.version }}
-            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ !contains(steps.version.outputs.version, '-') && format('{0}:latest', env.BACKEND_IMAGE) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
@@ -167,7 +167,7 @@ jobs:
           push: true
           tags: |
             ${{ env.FRONTEND_IMAGE }}:${{ steps.version.outputs.version }}
-            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ !contains(steps.version.outputs.version, '-') && format('{0}:latest', env.FRONTEND_IMAGE) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
@@ -198,7 +198,9 @@ jobs:
           trap 'rm -f "${release_notes}"' EXIT
           awk 'NR > 1 && /^## / { exit } { print }' .github/release-notes.md > "${release_notes}"
           test -s "${release_notes}"
-          gh release create "${VERSION}" \
+          release_flags=()
+          if [[ "$VERSION" == *-* ]]; then release_flags+=(--prerelease --latest=false); fi
+          gh release create "${VERSION}" "${release_flags[@]}" \
             gost-amd64 gost-arm64 \
             gost-windows-amd64.exe gost-windows-arm64.exe \
             gost-darwin-amd64 gost-darwin-arm64 \
