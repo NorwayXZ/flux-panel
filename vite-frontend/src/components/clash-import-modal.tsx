@@ -204,7 +204,7 @@ export default function ClashImportModal({
                   <span className="text-default-500">
                     {" "}
                     MATCH（{result.finalPolicy}
-                    ）对应上方的“默认出口”，请在那里选择。
+                    ）对应下方的“其余流量”，请在那里选择。
                   </span>
                 )}
                 {result.rules.some((rule) =>

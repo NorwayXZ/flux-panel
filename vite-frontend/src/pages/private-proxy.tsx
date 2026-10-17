@@ -79,7 +79,11 @@ import CamouflagePicker, {
   AUTO_CAMOUFLAGE,
 } from "@/components/camouflage-picker";
 import ExitPicker, { type ExitChoice } from "@/components/exit-picker";
-import RouteRulesEditor, { exitLabel } from "@/components/route-rules-editor";
+import DefaultExitSelect, {
+  exitKeyOf,
+  RoutingSummary,
+} from "@/components/default-exit-select";
+import RouteRulesEditor from "@/components/route-rules-editor";
 import ProxyEditModal from "@/components/proxy-edit-modal";
 import ProxyImport from "@/components/proxy-import";
 import ProxyQr from "@/components/proxy-qr";
@@ -1732,7 +1736,7 @@ export default function PrivateProxyPage() {
             {exitTarget ? `“${exitTarget.name}”的出口与分流` : "出口与分流"}
           </ModalHeader>
           <ModalBody>
-            {exitTarget && (
+            {exitTarget && routingBlockedReason(exitTarget) && (
               <ExitPicker
                 blockedReason={
                   isAdmin
@@ -1741,12 +1745,6 @@ export default function PrivateProxyPage() {
                 }
                 countries={exitInfo?.countries || []}
                 customBlockedReason={routingBlockedReason(exitTarget)}
-                description={
-                  routingBlockedReason(exitTarget)
-                    ? undefined
-                    : "没有命中下面分流规则的流量走这里。只想让部分网站换出口时，这里选“节点自身 IP”，再在下面加规则。"
-                }
-                title={routingBlockedReason(exitTarget) ? "出口" : "默认出口"}
                 customExits={
                   ROUTED_EXIT_PROXY_TYPES.includes(exitTarget.proxyType)
                     ? proxyExits
@@ -1754,50 +1752,59 @@ export default function PrivateProxyPage() {
                 }
                 error={exitInfoError}
                 loading={exitInfoLoading && !exitInfo}
+                title="出口"
                 value={exitChoice}
                 onChange={setExitChoice}
               />
             )}
             {exitTarget && !routingBlockedReason(exitTarget) && (
-              <div className="border-t border-divider pt-4">
+              <div className="space-y-5">
+                <RoutingSummary
+                  countries={exitInfo?.countries || []}
+                  customExits={proxyExits}
+                  rules={routeRules}
+                  value={exitChoice}
+                />
                 <RouteRulesEditor
-                  defaultExit={
-                    exitChoice.exitType === "custom"
-                      ? `custom:${exitChoice.exitCustomId}`
-                      : exitChoice.exitType === "residential"
-                        ? `residential:${exitChoice.exitCountry}`
-                        : "direct"
-                  }
                   allowResidential={
                     isAdmin &&
                     !exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)
                   }
+                  catalog={ruleCatalog}
                   countries={exitInfo?.countries || []}
                   customExits={proxyExits}
+                  defaultExit={exitKeyOf(exitChoice)}
                   newerRulesBlocked={newerRulesBlocked(exitTarget)}
                   presets={routePresets}
                   rules={routeRules}
-                  catalog={ruleCatalog}
                   rulesets={routeRulesets}
                   onChange={setRouteRules}
                   onRulesetsChanged={loadRoutingOptions}
                 />
+                <div className="border-t border-divider pt-4">
+                  <DefaultExitSelect
+                    allowResidential={
+                      isAdmin &&
+                      !exitBlockedReason(exitTarget.proxyType, exitTarget.nodeId)
+                    }
+                    countries={exitInfo?.countries || []}
+                    customExits={proxyExits}
+                    residentialBlockedReason={
+                      isAdmin
+                        ? exitBlockedReason(
+                            exitTarget.proxyType,
+                            exitTarget.nodeId,
+                          )
+                        : undefined
+                    }
+                    value={exitChoice}
+                    onChange={setExitChoice}
+                  />
+                </div>
                 {routeRules.length > 0 && (
-                  <p className="mt-2 text-xs text-default-500">
+                  <p className="text-xs text-default-500">
                     命中规则的出口不可用时，这部分连接会断开，不会改走节点自身
-                    IP。当前规则：
-                    {routeRules
-                      .map((rule) =>
-                        exitLabel(
-                          rule.exit,
-                          exitInfo?.countries || [],
-                          proxyExits,
-                        ),
-                      )
-                      .filter(
-                        (label, index, list) => list.indexOf(label) === index,
-                      )
-                      .join("、")}
+                    IP。
                   </p>
                 )}
               </div>

@@ -261,7 +261,8 @@ export default function RouteRulesEditor({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">分流规则</div>
           <p className="mt-0.5 text-xs text-default-500">
-            从上往下匹配，命中第一条就走它的出口；没有命中任何规则的流量走上面的“默认出口”。
+            从上往下匹配，命中第一条就走它的出口；没有命中任何规则的流量走下面的“其余流量”（默认是节点自身
+            IP）。
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -294,7 +295,8 @@ export default function RouteRulesEditor({
 
       {rules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-divider px-4 py-5 text-center text-xs text-default-500">
-          还没有规则，所有流量都走默认出口。点“按规则集”选 OpenAI、Netflix
+          还没有规则，所有流量都走下面“其余流量”选的出口。点“按规则集”选
+          OpenAI、Netflix
           等社区维护的现成规则集，点“按域名”填写你自己的域名，或者直接导入 Clash
           配置里的规则。每条规则还可以改成 GEOSITE、GEOIP、规则集订阅、IP
           段、端口等匹配方式。
@@ -507,7 +509,7 @@ export default function RouteRulesEditor({
                   </Checkbox>
                   <p className="text-xs text-default-400">
                     {rule.resolve
-                      ? "开启后，从这条规则开始，之后的规则和默认出口收到的都是节点解析出的 IP 而不是域名，可能影响出口那边的 CDN 就近和部分流媒体解锁。"
+                      ? "开启后，从这条规则开始，之后的规则和“其余流量”收到的都是节点解析出的 IP 而不是域名，可能影响出口那边的 CDN 就近和部分流媒体解锁。"
                       : "默认只匹配直接用 IP 连接的流量（相当于 Clash 的 no-resolve），访问域名的流量会把域名原样交给出口。"}
                   </p>
                 </div>
@@ -518,11 +520,16 @@ export default function RouteRulesEditor({
                     {newerRulesBlocked}
                   </p>
                 )}
+              {rule.values.length === 0 && (
+                <p className="text-xs text-warning-600 dark:text-warning-400">
+                  这条规则还没有选择或填写内容，不会匹配任何流量。
+                </p>
+              )}
               {defaultExit && rule.exit === defaultExit && (
                 <p className="text-xs text-warning-600 dark:text-warning-400">
                   {defaultExit === "direct"
                     ? "没有命中规则的流量本来就走节点自身 IP，这条规则不起作用，可以删掉。"
-                    : "这条规则的出口和默认出口相同，不起作用。想只让这些网站走这个出口，请把上面的默认出口改为“节点自身 IP”。"}
+                    : "这条规则的出口和下面“其余流量”的出口相同，不起作用。想只让这些网站走这个出口，请把“其余流量”改回“节点自身 IP”。"}
                 </p>
               )}
             </li>
@@ -591,7 +598,7 @@ export default function RouteRulesEditor({
               </div>
             ) : testResult.index === -1 ? (
               <div>
-                没有命中任何规则 → 默认出口{" "}
+                没有命中任何规则 → 其余流量{" "}
                 <span className="font-semibold text-primary">
                   {exitLabel(defaultExit || "direct", countries, customExits)}
                 </span>

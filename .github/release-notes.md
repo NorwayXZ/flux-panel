@@ -1,3 +1,15 @@
+## 2.81.1 Clearer routing page: rules first, then "everything else"
+
+- "出口与分流" now reads in the order traffic is matched:
+  - A "现在的效果" summary at the top lists where each rule's traffic goes and where everything else goes.
+  - The rules come next.
+  - A single "其余流量" selector comes last. It defaults to the node's own IP (the original IP).
+- The three exit cards and the separate custom-exit dropdown are gone from this page. They read as two places to pick the same exit, and some users ended up sending all traffic through a custom node when they only wanted a few sites there.
+- Choosing a custom node, exit group or residential country for "其余流量" shows a warning that all unmatched traffic will leave through it.
+- A rule with nothing selected or filled in is flagged as matching nothing.
+- Protocols that cannot use routing rules still show the original exit picker.
+- Panel-only update; Agents stay at 2.79.0. No database change. 2.81.0 remains available for rollback.
+
 ## 2.81.0 Routing test: see which rule a site hits
 
 - "出口与分流" has a routing test. Enter a domain, URL or IP, optionally with a port, and choose TCP or UDP. The panel reports which rule it hits, the field and value that matched, and the exit it would use. The matching rule is highlighted. A destination that matches no rule shows the default exit.
