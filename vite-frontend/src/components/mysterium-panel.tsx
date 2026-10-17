@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@heroui/button";
 import { Checkbox } from "@heroui/checkbox";
 import { Chip } from "@heroui/chip";
@@ -70,6 +70,11 @@ export default function MysteriumPanel() {
   const [budget, setBudget] = useState("20");
   const [lowBalance, setLowBalance] = useState("10");
   const [setupNode, setSetupNode] = useState("");
+  const setupInFlight = useRef(false);
+  const [setupStatus, setSetupStatus] = useState<{
+    state: "pending" | "success" | "error";
+    message: string;
+  } | null>(null);
   const [topupTarget, setTopupTarget] = useState<MysteriumAccount | null>(null);
   const [gateway, setGateway] = useState("paypal");
   const [amount, setAmount] = useState("10");
@@ -112,18 +117,52 @@ export default function MysteriumPanel() {
   };
 
   const enableOn = async () => {
-    if (!setupNode) return;
-    setBusy("setup");
-    toast("正在节点上安装并启动 Mysterium，第一次需要 1～2 分钟…", {
-      duration: 5000,
-    });
-    const response = await setupMysteriumNode(Number(setupNode));
+    if (!setupNode || setupInFlight.current) return;
+    const nodeId = Number(setupNode);
+    const nodeName =
+      nodes.find((node) => node.id === nodeId)?.name || setupNode;
 
-    setBusy("");
-    if (response.code !== 0) return toast.error(response.msg || "启用失败");
-    toast.success("已在节点上启用，充值后即可使用");
-    setSetupNode("");
-    void load();
+    setupInFlight.current = true;
+    setBusy("setup");
+    setSetupStatus({
+      state: "pending",
+      message: `正在为“${nodeName}”安装并启动 Mysterium，首次启用可能需要数分钟，请勿重复点击。`,
+    });
+    try {
+      const response = await setupMysteriumNode(nodeId);
+
+      if (response.code !== 0 || !response.data?.identity) {
+        const detail =
+          response.code !== 0
+            ? response.msg || "节点未返回失败原因"
+            : "节点未返回有效账户，请检查 Agent 日志";
+
+        setSetupStatus({
+          state: "error",
+          message: `“${nodeName}”启用未确认成功：${detail}。若提示超时，节点可能仍在安装，请稍后刷新账户列表确认。`,
+        });
+        return;
+      }
+      const account = response.data;
+
+      setAccounts((current) => [
+        ...current.filter((item) => item.nodeId !== nodeId),
+        account,
+      ]);
+      setSetupNode("");
+      setSetupStatus({
+        state: "success",
+        message: `已在“${nodeName}”上启用 Mysterium，账户已显示在下方，可点击“充值”开通或续费。`,
+      });
+    } catch (error) {
+      setSetupStatus({
+        state: "error",
+        message: `“${nodeName}”启用未确认成功：${error instanceof Error ? error.message : "请求异常"}。请稍后刷新账户列表确认，或检查节点 Agent 日志。`,
+      });
+    } finally {
+      setupInFlight.current = false;
+      setBusy("");
+    }
   };
 
   const refresh = async (account: MysteriumAccount) => {
@@ -382,7 +421,7 @@ export default function MysteriumPanel() {
               <Select
                 aria-label="选择节点"
                 className="w-56"
-                isDisabled={available.length === 0}
+                isDisabled={available.length === 0 || busy === "setup"}
                 placeholder={
                   available.length === 0
                     ? "没有可启用的节点"
@@ -400,7 +439,7 @@ export default function MysteriumPanel() {
               </Select>
               <Button
                 color="primary"
-                isDisabled={!setupNode}
+                isDisabled={!setupNode || busy === "setup"}
                 isLoading={busy === "setup"}
                 size="sm"
                 onPress={enableOn}
@@ -409,6 +448,30 @@ export default function MysteriumPanel() {
               </Button>
             </div>
           </div>
+
+          {setupStatus && (
+            <div
+              aria-live="polite"
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                setupStatus.state === "error"
+                  ? "border-danger/30 bg-danger/10 text-danger"
+                  : setupStatus.state === "success"
+                    ? "border-success/30 bg-success/10 text-success"
+                    : "border-primary/30 bg-primary/10 text-primary"
+              }`}
+              role={setupStatus.state === "error" ? "alert" : "status"}
+            >
+              {setupStatus.message}
+            </div>
+          )}
+          <Button
+            isDisabled={busy === "setup"}
+            size="sm"
+            variant="flat"
+            onPress={() => void load()}
+          >
+            刷新账户列表
+          </Button>
 
           {accounts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-divider px-6 py-6 text-center text-sm text-default-500">

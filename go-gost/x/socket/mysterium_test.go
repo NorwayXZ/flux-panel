@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -158,4 +159,45 @@ func selfProcess(t *testing.T) *exec.Cmd {
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
 	return cmd
+}
+
+func TestMysteriumDaemonHomeWhenServiceHasNoHome(t *testing.T) {
+	current, err := user.Current()
+	if err != nil || current.HomeDir == "" {
+		t.Skip("OS account home is unavailable")
+	}
+	t.Setenv("HOME", "")
+	env := mysteriumDaemonEnv()
+	homes := []string{}
+	for _, item := range env {
+		if strings.HasPrefix(item, "HOME=") {
+			homes = append(homes, item)
+		}
+	}
+	if len(homes) != 1 || homes[0] != "HOME="+current.HomeDir {
+		t.Fatalf("child HOME: %v", homes)
+	}
+	if os.Getenv("HOME") != "" {
+		t.Fatal("Agent environment was changed")
+	}
+	cmd := exec.Command("sh", "-c", `test -n "$HOME" && test -d "$HOME"`)
+	cmd.Env = env
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("child cannot resolve its home: %v", err)
+	}
+}
+
+func TestMysteriumStartupErrorIncludesBoundedLogTail(t *testing.T) {
+	m := &mysteriumManager{directory: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(m.directory, "logs"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("old log\n", 2000) + `Failed to create command: $HOME is not defined`
+	if err := os.WriteFile(filepath.Join(m.directory, "logs", "daemon.out"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	detail := m.startupLog()
+	if len(detail) > 2048 || !strings.Contains(detail, "$HOME is not defined") {
+		t.Fatalf("unexpected startup detail: %q", detail)
+	}
 }

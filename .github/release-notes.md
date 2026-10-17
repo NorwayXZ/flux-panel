@@ -1,3 +1,11 @@
+## 2.83.3 修复 Mysterium 节点启用失败（Agent 2.83.3）
+
+- 修复以 systemd 服务运行的 Agent 缺少 HOME 环境变量时，Mysterium 报 `$HOME is not defined` 并退出的问题。Agent 为 Mysterium 子进程补齐当前系统账户的真实主目录，无需手工修改服务配置；已有账户密钥和余额保留。
+- 节点启动失败时返回最近的启动日志，帮助定位实际原因。
+- “在节点上启用”期间持续显示进度，失败原因保留在页面上；防止重复提交，异常后恢复按钮。启用成功后直接显示账户，并增加“刷新账户列表”入口。
+- 将内置反向代理中 Mysterium 启用接口的等待时间调整为 270 秒，覆盖后端最多 240 秒的节点等待时间。
+- 面板和 Agent 均升级至 2.83.3。先升级面板，再升级需要使用 Mysterium 的节点 Agent。无数据库结构变更，2.83.2 保留供回退。
+
 ## 2.83.2 Mysterium page shows the whole flow
 
 - The Mysterium tab shows four steps with their progress: enable, turn it on for a node, top up or renew, and choose it in a proxy. Before enabling, the page now makes clear where node accounts and the top-up button will appear.

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -117,6 +118,7 @@ func (m *mysteriumManager) ensureRunning() error {
 		"--proxymode", "--proxy.bind.address=127.0.0.1",
 		"--tequilapi.address=127.0.0.1", "--tequilapi.port="+strconv.Itoa(mysteriumAPIPort),
 		"--ui.enable=false", "daemon")
+	cmd.Env = mysteriumDaemonEnv()
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
@@ -133,7 +135,45 @@ func (m *mysteriumManager) ensureRunning() error {
 		}
 		time.Sleep(time.Second)
 	}
-	return errors.New("myst did not become ready; see mysterium/logs/daemon.out on the node")
+	return fmt.Errorf("myst did not become ready: %s", m.startupLog())
+}
+
+// systemd does not always supply HOME to system services. myst reads it while
+// constructing its CLI, even when explicit data/config paths are supplied.
+// Set the child process's real account home without changing the Agent's env.
+func mysteriumDaemonEnv() []string {
+	env := os.Environ()
+	if os.Getenv("HOME") != "" {
+		return env
+	}
+	current, err := user.Current()
+	if err != nil || current.HomeDir == "" {
+		return env
+	}
+	filtered := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if !strings.HasPrefix(item, "HOME=") {
+			filtered = append(filtered, item)
+		}
+	}
+	return append(filtered, "HOME="+current.HomeDir)
+}
+
+func (m *mysteriumManager) startupLog() string {
+	file, err := os.Open(filepath.Join(m.directory, "logs", "daemon.out"))
+	if err != nil {
+		return "see mysterium/logs/daemon.out on the node"
+	}
+	defer file.Close()
+	// Only return a small tail, even if a failed daemon produced a large log.
+	if info, err := file.Stat(); err == nil && info.Size() > 2048 {
+		_, _ = file.Seek(-2048, io.SeekEnd)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 2048))
+	if err != nil || strings.TrimSpace(string(data)) == "" {
+		return "see mysterium/logs/daemon.out on the node"
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func (m *mysteriumManager) healthy() bool {
