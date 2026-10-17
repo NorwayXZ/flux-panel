@@ -128,15 +128,15 @@ class ClashRulesTests {
         list.ipCidr.add("23.246.0.0/18");
         ProxyRuleSourceService.putList("ruleset:5", list);
         List<JSONObject> rules = ProxyRoutingService.rules(ProxyRoutingService.normalizeRules(List.of(
-                Map.of("match", "ip_cidr", "values", List.of("1.1.1.0/24"), "exit", "block", "noResolve", true),
+                Map.of("match", "ip_cidr", "values", List.of("1.1.1.0/24"), "exit", "block"),
                 Map.of("match", "port", "values", List.of("443", "8000-9000"), "exit", "direct"),
-                Map.of("match", "ruleset", "values", List.of("5"), "exit", "custom:3"),
+                Map.of("match", "ruleset", "values", List.of("5"), "exit", "custom:3", "resolve", true),
                 Map.of("match", "geoip", "values", List.of("lan"), "exit", "direct"))));
 
         JSONObject request = ProxyRoutingService.routerRequest("r", "node", null, null, rules, Map.of(), "p", Map.of(), true);
         JSONArray routerRules = request.getJSONArray("rules");
 
-        assertEquals("reject", routerRules.getJSONObject(0).getString("action"), "no-resolve rule comes first without a lookup");
+        assertEquals("reject", routerRules.getJSONObject(0).getString("action"), "IP rules match addresses without a lookup by default");
         assertEquals(List.of(443), routerRules.getJSONObject(1).getJSONArray("port").toJavaList(Integer.class));
         assertEquals(List.of("8000:9000"), routerRules.getJSONObject(2).getJSONArray("port_range").toJavaList(String.class));
         assertEquals("resolve", routerRules.getJSONObject(3).getString("action"));

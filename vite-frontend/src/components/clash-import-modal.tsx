@@ -151,7 +151,6 @@ export default function ClashImportModal({
         match: rule.match,
         values,
         exit,
-        ...(rule.noResolve ? { noResolve: true } : {}),
       });
     }
     if (rules.length === 0) return toast.error("没有可以导入的规则");
@@ -192,6 +191,15 @@ export default function ClashImportModal({
                     MATCH（{result.finalPolicy}
                     ）对应上方的“默认出口”，请在那里选择。
                   </span>
+                )}
+                {result.rules.some((rule) =>
+                  ["ip_cidr", "geoip", "ruleset"].includes(rule.match),
+                ) && (
+                  <p className="mt-1 text-xs text-default-500">
+                    IP 段、GEOIP 和规则集里的 IP 默认只匹配直接用 IP
+                    连接的流量，域名会原样交给出口；需要按解析结果匹配的规则，导入后可在规则里勾选“先解析域名再按
+                    IP 匹配”。
+                  </p>
                 )}
                 {result.skippedSamples.length > 0 && (
                   <details className="mt-2 text-xs text-default-500">

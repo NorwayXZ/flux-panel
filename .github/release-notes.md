@@ -1,3 +1,11 @@
+## 2.79.1 IP rules keep the domain for exits
+
+- In 2.79.0 an IP rule (IP range, GEOIP or a rule set with addresses) made the node resolve every domain before matching. sing-box then sends the resolved address, not the domain, to the exit for that rule, every later rule and the default exit. This breaks the exit's own DNS and CDN choice and can affect streaming unlocks.
+- IP rules now match only connections made to an address, like Clash's no-resolve. Domains reach exits unchanged.
+- A rule can still opt in with "先解析域名再按 IP 匹配". The editor explains what changes from that rule on.
+- Imported Clash rules no longer resolve. The import summary says how to turn it on per rule.
+- Panel-only update; Agents stay at 2.79.0. Rules saved in 2.79.0 switch to the new behavior the next time their proxy is saved or re-applied. 2.79.0 remains available for rollback.
+
 ## 2.79.0 Clash-style routing: more rule types, rule-set subscriptions, Clash import and exit groups (Agent 2.79.0)
 
 - Routing rules gain the Clash match types GEOSITE (any v2fly domain list, including attribute filters such as google@cn), GEOIP (country address lists, plus private for LAN and reserved ranges), domain regex, destination port and port range, and network (TCP or UDP). As in Clash, IP rules look up the domain first unless the rule is marked no-resolve.

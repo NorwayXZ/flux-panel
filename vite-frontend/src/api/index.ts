@@ -1076,8 +1076,11 @@ export interface RouteRule {
   values: string[];
   /** direct, block, residential:CC or custom:ID */
   exit: string;
-  /** IP rules: match only connections made to an address, without looking up the domain. */
-  noResolve?: boolean;
+  /**
+   * IP rules: resolve the domain first and match its address. From then on exits receive the
+   * address instead of the domain, so it is off by default.
+   */
+  resolve?: boolean;
 }
 
 /** A subscribed Clash rule provider. */
@@ -1110,7 +1113,6 @@ export interface ClashImportResult {
     match: RouteRuleMatch;
     values: string[];
     policy: string;
-    noResolve?: boolean;
   }>;
   policies: Array<{ name: string; suggested?: string | null }>;
   providers: Array<{

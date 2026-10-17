@@ -714,11 +714,11 @@ export default function PrivateProxyPage() {
           exitChoice.exitType === "custom"
             ? exitChoice.exitCustomId
             : undefined,
-        rules: routeRules.map(({ match, values, exit, noResolve }) => ({
+        rules: routeRules.map(({ match, values, exit, resolve }) => ({
           match,
           values,
           exit,
-          ...(noResolve ? { noResolve } : {}),
+          ...(resolve ? { resolve } : {}),
         })),
       });
 

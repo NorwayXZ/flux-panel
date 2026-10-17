@@ -39,7 +39,7 @@ public class ProxyRoutingService {
     private static final String EXIT_ROUTE_USER = "exit";
     private static final Set<String> MATCHES = Set.of("domain_suffix", "domain_keyword", "domain", "domain_regex", "ip_cidr",
             "port", "network", "preset", "geosite", "geoip", "ruleset");
-    /** Matches that work on the destination address, so a domain is resolved for them unless noResolve. */
+    /** Matches that work on the destination address; a rule may ask for the domain to be resolved first. */
     private static final Set<String> IP_MATCHES = Set.of("ip_cidr", "geoip", "ruleset");
     /** Router fields that need Agent ROUTER_RULES_AGENT_VERSION. */
     private static final Set<String> NEWER_ROUTER_FIELDS = Set.of("domain_regex", "port", "port_range", "network", "ip_is_private");
@@ -163,7 +163,7 @@ public class ProxyRoutingService {
             stored.put("match", match);
             stored.put("values", new ArrayList<>(cleaned));
             stored.put("exit", exit.startsWith("residential:") ? exit.toUpperCase(Locale.ROOT).replace("RESIDENTIAL:", "residential:") : exit);
-            if (IP_MATCHES.contains(match) && Boolean.TRUE.equals(rule.get("noResolve"))) stored.put("noResolve", true);
+            if (IP_MATCHES.contains(match) && Boolean.TRUE.equals(rule.get("resolve"))) stored.put("resolve", true);
             result.add(stored);
         }
         return result.toJSONString();
@@ -268,8 +268,10 @@ public class ProxyRoutingService {
             if (total > ROUTER_TOTAL_VALUES) {
                 throw new IllegalStateException("分流规则展开后超过 " + ROUTER_TOTAL_VALUES + " 条，请减少大型 GEOIP、GEOSITE 或规则集");
             }
-            // Like Clash, an IP rule looks up the domain first unless it says no-resolve.
-            if (resolveForIp && set.hasIpMatch() && !resolved && !rule.getBooleanValue("noResolve")) {
+            // IP rules match connections made to an address. A rule can ask for the domain to be
+            // resolved first; sing-box then hands every later exit the address instead of the
+            // domain, so this is opt-in rather than Clash's default.
+            if (resolveForIp && set.hasIpMatch() && !resolved && rule.getBooleanValue("resolve")) {
                 JSONObject resolve = new JSONObject(true);
                 resolve.put("action", "resolve");
                 routerRules.add(resolve);

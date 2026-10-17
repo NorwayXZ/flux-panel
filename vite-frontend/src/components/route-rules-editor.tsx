@@ -279,7 +279,7 @@ export default function RouteRulesEditor({
                       match,
                       values: [],
                       text: "",
-                      noResolve: undefined,
+                      resolve: undefined,
                     });
                   }}
                 >
@@ -414,18 +414,24 @@ export default function RouteRulesEditor({
                 />
               )}
               {ipMatches.has(rule.match) && (
-                <Checkbox
-                  isSelected={Boolean(rule.noResolve)}
-                  size="sm"
-                  onValueChange={(selected) =>
-                    update(index, { noResolve: selected || undefined })
-                  }
-                >
-                  <span className="text-xs text-default-500">
-                    不解析域名（no-resolve）：只匹配直接用 IP
-                    连接的流量。不勾选时会先查出域名的 IP 再匹配，和 Clash 一致
-                  </span>
-                </Checkbox>
+                <div className="space-y-1">
+                  <Checkbox
+                    isSelected={Boolean(rule.resolve)}
+                    size="sm"
+                    onValueChange={(selected) =>
+                      update(index, { resolve: selected || undefined })
+                    }
+                  >
+                    <span className="text-xs text-default-500">
+                      先解析域名再按 IP 匹配
+                    </span>
+                  </Checkbox>
+                  <p className="text-xs text-default-400">
+                    {rule.resolve
+                      ? "开启后，从这条规则开始，之后的规则和默认出口收到的都是节点解析出的 IP 而不是域名，可能影响出口那边的 CDN 就近和部分流媒体解锁。"
+                      : "默认只匹配直接用 IP 连接的流量（相当于 Clash 的 no-resolve），访问域名的流量会把域名原样交给出口。"}
+                  </p>
+                </div>
               )}
               {newerRulesBlocked &&
                 (newerMatches.has(rule.match) || groupExit(rule.exit)) && (

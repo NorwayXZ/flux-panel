@@ -535,7 +535,6 @@ public class ProxyRuleSourceService {
             item.put("match", rule.match);
             item.put("values", rule.values);
             item.put("policy", rule.policy);
-            if (rule.noResolve) item.put("noResolve", true);
             rules.add(item);
         }
         List<Map<String, Object>> policies = new ArrayList<>();
