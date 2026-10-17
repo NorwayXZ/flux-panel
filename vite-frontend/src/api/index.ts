@@ -1210,6 +1210,24 @@ export const saveExitGroup = (data: {
   intervalMinutes?: number;
   tolerance?: number;
 }) => Network.mutate("/proxy-exit/group/save", data, ["/proxy-exit/list"]);
+/** Which rule a destination hits: index -1 is the default exit, -2 a failed lookup. */
+export interface RouteTestResult {
+  index: number;
+  field?: string;
+  value?: string;
+  resolved?: string[];
+  notes: string[];
+  host: string;
+  port: number;
+  network: string;
+}
+export const testRoute = (data: {
+  rules: RouteRule[];
+  target: string;
+  network?: string;
+}) =>
+  // Lists the rules use are downloaded on first use.
+  Network.post<RouteTestResult>("/proxy-exit/route-test", data, 120_000);
 export const getRuleCatalog = () =>
   Network.post<RuleCatalogItem[]>("/proxy-exit/catalog");
 export const refreshRuleCatalog = (key: string) =>

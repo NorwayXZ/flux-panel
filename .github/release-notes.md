@@ -1,3 +1,14 @@
+## 2.81.0 Routing test: see which rule a site hits
+
+- "出口与分流" has a routing test. Enter a domain, URL or IP, optionally with a port, and choose TCP or UDP. The panel reports which rule it hits, the field and value that matched, and the exit it would use. The matching rule is highlighted. A destination that matches no rule shows the default exit.
+- It checks the rules as currently edited, so changes can be tested before saving. Lists the rules need (catalog sets, GEOSITE, GEOIP) are downloaded on first use.
+- Matching follows the node router:
+  - Rules are checked top to bottom, and any field of a rule can match.
+  - Domain suffixes match whole labels.
+  - IP rules only see addresses unless an earlier rule asks for the domain to be resolved. The result then lists the addresses used, as resolved by the panel.
+  - When resolving fails, the test reports that the node would drop the connection.
+- Panel-only update; Agents stay at 2.79.0. No database change. 2.80.0 remains available for rollback.
+
 ## 2.80.0 Curated rule sets ready to pick
 
 - 36 well-known community rule sets are built in, ready to pick:

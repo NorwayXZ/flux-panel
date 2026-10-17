@@ -273,6 +273,35 @@ public class ProxyRuleSourceService {
         });
     }
 
+    // ---- Rule hit test ----
+
+    /** Which of the given (unsaved) rules a destination hits, downloading lists the rules need. */
+    public R testRoute(List<Map<String, Object>> input, String target, String network) {
+        RouteTester.Target parsed;
+        List<JSONObject> rules;
+        try {
+            parsed = RouteTester.parse(target, network);
+            rules = ProxyRoutingService.rules(ProxyRoutingService.normalizeRules(input));
+        } catch (IllegalArgumentException e) {
+            return R.err(e.getMessage());
+        }
+        String error = prepare(rules, currentUserId(), isAdmin());
+        if (error != null) return R.err(error);
+        Map<String, Object> result = RouteTester.test(rules, parsed, host -> {
+            try {
+                List<String> addresses = new ArrayList<>();
+                for (InetAddress address : InetAddress.getAllByName(host)) addresses.add(address.getHostAddress());
+                return addresses;
+            } catch (java.net.UnknownHostException e) {
+                throw new IllegalStateException("域名不存在");
+            }
+        });
+        result.put("host", parsed.host);
+        result.put("port", parsed.port);
+        result.put("network", parsed.network);
+        return R.ok(result);
+    }
+
     // ---- Catalog ----
 
     /** The catalog with each entry's download state. */

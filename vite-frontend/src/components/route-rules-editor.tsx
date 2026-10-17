@@ -5,17 +5,27 @@ import type {
   RouteRule,
   RouteRuleMatch,
   RouteRuleset,
+  RouteTestResult,
   RuleCatalogItem,
 } from "@/api";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@heroui/button";
 import { Checkbox } from "@heroui/checkbox";
 import { Chip } from "@heroui/chip";
 import { Select, SelectItem, SelectSection } from "@heroui/select";
-import { Textarea } from "@heroui/input";
-import { ArrowDown, ArrowUp, FileInput, Plus, Trash2 } from "lucide-react";
+import { Input, Textarea } from "@heroui/input";
+import {
+  ArrowDown,
+  ArrowUp,
+  FileInput,
+  FlaskConical,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import toast from "react-hot-toast";
 
+import { testRoute } from "@/api";
 import ClashImportModal from "@/components/clash-import-modal";
 
 /**
@@ -139,6 +149,33 @@ export default function RouteRulesEditor({
   onRulesetsChanged?: () => void;
 }) {
   const [importOpen, setImportOpen] = useState(false);
+  const [testTarget, setTestTarget] = useState("");
+  const [testNetwork, setTestNetwork] = useState("tcp");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<RouteTestResult | null>(null);
+
+  // A result describes the rules as they were tested; edits make it stale.
+  useEffect(() => setTestResult(null), [rules, defaultExit]);
+
+  const runTest = async () => {
+    if (!testTarget.trim()) return;
+    setTesting(true);
+    const response = await testRoute({
+      rules: rules.map(({ match, values, exit, resolve }) => ({
+        match,
+        values,
+        exit,
+        ...(resolve ? { resolve } : {}),
+      })),
+      target: testTarget.trim(),
+      network: testNetwork,
+    });
+
+    setTesting(false);
+    if (response.code !== 0 || !response.data)
+      return toast.error(response.msg || "测试失败");
+    setTestResult(response.data);
+  };
   const exitOptions = [
     { key: "direct", label: "节点自身 IP" },
     ...(allowResidential
@@ -269,7 +306,7 @@ export default function RouteRulesEditor({
               // Rules have no id; their position is their identity while editing.
               // eslint-disable-next-line react/no-array-index-key
               key={index}
-              className="space-y-2 rounded-xl bg-default-50 p-3 dark:bg-default-100/60"
+              className={`space-y-2 rounded-xl bg-default-50 p-3 dark:bg-default-100/60 ${testResult?.index === index ? "ring-2 ring-primary" : ""}`}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
@@ -492,6 +529,96 @@ export default function RouteRulesEditor({
           ))}
         </ol>
       )}
+
+      <div className="space-y-2 rounded-xl border border-divider p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <FlaskConical className="shrink-0 text-default-500" size={16} />
+          <span className="text-sm font-medium">分流测试</span>
+          <Input
+            aria-label="要测试的域名或 IP"
+            className="min-w-48 flex-1"
+            placeholder="输入域名或 IP，例如 chatgpt.com、1.1.1.1:53"
+            size="sm"
+            value={testTarget}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void runTest();
+            }}
+            onValueChange={setTestTarget}
+          />
+          <Select
+            aria-label="网络类型"
+            className="w-24"
+            selectedKeys={[testNetwork]}
+            size="sm"
+            onSelectionChange={(keys) =>
+              setTestNetwork(String(Array.from(keys)[0] || "tcp"))
+            }
+          >
+            <SelectItem key="tcp">TCP</SelectItem>
+            <SelectItem key="udp">UDP</SelectItem>
+          </Select>
+          <Button
+            isDisabled={!testTarget.trim()}
+            isLoading={testing}
+            size="sm"
+            variant="flat"
+            onPress={runTest}
+          >
+            测试
+          </Button>
+        </div>
+        {testResult ? (
+          <div className="space-y-1 text-sm">
+            <div>
+              <span className="font-mono text-xs text-default-500">
+                {testResult.host}:{testResult.port} ·{" "}
+                {testResult.network.toUpperCase()}
+              </span>
+            </div>
+            {testResult.index >= 0 ? (
+              <div>
+                命中第{" "}
+                <span className="font-semibold">{testResult.index + 1}</span>{" "}
+                条规则（{testResult.field}{" "}
+                <span className="font-mono">{testResult.value}</span>）→{" "}
+                <span className="font-semibold text-primary">
+                  {exitLabel(
+                    rules[testResult.index]?.exit || "direct",
+                    countries,
+                    customExits,
+                  )}
+                </span>
+              </div>
+            ) : testResult.index === -1 ? (
+              <div>
+                没有命中任何规则 → 默认出口{" "}
+                <span className="font-semibold text-primary">
+                  {exitLabel(defaultExit || "direct", countries, customExits)}
+                </span>
+              </div>
+            ) : (
+              <div className="text-danger">
+                域名解析失败，节点会直接断开这个连接
+              </div>
+            )}
+            {testResult.resolved && (
+              <div className="text-xs text-default-500">
+                按 IP 匹配时用的地址（由面板解析，节点上的结果可能不同）：
+                {testResult.resolved.join("、")}
+              </div>
+            )}
+            {testResult.notes.map((note) => (
+              <div key={note} className="text-xs text-default-500">
+                {note}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-default-400">
+            按当前编辑中的规则计算（不用先保存），命中的规则会高亮。
+          </p>
+        )}
+      </div>
 
       <ClashImportModal
         exitOptions={exitOptions}

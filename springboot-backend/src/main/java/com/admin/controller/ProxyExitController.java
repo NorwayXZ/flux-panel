@@ -74,6 +74,15 @@ public class ProxyExitController {
         return result;
     }
 
+    /** Which rule a destination hits, for the rules being edited. */
+    @PostMapping("/route-test")
+    @SuppressWarnings("unchecked")
+    public R routeTest(@RequestBody Map<String, Object> body) {
+        Object rules = body.get("rules");
+        return sources.testRoute(rules instanceof List ? (List<Map<String, Object>>) rules : List.of(), text(body, "target"),
+                text(body, "network"));
+    }
+
     /** Well-known community rule sets shared by all users. */
     @PostMapping("/catalog")
     public R catalog() {
