@@ -1,3 +1,9 @@
+## 2.83.2 Mysterium page shows the whole flow
+
+- The Mysterium tab shows four steps with their progress: enable, turn it on for a node, top up or renew, and choose it in a proxy. Before enabling, the page now makes clear where node accounts and the top-up button will appear.
+- Budget and balance fields no longer wrap their units.
+- Panel-only update; Agents stay at 2.83.0. No database change. 2.83.1 remains available for rollback.
+
 ## 2.83.1 Mysterium guide in the tutorial
 
 - The in-panel tutorial (帮助 → 使用教程) has a "Mysterium 家宽（付费）" section for admins. It covers enabling Mysterium, opening a node account, topping up, using it in a proxy's routing, renewing (prepaid, never charged automatically) and reading spending. Notes cover per-node accounts, the monthly cap, TCP only and keeping the node's account key safe.

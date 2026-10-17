@@ -214,6 +214,46 @@ export default function MysteriumPanel() {
           </div>
         </div>
 
+        <ol className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            {
+              done: enabled,
+              title: "启用",
+              text: "勾选同意用户条款、设好每月预算，点“启用 Mysterium 家宽”。",
+            },
+            {
+              done: accounts.length > 0,
+              title: "在节点上启用",
+              text: "在下方“节点账户”选一台海外节点，点“在节点上启用”，自动安装并开一个账户。",
+            },
+            {
+              done: accounts.some((account) => account.balance > 0),
+              title: "充值 / 续费",
+              text: "点节点卡片上的“充值”，在 PayPal 或信用卡页面付款，5～10 分钟到账。以后余额不够时同样点“充值”续费，不会自动扣款。",
+            },
+            {
+              done: accounts.some((account) => account.connections.length > 0),
+              title: "在私人代理里使用",
+              text: "打开该节点上代理的“出口与分流”，规则出口或“其余流量”选“Mysterium 家宽 · 国家”，保存。",
+            },
+          ].map((step, index) => (
+            <li
+              key={step.title}
+              className={`rounded-xl border px-3 py-2 ${step.done ? "border-success/40 bg-success-50/50 dark:bg-success-500/10" : "border-divider"}`}
+            >
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${step.done ? "bg-success text-white" : "bg-default-200 text-default-600"}`}
+                >
+                  {step.done ? "✓" : index + 1}
+                </span>
+                {step.title}
+              </div>
+              <p className="mt-1 text-xs text-default-500">{step.text}</p>
+            </li>
+          ))}
+        </ol>
+
         {!enabled ? (
           <div className="space-y-3 rounded-xl bg-default-50 p-3 dark:bg-default-100/60">
             <Checkbox
@@ -236,9 +276,13 @@ export default function MysteriumPanel() {
             </Checkbox>
             <div className="flex flex-wrap items-end gap-3">
               <Input
-                className="w-48"
+                className="w-60"
                 description="每台节点每月最多花多少，超过自动暂停"
-                endContent={<span className="text-xs">美元/月</span>}
+                endContent={
+                  <span className="whitespace-nowrap text-xs text-default-400">
+                    美元/月
+                  </span>
+                }
                 label="每月预算"
                 size="sm"
                 type="number"
@@ -264,9 +308,13 @@ export default function MysteriumPanel() {
         ) : (
           <div className="flex flex-wrap items-end gap-3">
             <Input
-              className="w-44"
+              className="w-56"
               description="每台节点，超过自动暂停"
-              endContent={<span className="text-xs">美元/月</span>}
+              endContent={
+                <span className="whitespace-nowrap text-xs text-default-400">
+                  美元/月
+                </span>
+              }
               label="每月预算"
               size="sm"
               type="number"
@@ -274,9 +322,13 @@ export default function MysteriumPanel() {
               onValueChange={setBudget}
             />
             <Input
-              className="w-44"
+              className="w-56"
               description="低于此余额时告警"
-              endContent={<span className="text-xs">MYST</span>}
+              endContent={
+                <span className="whitespace-nowrap text-xs text-default-400">
+                  MYST
+                </span>
+              }
               label="余额提醒"
               size="sm"
               type="number"
