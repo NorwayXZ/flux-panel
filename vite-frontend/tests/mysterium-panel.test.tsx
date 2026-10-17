@@ -148,3 +148,12 @@ describe("Mysterium node activation feedback", () => {
     expect(getMysteriumOverview).toHaveBeenCalledTimes(1);
   });
 });
+
+it("shows the direct-node shared balance form without replacing node activation", async () => {
+  render(<MysteriumPanel />);
+  expect(await screen.findByText("统一余额 · 各节点直连")).toBeTruthy();
+  expect(screen.getByLabelText("付款账户节点")).toBeTruthy();
+  expect(screen.getByLabelText("共用余额的节点")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "绑定共享余额" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByRole("button", { name: "在节点上启用" })).toBeTruthy();
+});

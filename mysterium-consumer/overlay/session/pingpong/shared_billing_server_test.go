@@ -3,6 +3,8 @@ package pingpong
 import (
 	"encoding/hex"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -108,5 +110,18 @@ func TestSharedSignerPersistenceAndPendingGate(t *testing.T) {
 	wrong.Consumer = common.HexToAddress("0x9999").Hex()
 	if _, err := s.pay(wrong); err == nil {
 		t.Fatal("wrong consumer accepted")
+	}
+}
+
+func TestSharedSignerRequiresLoopbackSecret(t *testing.T) {
+	s := &SharedBillingServer{token: "expected-secret"}
+	for _, header := range []string{"", "Bearer wrong"} {
+		request := httptest.NewRequest(http.MethodPost, "/pay", strings.NewReader("{}"))
+		request.Header.Set("Authorization", header)
+		response := httptest.NewRecorder()
+		s.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("unauthorized request status=%d", response.Code)
+		}
 	}
 }
