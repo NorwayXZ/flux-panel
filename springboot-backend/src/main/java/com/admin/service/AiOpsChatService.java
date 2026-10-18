@@ -325,13 +325,18 @@ public class AiOpsChatService {
       messages.add(Map.of("role", "user", "content", previous.get("user_content")));
       JSONArray events = JSON.parseArray(Objects.toString(previous.get("events"), "[]"));
       String reply = "";
+      String reasoning = null;
       for (Object item : events) {
         JSONObject event = (JSONObject) item;
-        if ("assistant".equals(event.getString("type")))
+        if ("assistant".equals(event.getString("type"))) {
           reply = Objects.toString(event.getJSONObject("message").getString("content"), "");
+          reasoning = event.getJSONObject("message").getString("reasoning_content");
+        }
       }
       if (reply.isBlank()) reply = "（上一轮已结束，详情见工具记录）";
-      messages.add(Map.of("role", "assistant", "content", reply));
+      JSONObject historic = new JSONObject(Map.of("role", "assistant", "content", reply));
+      if (reasoning != null) historic.put("reasoning_content", reasoning);
+      messages.add(historic);
     }
     messages.add(Map.of("role", "user", "content", config.getString("prompt")));
     JSONArray tools = nodes.isEmpty() ? new JSONArray() : AiOpsService.tools(config);

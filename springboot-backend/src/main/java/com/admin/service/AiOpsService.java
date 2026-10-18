@@ -594,6 +594,8 @@ public class AiOpsService {
     JSONObject clean = new JSONObject();
     clean.put("role", "assistant");
     clean.put("content", message.get("content"));
+    if (message.containsKey("reasoning_content"))
+      clean.put("reasoning_content", message.get("reasoning_content"));
     if (message.containsKey("tool_calls"))
       clean.put("tool_calls", message.getJSONArray("tool_calls"));
     return clean;

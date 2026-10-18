@@ -129,7 +129,8 @@ class AiOpsChatServiceTests {
   @Test
   void decodesSplitUtf8AndToolArguments() {
     String wire =
-        chunk(new JSONObject(Map.of("content", "你好")), null)
+        chunk(new JSONObject(Map.of("reasoning_content", "检查上下文")), null)
+            + chunk(new JSONObject(Map.of("content", "你好")), null)
             + chunk(
                 new JSONObject(
                     Map.of(
@@ -165,6 +166,7 @@ class AiOpsChatServiceTests {
     JSONObject message =
         AiChatStreamSubscriber.assemble(subscriber.getBody().toCompletableFuture().join());
     assertEquals("你好", message.getString("content"));
+    assertEquals("检查上下文", message.getString("reasoning_content"));
     assertEquals(
         "{\"nodeId\":1}",
         message
@@ -322,6 +324,60 @@ class AiOpsChatServiceTests {
     assertEquals("no", response.getHeader("X-Accel-Buffering"));
     assertTrue(response.getContentAsString(StandardCharsets.UTF_8).contains("你好"));
     assertTrue(response.getContentAsString().contains("done"));
+  }
+
+  @Test
+  void thinkingToolRoundTripsPreserveProviderContext() throws Exception {
+    AtomicInteger requests = new AtomicInteger();
+    AtomicReference<JSONObject> followup = new AtomicReference<>();
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          JSONObject request =
+              JSON.parseObject(
+                  new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          int step = requests.incrementAndGet();
+          String response;
+          if (step == 1) {
+            JSONObject call = tool("inspect_disk", "{\"nodeId\":1}");
+            call.put("index", 0);
+            response =
+                chunk(new JSONObject(Map.of("reasoning_content", "check disk first")), null)
+                    + chunk(new JSONObject(Map.of("tool_calls", List.of(call))), "tool_calls");
+          } else {
+            followup.set(request);
+            response = chunk(new JSONObject(Map.of("content", "检查完成")), "stop");
+          }
+          exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+          exchange.sendResponseHeaders(200, 0);
+          exchange.getResponseBody().write(response.getBytes(StandardCharsets.UTF_8));
+          exchange.close();
+        });
+    server.start();
+    ops.settings(
+        new JSONObject(
+            Map.of(
+                "base_url",
+                "http://127.0.0.1:" + server.getAddress().getPort() + "/v1",
+                "model",
+                "test",
+                "api_key",
+                "secret-key")));
+    long now = System.currentTimeMillis();
+    db.update("INSERT INTO ai_ops_chat VALUES(1,7,'test',?,?)", now, now);
+    db.update(
+        "INSERT INTO ai_ops_chat_turn(id,chat_id,user_content,policy_json,status,created_at)"
+            + " VALUES(1,1,'check','{}','running',?)",
+        now);
+    JSONObject c = config();
+    c.put("nodeIds", List.of(1));
+    chat.execute(1, 1, c, settings(), new JSONArray(), e -> {}, now);
+    assertEquals(2, requests.get());
+    JSONArray messages = followup.get().getJSONArray("messages");
+    assertEquals("check disk first", messages.getJSONObject(2).getString("reasoning_content"));
+    assertEquals("tool", messages.getJSONObject(3).getString("role"));
+    assertEquals(1, toolCalls.size());
   }
 
   @Test

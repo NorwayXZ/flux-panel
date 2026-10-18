@@ -84,7 +84,7 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
   }
 
   static JSONObject assemble(byte[] bytes) {
-    StringBuilder content = new StringBuilder();
+    StringBuilder content = new StringBuilder(), reasoning = new StringBuilder();
     TreeMap<Integer, JSONObject> tools = new TreeMap<>();
     boolean finished = false;
     for (String raw : new String(bytes, StandardCharsets.UTF_8).split("\n")) {
@@ -101,6 +101,8 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
       JSONObject delta = choice.getJSONObject("delta");
       if (delta == null) continue;
       if (delta.getString("content") != null) content.append(delta.getString("content"));
+      if (delta.getString("reasoning_content") != null)
+        reasoning.append(delta.getString("reasoning_content"));
       JSONArray calls = delta.getJSONArray("tool_calls");
       if (calls == null) continue;
       for (Object value : calls) {
@@ -129,6 +131,7 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
     }
     if (!finished) throw new IllegalStateException("模型流意外中断，请重试");
     JSONObject message = new JSONObject(Map.of("role", "assistant", "content", content.toString()));
+    if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning.toString());
     if (!tools.isEmpty()) message.put("tool_calls", new JSONArray(new ArrayList<>(tools.values())));
     return message;
   }
