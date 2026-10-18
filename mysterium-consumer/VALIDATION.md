@@ -125,3 +125,9 @@ On owner node 8, authenticated loopback payments and remote member payments time
 The signer now uses a dedicated conventional dialer with bounded connect/TLS/response timeouts, and performs reconciliation outside the writer transaction. A regression test verifies a deliberately blocked Hermes query does not hold the ledger writer. Existing replay, persistence, pending, and signature tests pass with the race detector.
 
 During recovery, the prior three-minute pending window repeatedly outlasted upstream's approximately 20-second session creation deadline. The window is now ten seconds, preserving monotonic allocation above all previously signed amounts. Lost promises can therefore incur their reserved increment; this is an availability/cost tradeoff, not zero-cost retry. Deployment and traffic acceptance results must be recorded separately.
+
+### Recovery acceptance, 2026-10-19 05:20 Asia/Shanghai
+
+Installed release `myst-shared-1.39.7-5` on signer node 8 only, after verifying amd64 SHA256 `3bebfbadd1a84ca0ef87b8ddd7a6235fecbad926547d9dc1640e26befc8e2b2c`. Preserved identity, token and ledger; retained pre-change binary/config backups. Removed the unsuccessful HTTP/2 diagnostic override. Node 3's consumer binary did not require replacement.
+
+Both node-local probes and panel full private-proxy tests succeeded: proxy 38 BR `177.92.32.68` (878 ms), proxy 36 US `96.245.58.108` (349 ms), and signer-node proxy 31 US `69.249.207.217` (807 ms). Signer log contained no Payment error since final restart; member log showed continuing balance updates. These are immediate recovery checks, not long-duration assurance.
