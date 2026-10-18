@@ -186,6 +186,8 @@ export default function CustomExitsPanel() {
   };
 
   const plainExits = exits.filter((exit) => !exit.group);
+  // Provider exits are managed on their own tab; they can still join groups.
+  const ownExits = exits.filter((exit) => !exit.provider);
 
   const remove = async (exit: ProxyExit) => {
     if (!window.confirm(`删除自定义出口“${exit.name}”吗？`)) return;
@@ -237,7 +239,7 @@ export default function CustomExitsPanel() {
         <div className="flex min-h-40 items-center justify-center">
           <Spinner />
         </div>
-      ) : exits.length === 0 ? (
+      ) : ownExits.length === 0 ? (
         <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider px-6 text-center text-default-500">
           <Route size={28} />
           <span className="text-sm">
@@ -246,7 +248,7 @@ export default function CustomExitsPanel() {
         </div>
       ) : (
         <ResourceCardGrid>
-          {exits.map((exit) => (
+          {ownExits.map((exit) => (
             <ResourceCard
               key={exit.id}
               actions={[

@@ -118,7 +118,7 @@ export function exitLabel(
     const id = Number(exit.slice("custom:".length));
     const custom = customExits.find((item) => item.id === id);
 
-    return `${custom?.group ? "出口组" : "自定义"} · ${custom?.name || `#${id}`}`;
+    return `${custom?.group ? "出口组" : custom?.provider ? "服务商" : "自定义"} · ${custom?.name || `#${id}`}`;
   }
 
   return exit;
@@ -205,7 +205,7 @@ export default function RouteRulesEditor({
       : []),
     ...customExits.map((exit) => ({
       key: `custom:${exit.id}`,
-      label: `${exit.group ? "出口组" : "自定义"} · ${exit.name}`,
+      label: `${exit.group ? "出口组" : exit.provider ? "服务商" : "自定义"} · ${exit.name}`,
     })),
     { key: "block", label: "拒绝连接" },
   ];

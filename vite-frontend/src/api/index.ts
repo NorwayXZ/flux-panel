@@ -1178,6 +1178,15 @@ export interface ProxyExit {
   usedBy: number;
   /** Set for an exit group, which uses the fastest member automatically. */
   group?: ExitGroupSettings;
+  /** Set for an exit from a proxy provider (SOAX, Oxylabs, custom). */
+  provider?: {
+    providerId: number;
+    providerName: string;
+    kind?: ProxyProviderKind | null;
+    network?: "mobile" | "residential" | null;
+    country: string;
+    carrier?: string | null;
+  };
 }
 
 export interface RoutePreset {
@@ -1231,6 +1240,70 @@ export interface WarpNodeStatus {
   lastTestLatency?: number | null;
   lastError?: string | null;
 }
+export type ProxyProviderKind = "soax" | "oxylabs" | "custom";
+/** A commercial mobile or residential proxy provider account. */
+export interface ProxyProvider {
+  id: number;
+  name: string;
+  kind: ProxyProviderKind;
+  network: "mobile" | "residential";
+  stickyMinutes: number;
+  usageUsedBytes?: number | null;
+  usageLimitBytes?: number | null;
+  usageAt?: number | null;
+  usageError?: string | null;
+  usageSupported: boolean;
+  settings: Record<string, string | number | null>;
+  exits: number;
+}
+export const getProxyProviders = () =>
+  Network.post<ProxyProvider[]>("/proxy-provider/list");
+export const saveProxyProvider = (data: {
+  id?: number;
+  name: string;
+  kind: ProxyProviderKind;
+  network: "mobile" | "residential";
+  stickyMinutes: number;
+  settings: Record<string, string | number | undefined>;
+}) =>
+  Network.mutate("/proxy-provider/save", data, [
+    "/proxy-provider/list",
+    "/proxy-exit/list",
+  ]);
+export const deleteProxyProvider = (id: number) =>
+  Network.mutate("/proxy-provider/delete", { id }, ["/proxy-provider/list"]);
+export const getProviderCountries = (id: number) =>
+  Network.post<Array<{ code: string; name: string }> | null>(
+    "/proxy-provider/countries",
+    { id },
+    30_000,
+  );
+export const getProviderCarriers = (id: number, country: string) =>
+  Network.post<Array<{ code: string; name: string }> | null>(
+    "/proxy-provider/carriers",
+    { id, country },
+    30_000,
+  );
+export const refreshProviderUsage = (id: number) =>
+  Network.mutate<ProxyProvider>("/proxy-provider/usage", { id }, ["/proxy-provider/list"], 60_000);
+export const createProviderExit = (data: {
+  providerId: number;
+  country: string;
+  carrier?: string;
+  name?: string;
+}) =>
+  Network.mutate("/proxy-provider/exit/create", data, [
+    "/proxy-provider/list",
+    "/proxy-exit/list",
+  ]);
+export const rotateProviderExit = (id: number) =>
+  Network.mutate<{ reapplied: number }>(
+    "/proxy-provider/exit/rotate",
+    { id },
+    ["/proxy-exit/list"],
+    120_000,
+  );
+
 /** Mysterium residential exits: one paid account per node, one local proxy per country. */
 export interface MysteriumSettings {
   enabled: boolean;

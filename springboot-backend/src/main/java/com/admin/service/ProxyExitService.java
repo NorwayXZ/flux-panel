@@ -41,9 +41,12 @@ public class ProxyExitService {
     private final AESCrypto crypto;
 
     private final WarpService warp;
+    private final ProxyProviderService providers;
 
-    public ProxyExitService(JdbcTemplate jdbc, NodeMapper nodeMapper, WarpService warp, @Value("${jwt-secret}") String secret) {
+    public ProxyExitService(JdbcTemplate jdbc, NodeMapper nodeMapper, WarpService warp, ProxyProviderService providers,
+                            @Value("${jwt-secret}") String secret) {
         this.warp = warp;
+        this.providers = providers;
         this.jdbc = jdbc;
         this.nodeMapper = nodeMapper;
         this.crypto = new AESCrypto(secret + ":proxy-exit");
@@ -186,7 +189,8 @@ public class ProxyExitService {
         if (!AgentVersionUtil.isAtLeast(node.getVersion(), ROUTER_AGENT_VERSION)) {
             return R.err("自检需要节点 Agent " + ROUTER_AGENT_VERSION + " 或更高版本");
         }
-        JSONObject outbound = outbound(row);
+        JSONObject outbound = resolved(row);
+        if (outbound == null) return R.err("这个出口的服务商已被删除");
         if (GROUP_TYPE.equals(outbound.getString("type"))) return testGroup(id, outbound, node);
         GostDto response = WebSocketServer.send_msg(node.getId(), Map.of("outbound", outbound), "TestProxyExit", 25);
         long now = System.currentTimeMillis();
@@ -250,7 +254,53 @@ public class ProxyExitService {
         if (rows.isEmpty()) return null;
         Map<String, Object> row = rows.get(0);
         if (!admin && !Objects.equals(((Number) row.get("user_id")).intValue(), userId)) return null;
-        return outbound(row);
+        return resolved(row);
+    }
+
+    /** The exit's outbound with provider exits turned into their gateway outbound. */
+    private JSONObject resolved(Map<String, Object> row) {
+        JSONObject outbound = outbound(row);
+        return ProxyProviderService.EXIT_TYPE.equals(outbound.getString("type")) ? providers.expand(outbound) : outbound;
+    }
+
+    // ---- Provider exits ----
+
+    /** Adds an exit for a provider country (and carrier), with a fresh session. Admins only. */
+    public R createProviderExit(Long providerId, String country, String carrier, String name) {
+        Map<String, Object> provider = providers.row(providerId);
+        String code = country == null ? null : country.trim().toUpperCase(java.util.Locale.ROOT);
+        String carrierCode = org.apache.commons.lang3.StringUtils.isBlank(carrier) ? null : carrier.trim().toLowerCase(java.util.Locale.ROOT);
+        String error = providers.validateExit(provider, code, carrierCode);
+        if (error != null) return R.err(error);
+        JSONObject reference = new JSONObject(true);
+        reference.put("type", ProxyProviderService.EXIT_TYPE);
+        reference.put("providerId", providerId);
+        reference.put("country", code);
+        if (carrierCode != null) reference.put("carrier", carrierCode);
+        reference.put("session", ProxyProviderService.newSession());
+        String gateway = providers.gateway(provider);
+        String host = gateway.substring(0, gateway.lastIndexOf(':'));
+        int port = Integer.parseInt(gateway.substring(gateway.lastIndexOf(':') + 1));
+        String label = org.apache.commons.lang3.StringUtils.isNotBlank(name) ? name.trim()
+                : provider.get("name") + " · " + ("mobile".equals(provider.get("network")) ? "手机" : "家宽") + " · "
+                + new java.util.Locale("", code).getDisplayCountry(java.util.Locale.SIMPLIFIED_CHINESE)
+                + (carrierCode == null ? "" : " · " + carrierCode);
+        long now = System.currentTimeMillis();
+        jdbc.update("INSERT INTO proxy_exit (user_id,name,protocol,server,port,outbound,members,created_time,updated_time) VALUES (?,?,?,?,?,?,?,?,?)",
+                currentUserId(), truncate(label, 100), ProxyProviderService.EXIT_TYPE, host, port,
+                crypto.encrypt(reference.toJSONString()), "provider:" + providerId, now, now);
+        return R.ok();
+    }
+
+    /** Gives a provider exit a new session, so the provider assigns another IP. */
+    public R rotateProviderExit(Long id) {
+        Map<String, Object> row = owned(id);
+        if (row == null || !ProxyProviderService.EXIT_TYPE.equals(row.get("protocol"))) return R.err("出口不存在");
+        JSONObject reference = outbound(row);
+        reference.put("session", ProxyProviderService.newSession());
+        jdbc.update("UPDATE proxy_exit SET outbound=?, updated_time=?, last_test_ok=NULL, last_test_ip=NULL, last_test_error=NULL WHERE id=?",
+                crypto.encrypt(reference.toJSONString()), System.currentTimeMillis(), id);
+        return R.ok();
     }
 
     String exitName(Long id) {
@@ -296,6 +346,18 @@ public class ProxyExitService {
         item.put("lastTestCountry", row.get("last_test_country"));
         item.put("lastTestLatency", row.get("last_test_latency"));
         item.put("lastTestError", WarpService.explainRuntimeError((String) row.get("last_test_error")));
+        if (ProxyProviderService.EXIT_TYPE.equals(row.get("protocol"))) {
+            JSONObject reference = outbound(row);
+            Map<String, Object> provider = providers.row(reference.getLong("providerId"));
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("providerId", reference.getLong("providerId"));
+            info.put("providerName", provider == null ? "（已删除）" : provider.get("name"));
+            info.put("kind", provider == null ? null : provider.get("kind"));
+            info.put("network", provider == null ? null : provider.get("network"));
+            info.put("country", reference.getString("country"));
+            info.put("carrier", reference.getString("carrier"));
+            item.put("provider", info);
+        }
         if (GROUP_TYPE.equals(row.get("protocol"))) {
             JSONObject group = outbound(row);
             List<Long> members = group.getJSONArray("members").toJavaList(Long.class);

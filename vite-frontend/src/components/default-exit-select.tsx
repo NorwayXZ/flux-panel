@@ -139,13 +139,14 @@ export default function DefaultExitSelect({
           </SelectItem>
         </SelectSection>
         {customExits.length > 0 ? (
-          <SelectSection title="全部改走自己添加的节点">
+          <SelectSection title="全部改走自己添加的节点或服务商">
             {customExits.map((exit) => (
               <SelectItem
                 key={`custom:${exit.id}`}
-                textValue={`${exit.group ? "出口组" : "自定义"} · ${exit.name}`}
+                textValue={`${exit.group ? "出口组" : exit.provider ? "服务商" : "自定义"} · ${exit.name}`}
               >
-                {exit.group ? "出口组" : "自定义"} · {exit.name}
+                {exit.group ? "出口组" : exit.provider ? "服务商" : "自定义"} ·{" "}
+                {exit.name}
               </SelectItem>
             ))}
           </SelectSection>

@@ -95,6 +95,17 @@ public class ProxyRoutingService {
                 || rules(proxy.getRouteRules()).stream().anyMatch(rule -> key.equals(rule.getString("exit"))));
     }
 
+    /** Re-applies proxies using any exit of the provider (directly or in a group). */
+    public int reapplyForProvider(Long providerId) {
+        int applied = 0;
+        for (Long exitId : jdbc.queryForList("SELECT id FROM proxy_exit WHERE protocol = ? AND members = ?", Long.class,
+                ProxyProviderService.EXIT_TYPE, "provider:" + providerId)) {
+            applied += reapplyForExit(exitId);
+            for (Long group : exits.groupsContaining(exitId)) applied += reapplyForExit(group);
+        }
+        return applied;
+    }
+
     /** Re-applies the routers on a node whose proxies may use WARP, after its account changed. */
     public int reapplyOnNodeUsingWarp(Long nodeId) {
         return reapplyWhere(proxy -> java.util.Objects.equals(proxy.getNodeId(), nodeId));

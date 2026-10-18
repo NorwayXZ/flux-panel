@@ -40,6 +40,7 @@ import PageShell from "@/components/page-shell";
 import PageHelp from "@/components/page-help";
 import CustomExitsPanel from "@/components/custom-exits-panel";
 import MysteriumPanel from "@/components/mysterium-panel";
+import ProxyProvidersPanel from "@/components/proxy-providers-panel";
 import RoutePresetsPanel from "@/components/route-presets-panel";
 import RuleCatalogPanel from "@/components/rule-catalog-panel";
 import RulesetsPanel from "@/components/rulesets-panel";
@@ -549,6 +550,7 @@ export default function ExitManagementPage() {
   const tabs = [
     ...(admin ? [{ key: "residential", title: "家宽出口" }] : []),
     ...(admin ? [{ key: "mysterium", title: "Mysterium 家宽" }] : []),
+    ...(admin ? [{ key: "providers", title: "代理服务商" }] : []),
     { key: "custom", title: "自定义出口" },
     { key: "presets", title: "规则库" },
   ];
@@ -595,6 +597,8 @@ export default function ExitManagementPage() {
         <ResidentialExits />
       ) : tab === "mysterium" && admin ? (
         <MysteriumPanel />
+      ) : tab === "providers" && admin ? (
+        <ProxyProvidersPanel />
       ) : tab === "presets" ? (
         <div className="space-y-8">
           <RuleCatalogPanel />
