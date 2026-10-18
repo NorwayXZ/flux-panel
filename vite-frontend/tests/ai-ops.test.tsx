@@ -10,6 +10,10 @@ vi.mock("@/api/ai-ops", () => ({
   opsSettings: vi.fn(),
   opsDelete: vi.fn(),
   opsDetail: vi.fn(),
+  opsPreferences: vi.fn(async () => ({ code: 0, data: { alertDiagnosis: true, weeklyReport: true } })),
+  opsSavePreferences: vi.fn(),
+  opsReports: vi.fn(async () => ({ code: 0, data: [] })),
+  opsGenerateReport: vi.fn(),
 }));
 vi.mock("@heroui/button", () => ({
   Button: ({ children, onPress, isDisabled, isLoading, ...p }: any) => (
