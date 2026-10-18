@@ -227,8 +227,28 @@ export default function PortResourcesPage() {
     const message = orphaned
       ? `该端口池所属节点已删除。确认清理“${pool.name}”及其遗留租约吗？`
       : `确认删除端口池“${pool.name}”吗？`;
+
     if (!window.confirm(message)) return;
-    const res = await deletePublishingPortPool(pool.id);
+    let res = await deletePublishingPortPool(pool.id);
+
+    // The node is gone, so domain entries that still point at this pool cannot work any more.
+    if (res.code === 409 && res.data?.domainRoutes?.length) {
+      const domains = res.data.domainRoutes
+        .map((route) => `· ${route.domain}（入口节点：${route.nodeName}）`)
+        .join("\n");
+      const services = res.data.services?.length
+        ? `\n\n同时会清理这个端口池上的内网映射：${res.data.services.join("、")}。`
+        : "";
+
+      if (
+        !window.confirm(
+          `这个端口池还被 ${res.data.domainRoutes.length} 个域名入口使用：\n${domains}\n\n它们的后端在已删除的节点上，已经无法访问。` +
+            `确认一并删除这些域名入口（会移除入口节点上的配置和对应 DNS 记录）并清理端口池吗？${services}`,
+        )
+      )
+        return;
+      res = await deletePublishingPortPool(pool.id, true);
+    }
 
     if (res.code !== 0) return toast.error(res.msg || "删除失败");
     toast.success("端口池已删除");
@@ -242,7 +262,10 @@ export default function PortResourcesPage() {
         <div>
           <div className="flex items-center gap-1.5">
             <h1 className="text-2xl font-bold text-foreground">资源中心</h1>
-            <PageHelp>统一管理端口、域名、DDNS、AWS 凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。</PageHelp>
+            <PageHelp>
+              统一管理端口、域名、DDNS、AWS
+              凭据和家庭接入设备。端口资源仍在本页直接维护，其他资源可从上方标签或下方入口进入。
+            </PageHelp>
           </div>
         </div>
         <Button

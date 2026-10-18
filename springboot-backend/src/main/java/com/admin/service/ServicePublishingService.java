@@ -18,6 +18,9 @@ public interface ServicePublishingService {
     R listPortPools();
     R listPortGrants(Integer userId);
     R deletePortPool(Long id);
+
+    /** For a pool whose node is deleted, optionally also deletes the domain entries that still point at it. */
+    R deletePortPool(Long id, boolean includeDomainRoutes);
     R createPublishedService(PublishedServiceCreateDto dto);
     R listPublishedServices();
     R renewPublishedService(Long id, Integer hours, boolean permanent);

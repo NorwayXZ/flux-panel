@@ -64,6 +64,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -316,10 +317,16 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public R deletePortPool(Long id) {
+        return deletePortPool(id, false);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public R deletePortPool(Long id, boolean includeDomainRoutes) {
         PortPool pool = poolMapper.selectById(id);
         if (pool == null || pool.getStatus() == 0) return R.err("端口池不存在");
         if (nodeMapper.selectById(pool.getNodeId()) == null) {
-            return deleteOrphanedPortPool(pool);
+            return deleteOrphanedPortPool(pool, includeDomainRoutes);
         }
         Integer leases = leaseMapper.selectCount(new QueryWrapper<PortLease>().eq("pool_id", id));
         if (leases != null && leases > 0) return R.err("端口池仍有租约，不能删除");
@@ -337,7 +344,7 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
      * 节点记录已经被删除时，公网入口不可能再恢复运行；清理它遗留的端口池账本，
      * 但仍保留域名入口和家庭网络中转的依赖保护，避免产生无法解释的孤儿业务记录。
      */
-    private R deleteOrphanedPortPool(PortPool pool) {
+    private R deleteOrphanedPortPool(PortPool pool, boolean includeDomainRoutes) {
         Long poolId = pool.getId();
         int homeProxyCount = blockingHomeProxyPoolCount(poolId);
         if (homeProxyCount > 0) {
@@ -347,12 +354,44 @@ public class ServicePublishingServiceImpl implements ServicePublishingService {
         List<PublishedService> services = publishedServiceMapper.selectList(new QueryWrapper<PublishedService>()
                 .eq("pool_id", poolId)
                 .notIn("state", "released", "deleted"));
+        List<DomainRoute> routes = new ArrayList<>();
         for (PublishedService service : services) {
-            Integer domainCount = domainRouteMapper.selectCount(new QueryWrapper<DomainRoute>()
-                    .eq("published_service_id", service.getId()).ne("state", "deleted"));
-            if (domainCount != null && domainCount > 0) {
-                return R.err("端口池仍被 " + domainCount + " 个域名入口使用，请先删除相关域名入口");
+            routes.addAll(domainRouteMapper.selectList(new QueryWrapper<DomainRoute>()
+                    .eq("published_service_id", service.getId()).ne("state", "deleted")));
+        }
+        if (!routes.isEmpty() && !includeDomainRoutes) {
+            // Their backend lived on the deleted node, so they cannot work any more; list them so the
+            // administrator can confirm removing them together with the pool.
+            List<Map<String, Object>> blocking = new ArrayList<>();
+            for (DomainRoute route : routes) {
+                Node node = nodeMapper.selectById(route.getNodeId());
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", route.getId());
+                item.put("name", route.getName());
+                item.put("domain", route.getDomain());
+                item.put("nodeName", node == null ? "节点已删除" : node.getName());
+                blocking.add(item);
             }
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("domainRoutes", blocking);
+            data.put("services", services.stream().map(PublishedService::getName).toList());
+            R result = R.err(409, "端口池仍被 " + routes.size() + " 个域名入口使用："
+                    + String.join("、", routes.stream().map(DomainRoute::getDomain).toList())
+                    + "。它们的后端在已删除的节点上，已无法使用，可确认后一并删除");
+            result.setData(data);
+            return result;
+        }
+        for (DomainRoute route : routes) {
+            route.setState("delete_pending");
+            route.setLastError("所属端口池的节点已删除，随端口池一并清理");
+            route.setUpdatedTime(System.currentTimeMillis());
+            domainRouteMapper.updateById(route);
+            if (!cleanupDomainRoute(route)) {
+                return R.err("域名入口 " + route.getDomain() + " 删除未完成："
+                        + Objects.toString(route.getLastError(), "入口节点暂时无法处理") + "；可稍后重试");
+            }
+        }
+        for (PublishedService service : services) {
             InternalConnector connector = connectorMapper.selectById(service.getConnectorId());
             if (connector != null && !WebSocketServer.isConnectorOnline(connector.getId())) {
                 return R.err("端口池仍有内网映射，但接入端离线，暂时无法安全清理");

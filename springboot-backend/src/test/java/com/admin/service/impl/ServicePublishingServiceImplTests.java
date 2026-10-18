@@ -74,4 +74,53 @@ class ServicePublishingServiceImplTests {
         assertEquals(0, pool.getStatus());
         verify(grantService).deleteForPool(9L);
     }
+
+    @Test
+    void listsAndOptionallyRemovesDomainEntriesOfAnOrphanedPool() {
+        ServicePublishingServiceImpl service = new ServicePublishingServiceImpl();
+        PortPoolMapper poolMapper = mock(PortPoolMapper.class);
+        NodeMapper nodeMapper = mock(NodeMapper.class);
+        PortLeaseMapper leaseMapper = mock(PortLeaseMapper.class);
+        PublishedServiceMapper publishedServiceMapper = mock(PublishedServiceMapper.class);
+        com.admin.mapper.DomainRouteMapper domainRouteMapper = mock(com.admin.mapper.DomainRouteMapper.class);
+        com.admin.mapper.InternalConnectorMapper connectorMapper = mock(com.admin.mapper.InternalConnectorMapper.class);
+        PortPoolGrantService grantService = mock(PortPoolGrantService.class);
+        PortPool pool = new PortPool();
+        pool.setId(2L);
+        pool.setNodeId(16L);
+        pool.setStatus(1);
+        com.admin.entity.PublishedService published = new com.admin.entity.PublishedService();
+        published.setId(3L);
+        published.setName("openwrt");
+        published.setConnectorId(30L);
+        com.admin.entity.DomainRoute route = new com.admin.entity.DomainRoute();
+        route.setId(1L);
+        route.setDomain("openwrt-web.eeaa.xyz");
+        route.setNodeId(16L);
+        route.setState("deployment_failed");
+
+        when(poolMapper.selectById(2L)).thenReturn(pool);
+        when(nodeMapper.selectById(16L)).thenReturn(null);
+        when(publishedServiceMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(java.util.List.of(published));
+        when(domainRouteMapper.selectList(org.mockito.ArgumentMatchers.any())).thenReturn(java.util.List.of(route));
+        when(connectorMapper.selectById(30L)).thenReturn(null);
+        ReflectionTestUtils.setField(service, "poolMapper", poolMapper);
+        ReflectionTestUtils.setField(service, "nodeMapper", nodeMapper);
+        ReflectionTestUtils.setField(service, "leaseMapper", leaseMapper);
+        ReflectionTestUtils.setField(service, "publishedServiceMapper", publishedServiceMapper);
+        ReflectionTestUtils.setField(service, "domainRouteMapper", domainRouteMapper);
+        ReflectionTestUtils.setField(service, "connectorMapper", connectorMapper);
+        ReflectionTestUtils.setField(service, "portPoolGrantService", grantService);
+
+        var blocked = service.deletePortPool(2L, false);
+        assertEquals(409, blocked.getCode());
+        org.junit.jupiter.api.Assertions.assertTrue(blocked.getMsg().contains("openwrt-web.eeaa.xyz"));
+        assertEquals(1, ((java.util.List<?>) ((java.util.Map<?, ?>) blocked.getData()).get("domainRoutes")).size());
+        assertEquals(1, pool.getStatus(), "nothing is removed without confirmation");
+
+        assertEquals(0, service.deletePortPool(2L, true).getCode());
+        assertEquals("deleted", route.getState());
+        assertEquals("deleted", published.getState());
+        assertEquals(0, pool.getStatus());
+    }
 }

@@ -152,7 +152,8 @@ public class ServicePublishingController {
 
     @LogAnnotation @RequireRole @PostMapping("/pool/delete")
     public R deletePool(@RequestBody Map<String, Object> params) {
-        return service.deletePortPool(Long.valueOf(params.get("id").toString()));
+        return service.deletePortPool(Long.valueOf(params.get("id").toString()),
+                Boolean.TRUE.equals(params.get("includeDomainRoutes")));
     }
 
     @LogAnnotation @PostMapping("/service/create")

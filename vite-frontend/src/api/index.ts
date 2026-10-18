@@ -3918,9 +3918,17 @@ export const getPublishingPortGrants = (userId?: number) =>
     "/service-publishing/grant/list",
     userId ? { userId } : {},
   );
-export const deletePublishingPortPool = (id: number) =>
-  Network.mutate("/service-publishing/pool/delete", { id }, [
+export const deletePublishingPortPool = (
+  id: number,
+  includeDomainRoutes = false,
+) =>
+  Network.mutate<{
+    domainRoutes?: { id: number; name: string; domain: string; nodeName: string }[];
+    services?: string[];
+  }>("/service-publishing/pool/delete", { id, includeDomainRoutes }, [
     "/service-publishing/pool/list",
+    "/service-publishing/domain/list",
+    "/service-publishing/service/list",
   ]);
 export const getPortLedger = (
   data: {
