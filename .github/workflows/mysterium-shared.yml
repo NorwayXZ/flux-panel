@@ -32,5 +32,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view myst-shared-1.39.7-3 >/dev/null 2>&1 || gh release create myst-shared-1.39.7-3 --target "$GITHUB_SHA" --prerelease --title "Mysterium shared billing client 1.39.7-3" --notes "Custom GPL consumer and central signer. 1.39.7-3: consumers retry the same invoice for up to 100 s so a panel restart does not end sessions; a signed payment Hermes has not seen within 3 minutes no longer blocks the pool. Requires the matching panel and Agent. Live multi-node acceptance verification is pending. All traffic is billed against the shared balance."
-          gh release upload myst-shared-1.39.7-3 shared-release/myst-shared-linux-* shared-release/SHA256SUMS shared-release/source-overlay.tar.gz shared-release/upstream.patch shared-release/LICENSE --clobber
+          gh release view myst-shared-1.39.7-4 >/dev/null 2>&1 || gh release create myst-shared-1.39.7-4 --target "$GITHUB_SHA" --prerelease --title "Mysterium shared billing client 1.39.7-4" --notes "Fix shared signer reconciliation stalls: dedicated bounded Hermes HTTP transport and network reconciliation outside the ledger writer transaction. Preserves the payment ledger and shared identity. Requires configuration refresh to install the new binary."
+          gh release upload myst-shared-1.39.7-4 shared-release/myst-shared-linux-* shared-release/SHA256SUMS shared-release/source-overlay.tar.gz shared-release/upstream.patch shared-release/LICENSE --clobber

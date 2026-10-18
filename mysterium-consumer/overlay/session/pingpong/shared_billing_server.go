@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/mysteriumnetwork/node/requests"
 	"github.com/mysteriumnetwork/payments/crypto"
 	bolt "go.etcd.io/bbolt"
 )
@@ -54,6 +55,15 @@ func StartSharedBillingServer(signer hashSigner, info consumerInfoGetter, addres
 	consumer := os.Getenv("MYST_SHARED_CONSUMER")
 	if !common.IsHexAddress(consumer) {
 		return fmt.Errorf("invalid shared consumer")
+	}
+	// Signing must not share the discovery swarm dialer or its HTTP/2 pool.
+	// A stalled reconciliation otherwise holds the ledger writer and queues
+	// every consumer's invoice behind an unrelated discovery connection.
+	if caller, ok := info.(*HermesCaller); ok {
+		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+		transport := &http.Transport{DialContext: dialer.DialContext, TLSHandshakeTimeout: 5 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Second, IdleConnTimeout: 30 * time.Second}
+		info = NewHermesCaller(requests.NewHTTPClientWithTransport(transport, 8*time.Second), caller.hermesBaseURI)
 	}
 	db, err := bolt.Open(filepath.Join(directory, "shared-billing.db"), 0600, &bolt.Options{Timeout: time.Second})
 	if err != nil {
@@ -120,6 +130,14 @@ func (s *SharedBillingServer) pay(request SharedPaymentRequest) (*crypto.Exchang
 	if hermes != common.HexToAddress(request.Hermes) || channel != common.HexToAddress(request.Channel) {
 		return nil, fmt.Errorf("inactive payment channel")
 	}
+	// Network reconciliation must never hold the ledger's single writer lock.
+	data, err := s.info.GetConsumerData(s.chain, s.consumer.Hex(), -1)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reconcile Hermes: %w", err)
+	}
+	if err := data.LatestPromise.isValid(s.consumer.Hex()); err != nil {
+		return nil, err
+	}
 	var result *crypto.ExchangeMessage
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(fmt.Sprintf("%d:%s:%s:%s", s.chain, s.consumer.Hex(), hermes.Hex(), channel.Hex())))
@@ -143,13 +161,6 @@ func (s *SharedBillingServer) pay(request SharedPaymentRequest) (*crypto.Exchang
 			}
 			result = &old.Message
 			return nil
-		}
-		data, err := s.info.GetConsumerData(s.chain, s.consumer.Hex(), -1)
-		if err != nil {
-			return fmt.Errorf("cannot reconcile Hermes: %w", err)
-		}
-		if err := data.LatestPromise.isValid(s.consumer.Hex()); err != nil {
-			return err
 		}
 		latest := data.LatestPromise.Amount
 		if latest == nil {

@@ -186,3 +186,53 @@ func TestSharedSignerRequiresLoopbackSecret(t *testing.T) {
 		}
 	}
 }
+
+// A slow Hermes query must not monopolize the ledger writer, even when the
+// HTTP caller has already timed out and retries arrive from other consumers.
+type sharedBlockingInfo struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (m *sharedBlockingInfo) GetConsumerData(int64, string, time.Duration) (HermesUserInfo, error) {
+	close(m.entered)
+	<-m.release
+	return HermesUserInfo{Balance: big.NewInt(10000), Settled: big.NewInt(0), LatestPromise: LatestPromise{Amount: big.NewInt(0)}}, nil
+}
+
+func TestSharedHermesQueryDoesNotHoldLedgerWriter(t *testing.T) {
+	ks := identity.NewMockKeystoreWith(identity.MockKeys)
+	account := ks.Accounts()[0]
+	if err := ks.Unlock(account, ""); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bolt.Open(filepath.Join(t.TempDir(), "billing.db"), 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	info := &sharedBlockingInfo{entered: make(chan struct{}), release: make(chan struct{})}
+	addr := &mockAddressProvider{}
+	channel, _ := addr.GetActiveChannelAddress(137, account.Address)
+	hermes, _ := addr.GetActiveHermes(137)
+	s := &SharedBillingServer{db: db, signer: ks, info: info, addresses: addr, consumer: account.Address, chain: 137}
+	req := SharedPaymentRequest{Consumer: account.Address.Hex(), Channel: channel.Hex(), Hermes: hermes.Hex(), Invoice: crypto.Invoice{
+		ChainID: 137, Provider: common.HexToAddress("0x1234").Hex(), AgreementID: big.NewInt(1), AgreementTotal: big.NewInt(7), TransactorFee: big.NewInt(0), Hashlock: strings.Repeat("01", 32)}}
+	finished := make(chan error, 1)
+	go func() { _, err := s.pay(req); finished <- err }()
+	<-info.entered
+	writer := make(chan error, 1)
+	go func() { writer <- db.Update(func(*bolt.Tx) error { return nil }) }()
+	select {
+	case err := <-writer:
+		if err != nil {
+			t.Error(err)
+		}
+	case <-time.After(time.Second):
+		t.Error("Hermes network request holds ledger writer")
+	}
+	close(info.release)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+}
