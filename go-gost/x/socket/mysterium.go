@@ -4,10 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,11 +42,21 @@ const (
 
 var mysteriumTraceURL = "https://www.cloudflare.com/cdn-cgi/trace"
 
+// The panel waits 150 s for MysteriumConnect; one provider gets at most 30 s.
+var (
+	mysteriumConnectBudget  = 140 * time.Second
+	mysteriumAttemptTimeout = 30 * time.Second
+	mysteriumFallbackTime   = 35 * time.Second
+)
+
 type mysteriumConnection struct {
 	ProxyPort        int      `json:"proxyPort"`
 	Country          string   `json:"country"`
 	ProviderID       string   `json:"providerId,omitempty"`
 	ExcludeProviders []string `json:"excludeProviders,omitempty"`
+	// FallbackProvider is reconnected when no other provider works, so a
+	// manual switch does not leave the proxy without an exit.
+	FallbackProvider string `json:"fallbackProvider,omitempty"`
 }
 
 type mysteriumManager struct {
@@ -55,6 +67,8 @@ type mysteriumManager struct {
 	client    *http.Client
 	cmd       *exec.Cmd
 	stopping  bool
+	// last restart after providers stopped answering; limits restarts
+	revived time.Time
 	// desired connections by proxy port, restored after a restart
 	wanted map[int]mysteriumConnection
 }
@@ -366,6 +380,10 @@ func (m *mysteriumManager) adoptTrial() {
 // ---- Tequilapi ----
 
 func (m *mysteriumManager) call(method, path string, body interface{}, out interface{}) error {
+	return m.callContext(context.Background(), method, path, body, out)
+}
+
+func (m *mysteriumManager) callContext(ctx context.Context, method, path string, body interface{}, out interface{}) error {
 	var reader io.Reader
 	if body != nil {
 		content, err := json.Marshal(body)
@@ -374,7 +392,7 @@ func (m *mysteriumManager) call(method, path string, body interface{}, out inter
 		}
 		reader = bytes.NewReader(content)
 	}
-	request, err := http.NewRequest(method, m.api+path, reader)
+	request, err := http.NewRequestWithContext(ctx, method, m.api+path, reader)
 	if err != nil {
 		return err
 	}
@@ -609,7 +627,8 @@ type mysteriumProposal struct {
 }
 
 // pickProviders returns residential providers in the country, best first,
-// leaving out excluded ones.
+// leaving out excluded ones. When there are more than limit, they are drawn at
+// random from the best few, so nodes and retries do not all try the same ones.
 func pickProviders(proposals []mysteriumProposal, exclude []string, limit int) []mysteriumProposal {
 	skip := map[string]bool{}
 	for _, id := range exclude {
@@ -630,7 +649,12 @@ func pickProviders(proposals []mysteriumProposal, exclude []string, limit int) [
 		return a.Bandwidth > b.Bandwidth
 	})
 	if len(candidates) > limit {
-		candidates = candidates[:limit]
+		pool := candidates[:min(len(candidates), limit*3)]
+		rand.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+		candidates = pool[:limit]
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return candidates[i].Quality.Quality > candidates[j].Quality.Quality
+		})
 	}
 	return candidates
 }
@@ -643,6 +667,8 @@ type mysteriumConnectResult struct {
 	City       string `json:"city"`
 	ISP        string `json:"isp"`
 	LatencyMs  int64  `json:"latencyMs"`
+	// Fallback: no new provider worked and the previous one was reconnected.
+	Fallback bool `json:"fallback,omitempty"`
 }
 
 // connect opens (or replaces) the connection on the proxy port to a
@@ -673,36 +699,108 @@ func (m *mysteriumManager) connect(request mysteriumConnection) (mysteriumConnec
 			inCountry = append(inCountry, proposal)
 		}
 	}
-	candidates := pickProviders(inCountry, request.ExcludeProviders, 4)
+	candidates := pickProviders(inCountry, request.ExcludeProviders, 6)
 	if request.ProviderID != "" {
 		candidates = append([]mysteriumProposal{{ProviderID: request.ProviderID}}, candidates...)
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && request.FallbackProvider == "" {
 		return mysteriumConnectResult{}, fmt.Errorf("no residential Mysterium provider available in %s", request.Country)
 	}
+	deadline := time.Now().Add(mysteriumConnectBudget)
+	reserve := time.Duration(0)
+	if request.FallbackProvider != "" {
+		reserve = mysteriumFallbackTime
+	}
 	var lastErr error
+	p2pFailures, restarted := 0, false
 	for _, candidate := range candidates {
-		_ = m.call(http.MethodDelete, "/connection?id="+strconv.Itoa(request.ProxyPort), nil, nil)
-		body := map[string]interface{}{"consumer_id": id, "provider_id": candidate.ProviderID, "service_type": "wireguard",
-			"connect_options": map[string]interface{}{"proxy_port": request.ProxyPort}}
-		if err := m.call(http.MethodPut, "/connection", body, nil); err != nil {
-			lastErr = err
+		if time.Until(deadline)-reserve < 10*time.Second {
+			break
+		}
+		result, err := m.attempt(request, id, candidate, deadline.Add(-reserve))
+		if err == nil {
+			if restarted {
+				go m.reconnectOthers(request.ProxyPort)
+			}
+			return result, nil
+		}
+		lastErr = err
+		if !mysteriumP2PTrouble(err) {
+			p2pFailures = 0
 			continue
 		}
-		ip, latency, err := mysteriumProbe(request.ProxyPort)
-		if err != nil {
-			lastErr = err
-			continue
+		// Providers rarely all stop answering at once; myst's link to the
+		// broker has usually gone stale. A fresh daemon reconnects it.
+		if p2pFailures++; p2pFailures >= 2 && !restarted && m.mayRevive() {
+			restarted = true
+			m.stop()
+			if err := m.ensureRunning(); err != nil {
+				lastErr = err
+				break
+			}
 		}
-		m.mu.Lock()
-		m.wanted[request.ProxyPort] = mysteriumConnection{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID}
-		m.mu.Unlock()
-		m.saveWanted()
-		return mysteriumConnectResult{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID,
-			ExitIP: ip, City: candidate.Location.City, ISP: candidate.Location.ISP, LatencyMs: latency}, nil
+	}
+	if request.FallbackProvider != "" && time.Until(deadline) > 10*time.Second {
+		result, err := m.attempt(request, id, mysteriumProposal{ProviderID: request.FallbackProvider}, deadline)
+		if err == nil {
+			if restarted {
+				go m.reconnectOthers(request.ProxyPort)
+			}
+			result.Fallback = true
+			return result, nil
+		}
+	}
+	if restarted {
+		go m.reconnectOthers(request.ProxyPort)
 	}
 	_ = m.call(http.MethodDelete, "/connection?id="+strconv.Itoa(request.ProxyPort), nil, nil)
 	return mysteriumConnectResult{}, fmt.Errorf("could not connect to a residential provider in %s: %v", request.Country, lastErr)
+}
+
+// mayRevive allows one daemon restart per ten minutes, so connections that
+// keep failing do not restart myst under each other.
+func (m *mysteriumManager) mayRevive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if time.Since(m.revived) < 10*time.Minute {
+		return false
+	}
+	m.revived = time.Now()
+	return true
+}
+
+// attempt connects the proxy port to one provider and checks the exit.
+func (m *mysteriumManager) attempt(request mysteriumConnection, id string, candidate mysteriumProposal, deadline time.Time) (mysteriumConnectResult, error) {
+	_ = m.call(http.MethodDelete, "/connection?id="+strconv.Itoa(request.ProxyPort), nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), min(mysteriumAttemptTimeout, time.Until(deadline)))
+	defer cancel()
+	body := map[string]interface{}{"consumer_id": id, "provider_id": candidate.ProviderID, "service_type": "wireguard",
+		"connect_options": map[string]interface{}{"proxy_port": request.ProxyPort}}
+	if err := m.callContext(ctx, http.MethodPut, "/connection", body, nil); err != nil {
+		return mysteriumConnectResult{}, err
+	}
+	ip, latency, err := mysteriumProbe(request.ProxyPort)
+	if err != nil {
+		return mysteriumConnectResult{}, err
+	}
+	m.mu.Lock()
+	m.wanted[request.ProxyPort] = mysteriumConnection{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID}
+	m.mu.Unlock()
+	m.saveWanted()
+	return mysteriumConnectResult{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID,
+		ExitIP: ip, City: candidate.Location.City, ISP: candidate.Location.ISP, LatencyMs: latency}, nil
+}
+
+// mysteriumP2PTrouble reports errors where the provider never answered
+// through Mysterium's broker, as opposed to a provider refusing the session.
+func mysteriumP2PTrouble(err error) bool {
+	text := strings.ToLower(err.Error())
+	for _, sign := range []string{"p2p", "broker", "context deadline exceeded", "context canceled", "client.timeout"} {
+		if strings.Contains(text, sign) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *mysteriumManager) disconnect(port int) error {
@@ -760,6 +858,24 @@ func (m *mysteriumManager) reconnectWanted() {
 	list := make([]mysteriumConnection, 0, len(m.wanted))
 	for _, connection := range m.wanted {
 		list = append(list, connection)
+	}
+	m.mu.Unlock()
+	for _, connection := range list {
+		if status := m.connectionStatus(connection); status.Status == "Connected" {
+			continue
+		}
+		_, _ = m.connect(connection)
+	}
+}
+
+// reconnectOthers restores the other connections after myst was restarted.
+func (m *mysteriumManager) reconnectOthers(skip int) {
+	m.mu.Lock()
+	list := make([]mysteriumConnection, 0, len(m.wanted))
+	for port, connection := range m.wanted {
+		if port != skip {
+			list = append(list, connection)
+		}
 	}
 	m.mu.Unlock()
 	for _, connection := range list {

@@ -190,12 +190,17 @@ public class MysteriumService {
     }
 
     private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason) {
+        return connect(node, country, port, excluded, reason, null);
+    }
+
+    private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason, String fallbackProvider) {
         List<Map<String, Object>> previous = jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", node.getId(), country);
         String oldIp = previous.isEmpty() ? null : (String) previous.get(0).get("exit_ip");
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("proxyPort", port);
         request.put("country", country);
         request.put("excludeProviders", splitExcluded(excluded));
+        if (StringUtils.isNotBlank(fallbackProvider)) request.put("fallbackProvider", fallbackProvider);
         GostDto response = sendConnect(node.getId(), request);
         long now = System.currentTimeMillis();
         if (response == null || !"OK".equals(response.getMsg())) {
@@ -210,6 +215,14 @@ public class MysteriumService {
                         + "last_check_at=?, last_ok_at=?, last_error=NULL WHERE node_id=? AND country=?",
                 data.getString("providerId"), data.getString("exitIp"), StringUtils.left(data.getString("city"), 100),
                 StringUtils.left(data.getString("isp"), 200), data.getInteger("latencyMs"), now, now, node.getId(), country);
+        if (data.getBooleanValue("fallback")) {
+            // The old provider works again, so it no longer belongs on the exclusion list.
+            List<String> list = splitExcluded(excluded);
+            list.remove(data.getString("providerId"));
+            jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", String.join(",", list), node.getId(), country);
+            recordEvent(node.getId(), country, reason + "失败，没有连上新的家宽节点，已恢复原来的出口 " + data.getString("exitIp"), oldIp, data.getString("exitIp"));
+            return data;
+        }
         recordEvent(node.getId(), country, reason + "：" + StringUtils.defaultIfBlank(oldIp, "未连接") + " → " + data.getString("exitIp"), oldIp, data.getString("exitIp"));
         return data;
     }
@@ -362,8 +375,13 @@ public class MysteriumService {
         Map<String, Object> row = rows.get(0);
         String excluded = addExcluded((String) row.get("excluded"), (String) row.get("provider_id"));
         jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", excluded, nodeId, country);
-        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded, reason);
-        return result == null ? R.err("换节点失败，请稍后再试") : R.ok(result);
+        // A switch keeps the working provider as the last resort instead of leaving the proxy without an exit.
+        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded, reason, (String) row.get("provider_id"));
+        if (result == null) return R.err("换节点失败，请稍后再试");
+        if (result.getBooleanValue("fallback")) {
+            return R.err("没有连上新的家宽节点，已恢复原来的出口 " + StringUtils.defaultString(result.getString("exitIp")) + "，请稍后再试");
+        }
+        return R.ok(result);
     }
 
     private String refreshAccount(Node node) {
