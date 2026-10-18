@@ -73,6 +73,16 @@ class AiOpsMemoryTests {
   }
 
   @Test
+  void securityAuditDropsTheEchoedScript() throws Exception {
+    AiLegacyDiagnostics terminal = mock(AiLegacyDiagnostics.class);
+    when(terminal.execute(anyLong(), anyString(), anyInt())).thenReturn(
+        Map.of("output", "root@x:/# stty -echo; printf '%s' 'c2VjdGlvbg==' | base64 -d\r\nfrom x at now\r\n=== SSHD ===\r\npermitrootlogin no\r\n", "exitCode", 0));
+    Map<String, Object> result = new AiSecurityAudit(terminal).audit(8, 30);
+    assertEquals("from x at now\n=== SSHD ===\npermitrootlogin no", result.get("output"));
+    assertTrue(AiSecurityAudit.SCRIPT.length() < 16000, "fits the terminal script limit");
+  }
+
+  @Test
   void writeAccessFollowsTerminalPermission() {
     JSONObject inspect = JSONObject.parseObject("{\"mode\":\"inspect\",\"allowPanelRead\":true,\"allowTerminal\":true,\"serviceAllowlist\":[]}");
     String names = AiOpsService.tools(inspect).toString();

@@ -324,6 +324,8 @@ public class AiOpsChatService {
             "system",
             "content",
             AiPanelContext.guidance() + " You are the panel's server operations assistant. Reply in Chinese conversationally."
+                + " Today is " + java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
+                + " (Asia/Shanghai); date any notes you save with it."
                 + " You know this panel: the feature index below lists every page. For how/where/what"
                 + " questions, look up panel_knowledge first and answer with the page path and exact steps;"
                 + " do not ask the user to describe the panel or where things are. For current problems use"

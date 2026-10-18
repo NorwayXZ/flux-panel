@@ -13,6 +13,7 @@ public class AiSecurityAudit {
   }
 
   static final String SCRIPT = String.join("\n",
+      "echo \"from $(hostname) at $(date -u +%FT%TZ)\"",
       "section() { printf '\\n=== %s ===\\n' \"$1\"; }",
       "section SYSTEM; uname -srm; . /etc/os-release 2>/dev/null && echo \"$PRETTY_NAME\"; uptime",
       "[ -f /var/run/reboot-required ] && echo 'reboot-required: yes' || true",
@@ -43,6 +44,7 @@ public class AiSecurityAudit {
 
   Map<String, Object> audit(long node, int timeout) throws Exception {
     Map<String, Object> result = new LinkedHashMap<>(terminal.execute(node, SCRIPT, Math.min(timeout, 90)));
+    result.put("output", AiNetworkTools.clean(Objects.toString(result.get("output"), "")));
     result.put("guidance", "按风险排序给出加固建议：密码/root 登录、对公网开放的高危端口、暴力破解来源、缺失的 fail2ban/防火墙、"
         + "待装安全更新、需要重启的内核。只读检查，未修改任何配置；修改 SSH 前提醒确认已有可用密钥，避免把自己锁在外面。");
     return result;
