@@ -117,3 +117,11 @@ or large-scale operation. Unit checks for scoped routing, token switching, dupli
 of independent mode and existing shared billing passed. Go Mysterium tests also
 passed with the race detector. MySQL migration and deployed new-version end-to-end
 checks remain pending; the local environment has no Docker executable.
+
+## 2026-10-19 shared signer outage investigation
+
+On owner node 8, authenticated loopback payments and remote member payments timed out while the daemon remained running. Captured Go stacks showed a `SharedBillingServer.pay` bbolt writer transaction waiting in `HermesCaller.GetConsumerData` through the shared discovery HTTP transport; other invoice handlers waited on the bbolt writer mutex. Direct curl to the configured Hermes endpoint returned HTTP 200 in about 0.9 s. Disabling HTTP/2 alone did not recover service: a second stack showed the same reconciliation waiting for a TLS connection. Therefore the verified failure is payment reconciliation blocking the writer, not a proven HTTP/2-only defect.
+
+The signer now uses a dedicated conventional dialer with bounded connect/TLS/response timeouts, and performs reconciliation outside the writer transaction. A regression test verifies a deliberately blocked Hermes query does not hold the ledger writer. Existing replay, persistence, pending, and signature tests pass with the race detector.
+
+During recovery, the prior three-minute pending window repeatedly outlasted upstream's approximately 20-second session creation deadline. The window is now ten seconds, preserving monotonic allocation above all previously signed amounts. Lost promises can therefore incur their reserved increment; this is an availability/cost tradeoff, not zero-cost retry. Deployment and traffic acceptance results must be recorded separately.
