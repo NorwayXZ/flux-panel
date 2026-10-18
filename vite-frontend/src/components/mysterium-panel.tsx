@@ -358,49 +358,52 @@ export default function MysteriumPanel() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-end gap-3">
-            <Input
-              className="w-56"
-              description="每台节点，超过自动暂停"
-              endContent={
-                <span className="whitespace-nowrap text-xs text-default-400">
-                  美元/月
-                </span>
-              }
-              label="每月预算"
-              size="sm"
-              type="number"
-              value={budget}
-              onValueChange={setBudget}
-            />
-            <Input
-              className="w-56"
-              description="低于此余额时告警"
-              endContent={
-                <span className="whitespace-nowrap text-xs text-default-400">
-                  MYST
-                </span>
-              }
-              label="余额提醒"
-              size="sm"
-              type="number"
-              value={lowBalance}
-              onValueChange={setLowBalance}
-            />
+          <div className="flex flex-col gap-4 rounded-xl border border-divider bg-default-50/50 p-4 lg:flex-row lg:items-start">
+            <div className="grid w-full gap-4 sm:grid-cols-2 lg:max-w-3xl lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <Input
+                classNames={{ inputWrapper: "h-14 min-h-14", description: "mt-1" }}
+                description="每台节点，超过自动暂停"
+                endContent={
+                  <span className="whitespace-nowrap text-xs text-default-400">
+                    美元/月
+                  </span>
+                }
+                label="每月预算"
+                size="sm"
+                type="number"
+                value={budget}
+                onValueChange={setBudget}
+              />
+              <Input
+                classNames={{ inputWrapper: "h-14 min-h-14", description: "mt-1" }}
+                description="低于此余额时告警"
+                endContent={
+                  <span className="whitespace-nowrap text-xs text-default-400">
+                    MYST
+                  </span>
+                }
+                label="余额提醒"
+                size="sm"
+                type="number"
+                value={lowBalance}
+                onValueChange={setLowBalance}
+              />
+              <Button
+                className="h-14 px-6 sm:col-span-2 lg:col-span-1"
+                color="primary"
+                isLoading={busy === "settings"}
+                onPress={() =>
+                  void save({
+                    monthlyBudgetUsd: Number(budget),
+                    lowBalanceMyst: Number(lowBalance),
+                  })
+                }
+              >
+                保存设置
+              </Button>
+            </div>
             <Button
-              isLoading={busy === "settings"}
-              variant="flat"
-              onPress={() =>
-                void save({
-                  monthlyBudgetUsd: Number(budget),
-                  lowBalanceMyst: Number(lowBalance),
-                })
-              }
-            >
-              保存
-            </Button>
-            <Button
-              className="ml-auto"
+              className="h-14 shrink-0 self-end px-6 lg:ml-auto lg:self-start"
               color="danger"
               variant="light"
               onPress={() => {
