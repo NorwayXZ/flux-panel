@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class AgentUpgradeService {
     public static final String TARGET_VERSION = "2.84.0-beta.10";
-    private static final String INSTALLER_RELEASE = "2.84.0-beta.10";
+    private static final String INSTALLER_RELEASE = "2.84.0-beta.11";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";

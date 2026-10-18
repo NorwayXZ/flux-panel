@@ -98,7 +98,11 @@ class AiOpsChatServiceTests {
         "/v1/chat/completions",
         exchange -> {
           try {
-            exchange.getRequestBody().readAllBytes();
+            JSONObject request = JSON.parseObject(exchange.getRequestBody().readAllBytes());
+            if (request.getIntValue("max_tokens") != 8192) {
+              exchange.sendResponseHeaders(400, -1);
+              return;
+            }
             exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
             if (gate != null) gate.await(3, TimeUnit.SECONDS);

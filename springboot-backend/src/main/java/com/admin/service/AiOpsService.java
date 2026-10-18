@@ -680,7 +680,7 @@ public class AiOpsService {
                 "stream",
                 true,
                 "max_tokens",
-                2048));
+                8192));
     if (!tools.isEmpty()) {
       payload.put("tools", tools);
       payload.put("tool_choice", "auto");
