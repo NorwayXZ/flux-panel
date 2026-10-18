@@ -110,6 +110,17 @@ func (m *mysteriumManager) ensureRunning() error {
 	if err := os.MkdirAll(m.directory, 0700); err != nil {
 		return err
 	}
+	// A daemon this manager no longer tracks (one that outlived stop()) keeps
+	// the API port, so a new one would exit at once while health checks pass.
+	if m.healthy() {
+		stopStrayMysterium(m.binDirectory())
+		for i := 0; i < 15 && m.healthy(); i++ {
+			time.Sleep(time.Second)
+		}
+		if m.healthy() {
+			return errors.New("another myst process still holds the Mysterium API port")
+		}
+	}
 	if cfg, err := m.billingConfig(); err != nil {
 		return err
 	} else if cfg == nil {
@@ -163,12 +174,21 @@ func (m *mysteriumManager) ensureRunning() error {
 	go m.watch(cmd)
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
+		if !mysteriumRunning(cmd) {
+			// Clearing cmd keeps watch() from restarting a daemon that cannot start.
+			m.cmd = nil
+			return fmt.Errorf("myst exited during startup: %s", m.startupLog())
+		}
 		if m.healthy() {
 			return nil
 		}
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("myst did not become ready: %s", m.startupLog())
+}
+
+func (m *mysteriumManager) binDirectory() string {
+	return filepath.Join(m.directory, "bin")
 }
 
 // systemd does not always supply HOME to system services. myst reads it while
@@ -241,13 +261,26 @@ func (m *mysteriumManager) stop() {
 	m.mu.Unlock()
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(15 * time.Second):
+		// watch() is already waiting for the process, and a second Wait returns
+		// at once, so poll for its exit instead.
+		waitForMysterium(cmd, 15*time.Second)
+		if mysteriumRunning(cmd) {
 			_ = cmd.Process.Kill()
+			waitForMysterium(cmd, 5*time.Second)
 		}
+	}
+}
+
+// mysteriumRunning asks the OS instead of reading ProcessState, which
+// watch()'s concurrent Wait writes.
+func mysteriumRunning(cmd *exec.Cmd) bool {
+	return cmd != nil && cmd.Process != nil && cmd.Process.Signal(syscallZero) == nil
+}
+
+func waitForMysterium(cmd *exec.Cmd, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for mysteriumRunning(cmd) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

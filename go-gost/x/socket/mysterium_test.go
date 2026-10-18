@@ -317,3 +317,43 @@ func TestMysteriumP2PTrouble(t *testing.T) {
 		t.Fatal("a refused session is not a broker problem")
 	}
 }
+
+func TestMysteriumStopKillsADaemonThatIgnoresInterrupt(t *testing.T) {
+	cmd := exec.Command("sh", "-c", `trap "" INT; sleep 60`)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	m := &mysteriumManager{cmd: cmd, wanted: map[int]mysteriumConnection{}}
+	// watch() waits for the daemon in the background, as in production.
+	go func() { _ = cmd.Wait() }()
+	time.Sleep(200 * time.Millisecond)
+	started := time.Now()
+	m.stop()
+	if mysteriumRunning(cmd) {
+		t.Fatal("daemon still running after stop")
+	}
+	if time.Since(started) < 10*time.Second {
+		t.Fatalf("stop returned after %v without waiting for the daemon", time.Since(started))
+	}
+}
+
+func TestStrayMysteriumPIDsMatchOnlyThisInstall(t *testing.T) {
+	proc := t.TempDir()
+	bin := filepath.Join(t.TempDir(), "mysterium", "bin")
+	link := func(pid, target string) {
+		_ = os.MkdirAll(filepath.Join(proc, pid), 0700)
+		if err := os.Symlink(target, filepath.Join(proc, pid, "exe")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link("101", filepath.Join(bin, "myst-shared")+" (deleted)")
+	link("102", filepath.Join(bin, "myst"))
+	link("103", "/usr/bin/myst")
+	link("104", filepath.Join(bin, "other"))
+	_ = os.MkdirAll(filepath.Join(proc, "self"), 0700)
+	got := strayMysteriumPIDs(proc, bin)
+	if fmt.Sprint(got) != "[101 102]" {
+		t.Fatalf("stray pids %v", got)
+	}
+}
