@@ -60,6 +60,7 @@ const overview = (configured = true): any => ({
 });
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   vi.mocked(opsChatList).mockResolvedValue({ code: 0, msg: "", data: [] });
   vi.mocked(opsChatDetail).mockResolvedValue({
     code: 0,
@@ -103,7 +104,7 @@ it("renders text and tool results before the request finishes and lets the user 
   expect(screen.getByText(/inspect_disk/)).toBeTruthy();
   expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({
     message: "检查磁盘",
-    config: { nodeIds: [1], mode: "inspect", allowLogCleanup: false },
+    config: { nodeIds: [1], mode: "repair", allowTerminal: true, allowLogCleanup: false },
   });
   fireEvent.click(screen.getByRole("button", { name: "停止回复" }));
   expect(opsChatStop).toHaveBeenCalled();
@@ -152,7 +153,7 @@ it("loads a previous conversation and continues with its ID", async () => {
   expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({
     chatId: 9,
     message: "继续",
-    config: { nodeIds: [], mode: "inspect" },
+    config: { nodeIds: [], mode: "repair", allowTerminal: true },
   });
 });
 it("authorizes only selected nodes and immediately continues upgrades without granting log cleanup", async () => {
@@ -160,6 +161,7 @@ it("authorizes only selected nodes and immediately continues upgrades without gr
   render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
   expect(screen.queryByRole("button", { name: "授权升级并继续" })).toBeNull();
   fireEvent.click(screen.getByLabelText("节点A"));
+  fireEvent.change(screen.getByLabelText("对话执行权限"), { target: { value: "inspect" } });
   fireEvent.click(screen.getByRole("button", { name: "授权升级并继续" }));
   await waitFor(() => expect(streamOpsChat).toHaveBeenCalledOnce());
   expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({
@@ -171,11 +173,22 @@ it("opens terminal management explicitly and includes it in the actual request",
   vi.mocked(streamOpsChat).mockResolvedValue();
   render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
   fireEvent.click(screen.getByLabelText("节点A"));
-  fireEvent.click(screen.getByLabelText("完整服务器管理（终端命令、安装服务）"));
+
   fireEvent.change(screen.getByLabelText("聊天消息"), { target: { value: "安装 nginx 并验证" } });
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
   await waitFor(() => expect(streamOpsChat).toHaveBeenCalledOnce());
   expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({ config: {
-    nodeIds: [1], mode: "repair", allowTerminal: true, upgradeOnly: false, allowAgentUpgrade: true,
+    nodeIds: [1], mode: "repair", allowTerminal: true, allowAgentUpgrade: true,
   } });
+});
+
+it("retains terminal permission and selected nodes after reopening, including a read-only override", async () => {
+  const view = render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
+  expect((screen.getByLabelText("完整服务器管理（终端命令、安装服务）") as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByLabelText("节点A"));
+  fireEvent.change(screen.getByLabelText("对话执行权限"), { target: { value: "inspect" } });
+  view.unmount();
+  render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
+  expect((screen.getByLabelText("节点A") as HTMLInputElement).checked).toBe(true);
+  expect((screen.getByLabelText("对话执行权限") as HTMLSelectElement).value).toBe("inspect");
 });

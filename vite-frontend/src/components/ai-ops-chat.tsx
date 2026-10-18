@@ -16,18 +16,30 @@ import {
 } from "@/api/ai-ops";
 import { streamOpsChat } from "@/api/ai-chat-stream";
 
-const policy = (): OpsConfig => ({
+const permissionStorageKey = () => `ai-ops-chat-permissions-v1:${localStorage.getItem("name") || "admin"}`;
+const policy = (): OpsConfig => {
+  const defaults: OpsConfig = {
   name: "实时对话",
   prompt: "",
   nodeIds: [],
   cron: "0 0 3 * * *",
   timezone: "Asia/Shanghai",
-  mode: "inspect",
+  mode: "repair",
+  allowTerminal: true,
+  allowPanelRead: true,
+  allowAgentUpgrade: true,
   retentionDays: 7,
   maxJournalMb: 500,
   serviceAllowlist: [],
   allowLogCleanup: false,
-});
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(permissionStorageKey()) || "null");
+    return saved && typeof saved === "object"
+      ? { ...defaults, ...saved, nodeIds: Array.isArray(saved.nodeIds) ? saved.nodeIds : [] }
+      : defaults;
+  } catch { return defaults; }
+};
 const inputClass =
   "w-full rounded-lg border border-default-200 bg-content1 p-2 text-sm";
 function Events({ events }: { events: OpsChatEvent[] }) {
@@ -139,6 +151,9 @@ export default function AiOpsChat({
   const messagesBox = useRef<HTMLDivElement>(null);
   const historyRunning = turns.some((turn) => turn.status === "running");
   const configured = !!overview?.settings.keyConfigured;
+  useEffect(() => {
+    localStorage.setItem(permissionStorageKey(), JSON.stringify(config));
+  }, [config]);
   const refreshChats = async () => {
     const r = await opsChatList();
     if (r.code === 0) setChats(r.data);
@@ -321,7 +336,7 @@ export default function AiOpsChat({
           </summary>
           <div className="mt-3 space-y-3">
             <p className="text-xs text-default-500">
-              不选节点也可以聊天。旧节点可先查升级记录和安装日志；执行清理、重启或升级需切换到允许维护，升级还需单独勾选。权限每轮生效。
+              管理员默认开启完整服务器管理。权限和所选节点会保存；需要限制操作时可切换只读或关闭终端管理。不选节点时只聊天。
             </p>
             <div className="flex gap-2">
               <Button
@@ -406,7 +421,7 @@ export default function AiOpsChat({
             </Switch>
             {config.allowTerminal && (
               <p className="text-xs text-warning-700">
-                已授权助手以节点 Agent 的系统身份执行命令，通常为 root，可安装、修改配置或删除文件。仅作用于本轮所选节点；刷新页面后需重新开启。
+                已授权助手以节点 Agent 的系统身份执行命令，通常为 root，可安装、修改配置或删除文件。仅作用于所选节点；刷新后保留，可随时关闭或切回只读。
               </p>
             )}
             <Input
