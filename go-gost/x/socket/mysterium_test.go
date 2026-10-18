@@ -2,6 +2,7 @@ package socket
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestPickProvidersSkipsExcludedAndNonResidential(t *testing.T) {
@@ -199,5 +201,119 @@ func TestMysteriumStartupErrorIncludesBoundedLogTail(t *testing.T) {
 	detail := m.startupLog()
 	if len(detail) > 2048 || !strings.Contains(detail, "$HOME is not defined") {
 		t.Fatalf("unexpected startup detail: %q", detail)
+	}
+}
+
+func TestPickProvidersDrawsFromTheBestWhenThereAreMany(t *testing.T) {
+	proposals := []mysteriumProposal{}
+	for i := 0; i < 30; i++ {
+		p := mysteriumProposal{ProviderID: fmt.Sprintf("0x%02d", i)}
+		p.Location.IPType = "residential"
+		p.Quality.Quality = float64(100 - i)
+		proposals = append(proposals, p)
+	}
+	seen := map[string]bool{}
+	for round := 0; round < 20; round++ {
+		picked := pickProviders(proposals, nil, 4)
+		if len(picked) != 4 {
+			t.Fatalf("picked %d", len(picked))
+		}
+		for i, p := range picked {
+			if p.Quality.Quality < 89 {
+				t.Fatalf("picked %s outside the best 12", p.ProviderID)
+			}
+			if i > 0 && picked[i-1].Quality.Quality < p.Quality.Quality {
+				t.Fatal("picked providers are not best first")
+			}
+			seen[p.ProviderID] = true
+		}
+	}
+	if len(seen) <= 4 {
+		t.Fatalf("always the same providers: %v", seen)
+	}
+}
+
+func TestMysteriumSwitchFallsBackToThePreviousProvider(t *testing.T) {
+	var mu sync.Mutex
+	tried := []string{}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/healthcheck":
+			w.Write([]byte(`{}`))
+		case r.URL.Path == "/identities/current":
+			w.Write([]byte(`{"id":"0xabc"}`))
+		case r.URL.Path == "/proposals":
+			w.Write([]byte(`{"proposals":[{"provider_id":"0xnew1","location":{"country":"US","ip_type":"residential"},"quality":{"quality":3}},
+				{"provider_id":"0xnew2","location":{"country":"US","ip_type":"residential"},"quality":{"quality":2}}]}`))
+		case r.URL.Path == "/connection" && r.Method == http.MethodPut:
+			var body struct {
+				ProviderID string `json:"provider_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			tried = append(tried, body.ProviderID)
+			mu.Unlock()
+			if body.ProviderID != "0xold" {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":{"message":"Failed to connect: could not send p2p session create request: p2p send timeout"}}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"status":"Connected"}`))
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(api.Close)
+	m := &mysteriumManager{directory: t.TempDir(), api: api.URL, client: api.Client(), wanted: map[int]mysteriumConnection{}}
+	m.cmd = selfProcess(t)
+	// A restart happened recently, so this switch must not restart myst again.
+	m.revived = time.Now()
+	port := startTraceProxy(t)
+	original := mysteriumTraceURL
+	mysteriumTraceURL = "http://trace.example/cdn-cgi/trace"
+	defer func() { mysteriumTraceURL = original }()
+
+	result, err := m.connect(mysteriumConnection{ProxyPort: port, Country: "US", ExcludeProviders: []string{"0xold"}, FallbackProvider: "0xold"})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if !result.Fallback || result.ProviderID != "0xold" || result.ExitIP != "173.75.12.161" {
+		t.Fatalf("result %+v", result)
+	}
+	if strings.Join(tried, ",") != "0xnew1,0xnew2,0xold" {
+		t.Fatalf("tried %v", tried)
+	}
+	if m.wanted[port].ProviderID != "0xold" || m.wanted[port].FallbackProvider != "" {
+		t.Fatalf("remembered %+v", m.wanted[port])
+	}
+	if m.cmd == nil {
+		t.Fatal("myst was restarted within ten minutes of the last restart")
+	}
+}
+
+func TestMysteriumRevivesAtMostOncePerTenMinutes(t *testing.T) {
+	m := &mysteriumManager{}
+	if !m.mayRevive() || m.mayRevive() {
+		t.Fatal("expected exactly one restart")
+	}
+	m.revived = time.Now().Add(-11 * time.Minute)
+	if !m.mayRevive() {
+		t.Fatal("restart still blocked after ten minutes")
+	}
+}
+
+func TestMysteriumP2PTrouble(t *testing.T) {
+	for _, text := range []string{
+		`myst PUT /connection: HTTP 500 Failed to connect: could not send p2p session create request: timeout waiting for reply to "p2p-session-create": p2p send timeout`,
+		`could not send broker request to subject 0xe7.wireguard.p2p-config-exchange: context canceled`,
+		`Put "http://127.0.0.1:4450/connection": context deadline exceeded`,
+	} {
+		if !mysteriumP2PTrouble(errors.New(text)) {
+			t.Fatalf("not recognised: %s", text)
+		}
+	}
+	if mysteriumP2PTrouble(errors.New("myst PUT /connection: HTTP 500 provider rejected the session: insufficient balance")) {
+		t.Fatal("a refused session is not a broker problem")
 	}
 }
