@@ -27,7 +27,7 @@ import java.util.*;
 /** Routes only authenticated payment requests. Proxy traffic stays on each node. */
 @Service
 public class MysteriumSharedBillingService implements ApplicationRunner {
-    static final String RELEASE = "https://github.com/NorwayXZ/flux-panel/releases/download/myst-shared-1.39.7-2/";
+    static final String RELEASE = "https://github.com/NorwayXZ/flux-panel/releases/download/myst-shared-1.39.7-3/";
     private final JdbcTemplate jdbc;
     private final NodeMapper nodes;
     private final MysteriumService mysterium;
@@ -94,9 +94,7 @@ public class MysteriumSharedBillingService implements ApplicationRunner {
             for(Long id:targets) {
                 if(id.equals(ownerId))continue;
                 String token=randomToken();
-                if(!jdbc.queryForList("SELECT node_id FROM mysterium_shared_member WHERE node_id=? AND state='ready'",id).isEmpty()) {
-                    results.add(Map.of("nodeId",id,"success",true)); continue;
-                }
+                // Bound nodes are configured again too, so a rebinding installs the current client everywhere.
                 jdbc.update("INSERT INTO mysterium_shared_member(node_id,token_hash,state) VALUES(?,?,'configuring') "
                         + "ON DUPLICATE KEY UPDATE token_hash=VALUES(token_hash),state='configuring',last_error=NULL",id,hash(token));
                 try {

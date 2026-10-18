@@ -27,6 +27,18 @@ type SharedPaymentRequest struct {
 // local signing, which would create overlapping promises for the shared key.
 func SharedBillingEnabled() bool { return os.Getenv("MYST_SHARED_BILLING_URL") != "" }
 
+var (
+	sharedPaymentRetryWindow    = 100 * time.Second
+	sharedPaymentAttemptTimeout = 40 * time.Second
+	sharedPaymentRetryDelay     = time.Second
+)
+
+// sharedPaymentRetryable covers a signer still awaiting Hermes (409) and a
+// panel that is restarting or briefly unreachable (5xx from its proxy).
+func sharedPaymentRetryable(status int) bool {
+	return status == http.StatusConflict || status == http.StatusTooManyRequests || status >= 500
+}
+
 func (ip *InvoicePayer) issueSharedExchangeMessage(invoice crypto.Invoice) error {
 	endpoint := os.Getenv("MYST_SHARED_BILLING_URL")
 	u, err := url.Parse(endpoint)
@@ -42,32 +54,44 @@ func (ip *InvoicePayer) issueSharedExchangeMessage(invoice crypto.Invoice) error
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	// Providers end a session after about two minutes without payment. Retrying
+	// the same invoice for up to 100 s rides out a panel restart: the signer
+	// returns the identical signed message for a repeated invoice, so a payment
+	// signed just before the restart is delivered instead of lost.
+	ctx, cancel := context.WithTimeout(context.Background(), sharedPaymentRetryWindow)
 	defer cancel()
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var resp *http.Response
+	var lastErr error
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		attempt, cancelAttempt := context.WithTimeout(ctx, sharedPaymentAttemptTimeout)
+		req, err := http.NewRequestWithContext(attempt, http.MethodPost, endpoint, bytes.NewReader(payload))
 		if err != nil {
+			cancelAttempt()
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err = client.Do(req)
-		if err != nil {
-			return fmt.Errorf("shared billing unavailable: %w", err)
-		}
-		if resp.StatusCode == http.StatusOK {
+		if err == nil && resp.StatusCode == http.StatusOK {
+			// The body is read below; the attempt context must outlive it.
+			defer cancelAttempt()
 			break
 		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusConflict {
-			return fmt.Errorf("shared billing rejected invoice (HTTP %d)", resp.StatusCode)
+		cancelAttempt()
+		if err != nil {
+			lastErr = fmt.Errorf("shared billing unavailable: %w", err)
+		} else {
+			resp.Body.Close()
+			if !sharedPaymentRetryable(resp.StatusCode) {
+				return fmt.Errorf("shared billing rejected invoice (HTTP %d)", resp.StatusCode)
+			}
+			lastErr = fmt.Errorf("shared billing not ready (HTTP %d)", resp.StatusCode)
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("shared payment confirmation timed out")
-		case <-time.After(500 * time.Millisecond):
+			return fmt.Errorf("shared payment confirmation timed out: %v", lastErr)
+		case <-time.After(sharedPaymentRetryDelay):
 		}
 	}
 	defer resp.Body.Close()

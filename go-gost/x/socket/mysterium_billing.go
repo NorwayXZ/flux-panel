@@ -142,7 +142,9 @@ func (m *mysteriumManager) configureBilling(request mysteriumBillingRequest) (ma
 	if err := os.Chmod(download, 0700); err != nil {
 		return nil, err
 	}
-	if request.Role == "consumer" {
+	// A node bound before already uses the shared account; importing it again
+	// fails because the keystore has the key, so only the binary is replaced.
+	if request.Role == "consumer" && !strings.EqualFold(id, request.Consumer) {
 		var imported struct {
 			ID string `json:"id"`
 		}

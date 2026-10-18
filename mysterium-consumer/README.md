@@ -41,8 +41,13 @@ commands to preserve all 256-bit integer values.
 
 ## Availability and limitations
 
-- The panel and funded node must stay online for new invoices. They carry billing
-  requests, not application traffic. Existing tunnels may close when payment fails.
+- The panel and funded node must be reachable for new invoices. They carry billing
+  requests, not application traffic. A consumer retries the same invoice for up to
+  100 s (providers allow about 2 minutes without payment), so a panel restart does
+  not end tunnels; the signer returns the identical signed message for a repeated
+  invoice. A longer outage ends the session and the Agent reconnects afterwards.
+- Rebinding configures every selected node again, including bound ones, so all of
+  them run the current client. Their Mysterium connections restart once.
 - A lost payment sender leaves a signed promise that Hermes never sees. The signer
   blocks new allocations for 3 minutes, then treats it as lost and continues above
   it, so no amount is signed twice. Only the lost increment is paid to Hermes
