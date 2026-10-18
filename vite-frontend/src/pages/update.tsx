@@ -20,6 +20,8 @@ import {
 import { siteConfig } from "@/config/site";
 import { formatDateTime } from "@/utils/format";
 
+import { normalizeVersion, compareVersions, selectRelease, type PublishedRelease } from "@/utils/release-version";
+
 type CheckState = "idle" | "checking" | "success" | "error";
 
 interface RemoteVersion {
@@ -30,34 +32,11 @@ interface RemoteVersion {
   source: "release" | "tag";
 }
 
-const normalizeVersion = (value: string): string =>
-  value.trim().replace(/^v/i, "");
-
-const versionParts = (value: string): number[] => {
-  const match = normalizeVersion(value).match(/\d+(?:\.\d+)*/);
-
-  return match ? match[0].split(".").map(Number) : [];
-};
-
-const compareVersions = (left: string, right: string): number => {
-  const leftParts = versionParts(left);
-  const rightParts = versionParts(right);
-  const length = Math.max(leftParts.length, rightParts.length);
-
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
-
-    if (difference !== 0) return difference;
-  }
-
-  return 0;
-};
-
 const getLatestVersion = async (): Promise<RemoteVersion | null> => {
   const repository = siteConfig.updateRepository;
   const headers = { Accept: "application/vnd.github+json" };
   const releaseResponse = await fetch(
-    `https://api.github.com/repos/${repository}/releases/latest`,
+    `https://api.github.com/repos/${repository}/releases?per_page=100`,
     {
       headers,
       cache: "no-store",
@@ -65,14 +44,9 @@ const getLatestVersion = async (): Promise<RemoteVersion | null> => {
   );
 
   if (releaseResponse.ok) {
-    const release = (await releaseResponse.json()) as {
-      tag_name?: string;
-      name?: string;
-      html_url?: string;
-      published_at?: string;
-    };
+    const release = selectRelease(await releaseResponse.json() as PublishedRelease[], siteConfig.version);
 
-    if (release.tag_name) {
+    if (release?.tag_name) {
       return {
         version: normalizeVersion(release.tag_name),
         title: release.name || release.tag_name,
@@ -85,33 +59,8 @@ const getLatestVersion = async (): Promise<RemoteVersion | null> => {
     throw new Error(`GitHub Releases 请求失败（${releaseResponse.status}）`);
   }
 
-  const tagsResponse = await fetch(
-    `https://api.github.com/repos/${repository}/tags?per_page=30`,
-    {
-      headers,
-      cache: "no-store",
-    },
-  );
-
-  if (!tagsResponse.ok) {
-    throw new Error(`GitHub Tags 请求失败（${tagsResponse.status}）`);
-  }
-
-  const tags = (await tagsResponse.json()) as Array<{ name?: string }>;
-  const versionTag = tags
-    .filter((tag) => Boolean(tag.name && versionParts(tag.name).length > 0))
-    .sort((left, right) =>
-      compareVersions(right.name || "", left.name || ""),
-    )[0];
-
-  if (!versionTag?.name) return null;
-
-  return {
-    version: normalizeVersion(versionTag.name),
-    title: versionTag.name,
-    url: `https://github.com/${repository}/tree/${encodeURIComponent(versionTag.name)}`,
-    source: "tag",
-  };
+  // Tags can exist before build assets; never offer unpublished tags as installable releases.
+  return null;
 };
 
 const formatTime = (value?: Date | number | null) =>
