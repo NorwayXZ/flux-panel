@@ -27,7 +27,7 @@ import java.util.*;
 /** Routes only authenticated payment requests. Proxy traffic stays on each node. */
 @Service
 public class MysteriumSharedBillingService implements ApplicationRunner {
-    static final String RELEASE = "https://github.com/NorwayXZ/flux-panel/releases/download/myst-shared-1.39.7-4/";
+    static final String RELEASE = "https://github.com/NorwayXZ/flux-panel/releases/download/myst-shared-1.39.7-5/";
     private final JdbcTemplate jdbc;
     private final NodeMapper nodes;
     private final MysteriumService mysterium;

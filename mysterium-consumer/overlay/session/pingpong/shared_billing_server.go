@@ -30,8 +30,10 @@ type sharedState struct {
 // A signed payment that Hermes has not seen after this long was lost on the way
 // to the provider (for example while the panel restarted). Waiting longer cannot
 // help: nobody holds it, so it is never confirmed.
+// Stay below the upstream 20-second session-create deadline: a lost initial
+// payment must not make every subsequent connection expire before it can pay.
 var (
-	sharedPendingTimeout = 3 * time.Minute
+	sharedPendingTimeout = 10 * time.Second
 	sharedNow            = time.Now
 )
 

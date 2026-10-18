@@ -143,11 +143,11 @@ func TestSharedSignerMovesPastALostPayment(t *testing.T) {
 	other.Invoice.Provider = common.HexToAddress("0x5678").Hex()
 	other.Invoice.AgreementTotal = big.NewInt(5)
 	other.Invoice.Hashlock = strings.Repeat("02", 32)
-	now = now.Add(2 * time.Minute)
+	now = now.Add(sharedPendingTimeout / 2)
 	if _, err := s.pay(other); err == nil || !strings.Contains(err.Error(), "awaiting Hermes") {
 		t.Fatal("a recent payment must still block", err)
 	}
-	now = now.Add(2 * time.Minute)
+	now = now.Add(sharedPendingTimeout)
 	next, err := s.pay(other)
 	if err != nil {
 		t.Fatal("an overdue payment must not block the pool forever", err)
