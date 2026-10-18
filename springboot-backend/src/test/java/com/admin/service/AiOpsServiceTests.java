@@ -227,6 +227,22 @@ class AiOpsServiceTests {
     assertTrue(AiOpsService.tools(c).toJSONString().contains("cleanup_rotated_logs"));
   }
 
+  @Test
+  void upgradeOnlyPermissionDoesNotAuthorizeOtherMaintenance() {
+    JSONObject c = config();
+    c.put("mode", "repair");
+    c.put("_chatOwner", 1);
+    c.put("allowAgentUpgrade", true);
+    c.put("allowLogCleanup", true);
+    c.put("upgradeOnly", true);
+    String tools = AiOpsService.tools(c).toJSONString();
+    assertTrue(tools.contains("upgrade_agent"));
+    assertTrue(tools.contains("inspect_disk"));
+    assertFalse(tools.contains("restart_service"));
+    assertFalse(tools.contains("vacuum_journal"));
+    assertFalse(tools.contains("cleanup_rotated_logs"));
+  }
+
   JSONObject toolMessage(String name, String args) {
     return JSON.parseObject(
         "{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call\",\"type\":\"function\",\"function\":{\"name\":"

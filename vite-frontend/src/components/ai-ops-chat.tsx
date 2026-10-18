@@ -184,9 +184,16 @@ export default function AiOpsChat({
     controller.current?.abort();
     void opsChatStop();
   };
-  const send = async () => {
-    if (!message.trim() || running || historyRunning || !configured) return;
-    const text = message.trim();
+  const send = async (authorizedUpgrade = false) => {
+    const upgradeRequest = "我授权升级所选节点，允许升级造成短暂连接中断。先检查当前升级状态，已有任务运行时先跟踪，不要重复提交；执行后查询结果，未完成请明确说明。";
+    const text = authorizedUpgrade
+      ? `${message.trim() || "请继续处理所选节点的 Agent 升级问题。"}\n${upgradeRequest}`
+      : message.trim();
+    if (!text || running || historyRunning || !configured) return;
+    const turnConfig = authorizedUpgrade
+      ? { ...config, mode: "repair" as const, allowAgentUpgrade: true, upgradeOnly: true }
+      : config;
+    if (authorizedUpgrade) setConfig(turnConfig);
     setMessage("");
     setLivePrompt(text);
     setLiveText("");
@@ -203,7 +210,7 @@ export default function AiOpsChat({
           chatId,
           message: text,
           config: {
-            ...config,
+            ...turnConfig,
             prompt: text,
             serviceAllowlist: services
               .split(",")
@@ -375,6 +382,7 @@ export default function AiOpsChat({
                 setConfig({
                   ...config,
                   mode: e.target.value as OpsConfig["mode"],
+                  upgradeOnly: false,
                 })
               }
             >
@@ -488,6 +496,23 @@ export default function AiOpsChat({
           <div />
         </div>
         <div className="space-y-2 border-t border-default-200 p-3 sm:p-4">
+          {config.nodeIds.length > 0 &&
+            (config.mode !== "repair" || !config.allowAgentUpgrade) && (
+              <div className="rounded-lg bg-default-100 p-3 text-sm">
+                <p className="mb-2 text-default-600">
+                  当前未授权升级。点击后，助手可检查并升级已选的 {config.nodeIds.length} 个节点、跟踪结果；升级可能短暂中断连接。不会额外授权清理日志或其他节点。
+                </p>
+                <Button
+                  size="sm"
+                  color="warning"
+                  variant="flat"
+                  isDisabled={!configured || running || historyRunning}
+                  onPress={() => void send(true)}
+                >
+                  授权升级并继续
+                </Button>
+              </div>
+            )}
           {error && (
             <p role="alert" className="text-sm text-danger">
               {error}
@@ -521,7 +546,7 @@ export default function AiOpsChat({
               {config.nodeIds.length
                 ? `已选择 ${config.nodeIds.length} 个节点`
                 : "普通对话"}{" "}
-              · {config.mode === "inspect" ? "只读" : "允许维护"}
+              · {config.mode === "inspect" ? "只读" : config.upgradeOnly ? "仅允许 Agent 升级" : "允许维护"}
             </p>
             {running || historyRunning ? (
               <Button

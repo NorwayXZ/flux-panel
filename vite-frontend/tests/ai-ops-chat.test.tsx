@@ -155,3 +155,15 @@ it("loads a previous conversation and continues with its ID", async () => {
     config: { nodeIds: [], mode: "inspect" },
   });
 });
+it("authorizes only selected nodes and immediately continues upgrades without granting log cleanup", async () => {
+  vi.mocked(streamOpsChat).mockResolvedValue();
+  render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
+  expect(screen.queryByRole("button", { name: "授权升级并继续" })).toBeNull();
+  fireEvent.click(screen.getByLabelText("节点A"));
+  fireEvent.click(screen.getByRole("button", { name: "授权升级并继续" }));
+  await waitFor(() => expect(streamOpsChat).toHaveBeenCalledOnce());
+  expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({
+    config: { nodeIds: [1], mode: "repair", allowAgentUpgrade: true, upgradeOnly: true, allowLogCleanup: false, serviceAllowlist: [] },
+  });
+  expect(vi.mocked(streamOpsChat).mock.calls[0][0].message).toContain("已有任务运行时先跟踪");
+});

@@ -295,6 +295,9 @@ public class AiOpsService {
             "vacuum_journal",
             "restart_service",
             "cleanup_rotated_logs")) {
+      if (c.getBooleanValue("upgradeOnly")
+          && Set.of("vacuum_journal", "restart_service", "cleanup_rotated_logs").contains(name))
+        continue;
       if (c.getString("mode").equals("inspect")
           && (name.equals("vacuum_journal")
               || name.equals("restart_service")
