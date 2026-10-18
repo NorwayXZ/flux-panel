@@ -221,6 +221,21 @@ public class TelegramNotificationService {
     }
 
     @Async
+    public void notifyAiOps(long taskId, String taskName, long runId, String status, int repairs, String summary) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled()) return;
+            synchronized (deliveryLock) {
+                String key = shortenKey("ai-ops:" + runId);
+                if (loadDelivery(key).sendCount() > 0) return;
+                String message = "[AI 运维]\n任务：" + clean(taskName) + "\n状态：" + clean(status)
+                        + "\n已执行维护：" + repairs + " 次\n" + clean(summary);
+                deliver(settings, key, "ai_ops", "ai_ops", taskId, message, false);
+            }
+        } catch (Exception e) { log.warn("AI operations notification failed for task {}", taskId); }
+    }
+
+    @Async
     public void notifyDynamicDnsFailure(long ruleId, String ruleName, String detail) {
         try {
             Settings settings = loadSettings();

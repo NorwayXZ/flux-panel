@@ -639,6 +639,10 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 
 // routeCommand 路由命令到对应的处理函数
 func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
+	if cmd.Type == "OpsToolCall" || cmd.Type == "OpsCapabilities" {
+		go w.runOpsTool(cmd)
+		return
+	}
 	if strings.HasPrefix(cmd.Type, "Terminal") {
 		w.routeTerminalCommand(cmd)
 		return

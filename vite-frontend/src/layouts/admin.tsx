@@ -42,6 +42,7 @@ import {
   Sun,
   Waypoints,
   Wrench,
+  Bot,
 } from "lucide-react";
 
 import { Logo } from "@/components/icons";
@@ -204,6 +205,12 @@ export default function AdminLayout({
       path: "/network-tools",
       label: "网络诊断",
       icon: <Wrench className="h-5 w-5" />,
+      adminOnly: true,
+    },
+    {
+      path: "/ai-ops",
+      label: "AI 运维",
+      icon: <Bot className="h-5 w-5" />,
       adminOnly: true,
     },
     {
@@ -396,7 +403,7 @@ export default function AdminLayout({
         "/system-self-check",
       ],
     },
-    { label: "系统管理", paths: ["/server-assets", "/config", "/update"] },
+    { label: "系统管理", paths: ["/ai-ops", "/server-assets", "/config", "/update"] },
     { label: "帮助", paths: ["/guide"] },
   ];
 

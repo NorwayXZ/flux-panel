@@ -32,6 +32,7 @@ const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
 const AwsAccessPage = lazy(() => import("@/pages/aws-access"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
 const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
+const AiOpsPage = lazy(() => import("@/pages/ai-ops"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
 const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
 const ClientSpeedTestPage = lazy(() => import("@/pages/client-speed-test"));
@@ -554,6 +555,14 @@ function App() {
                 </ProtectedRoute>
               }
               path="/quality-lab"
+            />
+            <Route
+              path="/ai-ops"
+              element={
+                <ProtectedRoute adminOnly>
+                  <AiOpsPage />
+                </ProtectedRoute>
+              }
             />
             <Route
               element={

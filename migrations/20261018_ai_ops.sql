@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS ai_ops_settings (id int PRIMARY KEY,base_url varchar(500) NOT NULL,model varchar(200) NOT NULL,encrypted_key text) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ai_ops_task (id bigint PRIMARY KEY AUTO_INCREMENT,config_json mediumtext NOT NULL,enabled tinyint NOT NULL DEFAULT 0,next_run bigint NOT NULL,running tinyint NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS ai_ops_run (id bigint PRIMARY KEY AUTO_INCREMENT,task_id bigint NOT NULL,started_at bigint NOT NULL,finished_at bigint,status varchar(32) NOT NULL,detail mediumtext,KEY idx_ai_run(task_id,started_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

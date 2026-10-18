@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Activity,
+  Bot,
   Bell,
   BookOpen,
   Boxes,
@@ -38,6 +39,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   const { count: unreadAlertCount } = useAlertUnreadCount();
 
   const pageTitles: Record<string, string> = {
+    "/ai-ops": "AI 运维",
     "/dashboard": "仪表盘",
     "/forward": "转发管理",
     "/tunnel": "隧道管理",
@@ -119,6 +121,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   ];
 
   const moreItems: TabItem[] = [
+    {path: "/ai-ops", label: "AI 运维", icon: <Bot className="h-4 w-4" />, adminOnly: true},
     {
       path: "/smart-entry",
       label: "三网优化",
