@@ -235,6 +235,52 @@ public class TelegramNotificationService {
         } catch (Exception e) { log.warn("AI operations notification failed for task {}", taskId); }
     }
 
+    /** Follows an incident notice with the assistant's read-only diagnosis, under the same category switch. */
+    @Async
+    public void notifyAiDiagnosis(String resourceType, long resourceId, String resourceName, long incidentStartedAt, String diagnosis) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !categoryEnabled(settings, resourceType)) return;
+            synchronized (deliveryLock) {
+                String key = shortenKey("ai-diagnosis:" + resourceEventKey(resourceType, resourceId, incidentStartedAt));
+                if (loadDelivery(key).sendCount() > 0) return;
+                String message = "[AI 诊断] " + resourceLabel(resourceType) + "“" + clean(resourceName) + "”\n"
+                        + longText(diagnosis, 3000) + "\n（只读排查结果，仅供参考）";
+                deliver(settings, key, "ai_diagnosis", resourceType, resourceId, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("AI diagnosis notification failed for {} {}: {}", resourceType, resourceId, e.getMessage());
+        }
+    }
+
+    @Async
+    public void notifyWeeklyReport(String title, String content) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled()) return;
+            synchronized (deliveryLock) {
+                String key = shortenKey("weekly-report:" + title);
+                if (loadDelivery(key).sendCount() > 0) return;
+                StringBuilder body = new StringBuilder();
+                for (String line : StringUtils.defaultString(content).split("\n")) {
+                    // Telegram plain text cannot show tables; keep headings and list items.
+                    if (line.startsWith("|")) continue;
+                    body.append(line.replaceFirst("^#+\\s*", "■ ")).append('\n');
+                }
+                String message = "[" + clean(title) + "]\n" + longText(body.toString(), 3500)
+                        + "\n完整表格请在面板 AI 运维 → 健康报告 查看。";
+                deliver(settings, key, "weekly_report", "ai_ops", 0L, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("Weekly report notification failed: {}", e.getMessage());
+        }
+    }
+
+    private String longText(String value, int max) {
+        String text = StringUtils.defaultIfBlank(value, "").replace('\r', ' ').replaceAll("\n{3,}", "\n\n").trim();
+        return StringUtils.abbreviate(text, max);
+    }
+
     @Async
     public void notifyDynamicDnsFailure(long ruleId, String ruleName, String detail) {
         try {

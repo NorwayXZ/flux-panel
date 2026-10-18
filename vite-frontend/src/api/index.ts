@@ -3391,6 +3391,9 @@ export interface MonitoringAlertItem {
   resolvedAt?: number;
   updatedAt: number;
   read: boolean;
+  /** Read-only diagnosis by the operations assistant; administrators only. */
+  aiDiagnosis?: string;
+  aiDiagnosedAt?: number;
 }
 
 export interface MonitoringAlertPage {

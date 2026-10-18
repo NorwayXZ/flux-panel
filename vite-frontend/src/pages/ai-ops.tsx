@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Settings,
   History,
+  FileBarChart,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
@@ -34,6 +35,7 @@ import {
 } from "@/api/ai-ops";
 
 import AiOpsChat from "@/components/ai-ops-chat";
+import AiOpsReports from "@/components/ai-ops-reports";
 
 const defaults = (): OpsConfig => ({
   name: "",
@@ -222,6 +224,17 @@ export default function AiOpsPage() {
           }
         >
           <AiOpsChat overview={data} onSettings={() => setTab("settings")} />
+        </Tab>
+        <Tab
+          key="reports"
+          title={
+            <span className="flex items-center gap-2">
+              <FileBarChart size={16} />
+              健康报告
+            </span>
+          }
+        >
+          <AiOpsReports configured={!!data?.settings.keyConfigured} />
         </Tab>
         <Tab
           key="tasks"
@@ -554,19 +567,27 @@ export default function AiOpsPage() {
               </Switch>
               <Switch
                 isSelected={!!config.allowPanelRead}
-                onValueChange={(value) => setConfig({ ...config, allowPanelRead: value })}
+                onValueChange={(value) =>
+                  setConfig({ ...config, allowPanelRead: value })
+                }
               >
                 巡查面板告警、功能目录与所选节点线路
               </Switch>
               <Switch
                 isSelected={!!config.allowTerminal}
-                onValueChange={(value) => setConfig({ ...config, allowTerminal: value,
-                  ...(value ? { mode: "repair", upgradeOnly: false } : {}) })}
+                onValueChange={(value) =>
+                  setConfig({
+                    ...config,
+                    allowTerminal: value,
+                    ...(value ? { mode: "repair", upgradeOnly: false } : {}),
+                  })
+                }
               >
                 授权定时任务执行终端命令、安装服务与自动维护
               </Switch>
               <p className="text-xs text-warning-700">
-                终端以所选节点 Agent 身份执行，通常为 root；每次定时运行沿用保存的授权。
+                终端以所选节点 Agent 身份执行，通常为
+                root；每次定时运行沿用保存的授权。
                 请在任务要求中写明异常阈值、允许处理的范围和日志保留期限。
               </p>
               <p className="text-xs text-default-500">

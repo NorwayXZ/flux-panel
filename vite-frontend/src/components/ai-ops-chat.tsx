@@ -79,6 +79,7 @@ const toolLabels: Record<string, string> = {
   panel_knowledge: "查询面板手册",
   network_probe: "网络诊断",
   node_speed_test: "节点测速",
+  check_nodes: "批量检查",
   execute_command: "运行命令",
   inspect_disk: "检查磁盘",
   inspect_service: "检查服务",
@@ -176,6 +177,91 @@ function ToolRow({
     </details>
   );
 }
+const checkLabels: Record<string, string> = {
+  disk: "磁盘",
+  resources: "CPU / 内存",
+  agent: "Agent 版本",
+  availability: "24 小时可用率",
+};
+const statusStyles: Record<string, { label: string; className: string }> = {
+  fail: { label: "异常", className: "bg-danger-50 text-danger" },
+  warn: { label: "留意", className: "bg-warning-50 text-warning-700" },
+  unknown: { label: "未知", className: "bg-default-100 text-default-500" },
+  ok: { label: "正常", className: "bg-success-50 text-success-700" },
+};
+
+function NodeCheckTable({ event }: { event: OpsChatEvent }) {
+  const data = event.result?.data || {};
+  const rows: any[] = Array.isArray(data.rows) ? data.rows : [];
+  const counts: Record<string, number> = data.counts || {};
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-default-200 text-[13px]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-default-200 bg-default-50/60 px-3 py-2">
+        <span className="font-medium">
+          批量检查 · {checkLabels[data.check] || data.check}
+        </span>
+        <span className="text-xs text-default-500">{rows.length} 个节点</span>
+        <span className="ml-auto flex gap-1.5">
+          {["fail", "warn", "unknown", "ok"]
+            .filter((key) => counts[key])
+            .map((key) => (
+              <span
+                key={key}
+                className={`rounded-full px-2 py-0.5 text-xs ${statusStyles[key].className}`}
+              >
+                {statusStyles[key].label} {counts[key]}
+              </span>
+            ))}
+        </span>
+      </div>
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="text-left text-xs text-default-500">
+              <th className="px-3 py-1.5 font-medium">节点</th>
+              <th className="px-3 py-1.5 font-medium">状态</th>
+              <th className="px-3 py-1.5 font-medium">结果</th>
+              <th className="hidden px-3 py-1.5 font-medium sm:table-cell">
+                说明
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const style = statusStyles[row.status] || statusStyles.unknown;
+
+              return (
+                <tr
+                  key={row.nodeId}
+                  className={`border-t border-default-100 ${row.status === "fail" ? "bg-danger-50/40" : ""}`}
+                >
+                  <td className="px-3 py-1.5">{row.node}</td>
+                  <td className="px-3 py-1.5">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs ${style.className}`}
+                    >
+                      {style.label}
+                    </span>
+                  </td>
+                  <td
+                    className={`px-3 py-1.5 font-mono text-xs ${row.status === "fail" ? "text-danger" : ""}`}
+                  >
+                    {row.value || "—"}
+                  </td>
+                  <td className="hidden px-3 py-1.5 text-xs text-default-500 sm:table-cell">
+                    {row.detail}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Events({
   events,
   nodeName,
@@ -189,9 +275,13 @@ function Events({
 
   return (
     <div className="my-3 space-y-1.5">
-      {tools.map((e, i) => (
-        <ToolRow key={i} event={e} nodeName={nodeName} />
-      ))}
+      {tools.map((e, i) =>
+        e.call?.function?.name === "check_nodes" && e.result?.success ? (
+          <NodeCheckTable key={i} event={e} />
+        ) : (
+          <ToolRow key={i} event={e} nodeName={nodeName} />
+        ),
+      )}
     </div>
   );
 }

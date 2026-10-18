@@ -44,6 +44,8 @@ public class MonitoringService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final TelegramNotificationService telegramNotificationService;
+    @javax.annotation.Resource @org.springframework.context.annotation.Lazy
+    private AiOpsAutomation aiOpsAutomation;
     private final AtomicBoolean scanning = new AtomicBoolean(false);
 
     @Value("${monitoring.retention-days:90}")
@@ -258,7 +260,16 @@ public class MonitoringService {
         );
 
         Map<Integer, String> userNames = loadUserNames();
-        List<Map<String, Object>> items = rows.stream().map(row -> alertResponse(row, userNames)).toList();
+        boolean admin = roleId != null && roleId == ADMIN_ROLE_ID;
+        List<Map<String, Object>> items = rows.stream().map(row -> {
+            Map<String, Object> item = alertResponse(row, userNames);
+            // Diagnoses describe the operator's servers; only administrators see them.
+            if (!admin) {
+                item.remove("aiDiagnosis");
+                item.remove("aiDiagnosedAt");
+            }
+            return item;
+        }).toList();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("items", items);
         result.put("total", total);
@@ -712,6 +723,9 @@ public class MonitoringService {
                             + "started_at, resolved_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
                     state.type(), state.id(), state.name(), state.ownerUserId(), severity, ALERT_OPEN,
                     title, state.detail(), now, now);
+            if (aiOpsAutomation != null) {
+                aiOpsAutomation.onAlertOpened(state.type(), state.id(), state.name(), state.status(), state.detail(), now);
+            }
         }
         long incidentStartedAt = openAlerts.isEmpty() ? now : longValue(openAlerts.get(0).get("started_at"));
         telegramNotificationService.notifyResourceIncident(
@@ -881,6 +895,10 @@ public class MonitoringService {
         result.put("resolvedAt", row.get("resolved_at"));
         result.put("updatedAt", row.get("updated_at"));
         result.put("read", intValue(row.get("is_read")) == 1);
+        if (row.get("ai_diagnosis") != null) {
+            result.put("aiDiagnosis", row.get("ai_diagnosis"));
+            result.put("aiDiagnosedAt", row.get("ai_diagnosed_at"));
+        }
         return result;
     }
 

@@ -42,6 +42,11 @@ final class AiOpsToolSession {
         result.put("success", true);
         return result;
       }
+      if (name.equals("check_nodes") && allowed.contains(name)) {
+        result.put("data", ops.checkNodes(args.getString("check"), nodes, Math.min(120, AiOpsService.remainingSeconds(started))));
+        result.put("success", true);
+        return result;
+      }
       if (name.equals("node_speed_test") && allowed.contains(name)) {
         long source = args.getLongValue("sourceNodeId"), target = args.getLongValue("targetNodeId");
         if (!nodes.contains(source) || !nodes.contains(target))

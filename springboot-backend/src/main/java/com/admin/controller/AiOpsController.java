@@ -10,9 +10,35 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/v1/ai-ops")
 public class AiOpsController {
   private final AiOpsService service;
+  private final com.admin.service.AiOpsAutomation automation;
 
-  public AiOpsController(AiOpsService service) {
+  public AiOpsController(AiOpsService service, com.admin.service.AiOpsAutomation automation) {
     this.service = service;
+    this.automation = automation;
+  }
+
+  @RequireRole
+  @PostMapping("/preferences")
+  public R preferences() {
+    return R.ok(automation.preferences());
+  }
+
+  @RequireRole
+  @PostMapping("/preferences/save")
+  public R savePreferences(@RequestBody JSONObject body) {
+    return automation.savePreferences(body);
+  }
+
+  @RequireRole
+  @PostMapping("/reports")
+  public R reports() {
+    return automation.reports();
+  }
+
+  @RequireRole
+  @PostMapping("/reports/generate")
+  public R generateReport() {
+    return automation.generateNow();
   }
 
   @RequireRole

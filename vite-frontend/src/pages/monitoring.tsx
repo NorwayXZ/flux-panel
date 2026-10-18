@@ -710,7 +710,7 @@ function ApiTimingPanel({
           <Card
             key={String(label)}
             className="border border-transparent dark:border-default-100"
-                      >
+          >
             <CardBody className="p-4">
               <div className="text-sm text-default-500">{label}</div>
               <div className="mt-2 text-2xl font-semibold text-foreground">
@@ -1249,6 +1249,15 @@ function AlertList(props: AlertListProps) {
                 <span className="mt-1 block text-sm text-default-500">
                   {alert.detail || "未提供故障详情"}
                 </span>
+                {alert.aiDiagnosis && (
+                  <span className="mt-2 block whitespace-pre-wrap rounded-lg bg-primary-50 px-3 py-2 text-xs leading-5 text-default-700 dark:bg-primary-50/10">
+                    <span className="font-medium text-primary">
+                      AI 诊断（只读排查，仅供参考）：
+                    </span>
+                    {"\n"}
+                    {alert.aiDiagnosis}
+                  </span>
+                )}
                 <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-default-400">
                   <span>
                     {RESOURCE_LABELS[alert.resourceType]} ID {alert.resourceId}

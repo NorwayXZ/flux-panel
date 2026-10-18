@@ -24,6 +24,7 @@ public class AiOpsService {
   @javax.annotation.Resource private AgentUpgradeService agentUpgrades;
   @javax.annotation.Resource private AiNetworkTools networkTools;
   @javax.annotation.Resource private AiPanelKnowledge knowledge;
+  @javax.annotation.Resource private AiBatchChecks batchChecks;
   private final JdbcTemplate db;
   private final AESCrypto crypto;
   private final TelegramNotificationService notifications;
@@ -331,6 +332,13 @@ public class AiOpsService {
               "targetNodeId", Map.of("type", "integer", "description", "Probe this panel node's address instead of target"),
               "port", Map.of("type", "integer", "description", "Required for tcp; 1-65535")),
               "required", List.of("nodeId", "kind"), "additionalProperties", false))));
+      list.add(Map.of("type", "function", "function", Map.of("name", "check_nodes",
+          "description", "Run one check on every selected node at once and get a per-node status table"
+              + " (ok/warn/fail/unknown): disk (largest filesystem usage via read-only probe), resources (CPU/memory"
+              + " now and 24h peak), agent (version vs panel target), availability (24h node availability). Prefer it"
+              + " for questions about many nodes; the UI shows the table, so summarize only problems and actions.",
+          "parameters", Map.of("type", "object", "properties", Map.of("check", Map.of("type", "string", "enum", AiBatchChecks.CHECKS)),
+              "required", List.of("check"), "additionalProperties", false))));
       list.add(Map.of("type", "function", "function", Map.of("name", "node_speed_test",
           "description", "Measure real TCP bandwidth and RTT between two selected nodes (both directions, 4 streams,"
               + " 3-15 s, at most 50 MB per stream and direction; uses port 5201 on the target). Consumes traffic;"
@@ -442,6 +450,11 @@ public class AiOpsService {
     if (!nodeOnline(node)) throw new IllegalStateException("节点离线");
     String resolved = targetNode != null ? networkTools.nodeAddress(targetNode) : target;
     return networkTools.probe(node, kind, resolved, port, timeout);
+  }
+
+  Object checkNodes(String check, Set<Long> nodes, int timeout) {
+    if (batchChecks == null) throw new IllegalStateException("批量检查不可用");
+    return batchChecks.run(check, nodes, timeout);
   }
 
   Object nodeSpeedTest(long source, long target, int seconds) {

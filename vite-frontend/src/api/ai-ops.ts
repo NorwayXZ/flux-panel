@@ -89,3 +89,22 @@ export const opsChatDetail = (id: number) =>
 export const opsChatDelete = (id: number) =>
   Network.post("/ai-ops/chat/delete", { id });
 export const opsChatStop = () => Network.post("/ai-ops/chat/stop", {});
+
+export interface OpsPreferences {
+  alertDiagnosis: boolean;
+  weeklyReport: boolean;
+}
+export interface OpsReport {
+  id: number;
+  kind: string;
+  title: string;
+  content: string;
+  createdAt: number;
+}
+export const opsPreferences = () =>
+  Network.post<OpsPreferences>("/ai-ops/preferences", {});
+export const opsSavePreferences = (data: Partial<OpsPreferences>) =>
+  Network.post<OpsPreferences>("/ai-ops/preferences/save", data);
+export const opsReports = () => Network.post<OpsReport[]>("/ai-ops/reports", {});
+export const opsGenerateReport = () =>
+  Network.post<{ queued: boolean; message: string }>("/ai-ops/reports/generate", {});
