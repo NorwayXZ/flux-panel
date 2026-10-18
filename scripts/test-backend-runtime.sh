@@ -64,6 +64,12 @@ docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < "${PROJECT_DIR}
 docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
   "${PROJECT_DIR}/migrations/20260727_cross_entry_failover.sql"
 
+# Seed the legacy shared Mysterium schema and a historical connection/event.
+docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test <   "${PROJECT_DIR}/migrations/20261018_mysterium.sql"
+docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test <   "${PROJECT_DIR}/migrations/20261018_mysterium_events.sql"
+docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -e   "INSERT INTO mysterium_connection(node_id,country,proxy_port,state,created_time) VALUES(999998,'US',47100,'connected',1);
+   INSERT INTO mysterium_event(node_id,country,message,created_time) VALUES(999998,'US','legacy migration check',1);"
+
 # Exercise both upgrade paths: an old installation may still have 255-character
 # monitoring columns before the migration or startup schema initializer runs.
 docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -e \
@@ -203,5 +209,15 @@ FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-smart-entry-runti
 if [[ -n "${FLUX_PANEL_RUNTIME_DNS_BINARY:-}" ]]; then
   FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-openwrt-dns-runtime.py" "http://127.0.0.1:${runtime_port}" "${FLUX_PANEL_RUNTIME_DNS_BINARY}"
 fi
+
+# Check real MySQL migration preserves shared rows and permits separate proxy scopes.
+legacy_scope=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse   "SELECT scope_id FROM mysterium_event WHERE node_id=999998 LIMIT 1")
+[[ "${legacy_scope}" == "0" ]]
+scoped_key=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse   "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='mysterium_connection' AND index_name='PRIMARY' AND column_name='scope_id'")
+[[ "${scoped_key}" == "1" ]]
+docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -e   "INSERT INTO mysterium_connection(node_id,country,scope_id,proxy_port,state,created_time) VALUES
+   (999997,'US',0,47100,'connected',1),(999997,'US',42,47101,'connected',1),(999997,'US',43,47102,'connected',1);"
+scoped_count=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse   "SELECT COUNT(*) FROM mysterium_connection WHERE node_id=999997")
+[[ "${scoped_count}" == "3" ]]
 
 printf 'Backend runtime and monitoring integration test passed\n'
