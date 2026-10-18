@@ -6,7 +6,6 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "@heroui/button";
-import { Input } from "@heroui/input";
 import { Switch } from "@heroui/switch";
 import {
   AlertCircle,
@@ -514,8 +513,7 @@ export default function AiOpsChat({
     [chatId, setChatId] = useState<number>();
   const [turns, setTurns] = useState<OpsChatTurn[]>([]),
     [message, setMessage] = useState("");
-  const [config, setConfig] = useState<OpsConfig>(policy),
-    [services, setServices] = useState("");
+  const [config, setConfig] = useState<OpsConfig>(policy);
   const [running, setRunning] = useState(false),
     [liveText, setLiveText] = useState(""),
     [livePrompt, setLivePrompt] = useState("");
@@ -737,10 +735,10 @@ export default function AiOpsChat({
           config: {
             ...turnConfig,
             prompt: text,
-            serviceAllowlist: services
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
+            // Chat uses fixed log limits; services are managed through terminal commands.
+            retentionDays: 7,
+            maxJournalMb: 500,
+            serviceAllowlist: [],
           },
         },
         request.signal,
@@ -1040,37 +1038,8 @@ export default function AiOpsChat({
                 root，可安装、修改配置或删除文件。仅作用于所选节点；刷新后保留，可随时关闭或切回只读。
               </p>
             )}
-            <Input
-              size="sm"
-              label="服务白名单（逗号分隔）"
-              value={services}
-              isDisabled={running}
-              onValueChange={setServices}
-            />
             {config.mode === "repair" && (
               <>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    size="sm"
-                    type="number"
-                    label="日志保留天数"
-                    value={String(config.retentionDays)}
-                    isDisabled={running}
-                    onValueChange={(v) =>
-                      setConfig({ ...config, retentionDays: Number(v) })
-                    }
-                  />
-                  <Input
-                    size="sm"
-                    type="number"
-                    label="Journal 上限（MB）"
-                    value={String(config.maxJournalMb)}
-                    isDisabled={running}
-                    onValueChange={(v) =>
-                      setConfig({ ...config, maxJournalMb: Number(v) })
-                    }
-                  />
-                </div>
                 <Switch
                   size="sm"
                   isSelected={!!config.allowLogCleanup}
@@ -1092,8 +1061,8 @@ export default function AiOpsChat({
                   <span className="text-sm">允许升级所选节点 Agent</span>
                 </Switch>
                 <p className="text-xs leading-5 text-warning-700">
-                  清理会删除符合保留期限的日志；服务重启或 Agent
-                  升级可能中断连接。
+                  清理只删除 7 天前的已轮转日志，journal 收缩到 500
+                  MB；服务重启或 Agent 升级可能中断连接。
                 </p>
               </>
             )}
