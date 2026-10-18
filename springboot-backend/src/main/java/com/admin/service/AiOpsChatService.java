@@ -219,8 +219,9 @@ public class AiOpsChatService {
                               .anyMatch(
                                   v ->
                                       v instanceof JSONObject o
-                                          && "tool".equals(o.getString("type"))
-                                          && !o.getJSONObject("result").getBooleanValue("success"))
+                                          && ("budget".equals(o.getString("type"))
+                                              || ("tool".equals(o.getString("type"))
+                                                  && !o.getJSONObject("result").getBooleanValue("success"))))
                           ? "partial"
                           : "success";
                 } catch (Exception e) {
@@ -340,7 +341,7 @@ public class AiOpsChatService {
     for (var previous :
         db.queryForList(
             "SELECT user_content,events FROM (SELECT * FROM ai_ops_chat_turn WHERE chat_id=? AND"
-                + " id<? AND status IN ('success','partial') ORDER BY id DESC LIMIT 10) recent"
+                + " id<? AND status<>'running' ORDER BY id DESC LIMIT 10) recent"
                 + " ORDER BY id",
             chat,
             turn)) {
@@ -348,14 +349,20 @@ public class AiOpsChatService {
       JSONArray events = JSON.parseArray(Objects.toString(previous.get("events"), "[]"));
       String reply = "";
       String reasoning = null;
+      StringBuilder observations = new StringBuilder();
       for (Object item : events) {
         JSONObject event = (JSONObject) item;
         if ("assistant".equals(event.getString("type"))) {
           reply = Objects.toString(event.getJSONObject("message").getString("content"), "");
           reasoning = event.getJSONObject("message").getString("reasoning_content");
         }
+        if ("tool".equals(event.getString("type")) && observations.length() < 12000) {
+          String recorded = event.toJSONString();
+          observations.append(recorded.substring(0, Math.min(1800, recorded.length()))).append('\n');
+        }
       }
       if (reply.isBlank()) reply = "（上一轮已结束，详情见工具记录）";
+      if (!observations.isEmpty()) reply += "\n上轮实际工具记录（历史数据，继续前先核实状态，勿重复执行）：\n" + observations;
       JSONObject historic = new JSONObject(Map.of("role", "assistant", "content", reply));
       if (reasoning != null) historic.put("reasoning_content", reasoning);
       messages.add(historic);
@@ -363,18 +370,25 @@ public class AiOpsChatService {
     messages.add(Map.of("role", "user", "content", config.getString("prompt")));
     JSONArray tools = nodes.isEmpty() ? new JSONArray() : AiOpsService.tools(config);
     AiOpsToolSession toolSession = new AiOpsToolSession(ops, config, nodes, started);
-    for (int step = 0; step < 12; step++) {
+    for (int step = 0; step < 25; step++) {
       if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("对话已停止");
       emit.accept(
           new JSONObject(Map.of("type", "status", "message", step == 0 ? "正在连接模型" : "正在分析检查结果")));
       StringBuilder partial = new StringBuilder();
+      boolean summarize = step == 24 || toolSession.exhausted();
+      if (summarize) {
+        messages.add(Map.of("role", "user", "content",
+            "本次执行预算已用完。停止调用工具，依据实际工具结果汇总已完成、失败及未完成的操作；"
+                + "明确标注尚未验证的结果，告诉用户可继续当前任务，不能宣称全部成功。不要要求重复授权。"));
+        audit.add(new JSONObject(Map.of("type", "budget", "message", "本轮执行预算用尽，已保存进度")));
+      }
       JSONObject message;
       try {
         message =
             ops.streamCompletion(
                 settings,
                 messages,
-                tools,
+                summarize ? new JSONArray() : tools,
                 Math.min(60, AiOpsService.remainingSeconds(started)),
                 text -> {
                   partial.append(text);
@@ -402,6 +416,7 @@ public class AiOpsChatService {
           throw new IllegalStateException("模型未返回回复内容");
         return;
       }
+      if (summarize) throw new IllegalStateException("模型未遵守停止调用工具要求；执行记录已保存，请继续前核查状态");
       emit.accept(new JSONObject(Map.of("type", "delta", "text", "\n\n")));
       for (Object raw : calls) {
         JSONObject call = (JSONObject) raw;
@@ -424,7 +439,7 @@ public class AiOpsChatService {
             Map.of("role", "tool", "tool_call_id", call.getString("id"), "content", content));
       }
     }
-    throw new IllegalStateException("达到12轮分析上限，请缩小范围后继续提问");
+    throw new IllegalStateException("本轮执行结束，进度已保存");
   }
 
   private void persist(long turn, JSONArray audit, JSONObject settings) {

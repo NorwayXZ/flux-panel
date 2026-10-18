@@ -113,4 +113,8 @@ final class AiOpsToolSession {
     }
     return result;
   }
+
+  boolean exhausted() {
+    return calls >= 30;
+  }
 }

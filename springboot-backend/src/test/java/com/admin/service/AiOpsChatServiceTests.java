@@ -252,6 +252,35 @@ class AiOpsChatServiceTests {
   }
 
   @Test
+  void toolLoopReservesSummaryAndDoesNotStopAtTwelveRounds() throws Exception {
+    java.util.concurrent.atomic.AtomicInteger rounds = new java.util.concurrent.atomic.AtomicInteger();
+    TestOps looping = new TestOps() {
+      @Override
+      JSONObject streamCompletion(JSONObject settings, JSONArray messages, JSONArray tools,
+          int seconds, java.util.function.Consumer<String> onText) {
+        rounds.incrementAndGet();
+        if (tools.isEmpty()) {
+          onText.accept("已保存进度，仍有待验证项");
+          return new JSONObject(Map.of("role", "assistant", "content", "已保存进度，仍有待验证项"));
+        }
+        return new JSONObject(Map.of("role", "assistant", "tool_calls",
+            List.of(tool("inspect_disk", "{\"nodeId\":1}"))));
+      }
+    };
+    AiOpsChatService service = new AiOpsChatService(db, looping);
+    try {
+      JSONObject c = config();
+      c.put("nodeIds", List.of(1));
+      JSONArray audit = new JSONArray();
+      service.execute(1, 1, c, new JSONObject(), audit, e -> {}, System.currentTimeMillis());
+      assertEquals(25, rounds.get());
+      assertEquals(24, toolCalls.size());
+      assertTrue(audit.stream().anyMatch(e -> "budget".equals(((JSONObject)e).getString("type"))));
+      assertEquals("已保存进度，仍有待验证项", audit.getJSONObject(audit.size()-1).getJSONObject("message").getString("content"));
+    } finally { service.close(); looping.close(); }
+  }
+
+  @Test
   void ownerIsolationAndMissingModelDoNotCreateTurns() {
     long now = System.currentTimeMillis();
     db.update(
