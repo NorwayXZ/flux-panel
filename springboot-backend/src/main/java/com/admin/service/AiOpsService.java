@@ -289,12 +289,15 @@ public class AiOpsService {
     for (String name :
         List.of(
             "inspect_disk",
+            "execute_command",
             "inspect_agent_upgrade",
             "upgrade_agent",
             "inspect_service",
             "vacuum_journal",
             "restart_service",
             "cleanup_rotated_logs")) {
+      if (name.equals("execute_command") && (!c.getBooleanValue("allowTerminal")
+          || !"repair".equals(c.getString("mode")) || c.getBooleanValue("upgradeOnly"))) continue;
       if (c.getBooleanValue("upgradeOnly")
           && Set.of("vacuum_journal", "restart_service", "cleanup_rotated_logs").contains(name))
         continue;
@@ -312,6 +315,11 @@ public class AiOpsService {
           "nodeId", Map.of("type", "integer", "description", "Target node ID from selected nodes"));
       JSONArray required = new JSONArray();
       required.add("nodeId");
+      if (name.equals("execute_command")) {
+        props.put("command", Map.of("type", "string", "description",
+            "Shell script executed as the Agent OS user (often root). Use noninteractive commands. Inspect OS/init before changes, install/configure requested services, then verify. Max 16000 characters."));
+        required.add("command");
+      }
       if (name.contains("service") && c.getJSONArray("serviceAllowlist").isEmpty()) continue;
       if (name.contains("service")) {
         props.put("service", Map.of("type", "string", "enum", c.getJSONArray("serviceAllowlist")));
@@ -319,6 +327,7 @@ public class AiOpsService {
       }
       String desc =
           switch (name) {
+            case "execute_command" -> "Execute an administrator-authorized shell script on a selected node via its existing terminal, including legacy Agents. Returns output and exitCode. Bounded runtime; after timeout inspect before retrying. For long tasks launch with log/status files then poll. Never treat submission as verified success.";
             case "inspect_disk" -> "Inspect disk, inodes, /var/log size and journal usage";
             case "inspect_agent_upgrade" ->
                 "Read panel Agent version and upgrade history, inspect installation failure logs"
@@ -385,6 +394,18 @@ public class AiOpsService {
       if (!secret.isBlank()) encoded = encoded.replace(secret, "[REDACTED]");
     }
     return JSON.parseObject(encoded);
+  }
+
+  Object executeCommand(long node, String command, int timeout) throws Exception {
+    if (!nodeOnline(node)) throw new IllegalStateException("节点离线");
+    Map<String, Object> data = new HashMap<>(legacyDiagnostics.execute(node, command, timeout));
+    String output = Objects.toString(data.get("output"), "");
+    for (var row : db.queryForList("SELECT secret FROM node WHERE id=?", node)) {
+      String secret = Objects.toString(row.get("secret"), "");
+      if (!secret.isBlank()) output = output.replace(secret, "[REDACTED]");
+    }
+    data.put("output", output);
+    return data;
   }
 
   Object requestUpgrade(long node, int owner) {

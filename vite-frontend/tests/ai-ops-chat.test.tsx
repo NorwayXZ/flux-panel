@@ -167,3 +167,15 @@ it("authorizes only selected nodes and immediately continues upgrades without gr
   });
   expect(vi.mocked(streamOpsChat).mock.calls[0][0].message).toContain("已有任务运行时先跟踪");
 });
+it("opens terminal management explicitly and includes it in the actual request", async () => {
+  vi.mocked(streamOpsChat).mockResolvedValue();
+  render(<AiOpsChat overview={overview()} onSettings={() => {}} />);
+  fireEvent.click(screen.getByLabelText("节点A"));
+  fireEvent.click(screen.getByLabelText("完整服务器管理（终端命令、安装服务）"));
+  fireEvent.change(screen.getByLabelText("聊天消息"), { target: { value: "安装 nginx 并验证" } });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() => expect(streamOpsChat).toHaveBeenCalledOnce());
+  expect(vi.mocked(streamOpsChat).mock.calls[0][0]).toMatchObject({ config: {
+    nodeIds: [1], mode: "repair", allowTerminal: true, upgradeOnly: false, allowAgentUpgrade: true,
+  } });
+});

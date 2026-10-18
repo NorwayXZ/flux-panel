@@ -8,7 +8,7 @@ import java.util.concurrent.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-/** Only fixed read-only probes can cross the legacy terminal channel. */
+/** Bounded terminal sessions shared by fixed probes and explicitly authorized chat commands. */
 @Service
 public class AiLegacyDiagnostics {
   private final JdbcTemplate db;
@@ -32,6 +32,28 @@ public class AiLegacyDiagnostics {
     String id = "ai-probe-" + UUID.randomUUID();
     String marker = "AI_PROBE_" + UUID.randomUUID().toString().replace("-", "");
     String command = command(node, kind, marker);
+    return exchange(node, command, marker, Math.min(timeout, 40), "legacy_readonly_terminal");
+  }
+
+  public Map<String, Object> execute(long node, String script, int timeout) throws Exception {
+    if (script == null || script.isBlank() || script.length() > 16000 || script.indexOf('\0') >= 0)
+      throw new IllegalArgumentException("命令为空、过长或包含无效字符");
+    String marker = "AI_EXEC_" + UUID.randomUUID().toString().replace("-", "");
+    String encoded = Base64.getEncoder().encodeToString(script.getBytes(StandardCharsets.UTF_8));
+    String command = "stty -echo; printf '%s' '" + encoded
+        + "' | base64 -d | /bin/sh; ai_exit=$?; printf '\\n%s%s:%s\\n' '"
+        + marker.substring(0, 20) + "' '" + marker.substring(20) + "' \"$ai_exit\"; stty echo\n";
+    Map<String, Object> data = exchange(node, command, marker, timeout, "authorized_terminal");
+    String output = data.get("output").toString();
+    int boundary = output.lastIndexOf("\nAI_EXIT_CODE:");
+    if (boundary < 0) throw new IllegalStateException("未取得命令退出状态，不能确认执行完成");
+    return Map.of("transport", "authorized_terminal", "output", output.substring(0, boundary),
+        "exitCode", Integer.parseInt(output.substring(boundary + 14).trim()));
+  }
+
+  private Map<String, Object> exchange(long node, String command, String marker, int timeout,
+      String transport) throws Exception {
+    String id = "ai-terminal-" + UUID.randomUUID();
     if (!slots.tryAcquire()) throw new IllegalStateException("旧节点诊断通道繁忙，请稍后重试");
     Probe probe =
         new Probe(
@@ -40,10 +62,10 @@ public class AiLegacyDiagnostics {
     try {
       if (!send(node, "TerminalOpen", Map.of("sessionId", id, "cols", 120, "rows", 32)))
         throw new IllegalStateException("节点终端通道不可用");
-      String output = probe.result().get(Math.max(1, Math.min(timeout, 40)), TimeUnit.SECONDS);
-      return Map.of("transport", "legacy_readonly_terminal", "output", output);
+      String output = probe.result().get(Math.max(1, Math.min(timeout, 140)), TimeUnit.SECONDS);
+      return Map.of("transport", transport, "output", output);
     } catch (TimeoutException e) {
-      throw new IllegalStateException("旧节点终端诊断超时：终端协议可能不受支持或命令未返回；不能据此判断磁盘已满");
+      throw new IllegalStateException("终端执行超时，完成状态未知；关闭终端不保证后台任务停止，请先检查状态再重试");
     } catch (ExecutionException e) {
       throw new IllegalStateException(Objects.toString(e.getCause().getMessage(), "旧节点终端诊断失败"));
     } finally {
@@ -143,10 +165,13 @@ public class AiLegacyDiagnostics {
             probe.output().writeBytes(bytes);
             String text = probe.output().toString(StandardCharsets.UTF_8);
             int end = text.indexOf(probe.marker());
-            if (end >= 0)
+            if (end >= 0 && (!probe.marker().startsWith("AI_EXEC_") || text.indexOf('\n', end) >= 0))
               probe
                   .result()
-                  .complete(text.substring(0, end).replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", ""));
+                  .complete((text.substring(0, end)
+                      + (probe.marker().startsWith("AI_EXEC_")
+                          ? "\nAI_EXIT_CODE:" + text.substring(end + probe.marker().length() + 1, text.indexOf('\n', end)).trim()
+                          : "")).replaceAll("\\u001B\\[[0-9;?]*[A-Za-z]", ""));
           }
         }
       }

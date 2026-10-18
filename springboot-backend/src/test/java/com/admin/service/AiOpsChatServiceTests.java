@@ -277,6 +277,14 @@ class AiOpsChatServiceTests {
     assertFalse(
         session.invoke(tool("vacuum_journal", "{\"nodeId\":1}")).getBooleanValue("success"));
     assertTrue(toolCalls.isEmpty());
+    assertFalse(session.invoke(tool("execute_command", "{\"nodeId\":1,\"command\":\"id\"}"))
+        .getBooleanValue("success"));
+    JSONObject terminalPolicy = config();
+    terminalPolicy.put("mode", "repair");
+    terminalPolicy.put("allowTerminal", true);
+    var terminal = new AiOpsToolSession(ops, terminalPolicy, Set.of(1L), System.currentTimeMillis());
+    assertFalse(terminal.invoke(tool("execute_command", "{\"nodeId\":2,\"command\":\"id\"}"))
+        .getBooleanValue("success"));
     c.put("mode", "repair");
     AiOpsToolSession first = new AiOpsToolSession(ops, c, Set.of(1L), System.currentTimeMillis());
     assertTrue(first.invoke(tool("inspect_disk", "{\"nodeId\":1}")).getBooleanValue("success"));

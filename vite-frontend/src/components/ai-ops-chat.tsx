@@ -389,6 +389,22 @@ export default function AiOpsChat({
               <option value="inspect">只读检查</option>
               <option value="repair">允许维护</option>
             </select>
+            <Switch
+              size="sm"
+              isSelected={!!config.allowTerminal}
+              isDisabled={running}
+              onValueChange={(enabled) => setConfig({
+                ...config, allowTerminal: enabled,
+                ...(enabled ? { mode: "repair", upgradeOnly: false, allowAgentUpgrade: true } : {}),
+              })}
+            >
+              完整服务器管理（终端命令、安装服务）
+            </Switch>
+            {config.allowTerminal && (
+              <p className="text-xs text-warning-700">
+                已授权助手以节点 Agent 的系统身份执行命令，通常为 root，可安装、修改配置或删除文件。仅作用于本轮所选节点；刷新页面后需重新开启。
+              </p>
+            )}
             <Input
               size="sm"
               label="服务白名单（逗号分隔）"

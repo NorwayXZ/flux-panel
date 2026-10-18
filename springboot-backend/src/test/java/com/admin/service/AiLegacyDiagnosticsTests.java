@@ -12,6 +12,36 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 class AiLegacyDiagnosticsTests {
   @Test
+  void authorizedTerminalRunsScriptAndReportsRealExitCode() throws Exception {
+    var source = new JdbcDataSource();
+    source.setURL("jdbc:h2:mem:terminal;MODE=MySQL");
+    AiLegacyDiagnostics service = new AiLegacyDiagnostics(new JdbcTemplate(source)) {
+      @Override
+      boolean send(long node, String type, Map<String, Object> data) {
+        String id = data.get("sessionId").toString();
+        if (type.equals("TerminalOpen")) {
+          handle(node, new JSONObject(Map.of("type", "TerminalOpened", "data", new JSONObject(data))));
+        } else if (type.equals("TerminalInput")) {
+          try {
+            String command = new String(Base64.getDecoder().decode(data.get("data").toString()), StandardCharsets.UTF_8);
+            Process process = new ProcessBuilder("/bin/sh", "-c", command).redirectErrorStream(true).start();
+            byte[] output = process.getInputStream().readAllBytes();
+            assertTrue(process.waitFor(3, TimeUnit.SECONDS));
+            handle(node, new JSONObject(Map.of("type", "TerminalOutput", "data", new JSONObject(Map.of(
+                "sessionId", id, "data", Base64.getEncoder().encodeToString(output))))));
+          } catch (Exception e) { throw new RuntimeException(e); }
+        }
+        return true;
+      }
+    };
+    var result = service.execute(73, "printf 'actual-output'; exit 7", 3);
+    assertEquals(7, result.get("exitCode"));
+    assertTrue(result.get("output").toString().contains("actual-output"));
+    assertEquals(0, service.execute(73, "printf 'done'", 3).get("exitCode"));
+    assertThrows(IllegalArgumentException.class, () -> service.execute(73, "", 3));
+  }
+
+  @Test
   void onlyFixedCommandsAndOwnSessionOutputAreAccepted() throws Exception {
     var source = new JdbcDataSource();
     source.setURL("jdbc:h2:mem:legacy;MODE=MySQL;DB_CLOSE_DELAY=-1");

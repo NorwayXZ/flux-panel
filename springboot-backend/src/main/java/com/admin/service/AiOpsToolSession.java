@@ -40,6 +40,13 @@ final class AiOpsToolSession {
       long node = args.getLongValue("nodeId");
       if (!nodes.contains(node) || !allowed.contains(name))
         throw new IllegalArgumentException("工具或节点超出任务权限");
+      if (name.equals("execute_command")) {
+        Object data = ops.executeCommand(node, args.getString("command"),
+            Math.min(140, AiOpsService.remainingSeconds(started)));
+        result.put("data", data);
+        result.put("success", ((Number) ((Map<?, ?>) data).get("exitCode")).intValue() == 0);
+        return result;
+      }
       if (name.equals("inspect_agent_upgrade")) {
         result.put("data", ops.inspectUpgrade(node));
         result.put("success", true);

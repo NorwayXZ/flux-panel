@@ -323,7 +323,12 @@ public class AiOpsChatService {
                 + " observations do not count. Never claim execution without a successful tool"
                 + " result. Clearly explain tool limitations, offline nodes and failed actions."
                 + " Cannot create or change schedules from chat; direct the user to the task form"
-                + " when asked. No arbitrary shell. For Agent installation failures use"
+                + " when asked. Terminal authorization: " + config.getBooleanValue("allowTerminal")
+                + ". When execute_command is provided, you can install and configure requested services,"
+                + " read/write configuration and diagnose/repair using shell commands on selected nodes."
+                + " Inspect OS, init and current state first, use noninteractive commands, and verify"
+                + " actual service health afterwards. Do not ask users to run commands you can execute."
+                + " Do not make unrelated changes. For Agent installation failures use"
                 + " inspect_agent_upgrade before guessing disk causes. Old Agents can use fixed"
                 + " legacy read-only diagnostics. upgrade_agent requires this turn repair mode plus"
                 + " explicit upgrade permission. Journal retention settings are authorization"

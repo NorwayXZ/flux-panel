@@ -243,6 +243,17 @@ class AiOpsServiceTests {
     assertFalse(tools.contains("cleanup_rotated_logs"));
   }
 
+  @Test
+  void terminalRequiresExplicitMaintenanceAndSelectedScopePolicy() {
+    JSONObject c = config();
+    c.put("allowTerminal", true);
+    assertFalse(AiOpsService.tools(c).toJSONString().contains("execute_command"));
+    c.put("mode", "repair");
+    assertTrue(AiOpsService.tools(c).toJSONString().contains("execute_command"));
+    c.put("upgradeOnly", true);
+    assertFalse(AiOpsService.tools(c).toJSONString().contains("execute_command"));
+  }
+
   JSONObject toolMessage(String name, String args) {
     return JSON.parseObject(
         "{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call\",\"type\":\"function\",\"function\":{\"name\":"
