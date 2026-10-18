@@ -167,3 +167,26 @@ html, body {
     animation: none;
   }
 }
+
+/* AI 运维对话：回复正文接近 Claude 桌面版的阅读排版 */
+.ai-prose {
+  font-family: ui-serif, "Iowan Old Style", Charter, Georgia, Cambria, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", serif;
+  font-size: 16px;
+  line-height: 1.75;
+  letter-spacing: 0.005em;
+  overflow-wrap: anywhere;
+  font-feature-settings: "kern", "liga";
+  -webkit-font-smoothing: antialiased;
+}
+.ai-prose code,
+.ai-prose pre {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0;
+}
+@keyframes ai-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.ai-pulse {
+  animation: ai-pulse 1.2s ease-in-out infinite;
+}
