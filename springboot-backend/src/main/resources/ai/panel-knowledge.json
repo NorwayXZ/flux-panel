@@ -577,242 +577,242 @@
   {
    "id": "release:.github/release-notes.md#0",
    "kind": "release",
+   "title": "2.84.0-beta.23 AI 运维：节点笔记、改动记录与还原、安全巡检和对话功能补齐（面板预览版）",
+   "text": "- 节点笔记：助手把查到的系统版本、角色、服务和端口、处理过的问题记成每台节点一份笔记（最多 2000 字），下次对话自动带上；可在“AI 运维 → 记忆与改动”查看和修改。\n- 改动记录与还原：助手执行的每条命令都记录退出码和输出；新增“写入文件”工具，修改配置文件前先读取原内容并保存修改前后两份，可查看逐行差异并一键还原；文件在之后又被改动时拒绝覆盖。仅在“允许维护”并开启完整服务器管理时可用，单个文件最多 32 KB。\n- 安全巡检：只读检查 SSH 设置（root/密码登录）、开放端口、7 天失败登录及来源 IP、fail2ban、防火墙、待装安全更新、是否需要重启、可登录用户和密钥，按风险给出加固建议。\n- 对话功能：重新生成最后一条回复、编辑之前的问题后重发、搜索（含提问内容）和重命名会话、导出 Markdown；每轮显示 token 用量，填写单价后显示估算费用；可在对话框切换管理员允许的模型；思考型模型的思考过程可折叠查看。\n- 批量磁盘检查同时看剩余空间：可用不足 1 GB 记为留意、不足 256 MB 记为异常（/boot 仍只看使用率），避免小硬盘显示“正常”。\n- 新增表 ai_node_note、ai_ops_change，自动创建。仅更新面板，Agent 保持 2.84.0-beta.16。这是预发布版，不更新稳定版 latest 标签。"
+  },
+  {
+   "id": "release:.github/release-notes.md#1",
+   "kind": "release",
    "title": "2.84.0-beta.22 AI 运维：告警自动诊断、健康周报和批量检查（面板预览版）",
    "text": "- 告警自动诊断：节点、隧道、转发、私人代理和出口告警持续约 45 秒仍未恢复时，助手自动做一次只读排查（查看可用率、线路、出口和告警，必要时从相关节点做网络诊断），把可能原因、已排除因素和处理步骤写进告警中心（仅管理员可见），并推送到 Telegram。同一资源 30 分钟最多一次、每小时最多 6 次，可在“AI 运维 → 健康报告”关闭。\n- 每周健康报告：每周一 9 点逐台检查磁盘并对比一周增长，汇总 24 小时可用率、CPU/内存、需要升级或离线的节点、21 天内到期证书、14 天内到期服务器、本周与上周流量和未处理告警，由模型写出总结和优先处理事项，推送 Telegram；也可在“健康报告”页立即生成，历史报告保留 180 天。\n- 批量检查：对话中检查多台服务器（磁盘、CPU/内存、Agent 版本、可用率）时返回逐台状态表，异常行标红，回复只总结异常。\n- 网络诊断改进：节点没有 mtr/traceroute 时改用 ping 递增 TTL 追踪路由；去掉诊断输出中回显的提交命令，减少模型 token。\n- 新增表 ai_ops_preference、ai_ops_report、node_disk_sample，告警表增加诊断字段，均自动创建。仅更新面板，Agent 保持 2.84.0-beta.16。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#1",
+   "id": "release:.github/release-notes.md#2",
    "kind": "release",
    "title": "2.84.0-beta.21 AI 运维：面板知识、网络诊断和运行数据（面板预览版）",
    "text": "- 面板知识库：助手内置全部功能的页面位置、用途、前提、操作步骤、注意事项和近期版本说明，每次对话都带功能索引；问“某功能在哪、怎么用”时先查手册再答，不用你解释面板。知识库在每次发布构建时由使用教程、页面说明、文档和版本说明自动生成。\n- 当前问题：新增“issues”读取，汇总未处理告警和最近一次全系统自检的异常项及处理建议；不选节点时也能问面板功能和当前告警。\n- 网络诊断：从所选节点做 ping、TCP 连接延迟、路由追踪（mtr/traceroute）、HTTP 分段计时和 DNS 解析，目标可写域名/IP/URL 或直接选面板节点；只读模式可用，旧版 Agent 也可用。目标经严格校验，不能注入命令。\n- 节点间测速：两个所选节点之间做 3–15 秒双向 TCP 测速，返回上下行 Mbps 和 RTT；每次最多约 400 MB，占用目标 5201 端口。\n- 运行数据：所选节点及其隧道、转发的当前状态与 24 小时/7 天可用率、近期线路切换；面板流量趋势、转发和私人代理流量排行；私人代理出口（家宽池、Mysterium、WARP、自定义出口）状态；定时线路探测和测速结果；CPU、内存、网卡吞吐历史（面板每 5 分钟记录、保留 7 天，升级后开始积累）。\n- 使用教程新增“AI 运维”条目；对话中新工具显示为“查询面板手册”“网络诊断”“节点测速”。\n- 仅更新面板，Agent 保持 2.84.0-beta.16；新增 node_metric_sample 表，自动创建。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#2",
+   "id": "release:.github/release-notes.md#3",
    "kind": "release",
    "title": "2.84.0-beta.20 AI 运维对话界面重做（面板预览版）",
    "text": "- 对话页参照 Claude 桌面版重新排版：回复正文居中阅读栏、衬线西文配苹方中文、16px 字号和 1.75 行距，段落、标题、列表、引用、表格按 Markdown 渲染。\n- 代码块带语言标签和“复制”按钮；每条回复可一键复制。\n- 工具调用改为可折叠的紧凑行：显示中文动作、节点和命令，执行命令展开后以终端样式显示命令、输出和退出码。\n- 左侧改为会话列表（悬停可删除），输入框改为圆角输入区，自动增高，发送和停止为圆形按钮；空白页提供常用问题。聊天区按窗口剩余高度铺满，输入框始终可见；手机宽度可用。\n- 仅更新面板，Agent 保持 2.84.0-beta.16，无数据库变更。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#3",
+   "id": "release:.github/release-notes.md#4",
    "kind": "release",
    "title": "2.84.0-beta.19 修复 beta 更新发现（Agent 沿用 beta.16）",
    "text": "- beta 面板从已发布 Releases 列表选择更新，不再被 latest 正式版接口固定在 2.83.3；正式版安装保持正式通道。\n- 正确比较 beta 数字编号和同版本正式版；不再将构建尚未完成的 Git 标签作为可安装更新。\n- 增加通道筛选和 beta.9/beta.10、beta.16/beta.18 版本比较测试。"
   },
   {
-   "id": "release:.github/release-notes.md#4",
+   "id": "release:.github/release-notes.md#5",
    "kind": "release",
    "title": "2.84.0-beta.18 AI 执行预算与进度续接（Agent 沿用 beta.16）",
    "text": "- 聊天由12轮增加到最多25轮，保留最后一轮无工具汇总；预算耗尽保留部分完成状态，不再直接以“达到12轮上限”丢下执行结果。仍保留30次工具和10分钟时限。\n- 后续对话包含失败、中断轮次的有限工具记录摘要，继续前要求核查现状，减少重复执行。历史记录不作为新授权。\n- 增加连续24次工具执行后必须输出收尾报告的回归测试。仅面板更新。"
   },
   {
-   "id": "release:.github/release-notes.md#5",
+   "id": "release:.github/release-notes.md#6",
    "kind": "release",
    "title": "2.84.0-beta.17 AI 管理权限默认启用并保留（Agent 沿用 beta.16）",
    "text": "- 管理员聊天默认开启完整终端管理、面板读取及 Agent 升级，仍需选择目标节点。修复刷新或重开页面后回到只读、反复要求终端授权的问题。\n- 在当前浏览器按管理员名称保存权限和选定节点；主动切回只读或关闭权限同样保存。不会保存模型密钥或聊天正文，不自动运行任何命令。\n- 已保存的定时任务仍遵守各自配置，不批量扩大已有任务权限。"
   },
   {
-   "id": "release:.github/release-notes.md#6",
+   "id": "release:.github/release-notes.md#7",
    "kind": "release",
    "title": "2.84.0-beta.16 面板重启时 Mysterium 家宽不断线（Agent 2.84.0-beta.16，共享客户端 1.39.7-3）",
    "text": "- 共享余额的节点在面板重启期间不再断开家宽：付款请求失败（面板重启时的 502、连接中断或签名端暂未就绪）时，在约 100 秒内持续重试同一笔付款，不再 40 秒就主动断开连接。Mysterium 家宽节点允许约 2 分钟内未收到付款，面板重启一般 30–60 秒。\n- 重试的是同一笔账单，签名端原样返回已签好的付款，面板重启那一刻签出但没送到的付款也能补交，不会重复扣费，也不会触发 3 分钟等待。\n- 重新绑定统一余额时，已绑定的节点也会换上当前版本的共享客户端；Agent 遇到已导入的共享账户时只替换客户端，不再重复导入。\n- 面板和 Agent 均升级至 2.84.0-beta.16，共享客户端升级到 myst-shared 1.39.7-3。升级后需在“统一余额”里按原设置重新绑定一次，各共享节点的家宽会重连一次。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#7",
+   "id": "release:.github/release-notes.md#8",
    "kind": "release",
    "title": "2.84.0-beta.15 面板巡查上下文与定时终端维护（Agent 沿用 beta.13）",
    "text": "- AI 可显式授权读取面板功能/API 目录、节点版本、全局监控状态和所选节点的入口/出口隧道及转发关系；只返回指定字段，不暴露节点密钥。目录是能力说明，不等于开放所有面板接口操作。\n- 聊天和定时任务共享面板知识：资源关系、托管线路边界、DNS/端口与实际代理健康差异、清理前测量及保护业务数据的要求。\n- 定时任务可保存终端维护授权，按选定节点执行安装、检查、修复与验证；沿用执行时限、审计及通知机制。\n- 仍未接入 DNS、聚合、出口切换等全部面板控制接口，不宣称能自动修复所有面板异常。用户需自己设定任务周期、范围及要求。"
   },
   {
-   "id": "release:.github/release-notes.md#8",
+   "id": "release:.github/release-notes.md#9",
    "kind": "release",
    "title": "2.84.0-beta.14 AI 完整服务器管理（Agent 沿用 beta.13）",
    "text": "- 聊天新增“完整服务器管理（终端命令、安装服务）”授权，开放 execute_command，可按需求安装服务、编辑配置和验证结果，以节点 Agent 系统身份执行。仅作用于所选节点；只读和仅升级授权不开放终端。\n- 复用已有终端协议，支持旧版 Agent，无需先升级才能执行命令。每次执行限制时长和输出，返回真实退出码；超时明确标为状态未知，需先核查再重试。\n- 保存工具命令及结果供审计，遮蔽节点密钥；刷新页面后需重新开启完整管理。保留原有固定维护工具和节点范围检查。\n- 本次为面板更新，不改节点 Agent 版本。"
   },
   {
-   "id": "release:.github/release-notes.md#9",
+   "id": "release:.github/release-notes.md#10",
    "kind": "release",
    "title": "2.84.0-beta.13 修复 Agent 停止 Mysterium 时进程残留和重启风暴（Agent 2.84.0-beta.13）",
    "text": "- 修复 Agent 停止 myst 时不等进程真正退出的问题：旧进程继续占着端口，新进程启动即退出，Agent 却误判为启动成功；随后看门狗不断重启，形成每秒数次的重启风暴，同一账户的连接互相打断，所有家宽出口都连不上。换共享客户端（重新绑定统一余额）、自动重启 myst 和 Agent 升级都会触发。\n- 停止时轮询确认退出，15 秒仍未退出就强制结束；启动前发现本机本安装目录下残留的 myst 会先结束；新进程启动中退出时直接报错，不再误用旧进程的健康状态，也不会触发看门狗循环。\n- 本次已在线修复：NNC日本 换上共享客户端 1.39.7-2 后付款恢复，懒猫云美国vimiss 的美国家宽出口恢复（Verizon Business）。\n- 面板和 Agent 均升级至 2.84.0-beta.13。使用 Mysterium 的节点建议升级 Agent。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#10",
+   "id": "release:.github/release-notes.md#11",
    "kind": "release",
    "title": "2.84.0-beta.12 AI 一键授权升级并继续（Agent 沿用 beta.10）",
    "text": "- 在聊天输入区提供“授权升级并继续”，无需先找维护模式和升级开关；点击即携带所选节点范围、升级授权和用户需求继续执行。\n- 后端限制此快捷授权仅开放 Agent 升级，继续拒绝日志清理和其他服务重启；未点击时保持原有只读权限。\n- 已有权限时要求助手直接执行、检查升级结果，不再重复索要同一授权；缺少升级日志时不得断言 OpenRC 不兼容。\n- 保留 beta.11 的输出额度修复及 beta.10 的共享付款修复。"
   },
   {
-   "id": "release:.github/release-notes.md#11",
+   "id": "release:.github/release-notes.md#12",
    "kind": "release",
    "title": "2.84.0-beta.11 AI 多节点报告完整输出（Agent 沿用 beta.10）",
    "text": "- 修复聊天输出额度固定为 2048 tokens，思考模型检查多节点后额度耗尽、报告中途截断的问题。流式聊天提升至 8192 tokens，仍保留正文、传输容量及执行时限。\n- 要求多节点报告先覆盖每台节点，再补充细节，减少重复工具输出。增加实际 HTTP 请求额度回归检查。\n- 保留 beta.9 旧节点诊断、长流传输修复和 beta.10 Mysterium 共享付款修复。本次只升级面板，Agent 无需为聊天再次升级。"
   },
   {
-   "id": "release:.github/release-notes.md#12",
+   "id": "release:.github/release-notes.md#13",
    "kind": "release",
    "title": "2.84.0-beta.10 修复 Mysterium 共享付款卡死（Agent 2.84.0-beta.10，共享客户端 1.39.7-2）",
    "text": "- 修复共享余额付款永久卡死：付款节点签出的一笔付款如果没送到服务方（例如面板重启时返回 502），Hermes 永远看不到它，之前会一直拒绝后续付款，所有共享节点的家宽出口因此全部断开、也连不上新节点。现在一笔付款 3 分钟仍未被 Hermes 确认，就视为丢失，从累计金额之上继续签下一笔，不会重复签同一金额；损失最多是丢失的那一小笔。\n- 修复 beta.7 的问题：Agent 自动重启 myst 后没有重新解锁账户，之后的连接都报 `unlock required`。\n- 共享客户端升级到 myst-shared 1.39.7-2。升级面板和相关节点 Agent 后，需要在“Mysterium 家宽 → 统一余额”里按原设置重新绑定一次，以换上新客户端；付款记录保留。\n- 面板和 Agent 均升级至 2.84.0-beta.10。这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#13",
+   "id": "release:.github/release-notes.md#14",
    "kind": "release",
    "title": "2.84.0-beta.9 AI 长流式回复修复（Agent 沿用 beta.7）",
    "text": "- SSE 传输容量与实际回复正文容量分别限制，允许流式数据包的重复元数据开销，避免多节点诊断后的思考和汇总被错误中断。\n- 正文仍限制 256KB，传输限制 2MB；模型和工具权限限制不变。\n- 解开异步异常包装，显示实际错误原因，避免只显示 ExecutionException。\n- 旧节点探针兼容 BusyBox 日志统计，并补充 OS、OpenRC、下载工具和官方安装脚本网络可达性检查。\n- 保留 beta.8 旧节点只读诊断和单独授权升级能力。"
   },
   {
-   "id": "release:.github/release-notes.md#14",
+   "id": "release:.github/release-notes.md#15",
    "kind": "release",
    "title": "2.84.0-beta.8 AI 旧节点诊断与授权升级（Agent 沿用 beta.7）",
    "text": "- AI 可查询节点 Agent 版本、升级记录和安装日志，安装失败不再只能建议手动查看。\n- 旧节点不支持 OpsCapabilities 时，磁盘检查回退到面板固定的只读终端探针；不接受模型生成的 shell，限制时长和输出，隐藏节点密钥。\n- 聊天支持通过面板官方流程升级所选节点 Agent。须开启“允许维护”和单独的升级开关，并在同一轮先检查升级状态；升级异步执行，需查询结果验证。\n- 节点列表显示版本，并说明旧节点、只读权限与升级的能力边界。保留 beta.7 Mysterium 修复。\n- 无终端协议的老节点仍需先恢复管理通道，AI 无法绕过缺失的访问方式。"
   },
   {
-   "id": "release:.github/release-notes.md#15",
+   "id": "release:.github/release-notes.md#16",
    "kind": "release",
    "title": "2.84.0-beta.7 Mysterium 换出口不再断线（Agent 2.84.0-beta.7）",
    "text": "- 修复私人代理点“换一个出口”或远程切换时，新家宽节点都连不上就把原来能用的出口也断开的问题。现在会在最后重新连回原来的节点，并提示“没有连上新的家宽节点，已恢复原来的出口”。\n- 连续两个节点都卡在 Mysterium 消息中转（`p2p send timeout`、`broker request`）时，Agent 自动重启 myst 后继续尝试，并恢复本机其他国家的连接；每 10 分钟最多重启一次。\n- 候选节点从评分最高的一批里随机抽取，每次最多试 6 个，单个节点最多等 30 秒，避免多台服务器总是撞上同一批不可达节点。\n- 面板和 Agent 均升级至 2.84.0-beta.7。用 Mysterium 的节点需升级 Agent 才有自动重启和恢复原出口；面板单独升级时，旧 Agent 仍按原逻辑切换。无数据库变更。\n- 这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#16",
+   "id": "release:.github/release-notes.md#17",
    "kind": "release",
    "title": "2.84.0-beta.6 AI 聊天中文流式编码修复（Agent 沿用 beta.3）",
    "text": "- 修复实时聊天中文回复及错误提示变成问号的问题；SSE 数据明确使用 UTF-8 字节写出，避免默认字符串转换器使用其他编码。\n- 增加显式 ISO-8859-1 字符串转换器环境下的中文流式回归检查。\n- 保留模型要求回传的 reasoning_content，兼容 DeepSeek 思考模式下连续工具调用及追问；内部字段不作为聊天正文展示。\n- 包含 beta.5 实时聊天与 beta.4 代理服务商功能，Agent 无需再次升级。"
   },
   {
-   "id": "release:.github/release-notes.md#17",
+   "id": "release:.github/release-notes.md#18",
    "kind": "release",
    "title": "2.84.0-beta.5 AI 实时对话（Agent 沿用 2.84.0-beta.3）",
    "text": "- AI 运维新增实时聊天，默认打开对话页，支持逐字回复、连续追问、历史会话和停止回复。\n- 不选节点可普通交流；选定节点后支持检查和已授权的维护，并实时显示工具状态和结果。\n- 聊天与定时任务复用同一套节点范围、服务白名单、先检查再维护及日志保留限制。\n- 会话按管理员隔离、加密模型密钥不回显、流中密钥跨片段遮蔽，限制响应体、轮次和并发。\n- 补齐 SSE 反向代理配置、心跳、断连取消与中断记录。\n- 面板升级至 beta.5；Agent 继续使用 beta.3，已升级节点无需再次升级。模型接口须支持兼容 Chat Completions 的流式回复和工具调用。"
   },
   {
-   "id": "release:.github/release-notes.md#18",
+   "id": "release:.github/release-notes.md#19",
    "kind": "release",
    "title": "2.84.0-beta.4 代理服务商：SOAX、Oxylabs 和自定义模板（面板预览版）",
    "text": "“出口管理”新增“代理服务商”页，用自己购买的商业手机（4G/5G）或家宽 IP 套餐作为私人代理出口。\n\n- 支持 SOAX、Oxylabs，以及填写网关地址和用户名/密码模板的自定义服务商（如 IPRoyal、Decodo、Bright Data 等）。\n- 按国家添加出口；SOAX 配置 API key 后可从官方接口读取国家和运营商列表，并按运营商选择。\n- 可设置 IP 保持时长（5 分钟到 1 天，或尽量保持）；每个出口提供“换 IP”，立即换会话并重新下发到使用该出口的节点。\n- 显示已用/总流量：SOAX 读取套餐用量，Oxylabs 读取本月用量；每 30 分钟自动刷新，也可手动刷新。\n- 服务商出口可用于默认出口、分流规则出口和出口组；密码与密钥加密保存，页面只显示掩码。\n- 仅更新面板，节点 Agent 保持 2.84.0-beta.3。会自动新建 proxy_provider 表。真实 SOAX/Oxylabs 账号尚未实测，以官方文档格式实现。\n- 这是预发布版，不更新稳定版 latest 标签。"
   },
   {
-   "id": "release:.github/release-notes.md#19",
+   "id": "release:.github/release-notes.md#20",
    "kind": "release",
    "title": "2.84.0-beta.3 AI 定时运维（Agent 2.84.0-beta.3）",
    "text": "新增面板内置 AI 运维：自定义模型、自然语言定时任务、节点范围与权限、运行记录。\n\n- 管理员自行配置兼容 OpenAI Chat Completions 的模型服务；密钥加密保存。\n- 支持六段 Cron 与时区、手动执行、任务防重叠、节点离线和中断记录。\n- Linux Agent 支持磁盘/inode/日志检查、journal 清理、白名单服务检查与重启。\n- 可单独授权清理 /var/log 下超过保留期限的已轮转日志，跳过活动日志和符号链接，并限制删除量。\n- 模型不能扩大节点或服务权限；维护后验证，完整保留工具结果。\n- 可复用系统 Telegram 配置通知异常与维护结果；健康检查保持安静。\n\n面板和需要维护的节点须升级至 2.84.0-beta.3。模型默认未配置，任务默认关闭。真实模型接入由管理员完成后验证。\n\n修复节点升级判断：正确区分 beta.1、beta.2、beta.3，避免旧预览版被判断为最新。\n\n使用说明：docs/ai-operations.md"
   },
   {
-   "id": "release:.github/release-notes.md#20",
+   "id": "release:.github/release-notes.md#21",
    "kind": "release",
    "title": "2.84.0-beta.1 Mysterium 共享付款预览（Agent 2.84.0-beta.1）",
    "text": "- 新增“统一余额 · 各节点直连”绑定入口，集中处理付款，代理业务流量由各节点直接连接 Mysterium 出口。\n- 定制 myst 1.39.7 集中签名、持久化付款记录、重试去重，并等待 Hermes 确认后签出下一笔付款；失败时不回退到独立记账。\n- 共享节点的充值入口指向付款账户；共享花费只在付款账户统计。付款节点和面板需持续在线。\n- 补齐私人代理卡片的 Mysterium 出口状态、一键切换、切换记录及远程切换链接，并为 Shadowsocks 提供 Mysterium TCP 出口选择。\n- 本地构建、相关自动测试及两个真实独立进程共享账户并发转发已通过；测试出口为 216.75.151.35 和 64.93.81.242。\n- 这是预发布版：跨服务器面板完整链路、长期并发和付款发送端丢失后的恢复仍待验证；不更新稳定版 latest 标签。绑定前需升级所选节点 Agent。"
   },
   {
-   "id": "release:.github/release-notes.md#21",
+   "id": "release:.github/release-notes.md#22",
    "kind": "release",
    "title": "2.83.3 修复 Mysterium 节点启用失败（Agent 2.83.3）",
    "text": "- 修复以 systemd 服务运行的 Agent 缺少 HOME 环境变量时，Mysterium 报 `$HOME is not defined` 并退出的问题。Agent 为 Mysterium 子进程补齐当前系统账户的真实主目录，无需手工修改服务配置；已有账户密钥和余额保留。\n- 节点启动失败时返回最近的启动日志，帮助定位实际原因。\n- “在节点上启用”期间持续显示进度，失败原因保留在页面上；防止重复提交，异常后恢复按钮。启用成功后直接显示账户，并增加“刷新账户列表”入口。\n- 将内置反向代理中 Mysterium 启用接口的等待时间调整为 270 秒，覆盖后端最多 240 秒的节点等待时间。\n- 面板和 Agent 均升级至 2.83.3。先升级面板，再升级需要使用 Mysterium 的节点 Agent。无数据库结构变更，2.83.2 保留供回退。"
   },
   {
-   "id": "release:.github/release-notes.md#22",
+   "id": "release:.github/release-notes.md#23",
    "kind": "release",
    "title": "2.83.2 Mysterium page shows the whole flow",
    "text": "- The Mysterium tab shows four steps with their progress: enable, turn it on for a node, top up or renew, and choose it in a proxy. Before enabling, the page now makes clear where node accounts and the top-up button will appear.\n- Budget and balance fields no longer wrap their units.\n- Panel-only update; Agents stay at 2.83.0. No database change. 2.83.1 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#23",
+   "id": "release:.github/release-notes.md#24",
    "kind": "release",
    "title": "2.83.1 Mysterium guide in the tutorial",
    "text": "- The in-panel tutorial (帮助 → 使用教程) has a \"Mysterium 家宽（付费）\" section for admins. It covers enabling Mysterium, opening a node account, topping up, using it in a proxy's routing, renewing (prepaid, never charged automatically) and reading spending. Notes cover per-node accounts, the monthly cap, TCP only and keeping the node's account key safe.\n- Panel-only update; Agents stay at 2.83.0. No database change. 2.83.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#24",
+   "id": "release:.github/release-notes.md#25",
    "kind": "release",
    "title": "2.83.0 Mysterium residential exits (Agent 2.83.0)",
    "text": "- New exit type \"Mysterium 家宽 · country\": residential connections from the Mysterium network, home broadband run by individuals in over 100 countries.\n  - Admins can pick it as a rule's exit or for everything else in 出口与分流, like the existing residential exits.\n  - Saving the proxy makes the node connect to the best-rated residential provider in that country.\n- The Agent installs Mysterium's node software (myst 1.39.7) when first needed and runs it in proxy mode. Each country is a user-space WireGuard tunnel behind an HTTP proxy on 127.0.0.1, so the node's routes stay untouched and nothing listens publicly. Connections are restored after a restart.\n- A trial install made with scripts/mysterium-poc.sh is taken over with its funded account.\n- Each node has its own Mysterium account. 出口管理 → Mysterium 家宽 handles:\n  - enabling it (with agreement to Mysterium's user terms);\n  - turning it on per node;\n  - balance in MYST and USD, with a top-up link through PayPal, Stripe or CoinGate (payment happens on the provider's page);\n  - this month's spending against the budget;\n  - each country's connection with exit IP, city, ISP, latency and traffic;\n  - the residential node count and price per GB for each country.\n- Upkeep:\n  - Connections in use are checked every 2 minutes. After two failures the connection moves to another residential provider in the same country, keeping its port, so proxies are not re-applied.\n  - Countries no longer used are disconnected.\n- Cost control:\n  - Spending is measured from balance changes every 10 minutes.\n  - A node over the monthly budget (default $20) is suspended until the budget is raised or the month ends.\n  - Low balance, suspension and failing connections appear in the alert centre as \"Mysterium 家宽\" and go to Telegram.\n- Notes:\n  - Pricing is about $0.40–0.45 per GB, counting upload and download. On a test from Tokyo, a US Verizon residential exit reached about 47 Mbps down and 40 Mbps up.\n  - Only TCP goes through these exits.\n- Agent 2.83.0 is required for Mysterium; everything else works with older Agents. Adds the mysterium_setting, mysterium_account and mysterium_connection tables (created at startup; migrations/20261018_mysterium.sql for manual setups). 2.82.2 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#25",
+   "id": "release:.github/release-notes.md#26",
    "kind": "release",
    "title": "2.82.2 sing-box runs on systems without glibc (Agent 2.82.2)",
    "text": "- Since 1.13, sing-box's default Linux build depends on glibc. On Alpine, slim containers and other systems without it, the file was there but would not start (\"fork/exec .../sing-box-1.13.15: no such file or directory\"). That broke WARP self-tests, routers and sing-box private proxies on those nodes.\n- The Agent now downloads sing-box's statically linked (musl) build, which runs on any Linux. On start it checks that the existing sing-box runs; a copy that cannot start is replaced, and nodes where it already works are left alone.\n- With an older Agent, this error now appears in the panel with an explanation and an upgrade hint.\n- The WARP list shows only the nodes already using WARP. The others fold into one line saying how many have not used it yet and how many need an Agent upgrade.\n- Agent and panel are both 2.82.2. No database change. 2.82.1 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#26",
+   "id": "release:.github/release-notes.md#27",
    "kind": "release",
    "title": "2.82.1 WARP endpoint selection, self-repair and WARP+",
    "text": "- \"优选接入点\" tries eight Cloudflare WARP endpoints (different addresses and ports, including 500, 854 and 1701 for networks that block 2408) from the node, keeps the fastest that works, and re-applies the node's routers when it changes.\n- In-use WARP is checked every 30 minutes. After two failures in a row the panel switches to another endpoint, then registers a fresh account if no endpoint works. If WARP still fails, the alert centre shows it under the new \"WARP 出口\" type and sends Telegram alerts like other resources.\n- Admins can bind a WARP+ license. It is applied to every node's WARP account and to accounts registered later. Nodes beyond the license's device limit report the error and stay on free WARP. Re-registering a node keeps its license.\n- The WARP list shows each node's endpoint, WARP+ status and how many running proxies use WARP there.\n- The panel now keeps the account token Cloudflare issues at registration, which a license needs. Accounts registered by 2.82.0 are registered again the first time a license is bound.\n- Panel-only update; Agents stay at 2.82.0. Adds token, account_type, license_key and fail_count columns to warp_account (created at startup; migrations/20261017_warp_account_repair.sql for manual setups). 2.82.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#27",
+   "id": "release:.github/release-notes.md#28",
    "kind": "release",
    "title": "2.82.0 Cloudflare WARP as a free exit (Agent 2.82.0)",
    "text": "- Cloudflare WARP is a built-in exit, with nothing to add or configure. In 出口与分流 it can be the exit for unmatched traffic, the exit of any rule, or a member of an exit group.\n- Traffic leaves through Cloudflare's network with a Cloudflare IP. That helps with services that refuse data-centre addresses, and gives IPv4-only nodes IPv6 access.\n- The panel registers one free WARP account per node the first time WARP is used there, through Cloudflare's client API. The node only receives the WireGuard settings.\n- 出口管理 → 自定义出口 shows WARP's state on each node: the exit IP, location and latency from the last self-test. It has a self-test button, and admins can re-register a node's account if Cloudflare stops accepting it, after which the proxies on that node are re-applied.\n- Exit groups can include WARP. Testing a group tests WARP alongside the other members.\n- The Agent router accepts WireGuard endpoints. It validates keys, addresses, the single peer and the reserved bytes, and rejects anything that would listen, bind or touch the system network stack.\n- Agent 2.82.0 is required for WARP. Other routing keeps working on older Agents. Adds the warp_account table (created at startup; migrations/20261017_warp_account.sql for manual setups). 2.81.1 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#28",
+   "id": "release:.github/release-notes.md#29",
    "kind": "release",
    "title": "2.81.1 Clearer routing page: rules first, then \"everything else\"",
    "text": "- \"出口与分流\" now reads in the order traffic is matched:\n  - A \"现在的效果\" summary at the top lists where each rule's traffic goes and where everything else goes.\n  - The rules come next.\n  - A single \"其余流量\" selector comes last. It defaults to the node's own IP (the original IP).\n- The three exit cards and the separate custom-exit dropdown are gone from this page. They read as two places to pick the same exit, and some users ended up sending all traffic through a custom node when they only wanted a few sites there.\n- Choosing a custom node, exit group or residential country for \"其余流量\" shows a warning that all unmatched traffic will leave through it.\n- A rule with nothing selected or filled in is flagged as matching nothing.\n- Protocols that cannot use routing rules still show the original exit picker.\n- Panel-only update; Agents stay at 2.79.0. No database change. 2.81.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#29",
+   "id": "release:.github/release-notes.md#30",
    "kind": "release",
    "title": "2.81.0 Routing test: see which rule a site hits",
    "text": "- \"出口与分流\" has a routing test. Enter a domain, URL or IP, optionally with a port, and choose TCP or UDP. The panel reports which rule it hits, the field and value that matched, and the exit it would use. The matching rule is highlighted. A destination that matches no rule shows the default exit.\n- It checks the rules as currently edited, so changes can be tested before saving. Lists the rules need (catalog sets, GEOSITE, GEOIP) are downloaded on first use.\n- Matching follows the node router:\n  - Rules are checked top to bottom, and any field of a rule can match.\n  - Domain suffixes match whole labels.\n  - IP rules only see addresses unless an earlier rule asks for the domain to be resolved. The result then lists the addresses used, as resolved by the panel.\n  - When resolving fails, the test reports that the node would drop the connection.\n- Panel-only update; Agents stay at 2.79.0. No database change. 2.80.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#30",
+   "id": "release:.github/release-notes.md#31",
    "kind": "release",
    "title": "2.80.0 Curated rule sets ready to pick",
    "text": "- 36 well-known community rule sets are built in, ready to pick:\n  - AI: OpenAI, Claude, Gemini, Copilot.\n  - Streaming: Netflix, Disney+, YouTube, Spotify, HBO, Prime Video, TikTok, Twitch, Bilibili.\n  - Social: Telegram, X, Facebook, Instagram, Discord.\n  - Common services: Google, Microsoft, Apple, GitHub, Steam, Epic, Cloudflare, Amazon, PayPal.\n  - Ad and tracker blocking (lite), common sites outside China, GFW, non-China TLDs, China services.\n  - China, Telegram and LAN address ranges.\n- Sources are blackmatrix7/ios_rule_script and Loyalsoldier/clash-rules. Where blackmatrix7 keeps a list's full content in its _Classical file, that file is used.\n- In 出口与分流, \"按规则集\" adds a rule that picks from these sets by category, with no URL to find. Each set is downloaded once the first time a rule uses it and is shared by every user and proxy.\n- Sets in use are checked for updates every 12 hours, through jsDelivr with a GitHub fallback. When a set changes, the proxies that use it are re-applied.\n- 出口管理 → 规则库 lists the catalog with each set's size and last update. Any set can be downloaded or refreshed from there.\n- When an imported Clash configuration's rule providers point at one of these sets, in any mirror or file variant, the import uses the shared copy instead of creating a subscription.\n- Panel-only update; Agents stay at 2.79.0. No database change. 2.79.1 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#31",
+   "id": "release:.github/release-notes.md#32",
    "kind": "release",
    "title": "2.79.1 IP rules keep the domain for exits",
    "text": "- In 2.79.0 an IP rule (IP range, GEOIP or a rule set with addresses) made the node resolve every domain before matching. sing-box then sends the resolved address, not the domain, to the exit for that rule, every later rule and the default exit. This breaks the exit's own DNS and CDN choice and can affect streaming unlocks.\n- IP rules now match only connections made to an address, like Clash's no-resolve. Domains reach exits unchanged.\n- A rule can still opt in with \"先解析域名再按 IP 匹配\". The editor explains what changes from that rule on.\n- Imported Clash rules no longer resolve. The import summary says how to turn it on per rule.\n- Panel-only update; Agents stay at 2.79.0. Rules saved in 2.79.0 switch to the new behavior the next time their proxy is saved or re-applied. 2.79.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#32",
+   "id": "release:.github/release-notes.md#33",
    "kind": "release",
    "title": "2.79.0 Clash-style routing: more rule types, rule-set subscriptions, Clash import and exit groups (Agent 2.79.0)",
    "text": "- Routing rules gain the Clash match types GEOSITE (any v2fly domain list, including attribute filters such as google@cn), GEOIP (country address lists, plus private for LAN and reserved ranges), domain regex, destination port and port range, and network (TCP or UDP). As in Clash, IP rules look up the domain first unless the rule is marked no-resolve.\n- Rule-set subscriptions: add a Clash rule-provider URL (YAML payload, one-entry-per-line text or sing-box JSON; domain, ipcidr or classical behavior) with an update interval of 6 hours to a week (3 days by default). The panel downloads and refreshes them and re-applies the proxies that use a subscription when it changes. Addresses on private networks are refused, including after redirects.\n- \"导入 Clash 规则\" in 出口与分流 reads a whole Clash / Mihomo configuration or a list of rule lines. Each policy group is mapped to an exit (DIRECT and REJECT, and exits with the same name, are pre-selected), rule providers become subscriptions, consecutive rules with the same policy are merged, and unsupported lines (source address, process and logical rules) are listed.\n- Exit groups: combine custom exits, optionally with the node's own IP, into a group that keeps testing its members and uses the fastest one, like Clash url-test. The test address, interval and switching tolerance are adjustable. A group can be a proxy's default exit or a rule's exit, and its self-test reports every member.\n- 出口管理 → 规则库 now holds rule-set subscriptions and the built-in groups.\n- GEOSITE and GEOIP lists are downloaded by the panel on first use and refreshed every 3 days; nodes still need no access to GitHub. One router can hold up to 120,000 expanded entries.\n- Agent 2.79.0 is required for exit groups and for the regex, GEOIP, port and network rules. Proxies with only the earlier rule types keep working on Agent 2.76.0. Adds the route_ruleset and route_list_cache tables and a members column on proxy_exit, and widens private_proxy.route_rules (created at startup; migrations/20261017_route_rule_sources.sql for manual setups). 2.78.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#33",
+   "id": "release:.github/release-notes.md#34",
    "kind": "release",
    "title": "2.78.0 Routing groups that update themselves, and quicker custom-domain rules",
    "text": "- The built-in routing groups (ChatGPT/OpenAI, Claude, Gemini, Google, YouTube, Netflix, Disney+, Spotify, Telegram, X, Meta, TikTok, GitHub, Microsoft, Apple, Steam, Discord) are now synced every 3 days from the v2fly domain-list-community lists, so new AI and streaming domains are picked up without a panel update. The panel downloads the lists (jsDelivr first, GitHub as fallback); nodes need no access to GitHub. When a group changes, private proxies whose rules use it are re-applied automatically. Until the first sync, and whenever a download fails, the built-in lists keep working.\n- New group \"AI 服务合集\" covers the common AI services outside China in one rule.\n- 出口管理 has a new \"规则分组\" tab listing every group with its size and last update. Admins can sync them immediately with \"立即更新\".\n- In 出口与分流, \"添加规则\" is split into \"按分组\" and \"按域名\", so adding your own domains for a chosen exit is one click. Group chips show how many domains each group holds.\n- Large groups are split into several router rules so they stay within the Agent's per-rule limit.\n- Panel-only update; Agents stay at 2.76.0. Adds the route_preset_data table (created at startup; migrations/20261017_route_preset_data.sql for manual setups). 2.77.2 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#34",
+   "id": "release:.github/release-notes.md#35",
    "kind": "release",
    "title": "2.77.2 Clearer default exit in proxy routing",
    "text": "- In 出口与分流 the top choice is now labelled 默认出口 and explains that it carries the traffic no rule matches. To send only some sites through a custom or residential exit, keep the default on the node's own IP and add rules for those sites.\n- A rule whose exit is the same as the default exit is flagged as having no effect, with what to change.\n- Panel-only update; Agents stay at 2.76.0. No database change. 2.77.1 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#35",
+   "id": "release:.github/release-notes.md#36",
    "kind": "release",
    "title": "2.77.1 A cleaner, more professional look",
    "text": "- Page headers are a bold title with its actions on the same line. The explanation that used to sit under each title now opens from a help icon beside it.\n- 转发管理, 节点管理, 隧道管理 and 用户管理 show the item count beside the title and use full-size buttons with icons; the main action is a solid \"新建\" button.\n- Menu items and page titles use short, consistent names: 仪表盘, 调度总览, 节点管理, 隧道管理, Docker 应用, 质量实验室, 带宽测试, 本机测速, 链路拓扑, 系统自检, 内网组网, IP 质量检测.\n- Cards use larger type and more spacing, and grids show at most three cards per row (four on very wide screens).\n- Long explanations inside pages (来源 IP 分流, 内网组网, 三网优化) are folded into a \"使用说明\" section that opens on demand.\n- Release checks follow the new page names (2.77.0 was built but not published because of them).\n- Panel-only update; Agents stay at 2.76.0. No database change. 2.76.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#36",
+   "id": "release:.github/release-notes.md#37",
    "kind": "release",
    "title": "2.76.0 Custom exits and per-domain routing for private proxies (Agent 2.76.0)",
    "text": "- 出口管理 (formerly 家宽出口池) has two tabs: residential exits, and a new custom exits tab. Paste share links (vless://, vmess://, trojan://, ss://, hysteria2://, tuic://, anytls://, socks5://, http(s)://, several at once) or Clash proxies; the panel shows what it recognised before saving. Each exit can be self-tested from a node, which reports the exit IP, country and latency. Custom exits are available to every user for their own proxies.\n- Private proxies get \"出口与分流\": a default exit (the node's own IP, a residential country, or a custom exit) and rules matched top to bottom by built-in group (ChatGPT/OpenAI, Claude, Gemini, Google, YouTube, Netflix, Disney+, Spotify, Telegram, X, Meta, TikTok, GitHub, Microsoft, Apple, Steam, Discord, common Chinese sites), domain suffix, keyword, full domain or IP range. Each rule sends traffic to the node's IP, a residential country, a custom exit, or rejects it. For example, only ChatGPT can go through a US residential exit while everything else leaves directly.\n- On the node the proxy hands its traffic to a loopback sing-box router that sniffs the domain and picks the exit, so routing works the same for sing-box and Xray protocols. Traffic for an exit that is down is dropped rather than sent from the node's own address. The exit pool keeps the countries used by rules connected.\n- Routing needs Agent 2.76.0 on the proxy's node and is available for VLESS, VMess, Trojan, Hysteria2, TUIC, AnyTLS, Shadowsocks 2022, ShadowTLS and VLESS REALITY/XHTTP. SOCKS5, HTTP, mixed and classic Shadowsocks proxies keep a single exit.\n- Stat cards that open another page (dashboard, routing overview, residential countries) respond to clicks again.\n- Includes 2.75.0 (tunnel link diagram and pre-create checks), whose build was interrupted on GitHub, and a fix for a timing-sensitive OpenWrt DNS smoke test.\n- Database: `private_proxy` gains `exit_custom_id`, `route_rules`, `route_countries`, `route_exit_ports`, and a new `proxy_exit` table; added automatically on startup (`migrations/20261016_proxy_custom_exit_routing.sql` for manual upgrades). Upgrade Agents on nodes that should route traffic. 2.74.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#37",
+   "id": "release:.github/release-notes.md#38",
    "kind": "release",
    "title": "2.75.0 Tunnel link diagram with checks before creating",
    "text": "- The tunnel form has a live link diagram on the right: user device → entry → relays → exit → internet. A moment after the nodes, hops or protocol change, the panel checks the path and colours each node and hop green, amber or red with the reason, so a broken hop shows before the tunnel is saved.\n- Hops are tested on the real port: the next node opens a temporary listener for a few seconds on the port the next forward would get from its range, and the previous node connects to it. A timeout is reported as a security group, firewall or port mapping that does not allow the node's port range; a port taken by another program and a full port range are reported too. Both Agents need 2.44.1 or later; older ones still get online checks.\n- When the check fails the create button turns into \"仍然创建\" rather than blocking, since some setups open the port afterwards.\n- Tunnel cards show the same diagram in compact form, with the result of the last diagnosis on each hop; the diagnosis dialog shows the full diagram above the per-hop list.\n- Diagnosis of a tunnel without any forward now probes the real hop port with a temporary listener instead of port 22. The existing result list is unchanged for the MCP tool and older clients.\n- New endpoint `POST /api/v1/tunnel/precheck`. Panel-only update; Agents stay at 2.66.0. No database change. 2.74.0 remains available for rollback."
   },
   {
-   "id": "release:.github/release-notes.md#38",
+   "id": "release:.github/release-notes.md#39",
    "kind": "release",
    "title": "2.74.0 Consistent pages, new routing overview and a speedtest-style client speed test",
    "text": "- Page headers: every page now opens with a bold title and a one-line description, as on the dashboard. The small grey category line above titles and the divider under headers are gone; 转发管理, 节点管理, 隧道组建 and 用户管理 gain titles too.\n- 本机测速 is redesigned after speedtest.net: a large start button, then an animated speedometer with a needle and a non-linear scale up to 10 Gbps, live ping, jitter, download and upload readouts, a live speed curve, and your network and the Cloudflare test location underneath. Settings move into a dialog; measurement logic is unchanged.\n- 线路调度中心: module counts are stat cards, the configuration check moves to the top, and each module is one card combining its role, capability facts (Agent, relay traffic, DNS, UDP, user grants) and boundary, instead of the same modules listed twice.\n- 三网优化: carrier entries are compact three-line tiles and strategies sit two or three per row, so each strategy card is about half as tall.\n- 真实带宽测试, IP 质量与解锁检测 and UDP / QUIC 诊断 show tasks and nodes as standard resource cards with stat cards on top.\n- 告警中心, 网络质量实验室, 全系统自检 and 网络诊断 drop their own grey boxes for the panel's cards and stat cards; empty states across the panel use the same dashed card.\n- Panel-only update; Agents stay at 2.66.0. No database change. 2.73.0 remains available for rollback."
-  },
-  {
-   "id": "release:.github/release-notes.md#39",
-   "kind": "release",
-   "title": "2.73.0 Dashboard in the NodePassDash layout",
-   "text": "- The dashboard is rebuilt after NodePassDash: a title with a live clock and node, tunnel and forward counts; four status tiles (running, paused, error, offline nodes); a 24-hour traffic chart with gradient areas beside a node list; this week's traffic, today's traffic and quick actions; and a recent-activity table of open alerts and route switches. 异常与待处理, 转发流量排行 and 额度与到期风险 stay below in the same card style.\n- Traffic is now recorded per direction. Charts show inbound and outbound separately; hours recorded before this update show as one grey \"未区分方向\" share until they age out.\n- Hourly traffic is kept for eight days instead of 48 hours, which feeds the seven-day chart. The weekly chart fills in over the first week after upgrading.\n- The running, paused and error tiles open 转发管理 filtered to that status, in either the card or table view; a chip in the page header clears the filter.\n- Database: `statistics_flow` gains `in_flow`, `out_flow`, `total_in_flow`, `total_out_flow` and an index on `created_time`, added automatically on startup (`migrations/20261016_statistics_flow_direction.sql` for manual upgrades). Agents stay at 2.66.0. 2.72.0 remains available for rollback."
   }
  ]
 }

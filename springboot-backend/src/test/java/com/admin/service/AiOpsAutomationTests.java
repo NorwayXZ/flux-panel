@@ -24,6 +24,12 @@ class AiOpsAutomationTests {
     assertEquals("/", mounts.get(0).get("mount"));
     assertEquals(93, mounts.get(0).get("usedPercent"));
     assertTrue(AiBatchChecks.parseDf("no disk section").isEmpty());
+    assertEquals("fail", AiBatchChecks.diskStatus(87, 150 * 1024), "150 MB free on a small disk");
+    assertEquals("warn", AiBatchChecks.diskStatus(35, 800 * 1024), "under 1 GB free");
+    assertEquals("ok", AiBatchChecks.diskStatus(44, 5L * 1024 * 1024));
+    assertEquals("fail", AiBatchChecks.diskStatus(92, 50L * 1024 * 1024));
+    assertEquals("ok", AiBatchChecks.mountStatus(Map.of("mount", "/boot", "usedPercent", 23, "availKb", 600L * 1024)), "small /boot is normal");
+    assertEquals("warn", AiBatchChecks.mountStatus(Map.of("mount", "/", "usedPercent", 23, "availKb", 600L * 1024)));
   }
 
   @Test

@@ -85,11 +85,27 @@ public class AiBatchChecks {
     }
     List<Map<String, Object>> mounts = parseDf(output);
     if (mounts.isEmpty()) return row("unknown", "", "未能读取 df 输出");
-    Map<String, Object> worst = mounts.stream().max(Comparator.comparingInt(m -> (int) m.get("usedPercent"))).get();
+    Map<String, Object> worst = mounts.stream().max(Comparator
+        .comparingInt((Map<String, Object> m) -> 3 - rank(mountStatus(m)))
+        .thenComparingInt(m -> (int) m.get("usedPercent"))).get();
     int used = (int) worst.get("usedPercent");
     String value = worst.get("mount") + " " + used + "%";
     String detail = "可用 " + Math.round(((Number) worst.get("availKb")).longValue() / 1048576.0 * 10) / 10.0 + " GB";
-    return row(used >= 90 ? "fail" : used >= 80 ? "warn" : "ok", value, detail);
+    return row(mountStatus(worst), value, detail);
+  }
+
+  /** /boot is small by design, so only its usage percentage matters. */
+  static String mountStatus(Map<String, Object> mount) {
+    int used = (int) mount.get("usedPercent");
+    if (Objects.toString(mount.get("mount"), "").startsWith("/boot")) return used >= 90 ? "fail" : used >= 80 ? "warn" : "ok";
+    return diskStatus(used, ((Number) mount.get("availKb")).longValue());
+  }
+
+  /** Small VPS disks run out long before a percentage alarm; free space counts too. */
+  static String diskStatus(int usedPercent, long availKb) {
+    if (usedPercent >= 90 || availKb < 256 * 1024) return "fail";
+    if (usedPercent >= 80 || availKb < 1024 * 1024) return "warn";
+    return "ok";
   }
 
   /** Real filesystems from `df -Pk` output; pseudo filesystems and loop mounts are ignored. */
