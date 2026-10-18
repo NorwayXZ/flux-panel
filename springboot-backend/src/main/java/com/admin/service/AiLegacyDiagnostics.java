@@ -29,16 +29,13 @@ public class AiLegacyDiagnostics {
   public Map<String, Object> inspect(long node, String kind, int timeout) throws Exception {
     if (!Set.of("inspect_disk", "inspect_agent_upgrade").contains(kind))
       throw new IllegalArgumentException("旧节点仅支持磁盘与升级只读诊断，请先升级 Agent");
-    if (!slots.tryAcquire()) throw new IllegalStateException("旧节点诊断通道繁忙，请稍后重试");
     String id = "ai-probe-" + UUID.randomUUID();
     String marker = "AI_PROBE_" + UUID.randomUUID().toString().replace("-", "");
+    String command = command(node, kind, marker);
+    if (!slots.tryAcquire()) throw new IllegalStateException("旧节点诊断通道繁忙，请稍后重试");
     Probe probe =
         new Probe(
-            node,
-            command(node, kind, marker),
-            marker,
-            new java.io.ByteArrayOutputStream(),
-            new CompletableFuture<>());
+            node, command, marker, new java.io.ByteArrayOutputStream(), new CompletableFuture<>());
     probes.put(id, probe);
     try {
       if (!send(node, "TerminalOpen", Map.of("sessionId", id, "cols", 120, "rows", 32)))
@@ -51,8 +48,11 @@ public class AiLegacyDiagnostics {
       throw new IllegalStateException(Objects.toString(e.getCause().getMessage(), "旧节点终端诊断失败"));
     } finally {
       probes.remove(id);
-      send(node, "TerminalClose", Map.of("sessionId", id, "reason", "只读诊断结束"));
-      slots.release();
+      try {
+        send(node, "TerminalClose", Map.of("sessionId", id, "reason", "只读诊断结束"));
+      } finally {
+        slots.release();
+      }
     }
   }
 
