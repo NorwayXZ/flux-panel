@@ -173,6 +173,50 @@ public class BandwidthTestService {
         }
     }
 
+    /**
+     * A short measurement requested by the operations assistant. It is not stored as a task and
+     * shares the two-run limit with scheduled tests; traffic is capped per run.
+     */
+    public Map<String, Object> runAdHoc(Long sourceId, Long targetId, int seconds) {
+        if (Objects.equals(sourceId, targetId)) throw new IllegalArgumentException("来源节点和目标节点不能相同");
+        if (active.incrementAndGet() > 2) {
+            active.decrementAndGet();
+            throw new IllegalStateException("已有 2 项带宽测试在运行，请稍后重试");
+        }
+        int duration = Math.max(3, Math.min(15, seconds)), streams = 4;
+        String sessionId = "bw-ai-" + System.currentTimeMillis();
+        boolean prepared = false;
+        try {
+            Node source = requireOnlineNode(sourceId, "来源");
+            Node target = requireOnlineNode(targetId, "目标");
+            String targetHost = firstNonBlank(target.getServerIp(), target.getIp());
+            if (targetHost == null) throw new IllegalStateException("目标节点没有可连接地址");
+            long bytesPerStream = 50L * 1024 * 1024;
+            GostDto prepareResult = WebSocketServer.send_msg(targetId, Map.of("sessionId", sessionId, "protocol", "tcp", "listenPort", 5201,
+                    "ttlSeconds", duration + 45, "maximumBytes", bytesPerStream, "maximumStreams", streams), "BandwidthPrepare", 12);
+            requireOK(prepareResult, "目标节点未能打开带宽测试端口 5201");
+            prepared = true;
+            JSONObject preparedData = json(prepareResult.getData());
+            Map<String, Object> run = new LinkedHashMap<>();
+            run.put("targetHost", targetHost); run.put("port", preparedData.getIntValue("port")); run.put("token", preparedData.getString("token"));
+            run.put("protocol", "tcp"); run.put("direction", "bidirectional"); run.put("streams", streams); run.put("durationSeconds", duration); run.put("maximumBytes", bytesPerStream);
+            GostDto runResult = WebSocketServer.send_msg(source.getId(), run, "BandwidthRun", duration + 25L);
+            requireOK(runResult, "来源节点未完成带宽测试");
+            JSONObject data = json(runResult.getData());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("source", source.getName());
+            result.put("target", target.getName());
+            result.put("targetHost", targetHost);
+            for (String key : List.of("uploadMbps", "downloadMbps", "totalMbps", "rttMs", "retransmits", "durationMs", "successfulStreams", "failedStreams"))
+                if (data.containsKey(key)) result.put(key, data.get(key));
+            result.put("note", "上传为来源到目标，下载为目标到来源；每个方向每流最多 50 MB");
+            return result;
+        } finally {
+            if (prepared) WebSocketServer.send_msg(targetId, Map.of("sessionId", sessionId), "BandwidthStop", 5);
+            active.decrementAndGet();
+        }
+    }
+
     private Node requireOnlineNode(Long id, String label) {
         Node node = nodeMapper.selectById(id);
         if (node == null) throw new IllegalStateException(label + "节点不存在");

@@ -76,6 +76,9 @@ const inputClass =
   "w-full rounded-xl border border-default-200 bg-content1 px-3 py-2 text-sm outline-none transition focus:border-primary";
 const toolLabels: Record<string, string> = {
   inspect_panel: "读取面板",
+  panel_knowledge: "查询面板手册",
+  network_probe: "网络诊断",
+  node_speed_test: "节点测速",
   execute_command: "运行命令",
   inspect_disk: "检查磁盘",
   inspect_service: "检查服务",
@@ -118,10 +121,19 @@ function ToolRow({
   const args = parseArgs(event.call?.function?.arguments);
   const ok = !!event.result?.success;
   const data = event.result?.data;
-  const target = args.nodeId
-    ? nodeName(Number(args.nodeId))
-    : args.section || "";
-  const detail = args.command || args.service || "";
+  const target =
+    name === "node_speed_test"
+      ? `${nodeName(Number(args.sourceNodeId))} → ${nodeName(Number(args.targetNodeId))}`
+      : args.nodeId
+        ? nodeName(Number(args.nodeId))
+        : args.section || "";
+  const detail =
+    args.command ||
+    args.service ||
+    args.query ||
+    (name === "network_probe"
+      ? `${args.kind || ""} ${args.targetNodeId ? nodeName(Number(args.targetNodeId)) : args.target || ""}${args.port ? `:${args.port}` : ""}`
+      : "");
   const command =
     name === "execute_command" && data && typeof data === "object";
 

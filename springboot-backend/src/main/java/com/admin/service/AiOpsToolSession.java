@@ -37,6 +37,20 @@ final class AiOpsToolSession {
       JSONObject fn = call.getJSONObject("function");
       String name = fn.getString("name");
       JSONObject args = JSON.parseObject(fn.getString("arguments"));
+      if (name.equals("panel_knowledge") && allowed.contains(name)) {
+        result.put("data", ops.searchKnowledge(args.getString("query")));
+        result.put("success", true);
+        return result;
+      }
+      if (name.equals("node_speed_test") && allowed.contains(name)) {
+        long source = args.getLongValue("sourceNodeId"), target = args.getLongValue("targetNodeId");
+        if (!nodes.contains(source) || !nodes.contains(target))
+          throw new IllegalArgumentException("测速的两个节点都必须在本轮所选节点中");
+        int seconds = args.containsKey("seconds") ? args.getIntValue("seconds") : 8;
+        result.put("data", ops.nodeSpeedTest(source, target, seconds));
+        result.put("success", true);
+        return result;
+      }
       if (name.equals("inspect_panel") && allowed.contains(name)) {
         result.put("data", ops.inspectPanel(args.getString("section"), nodes));
         result.put("success", true);
@@ -45,6 +59,14 @@ final class AiOpsToolSession {
       long node = args.getLongValue("nodeId");
       if (!nodes.contains(node) || !allowed.contains(name))
         throw new IllegalArgumentException("工具或节点超出任务权限");
+      if (name.equals("network_probe")) {
+        Long targetNode = args.containsKey("targetNodeId") ? args.getLong("targetNodeId") : null;
+        Integer port = args.containsKey("port") ? args.getInteger("port") : null;
+        result.put("data", ops.networkProbe(node, args.getString("kind"), args.getString("target"), targetNode, port,
+            Math.min(90, AiOpsService.remainingSeconds(started))));
+        result.put("success", true);
+        return result;
+      }
       if (name.equals("execute_command")) {
         Object data = ops.executeCommand(node, args.getString("command"),
             Math.min(140, AiOpsService.remainingSeconds(started)));

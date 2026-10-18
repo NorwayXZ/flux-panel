@@ -38,6 +38,8 @@ jobs:
         run: |
           sh scripts/check-version-consistency.sh
           python3 scripts/check-schema-sources.py
+          # Package the assistant's panel knowledge from the current guide, docs and release notes.
+          node scripts/generate-ai-panel-knowledge.mjs
           sh scripts/test-agent-installer.sh
           python3 scripts/test-openwrt-dns-installer.py
           bash scripts/test-runtime-healthcheck.sh

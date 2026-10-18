@@ -301,6 +301,12 @@ public class AiOpsChatService {
             "system",
             "content",
             AiPanelContext.guidance() + " You are the panel's server operations assistant. Reply in Chinese conversationally."
+                + " You know this panel: the feature index below lists every page. For how/where/what"
+                + " questions, look up panel_knowledge first and answer with the page path and exact steps;"
+                + " do not ask the user to describe the panel or where things are. For current problems use"
+                + " inspect_panel issues/alerts; for slow or failing lines combine inspect_panel health/routes/"
+                + "probes with network_probe from the involved nodes and say which segment fails.\n"
+                + ops.knowledgeIndex() + "\n"
                 + " Keep multi-node reports concise: report each selected node before expanding"
                 + " details. Prioritize failures, measured values and next actions; avoid repeating"
                 + " full tool output."
@@ -319,7 +325,9 @@ public class AiOpsChatService {
                 + config.getIntValue("retentionDays")
                 + " days / "
                 + config.getIntValue("maxJournalMb")
-                + " MB. Only use provided tools. No nodes selected means general conversation only."
+                + " MB. Only use provided tools. With no nodes selected only panel knowledge and panel-wide"
+                + " reads (alerts, issues, capabilities) are available; ask the user to select nodes for"
+                + " server checks."
                 + " Inspect a node or service again in this turn before any repair; previous turns'"
                 + " observations do not count. Never claim execution without a successful tool"
                 + " result. Clearly explain tool limitations, offline nodes and failed actions."
@@ -368,7 +376,7 @@ public class AiOpsChatService {
       messages.add(historic);
     }
     messages.add(Map.of("role", "user", "content", config.getString("prompt")));
-    JSONArray tools = nodes.isEmpty() ? new JSONArray() : AiOpsService.tools(config);
+    JSONArray tools = nodes.isEmpty() ? AiOpsService.generalTools(config) : AiOpsService.tools(config);
     AiOpsToolSession toolSession = new AiOpsToolSession(ops, config, nodes, started);
     for (int step = 0; step < 25; step++) {
       if (Thread.currentThread().isInterrupted()) throw new IllegalStateException("对话已停止");

@@ -58,6 +58,9 @@ public class WebSocketServer extends TextWebSocketHandler {
     @Resource
     OpenWrtDnsResolverService openWrtDnsResolverService;
 
+    @Resource
+    com.admin.service.NodeMetricHistory nodeMetricHistory;
+
     // 存储所有活跃的 WebSocket 连接（
     private static final CopyOnWriteArraySet<WebSocketSession> activeSessions = new CopyOnWriteArraySet<>();
     
@@ -157,6 +160,9 @@ public class WebSocketServer extends TextWebSocketHandler {
                 if (decryptedPayload.contains("memory_usage")){
                     // 先发送确认消息
                     sendToUser(session, "{\"type\":\"call\"}", nodeSecret);
+                    if (Objects.equals(type, "1") && nodeMetricHistory != null) {
+                        nodeMetricHistory.record(Long.parseLong(id), decryptedPayload);
+                    }
                 }else if (decryptedPayload.contains("requestId")) {
                     log.info("收到消息: {}", decryptedPayload);
                     // 处理命令响应消息
