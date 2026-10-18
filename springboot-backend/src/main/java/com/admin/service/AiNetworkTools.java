@@ -40,6 +40,7 @@ public class AiNetworkTools {
   Map<String, Object> probe(long node, String kind, String target, Integer port, int timeout) throws Exception {
     String script = script(kind, target, port);
     Map<String, Object> result = new LinkedHashMap<>(terminal.execute(node, script, Math.min(timeout, 90)));
+    result.put("output", clean(Objects.toString(result.get("output"), "")));
     result.put("kind", kind);
     result.put("target", target);
     if (port != null) result.put("port", port);
@@ -48,6 +49,14 @@ public class AiNetworkTools {
 
   Map<String, Object> speedTest(long source, long target, int seconds) {
     return bandwidth.runAdHoc(source, target, seconds);
+  }
+
+  /** Drops the echoed submission and terminal carriage returns before the header line. */
+  static String clean(String output) {
+    String text = output.replace("\r", "");
+    int header = text.indexOf("\nfrom ");
+    if (header < 0 && text.startsWith("from ")) header = -1;
+    return header >= 0 ? text.substring(header + 1).trim() : text.trim();
   }
 
   static boolean validHost(String value) {
@@ -85,7 +94,11 @@ public class AiNetworkTools {
               "if command -v mtr >/dev/null 2>&1; then timeout 60 mtr -rwbz -c 5 -G 1 " + t
                   + " 2>&1; elif command -v traceroute >/dev/null 2>&1; then timeout 60 traceroute -n -w 2 -q 2 -m 25 " + t
                   + " 2>&1; elif command -v tracepath >/dev/null 2>&1; then timeout 60 tracepath -n -m 25 " + t
-                  + " 2>&1; else echo 'mtr/traceroute/tracepath not installed'; fi";
+                  // Without trace tools, ping with increasing TTL reveals each hop that answers.
+                  + " 2>&1; else echo 'trace via ping TTL (mtr/traceroute not installed)'; for ttl in $(seq 1 20); do"
+                  + " r=$(ping -n -c 1 -W 1 -t $ttl " + t + " 2>&1); if echo \"$r\" | grep -q 'bytes from'; then"
+                  + " echo \"$ttl $(echo \"$r\" | grep -oE 'from [0-9a-fA-F:.]+' | head -1 | cut -d' ' -f2) $(echo \"$r\" | grep -oE 'time=[0-9.]+ ?ms' | head -1) reached\";"
+                  + " break; fi; hop=$(echo \"$r\" | grep -oiE 'from [0-9a-fA-F:.]+' | head -1 | cut -d' ' -f2); echo \"$ttl ${hop:-*}\"; done; fi";
           case "http" ->
               "if ! command -v curl >/dev/null 2>&1; then echo 'curl not installed'; exit 0; fi; for i in 1 2 3; do"
                   + " curl -sS -o /dev/null -L --max-redirs 3 --max-time 20 -w 'dns=%{time_namelookup}s"

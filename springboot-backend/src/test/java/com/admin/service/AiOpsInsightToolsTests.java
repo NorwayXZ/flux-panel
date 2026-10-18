@@ -22,6 +22,8 @@ class AiOpsInsightToolsTests {
     assertThrows(IllegalArgumentException.class, () -> AiNetworkTools.script("rm", "a.com", null));
     assertTrue(AiNetworkTools.script("tcp", "2001:db8::1", 443).contains("telnet://[2001:db8::1]:443"));
     assertTrue(AiNetworkTools.script("trace", "example.com", null).contains("mtr -rwbz"));
+    assertTrue(AiNetworkTools.script("trace", "example.com", null).contains("ping -n -c 1 -W 1 -t $ttl"), "falls back to ping TTL");
+    assertEquals("from host at now\n64 bytes", AiNetworkTools.clean("root@x:/# stty -echo; printf 'abc' | base64 -d\r\n\rfrom host at now\r\n64 bytes\r\n"));
     assertTrue(AiNetworkTools.script("http", "https://example.com/path?a=1", null).contains("'https://example.com/path?a=1'"));
   }
 
