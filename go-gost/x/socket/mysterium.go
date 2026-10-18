@@ -40,6 +40,8 @@ const (
 	mysteriumTrialDirectory = "/opt/cloudnest-mysterium"
 )
 
+var mysteriumSiblingProbe = func(port int) (string, int64, error) { return mysteriumProbeTimeout(port, 3*time.Second) }
+
 var mysteriumTraceURL = "https://www.cloudflare.com/cdn-cgi/trace"
 
 // The panel waits 150 s for MysteriumConnect; one provider gets at most 30 s.
@@ -54,12 +56,15 @@ type mysteriumConnection struct {
 	Country          string   `json:"country"`
 	ProviderID       string   `json:"providerId,omitempty"`
 	ExcludeProviders []string `json:"excludeProviders,omitempty"`
+	ExcludeExitIPs   []string `json:"excludeExitIps,omitempty"`
+	Independent      bool     `json:"independent,omitempty"`
 	// FallbackProvider is reconnected when no other provider works, so a
 	// manual switch does not leave the proxy without an exit.
 	FallbackProvider string `json:"fallbackProvider,omitempty"`
 }
 
 type mysteriumManager struct {
+	connectMu sync.Mutex
 	mu        sync.Mutex
 	directory string
 	binary    string
@@ -707,6 +712,37 @@ type mysteriumConnectResult struct {
 // connect opens (or replaces) the connection on the proxy port to a
 // residential provider in the country and checks that traffic goes through.
 func (m *mysteriumManager) connect(request mysteriumConnection) (mysteriumConnectResult, error) {
+	m.connectMu.Lock()
+	defer m.connectMu.Unlock()
+	// Serialise allocation and include restored sibling sessions, not just the panel snapshot.
+	{
+		m.mu.Lock()
+		siblings := make([]mysteriumConnection, 0, len(m.wanted))
+		for port, connection := range m.wanted {
+			if port != request.ProxyPort && (request.Independent || connection.Independent) {
+				siblings = append(siblings, connection)
+			}
+		}
+		m.mu.Unlock()
+		// Probe siblings concurrently so many ports cannot exhaust the connect deadline.
+		ips := make(chan string, len(siblings))
+		var probes sync.WaitGroup
+		for _, sibling := range siblings {
+			request.ExcludeProviders = append(request.ExcludeProviders, sibling.ProviderID)
+			probes.Add(1)
+			go func(port int) {
+				defer probes.Done()
+				if ip, _, err := mysteriumSiblingProbe(port); err == nil {
+					ips <- ip
+				}
+			}(sibling.ProxyPort)
+		}
+		probes.Wait()
+		close(ips)
+		for ip := range ips {
+			request.ExcludeExitIPs = append(request.ExcludeExitIPs, ip)
+		}
+	}
 	request.Country = strings.ToUpper(strings.TrimSpace(request.Country))
 	if len(request.Country) != 2 || request.ProxyPort < 1024 || request.ProxyPort > 65535 {
 		return mysteriumConnectResult{}, errors.New("invalid country or proxy port")
@@ -733,7 +769,7 @@ func (m *mysteriumManager) connect(request mysteriumConnection) (mysteriumConnec
 		}
 	}
 	candidates := pickProviders(inCountry, request.ExcludeProviders, 6)
-	if request.ProviderID != "" {
+	if request.ProviderID != "" && !containsMysteriumValue(request.ExcludeProviders, request.ProviderID) {
 		candidates = append([]mysteriumProposal{{ProviderID: request.ProviderID}}, candidates...)
 	}
 	if len(candidates) == 0 && request.FallbackProvider == "" {
@@ -764,7 +800,7 @@ func (m *mysteriumManager) connect(request mysteriumConnection) (mysteriumConnec
 		}
 		// Providers rarely all stop answering at once; myst's link to the
 		// broker has usually gone stale. A fresh daemon reconnects it.
-		if p2pFailures++; p2pFailures >= 2 && !restarted && m.mayRevive() {
+		if p2pFailures++; p2pFailures >= 2 && !restarted && !m.hasIndependentConnections(request) && m.mayRevive() {
 			restarted = true
 			m.stop()
 			if err := m.ensureRunning(); err != nil {
@@ -821,12 +857,43 @@ func (m *mysteriumManager) attempt(request mysteriumConnection, id string, candi
 	if err != nil {
 		return mysteriumConnectResult{}, err
 	}
+	if containsMysteriumValue(request.ExcludeExitIPs, ip) {
+		_ = m.call(http.MethodDelete, "/connection?id="+strconv.Itoa(request.ProxyPort), nil, nil)
+		return mysteriumConnectResult{}, fmt.Errorf("provider returned an exit IP already used by another proxy: %s", ip)
+	}
 	m.mu.Lock()
-	m.wanted[request.ProxyPort] = mysteriumConnection{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID}
+	request.ProviderID = candidate.ProviderID
+	request.FallbackProvider = ""
+	request.ExcludeProviders = nil
+	request.ExcludeExitIPs = nil
+	m.wanted[request.ProxyPort] = request
 	m.mu.Unlock()
 	m.saveWanted()
 	return mysteriumConnectResult{ProxyPort: request.ProxyPort, Country: request.Country, ProviderID: candidate.ProviderID,
 		ExitIP: ip, City: candidate.Location.City, ISP: candidate.Location.ISP, LatencyMs: latency}, nil
+}
+
+func (m *mysteriumManager) hasIndependentConnections(request mysteriumConnection) bool {
+	if request.Independent {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, connection := range m.wanted {
+		if connection.Independent {
+			return true
+		}
+	}
+	return false
+}
+
+func containsMysteriumValue(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // mysteriumP2PTrouble reports errors where the provider never answered
@@ -842,6 +909,8 @@ func mysteriumP2PTrouble(err error) bool {
 }
 
 func (m *mysteriumManager) disconnect(port int) error {
+	m.connectMu.Lock()
+	defer m.connectMu.Unlock()
 	m.mu.Lock()
 	delete(m.wanted, port)
 	m.mu.Unlock()
@@ -858,8 +927,14 @@ func (m *mysteriumManager) disconnect(port int) error {
 
 // mysteriumProbe fetches Cloudflare's trace through the local proxy.
 func mysteriumProbe(port int) (string, int64, error) {
+	return mysteriumProbeTimeout(port, 15*time.Second)
+}
+
+func mysteriumProbeTimeout(port int, timeout time.Duration) (string, int64, error) {
 	proxy := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
-	client := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxy)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: timeout, Transport: transport}
 	started := time.Now()
 	response, err := client.Get(mysteriumTraceURL)
 	if err != nil {

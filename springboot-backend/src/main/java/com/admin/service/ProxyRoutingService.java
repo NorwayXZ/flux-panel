@@ -494,7 +494,7 @@ public class ProxyRoutingService {
         // Mysterium residential exits: one local proxy per country, connected on demand.
         Set<String> mysteriumCountries = MysteriumService.countries(proxy.getExitType(), proxy.getExitCountry(), rules);
         if (!mysteriumCountries.isEmpty()) {
-            for (Map.Entry<String, Integer> entry : mysterium.ensureCountries(node, mysteriumCountries).entrySet()) {
+            for (Map.Entry<String, Integer> entry : mysterium.ensureCountries(node, mysteriumCountries, MysteriumService.scope(proxy)).entrySet()) {
                 request.getJSONArray("outbounds").add(MysteriumService.outbound(entry.getKey(), entry.getValue()));
             }
         }

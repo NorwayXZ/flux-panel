@@ -74,9 +74,9 @@ class MysteriumServiceTests {
         org.mockito.Mockito.when(nodes.selectById(7L)).thenReturn(node);
         org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_account WHERE node_id = ?", 7L))
                 .thenReturn(List.of(Map.of("balance", 10, "suspended", 0)));
-        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", 7L, "US", 0L))
                 .thenReturn(List.of(Map.of("proxy_port", 47100, "provider_id", "old-provider", "excluded", "earlier-provider")));
-        org.mockito.Mockito.when(jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", 7L, "US", 0L))
                 .thenReturn(List.of(Map.of("exit_ip", "192.0.2.1")));
         var response = new com.admin.common.dto.GostDto(); response.setMsg("OK");
         response.setData(Map.of("providerId", "new-provider", "exitIp", "192.0.2.2", "latencyMs", 15));
@@ -86,7 +86,7 @@ class MysteriumServiceTests {
         org.mockito.Mockito.verify(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.argThat(payload ->
                 List.of("earlier-provider", "old-provider").equals(payload.get("excludeProviders")) && Integer.valueOf(47100).equals(payload.get("proxyPort"))
                         && "old-provider".equals(payload.get("fallbackProvider"))));
-        org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("INSERT INTO mysterium_event"), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("US"), org.mockito.ArgumentMatchers.contains("远程切换"), org.mockito.ArgumentMatchers.eq("192.0.2.1"), org.mockito.ArgumentMatchers.eq("192.0.2.2"), org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("INSERT INTO mysterium_event"), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("US"), org.mockito.ArgumentMatchers.contains("远程切换"), org.mockito.ArgumentMatchers.eq("192.0.2.1"), org.mockito.ArgumentMatchers.eq("192.0.2.2"), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq(0L));
     }
 
     @Test
@@ -110,9 +110,9 @@ class MysteriumServiceTests {
         org.mockito.Mockito.when(nodes.selectById(7L)).thenReturn(node);
         org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_account WHERE node_id = ?", 7L))
                 .thenReturn(List.of(Map.of("balance", 10, "suspended", 0)));
-        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", 7L, "US", 0L))
                 .thenReturn(List.of(Map.of("proxy_port", 47100, "provider_id", "old-provider", "excluded", "earlier-provider")));
-        org.mockito.Mockito.when(jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", 7L, "US"))
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", 7L, "US", 0L))
                 .thenReturn(List.of(Map.of("exit_ip", "192.0.2.1")));
         var response = new com.admin.common.dto.GostDto(); response.setMsg("OK");
         response.setData(Map.of("providerId", "old-provider", "exitIp", "192.0.2.1", "latencyMs", 15, "fallback", true));
@@ -120,9 +120,28 @@ class MysteriumServiceTests {
         org.mockito.Mockito.doReturn(response).when(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.anyMap());
         var result = service.reconnect(7L, "US");
         assertTrue(result.getCode() != 0 && result.getMsg().contains("已恢复原来的出口 192.0.2.1"), result.getMsg());
-        org.mockito.Mockito.verify(jdbc).update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", "earlier-provider", 7L, "US");
+        org.mockito.Mockito.verify(jdbc).update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=? AND scope_id=?", "earlier-provider", 7L, "US", 0L);
         org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("UPDATE mysterium_connection SET state='connected'"), org.mockito.ArgumentMatchers.eq("old-provider"),
                 org.mockito.ArgumentMatchers.eq("192.0.2.1"), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(15),
-                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("US"));
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.eq("US"), org.mockito.ArgumentMatchers.eq(0L));
+    }
+
+    @Test
+    void independentSwitchIsScopedAndExcludesSiblingExits() {
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        var nodes = org.mockito.Mockito.mock(com.admin.mapper.NodeMapper.class);
+        var service = org.mockito.Mockito.spy(new MysteriumService(jdbc, nodes, null));
+        org.mockito.Mockito.doReturn(true).when(service).enabled();
+        var node = new com.admin.entity.Node(); node.setId(7L); node.setVersion("2.84.0-beta.27");
+        org.mockito.Mockito.when(nodes.selectById(7L)).thenReturn(node);
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_account WHERE node_id = ?", 7L)).thenReturn(List.of(Map.of("balance",10,"suspended",0)));
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?",7L,"US",42L)).thenReturn(List.of(Map.of("proxy_port",47101,"provider_id","old")));
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT provider_id,exit_ip FROM mysterium_connection WHERE node_id=? AND proxy_port<>? AND state='connected' AND (? > 0 OR scope_id > 0)",7L,47101,42L)).thenReturn(List.of(Map.of("provider_id","sibling","exit_ip","192.0.2.1")));
+        var response = new com.admin.common.dto.GostDto(); response.setMsg("OK"); response.setData(Map.of("providerId","new","exitIp","192.0.2.2","latencyMs",5));
+        org.mockito.Mockito.doReturn(true).when(service).nodeOnline(7L);
+        org.mockito.Mockito.doReturn(response).when(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.anyMap());
+        assertEquals(0,service.reconnect(7L,"US","test",42L).getCode());
+        org.mockito.Mockito.verify(service).sendConnect(org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.argThat(p -> Boolean.TRUE.equals(p.get("independent")) && ((List<?>)p.get("excludeExitIps")).contains("192.0.2.1") && ((List<?>)p.get("excludeProviders")).contains("sibling")));
+        org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("UPDATE mysterium_connection SET state='connected'"),org.mockito.ArgumentMatchers.eq("new"),org.mockito.ArgumentMatchers.eq("192.0.2.2"),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(5),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("US"),org.mockito.ArgumentMatchers.eq(42L));
     }
 }

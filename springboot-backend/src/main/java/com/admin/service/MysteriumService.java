@@ -42,7 +42,7 @@ import java.util.TreeSet;
 /**
  * Mysterium residential exits. Each node that needs one runs Mysterium's node software through
  * the Agent with its own account (one account per node, funded by the admin). A country in use
- * on a node is one connection to a residential provider behind a local HTTP proxy port, which
+ * on a node is one shared connection by default, or one connection per opted-in private proxy, behind a local HTTP proxy port, which
  * the node's routers use as the exit "mysterium:CC". Connections are checked and moved to
  * another provider when they fail; spending is tracked from the balance and capped per month.
  */
@@ -50,6 +50,7 @@ import java.util.TreeSet;
 @Service
 public class MysteriumService {
     public static final String AGENT_VERSION = "2.83.0";
+    public static final String INDEPENDENT_AGENT_VERSION = "2.84.0-beta.27";
     static final String EXIT_PREFIX = "mysterium:";
     static final int PORT_BASE = 47100;
     static final String DISCOVERY = "https://discovery.mysterium.network/api/v4";
@@ -134,8 +135,16 @@ public class MysteriumService {
 
     /** Router outbounds for the node's Mysterium proxies in the given countries, connecting them when needed. */
     public Map<String, Integer> ensureCountries(Node node, Set<String> countries) {
+        return ensureCountries(node, countries, 0L);
+    }
+
+    static long scope(PrivateProxy proxy) {
+        return Boolean.TRUE.equals(proxy.getMysteriumIndependent()) ? proxy.getId() : 0L;
+    }
+
+    public Map<String, Integer> ensureCountries(Node node, Set<String> countries, long scope) {
         Map<String, Integer> ports = new LinkedHashMap<>();
-        for (String country : countries) ports.put(country, ensureCountry(node, country));
+        for (String country : countries) ports.put(country, ensureCountry(node, country, scope));
         return ports;
     }
 
@@ -152,6 +161,12 @@ public class MysteriumService {
 
     /** The node's connection to the country, opened now if there is none. Returns the local proxy port. */
     synchronized int ensureCountry(Node node, String country) {
+        return ensureCountry(node, country, 0L);
+    }
+
+    synchronized int ensureCountry(Node node, String country, long scope) {
+        if (scope > 0 && !AgentVersionUtil.isReleaseAtLeast(node.getVersion(), INDEPENDENT_AGENT_VERSION))
+            throw new IllegalStateException("独立出口需要节点 Agent " + INDEPENDENT_AGENT_VERSION + " 或更高版本");
         if (!enabled()) throw new IllegalStateException("Mysterium 家宽还没有启用，请先在“出口管理 → Mysterium 家宽”里启用");
         if (!AgentVersionUtil.isAtLeast(node.getVersion(), AGENT_VERSION)) {
             throw new IllegalStateException("Mysterium 家宽需要节点 Agent " + AGENT_VERSION + " 或更高版本，请先升级该节点");
@@ -165,7 +180,7 @@ public class MysteriumService {
         if (account != null && intValue(account.get("suspended")) == 1) {
             throw new IllegalStateException("节点“" + node.getName() + "”本月的 Mysterium 花费已达上限，已暂停使用");
         }
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id = ? AND country = ?", node.getId(), country);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id = ? AND country = ? AND scope_id = ?", node.getId(), country, scope);
         if (!rows.isEmpty() && "connected".equals(rows.get(0).get("state"))) return intValue(rows.get(0).get("proxy_port"));
         if (account != null && decimal(account.get("balance")) <= 0) {
             throw new IllegalStateException("节点“" + node.getName() + "”的 Mysterium 账户余额为 0，请先充值");
@@ -173,11 +188,11 @@ public class MysteriumService {
         int port = rows.isEmpty() ? allocatePort(node.getId()) : intValue(rows.get(0).get("proxy_port"));
         String excluded = rows.isEmpty() ? null : (String) rows.get(0).get("excluded");
         long now = System.currentTimeMillis();
-        jdbc.update("INSERT INTO mysterium_connection (node_id, country, proxy_port, state, fail_count, created_time) VALUES (?,?,?,?,0,?) "
-                + "ON DUPLICATE KEY UPDATE state=VALUES(state)", node.getId(), country, port, "connecting", now);
-        JSONObject result = connect(node, country, port, excluded);
+        jdbc.update("INSERT INTO mysterium_connection (node_id, country, scope_id, proxy_port, state, fail_count, created_time) VALUES (?,?,?,?,?,0,?) "
+                + "ON DUPLICATE KEY UPDATE state=VALUES(state)", node.getId(), country, scope, port, "connecting", now);
+        JSONObject result = connect(node, country, port, excluded, scope);
         if (result == null) {
-            String error = (String) jdbc.queryForList("SELECT last_error FROM mysterium_connection WHERE node_id=? AND country=?", node.getId(), country)
+            String error = (String) jdbc.queryForList("SELECT last_error FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", node.getId(), country, scope)
                     .get(0).get("last_error");
             throw new IllegalStateException("连接 Mysterium " + country + " 家宽失败：" + error);
         }
@@ -185,45 +200,58 @@ public class MysteriumService {
     }
 
     /** Connects (or moves) the connection; returns the agent's result, or null after recording the error. */
-    private synchronized JSONObject connect(Node node, String country, int port, String excluded) {
-        return connect(node, country, port, excluded, "连接 / 自动恢复");
+    private synchronized JSONObject connect(Node node, String country, int port, String excluded, long scope) {
+        return connect(node, country, port, excluded, "连接 / 自动恢复", null, scope);
     }
 
-    private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason) {
-        return connect(node, country, port, excluded, reason, null);
-    }
-
-    private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason, String fallbackProvider) {
-        List<Map<String, Object>> previous = jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=?", node.getId(), country);
+    private synchronized JSONObject connect(Node node, String country, int port, String excluded, String reason, String fallbackProvider, long scope) {
+        List<Map<String, Object>> previous = jdbc.queryForList("SELECT exit_ip, provider_id FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", node.getId(), country, scope);
         String oldIp = previous.isEmpty() ? null : (String) previous.get(0).get("exit_ip");
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("proxyPort", port);
         request.put("country", country);
-        request.put("excludeProviders", splitExcluded(excluded));
+        List<String> excludedProviders = splitExcluded(excluded);
+        {
+            List<Map<String, Object>> siblings = jdbc.queryForList("SELECT provider_id,exit_ip FROM mysterium_connection WHERE node_id=? AND proxy_port<>? AND state='connected' AND (? > 0 OR scope_id > 0)", node.getId(), port, scope);
+            List<String> ips = new ArrayList<>();
+            for (Map<String, Object> sibling : siblings) {
+                if (sibling.get("provider_id") != null) excludedProviders.add(sibling.get("provider_id").toString());
+                if (sibling.get("exit_ip") != null) ips.add(sibling.get("exit_ip").toString());
+            }
+            request.put("excludeExitIps", ips);
+            request.put("independent", scope > 0);
+        }
+        request.put("excludeProviders", excludedProviders);
         if (StringUtils.isNotBlank(fallbackProvider)) request.put("fallbackProvider", fallbackProvider);
         GostDto response = sendConnect(node.getId(), request);
         long now = System.currentTimeMillis();
         if (response == null || !"OK".equals(response.getMsg())) {
             String error = response == null ? "节点无响应" : response.getMsg();
-            jdbc.update("UPDATE mysterium_connection SET state='failed', last_error=?, last_check_at=? WHERE node_id=? AND country=?",
-                    truncate(error), now, node.getId(), country);
-            recordEvent(node.getId(), country, reason + "失败：" + error, oldIp, null);
+            jdbc.update("UPDATE mysterium_connection SET state='failed', last_error=?, last_check_at=? WHERE node_id=? AND country=? AND scope_id=?",
+                    truncate(error), now, node.getId(), country, scope);
+            recordEvent(node.getId(), country, reason + "失败：" + error, oldIp, null, scope);
             return null;
         }
         JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
+        if (((List<?>) request.getOrDefault("excludeExitIps", List.of())).contains(data.getString("exitIp"))) {
+            WebSocketServer.send_msg(node.getId(), Map.of("proxyPort", port), "MysteriumDisconnect", 30);
+            jdbc.update("UPDATE mysterium_connection SET state='failed', last_error=? WHERE node_id=? AND country=? AND scope_id=?",
+                    "未能分配不同的出口 IP，请重试", node.getId(), country, scope);
+            return null;
+        }
         jdbc.update("UPDATE mysterium_connection SET state='connected', provider_id=?, exit_ip=?, city=?, isp=?, latency_ms=?, fail_count=0, "
-                        + "last_check_at=?, last_ok_at=?, last_error=NULL WHERE node_id=? AND country=?",
+                        + "last_check_at=?, last_ok_at=?, last_error=NULL WHERE node_id=? AND country=? AND scope_id=?",
                 data.getString("providerId"), data.getString("exitIp"), StringUtils.left(data.getString("city"), 100),
-                StringUtils.left(data.getString("isp"), 200), data.getInteger("latencyMs"), now, now, node.getId(), country);
+                StringUtils.left(data.getString("isp"), 200), data.getInteger("latencyMs"), now, now, node.getId(), country, scope);
         if (data.getBooleanValue("fallback")) {
             // The old provider works again, so it no longer belongs on the exclusion list.
             List<String> list = splitExcluded(excluded);
             list.remove(data.getString("providerId"));
-            jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", String.join(",", list), node.getId(), country);
-            recordEvent(node.getId(), country, reason + "失败，没有连上新的家宽节点，已恢复原来的出口 " + data.getString("exitIp"), oldIp, data.getString("exitIp"));
+            jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=? AND scope_id=?", String.join(",", list), node.getId(), country, scope);
+            recordEvent(node.getId(), country, reason + "失败，没有连上新的家宽节点，已恢复原来的出口 " + data.getString("exitIp"), oldIp, data.getString("exitIp"), scope);
             return data;
         }
-        recordEvent(node.getId(), country, reason + "：" + StringUtils.defaultIfBlank(oldIp, "未连接") + " → " + data.getString("exitIp"), oldIp, data.getString("exitIp"));
+        recordEvent(node.getId(), country, reason + "：" + StringUtils.defaultIfBlank(oldIp, "未连接") + " → " + data.getString("exitIp"), oldIp, data.getString("exitIp"), scope);
         return data;
     }
 
@@ -233,22 +261,27 @@ public class MysteriumService {
 
     boolean nodeOnline(Long nodeId) { return WebSocketServer.isNodeOnline(nodeId); }
 
-    private void recordEvent(Long nodeId, String country, String message, String oldIp, String newIp) {
-        jdbc.update("INSERT INTO mysterium_event (node_id,country,message,old_ip,new_ip,created_time) VALUES (?,?,?,?,?,?)",
-                nodeId, country, truncate(message), oldIp, newIp, System.currentTimeMillis());
+    private void recordEvent(Long nodeId, String country, String message, String oldIp, String newIp, long scope) {
+        jdbc.update("INSERT INTO mysterium_event (node_id,country,message,old_ip,new_ip,created_time,scope_id) VALUES (?,?,?,?,?,?,?)",
+                nodeId, country, truncate(message), oldIp, newIp, System.currentTimeMillis(), scope);
     }
 
-    public R events(Long nodeId, String country) {
+    public R events(Long nodeId, String country) { return events(nodeId, country, 0L); }
+
+    public R events(Long nodeId, String country, long scope) {
         if (nodeId == null || country == null || !country.matches("[A-Z]{2}")) return R.err("节点或国家不正确");
-        return R.ok(jdbc.queryForList("SELECT id,message,old_ip AS oldIp,new_ip AS newIp,created_time AS createdTime FROM mysterium_event WHERE node_id=? AND country=? ORDER BY id DESC LIMIT 100", nodeId, country));
+        return R.ok(jdbc.queryForList("SELECT id,message,old_ip AS oldIp,new_ip AS newIp,created_time AS createdTime FROM mysterium_event WHERE node_id=? AND country=? AND scope_id=? ORDER BY id DESC LIMIT 100", nodeId, country, scope));
     }
 
     /** Card view shared by proxies using this node and country. */
-    public Map<String, Object> exitView(Long nodeId, String country) {
+    public Map<String, Object> exitView(Long nodeId, String country) { return exitView(nodeId, country, 0L); }
+
+    public Map<String, Object> exitView(Long nodeId, String country, long scope) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("country", country);
+        view.put("independent", scope > 0);
         view.put("countryName", country);
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", nodeId, country, scope);
         Map<String, Object> row = rows.isEmpty() ? Map.of() : rows.get(0);
         Map<String, Object> account = account(nodeId);
         boolean suspended = account != null && intValue(account.get("suspended")) == 1;
@@ -257,7 +290,7 @@ public class MysteriumService {
         view.put("exitOwner", row.get("isp"));
         view.put("detail", suspended ? "本月预算已达上限" : row.get("last_error"));
         view.put("checkedAt", row.get("last_check_at"));
-        List<Map<String, Object>> times = jdbc.queryForList("SELECT MAX(created_time) AS active_since FROM mysterium_event WHERE node_id=? AND country=? AND new_ip IS NOT NULL", nodeId, country);
+        List<Map<String, Object>> times = jdbc.queryForList("SELECT MAX(created_time) AS active_since FROM mysterium_event WHERE node_id=? AND country=? AND scope_id=? AND new_ip IS NOT NULL", nodeId, country, scope);
         view.put("activeSince", times.isEmpty() ? row.get("created_time") : times.get(0).get("active_since"));
         return view;
     }
@@ -358,10 +391,12 @@ public class MysteriumService {
 
     /** Moves the country's connection to another provider now. */
     public R reconnect(Long nodeId, String country) {
-        return reconnect(nodeId, country, "手动切换");
+        return reconnect(nodeId, country, "手动切换", 0L);
     }
 
-    public synchronized R reconnect(Long nodeId, String country, String reason) {
+    public R reconnect(Long nodeId, String country, String reason) { return reconnect(nodeId, country, reason, 0L); }
+
+    public synchronized R reconnect(Long nodeId, String country, String reason, long scope) {
         if (nodeId == null || country == null || !country.matches("[A-Z]{2}")) return R.err("节点或国家不正确");
         if (!enabled()) return R.err("Mysterium 家宽还没有启用");
         Map<String, Object> account = nodeId == null ? null : account(nodeId);
@@ -369,14 +404,16 @@ public class MysteriumService {
         if (intValue(account.get("suspended")) == 1) return R.err("本月预算已达上限，已暂停使用");
         if (decimal(account.get("balance")) <= 0) return R.err("Mysterium 余额不足，请先充值");
         Node node = nodeId == null ? null : nodeMapper.selectById(nodeId);
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", nodeId, country, scope);
         if (node == null || rows.isEmpty()) return R.err("连接不存在");
+        if (scope > 0 && !AgentVersionUtil.isReleaseAtLeast(node.getVersion(), INDEPENDENT_AGENT_VERSION))
+            return R.err("独立出口需要节点 Agent " + INDEPENDENT_AGENT_VERSION + " 或更高版本");
         if (!nodeOnline(nodeId)) return R.err("节点离线");
         Map<String, Object> row = rows.get(0);
         String excluded = addExcluded((String) row.get("excluded"), (String) row.get("provider_id"));
-        jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", excluded, nodeId, country);
+        jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=? AND scope_id=?", excluded, nodeId, country, scope);
         // A switch keeps the working provider as the last resort instead of leaving the proxy without an exit.
-        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded, reason, (String) row.get("provider_id"));
+        JSONObject result = connect(node, country, intValue(row.get("proxy_port")), excluded, reason, (String) row.get("provider_id"), scope);
         if (result == null) return R.err("换节点失败，请稍后再试");
         if (result.getBooleanValue("fallback")) {
             return R.err("没有连上新的家宽节点，已恢复原来的出口 " + StringUtils.defaultString(result.getString("exitIp")) + "，请稍后再试");
@@ -408,8 +445,8 @@ public class MysteriumService {
         if (list != null) {
             for (int i = 0; i < list.size(); i++) {
                 JSONObject item = list.getJSONObject(i);
-                jdbc.update("UPDATE mysterium_connection SET bytes_received=?, bytes_sent=? WHERE node_id=? AND country=?",
-                        item.getLongValue("bytesReceived"), item.getLongValue("bytesSent"), node.getId(), item.getString("country"));
+                jdbc.update("UPDATE mysterium_connection SET bytes_received=?, bytes_sent=? WHERE node_id=? AND proxy_port=?",
+                        item.getLongValue("bytesReceived"), item.getLongValue("bytesSent"), node.getId(), item.getIntValue("proxyPort"));
             }
         }
         return null;
@@ -431,22 +468,23 @@ public class MysteriumService {
 
     /** Every two minutes: checks connections in use, moves failing ones, and closes unused ones. */
     @Scheduled(fixedDelay = 120_000L, initialDelay = 180_000L)
-    public void upkeep() {
+    public synchronized void upkeep() {
         try {
             Map<Long, Set<String>> used = usage();
             for (Map<String, Object> row : jdbc.queryForList("SELECT * FROM mysterium_connection")) {
                 Long nodeId = ((Number) row.get("node_id")).longValue();
                 String country = (String) row.get("country");
+                long scope = longValue(row.get("scope_id"));
                 Node node = nodeMapper.selectById(nodeId);
                 if (node == null) {
-                    jdbc.update("DELETE FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
+                    jdbc.update("DELETE FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", nodeId, country, scope);
                     continue;
                 }
                 if (!WebSocketServer.isNodeOnline(nodeId)) continue;
                 int port = intValue(row.get("proxy_port"));
-                if (!used.getOrDefault(nodeId, Set.of()).contains(country)) {
+                if (!used.getOrDefault(nodeId, Set.of()).contains(scope + ":" + country)) {
                     WebSocketServer.send_msg(nodeId, Map.of("proxyPort", port), "MysteriumDisconnect", 30);
-                    jdbc.update("DELETE FROM mysterium_connection WHERE node_id=? AND country=?", nodeId, country);
+                    jdbc.update("DELETE FROM mysterium_connection WHERE node_id=? AND country=? AND scope_id=?", nodeId, country, scope);
                     continue;
                 }
                 if ("suspended".equals(row.get("state"))) continue;
@@ -458,28 +496,38 @@ public class MysteriumService {
     }
 
     private void checkConnection(Node node, Map<String, Object> row) {
+        long scope = longValue(row.get("scope_id"));
         String country = (String) row.get("country");
         int port = intValue(row.get("proxy_port"));
         long now = System.currentTimeMillis();
         GostDto response = WebSocketServer.send_msg(node.getId(), Map.of("proxyPort", port), "MysteriumCheck", 30);
         if (response != null && "OK".equals(response.getMsg())) {
             JSONObject data = JSON.parseObject(JSON.toJSONString(response.getData()));
+            Integer duplicates = jdbc.queryForObject("SELECT COUNT(*) FROM mysterium_connection WHERE node_id=? AND proxy_port<>? AND exit_ip=? AND state='connected' AND (? > 0 OR scope_id > 0)", Integer.class,
+                    node.getId(), port, data.getString("exitIp"), scope);
+            if (duplicates != null && duplicates > 0) {
+                WebSocketServer.send_msg(node.getId(), Map.of("proxyPort", port), "MysteriumDisconnect", 30);
+                jdbc.update("UPDATE mysterium_connection SET state='failed', last_error=? WHERE node_id=? AND country=? AND scope_id=?",
+                        "出口 IP 与其他代理重复，正在重新分配", node.getId(), country, scope);
+                connect(node, country, port, addExcluded((String) row.get("excluded"), (String) row.get("provider_id")), scope);
+                return;
+            }
             jdbc.update("UPDATE mysterium_connection SET state='connected', fail_count=0, exit_ip=?, latency_ms=?, last_check_at=?, last_ok_at=?, "
-                    + "last_error=NULL WHERE node_id=? AND country=?", data.getString("exitIp"), data.getInteger("latencyMs"), now, now, node.getId(), country);
+                    + "last_error=NULL WHERE node_id=? AND country=? AND scope_id=?", data.getString("exitIp"), data.getInteger("latencyMs"), now, now, node.getId(), country, scope);
             return;
         }
         int failures = intValue(row.get("fail_count")) + 1;
         String error = response == null ? "节点无响应" : response.getMsg();
-        jdbc.update("UPDATE mysterium_connection SET fail_count=?, last_check_at=?, last_error=? WHERE node_id=? AND country=?",
-                failures, now, truncate(error), node.getId(), country);
+        jdbc.update("UPDATE mysterium_connection SET fail_count=?, last_check_at=?, last_error=? WHERE node_id=? AND country=? AND scope_id=?",
+                failures, now, truncate(error), node.getId(), country, scope);
         if (failures < 2 && "connected".equals(row.get("state"))) return;
         // Two failures in a row (or already failed): move to another residential provider on the same port.
         String excluded = addExcluded((String) row.get("excluded"), (String) row.get("provider_id"));
-        jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=?", excluded, node.getId(), country);
-        if (connect(node, country, port, excluded) != null) {
+        jdbc.update("UPDATE mysterium_connection SET excluded=? WHERE node_id=? AND country=? AND scope_id=?", excluded, node.getId(), country, scope);
+        if (connect(node, country, port, excluded, scope) != null) {
             log.info("Mysterium {} on node {} moved to another provider", country, node.getId());
         } else {
-            jdbc.update("UPDATE mysterium_connection SET fail_count=? WHERE node_id=? AND country=?", failures, node.getId(), country);
+            jdbc.update("UPDATE mysterium_connection SET fail_count=? WHERE node_id=? AND country=? AND scope_id=?", failures, node.getId(), country, scope);
         }
     }
 
@@ -531,7 +579,7 @@ public class MysteriumService {
         Map<Long, Set<String>> used = new HashMap<>();
         for (PrivateProxy proxy : proxyMapper.selectList(new QueryWrapper<PrivateProxy>().eq("state", "active"))) {
             Set<String> countries = countries(proxy.getExitType(), proxy.getExitCountry(), ProxyRoutingService.rules(proxy.getRouteRules()));
-            if (!countries.isEmpty()) used.computeIfAbsent(proxy.getNodeId(), key -> new TreeSet<>()).addAll(countries);
+            if (!countries.isEmpty()) for (String country : countries) used.computeIfAbsent(proxy.getNodeId(), key -> new TreeSet<>()).add(scope(proxy) + ":" + country);
         }
         return used;
     }
@@ -584,6 +632,7 @@ public class MysteriumService {
         for (Map<String, Object> connection : jdbc.queryForList("SELECT * FROM mysterium_connection WHERE node_id=? ORDER BY country", nodeId)) {
             Map<String, Object> view = new LinkedHashMap<>();
             view.put("country", connection.get("country"));
+            view.put("scopeId", longValue(connection.get("scope_id")));
             view.put("proxyPort", connection.get("proxy_port"));
             view.put("state", connection.get("state"));
             view.put("exitIp", connection.get("exit_ip"));

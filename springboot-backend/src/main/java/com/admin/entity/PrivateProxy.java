@@ -39,6 +39,7 @@ public class PrivateProxy implements Serializable {
     private Integer speedLimitMbps;
     private String exitType;
     private String exitCountry;
+    private Boolean mysteriumIndependent;
     private Integer exitRoutePort;
     private String exitSwitchToken;
     private Long exitCustomId;

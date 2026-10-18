@@ -63,7 +63,8 @@ public class PrivateProxyController {
                 body.get("exitType") == null ? null : body.get("exitType").toString(),
                 body.get("exitCountry") == null ? null : body.get("exitCountry").toString(),
                 customId == null || customId.toString().isBlank() ? null : Long.valueOf(customId.toString()),
-                rules instanceof java.util.List ? (java.util.List<Map<String, Object>>) rules : null);
+                rules instanceof java.util.List ? (java.util.List<Map<String, Object>>) rules : null,
+                body.get("mysteriumIndependent") == null ? null : Boolean.valueOf(body.get("mysteriumIndependent").toString()));
     }
     @LogAnnotation @PostMapping("/exit-switch") public R switchExit(@RequestBody Map<String, Object> body) {
         Object id = body.get("id");

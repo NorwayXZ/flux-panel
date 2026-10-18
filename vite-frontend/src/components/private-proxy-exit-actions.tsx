@@ -56,7 +56,7 @@ export default function PrivateProxyExitActions({
           切换记录
         </Button>
       )}
-      {item.exitType === "mysterium" && <p className="w-full text-xs text-default-400">同一节点、同一国家共用出口，切换会影响其他使用它的代理。</p>}
+      {item.exitType === "mysterium" && <p className="w-full text-xs text-default-400">{item.mysteriumIndependent ? "独立出口，切换只影响此代理。" : "同一节点、同一国家共用出口，切换会影响其他使用它的代理。"}</p>}
     </div>
   );
 }

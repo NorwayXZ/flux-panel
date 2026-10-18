@@ -42,10 +42,10 @@ public class MysteriumController {
     public R refresh(@RequestBody Map<String, Object> body) { return service.refresh(id(body)); }
 
     @RequireRole @LogAnnotation @PostMapping("/reconnect")
-    public R reconnect(@RequestBody Map<String, Object> body) { return service.reconnect(id(body), text(body, "country")); }
+    public R reconnect(@RequestBody Map<String, Object> body) { return service.reconnect(id(body), text(body, "country"), "手动切换", body.get("scopeId") == null ? 0L : Long.parseLong(body.get("scopeId").toString())); }
 
     @RequireRole @PostMapping("/events")
-    public R events(@RequestBody Map<String, Object> body) { return service.events(id(body), text(body, "country")); }
+    public R events(@RequestBody Map<String, Object> body) { return service.events(id(body), text(body, "country"), body.get("scopeId") == null ? 0L : Long.parseLong(body.get("scopeId").toString())); }
 
     private static Long id(Map<String, Object> body) {
         Object value = body == null ? null : body.get("nodeId");

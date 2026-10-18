@@ -357,3 +357,47 @@ func TestStrayMysteriumPIDsMatchOnlyThisInstall(t *testing.T) {
 		t.Fatalf("stray pids %v", got)
 	}
 }
+
+func TestMysteriumIndependentRejectsDuplicateIPWithoutChangingSibling(t *testing.T) {
+	m, _ := fakeTequilapi(t)
+	m.cmd = selfProcess(t)
+	port := startTraceProxy(t)
+	original := mysteriumTraceURL
+	mysteriumTraceURL = "http://trace.example/cdn-cgi/trace"
+	defer func() { mysteriumTraceURL = original }()
+	m.wanted[47101] = mysteriumConnection{ProxyPort: 47101, Country: "US", ProviderID: "0xsibling"}
+	_, err := m.connect(mysteriumConnection{ProxyPort: port, Country: "US", Independent: true, ExcludeExitIPs: []string{"173.75.12.161"}})
+	if err == nil || !strings.Contains(err.Error(), "already used") {
+		t.Fatalf("expected duplicate IP rejection, got %v", err)
+	}
+	if _, ok := m.wanted[port]; ok {
+		t.Fatal("duplicate exit must not be remembered")
+	}
+	if m.wanted[47101].ProviderID != "0xsibling" {
+		t.Fatal("sibling changed")
+	}
+}
+
+func TestMysteriumIndependentPersistsItsModeForRestart(t *testing.T) {
+	m, _ := fakeTequilapi(t)
+	m.cmd = selfProcess(t)
+	port := startTraceProxy(t)
+	original := mysteriumTraceURL
+	mysteriumTraceURL = "http://trace.example/cdn-cgi/trace"
+	defer func() { mysteriumTraceURL = original }()
+	_, err := m.connect(mysteriumConnection{ProxyPort: port, Country: "US", Independent: true, ExcludeExitIPs: []string{"192.0.2.10"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(m.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []mysteriumConnection
+	if err = json.Unmarshal(content, &saved); err != nil || len(saved) != 1 || !saved[0].Independent {
+		t.Fatalf("mode lost: %s (%v)", content, err)
+	}
+	if len(saved[0].ExcludeExitIPs) != 0 {
+		t.Fatal("stale sibling IP snapshot persisted")
+	}
+}

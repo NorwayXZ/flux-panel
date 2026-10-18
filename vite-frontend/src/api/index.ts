@@ -706,6 +706,7 @@ export interface PrivateProxyItem {
   available?: boolean;
   unavailableReason?: string;
   exitType?: PrivateProxyExitType;
+  mysteriumIndependent?: boolean;
   exitCountry?: string;
   exit?: ExitStatusView;
   routing?: PrivateProxyRouting;
@@ -1314,6 +1315,7 @@ export interface MysteriumSettings {
   agentVersion: string;
 }
 export interface MysteriumConnection {
+  scopeId?: number;
   country: string;
   proxyPort: number;
   state: "connecting" | "connected" | "failed" | "suspended";
@@ -1380,10 +1382,10 @@ export const topupMysterium = (data: {
   }>("/mysterium/topup", data, 90_000);
 export const refreshMysterium = (nodeId: number) =>
   Network.mutate<MysteriumAccount>("/mysterium/refresh", { nodeId }, ["/mysterium/overview"], 90_000);
-export const getMysteriumEvents = (nodeId: number, country: string) =>
-  Network.post<ExitEvent[]>("/mysterium/events", { nodeId, country });
-export const reconnectMysterium = (nodeId: number, country: string) =>
-  Network.mutate("/mysterium/reconnect", { nodeId, country }, ["/mysterium/overview"], 200_000);
+export const getMysteriumEvents = (nodeId: number, country: string, scopeId = 0) =>
+  Network.post<ExitEvent[]>("/mysterium/events", { nodeId, country, scopeId });
+export const reconnectMysterium = (nodeId: number, country: string, scopeId = 0) =>
+  Network.mutate("/mysterium/reconnect", { nodeId, country, scopeId }, ["/mysterium/overview"], 200_000);
 export const getWarpStatus = () =>
   Network.post<{ nodes: WarpNodeStatus[]; minimumAgentVersion: string }>(
     "/proxy-exit/warp",
@@ -1529,6 +1531,7 @@ export const testProxyExit = (id: number, nodeId?: number) =>
     { id, nodeId },
   );
 export const updatePrivateProxyRouting = (data: {
+  mysteriumIndependent?: boolean;
   id: number;
   exitType: PrivateProxyExitType;
   exitCountry?: string;
@@ -1540,7 +1543,7 @@ export const updatePrivateProxyRouting = (data: {
     "/private-proxy/routing",
     data,
     ["/private-proxy/list"],
-    120_000,
+    200_000,
   );
 
 export const updatePrivateProxyExit = (

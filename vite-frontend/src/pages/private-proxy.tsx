@@ -368,6 +368,7 @@ export default function PrivateProxyPage() {
     exitType: "node",
     exitCountry: "",
   });
+  const [mysteriumIndependent, setMysteriumIndependent] = useState(false);
   const [exitSaving, setExitSaving] = useState(false);
   const [proxyExits, setProxyExits] = useState<ProxyExit[]>([]);
   const [routePresets, setRoutePresets] = useState<RoutePreset[]>([]);
@@ -377,6 +378,7 @@ export default function PrivateProxyPage() {
   const [routeRules, setRouteRules] = useState<RouteRule[]>([]);
   const [eventsTarget, setEventsTarget] = useState<{
     groupId?: number;
+    scopeId?: number;
     nodeId?: number;
     country?: string;
     title: string;
@@ -656,6 +658,7 @@ export default function PrivateProxyPage() {
   };
 
   const openExitSettings = (item: PrivateProxyItem) => {
+    setMysteriumIndependent(Boolean(item.mysteriumIndependent));
     setExitChoice({
       exitType: item.exitType || "node",
       exitCountry: item.exitCountry || "",
@@ -747,6 +750,7 @@ export default function PrivateProxyPage() {
     ) {
       setExitSaving(true);
       const routed = await updatePrivateProxyRouting({
+        ...(isAdmin ? { mysteriumIndependent } : {}),
         id: exitTarget.id,
         exitType: exitChoice.exitType,
         exitCountry:
@@ -841,6 +845,7 @@ export default function PrivateProxyPage() {
     if (item.exitType === "mysterium") {
       setEventsTarget({
         nodeId: item.nodeId,
+        scopeId: item.mysteriumIndependent ? item.id : 0,
         country: item.exitCountry || "",
         title: `Mysterium ${regionName(item.exitCountry || "")}家宽出口的切换记录`,
       });
@@ -1835,10 +1840,18 @@ export default function PrivateProxyPage() {
                 )}
               </div>
             )}
+            {(exitChoice.exitType === "mysterium" || routeRules.some(rule => rule.exit.startsWith("mysterium:"))) && isAdmin && (
+              <div className="rounded-xl border border-divider p-3">
+                <Switch isSelected={mysteriumIndependent} onValueChange={setMysteriumIndependent}>
+                  为此代理分配独立 Mysterium 出口
+                </Switch>
+                <p className="mt-2 text-xs text-default-500">开启后，此代理使用独立连接，尝试分配与本服务器其他代理不同的出口 IP；换出口只影响此代理。账户余额继续共用。需要 Agent 2.84.0-beta.27 或更高版本。</p>
+              </div>
+            )}
             {exitChoice.exitType === "mysterium" && (
               <p className="text-xs text-warning-600">
                 Mysterium 出口只支持 TCP；UDP 流量无法通过，不会回退到节点自身
-                IP。同一节点、同一国家的代理共用出口连接。
+                IP。{mysteriumIndependent ? "此代理使用独立出口连接。" : "同一节点、同一国家的代理共用出口连接。"}
               </p>
             )}
             <p className="text-xs text-default-500">
@@ -1854,7 +1867,7 @@ export default function PrivateProxyPage() {
                     不用登录面板，打开这个链接就会换到备用出口，并显示新的出口
                     IP。可以存成浏览器书签或手机快捷指令。拿到链接的人只能触发换出口，请不要公开。
                     {exitTarget.exitType === "mysterium" &&
-                      "同一节点、同一国家共用连接，切换会影响其他使用该连接的代理，并可能产生连接费用。"}
+                      (exitTarget.mysteriumIndependent ? "此链接只切换本代理的独立出口，并可能产生连接费用。" : "同一节点、同一国家共用连接，切换会影响其他使用该连接的代理，并可能产生连接费用。")}
                   </p>
                   {switchLink ? (
                     <div className="flex flex-wrap items-center gap-2">

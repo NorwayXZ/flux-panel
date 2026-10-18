@@ -40,6 +40,7 @@ public class PrivateProxySchemaInitializer {
             ensureColumn("runtime_out_flow", "bigint NOT NULL DEFAULT 0 AFTER runtime_in_flow");
             // 出口设置。带默认值，旧版本后端写入时不提供这两列也能成功，版本可以回退。
             ensureColumn("exit_type", "varchar(16) NOT NULL DEFAULT 'node'");
+            ensureColumn("mysterium_independent", "tinyint NOT NULL DEFAULT 0");
             ensureColumn("exit_country", "varchar(8) DEFAULT NULL");
             ensureColumn("exit_route_port", "int DEFAULT NULL");
             ensureColumn("exit_switch_token", "varchar(64) DEFAULT NULL");
@@ -124,6 +125,13 @@ public class PrivateProxySchemaInitializer {
                     + "message varchar(500) NOT NULL, old_ip varchar(64) DEFAULT NULL, new_ip varchar(64) DEFAULT NULL, "
                     + "created_time bigint NOT NULL, PRIMARY KEY (id), KEY idx_mysterium_event (node_id,country,created_time)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            // Preserve legacy shared connections under scope 0; independent scopes use proxy IDs.
+            SchemaSupport.ensureColumn(jdbcTemplate, "mysterium_connection", "scope_id", "bigint NOT NULL DEFAULT 0");
+            Integer scopedPrimary = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='mysterium_connection' AND index_name='PRIMARY' AND column_name='scope_id'", Integer.class);
+            if (scopedPrimary == null || scopedPrimary == 0) {
+                jdbcTemplate.execute("ALTER TABLE mysterium_connection DROP PRIMARY KEY, ADD PRIMARY KEY (node_id,country,scope_id)");
+            }
+            SchemaSupport.ensureColumn(jdbcTemplate, "mysterium_event", "scope_id", "bigint NOT NULL DEFAULT 0");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS proxy_provider ("
                     + "id bigint NOT NULL AUTO_INCREMENT, name varchar(100) NOT NULL, kind varchar(16) NOT NULL, "
                     + "network varchar(16) NOT NULL DEFAULT 'mobile', config text NOT NULL, sticky_minutes int NOT NULL DEFAULT 10, "

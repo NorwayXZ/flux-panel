@@ -93,3 +93,27 @@ residential connection through the shared balance (Agent 2.84.0-beta.16).
 Each check ran more than two minutes after the panel returned, beyond the
 providers' unpaid-payment leeway. Before this change a panel restart could end
 both sessions and, with a lost payment, keep the pool blocked.
+
+## Same-daemon parallel US connections — 2026-10-19 (Asia/Shanghai)
+
+On NosLa San Jose, used the running funded shared-billing consumer at loopback
+API port 4450; no daemon restart, identity import, or production routing changes.
+The upstream pinned source uses `multiConnectionManager.cms[ProxyPort]`, supporting
+multiple user-space proxy sessions within the same daemon.
+
+- Existing connection port 47100: `208.118.168.18`.
+- Temporary connection port 47498, a different US residential provider:
+  `208.85.9.227`, while port 47100 continued returning `208.118.168.18`.
+- The original session ID was unchanged before, during, and after the check.
+- Deleted only connection 47498; its final state was `NotConnected`. The original
+  connection remained available. DELETE returned an empty successful response,
+  which the validation script initially reported as a JSON decoding warning;
+  the subsequent status verified cleanup.
+
+This confirms same-daemon, same-account, distinct-IP parallel transport in a short
+live test. It does not yet validate the newly added panel scope migration or
+Agent restart/deduplication logic on a deployed build, sustained invoice renewal,
+or large-scale operation. Unit checks for scoped routing, token switching, duplicate-IP rejection, persistence
+of independent mode and existing shared billing passed. Go Mysterium tests also
+passed with the race detector. MySQL migration and deployed new-version end-to-end
+checks remain pending; the local environment has no Docker executable.

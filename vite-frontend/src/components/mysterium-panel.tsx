@@ -187,9 +187,9 @@ export default function MysteriumPanel() {
     void load();
   };
 
-  const reconnect = async (account: MysteriumAccount, country: string) => {
-    setBusy(`reconnect-${account.nodeId}-${country}`);
-    const response = await reconnectMysterium(account.nodeId, country);
+  const reconnect = async (account: MysteriumAccount, country: string, scopeId = 0) => {
+    setBusy(`reconnect-${account.nodeId}-${country}-${scopeId}`);
+    const response = await reconnectMysterium(account.nodeId, country, scopeId);
 
     setBusy("");
     if (response.code !== 0) toast.error(response.msg || "换节点失败");
@@ -637,11 +637,12 @@ export default function MysteriumPanel() {
 
                           return (
                             <div
-                              key={connection.country}
+                              key={`${connection.country}-${connection.proxyPort}`}
                               className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm"
                             >
                               <span className="w-20 font-medium">
                                 {regionName(connection.country)}
+                                <span className="block text-xs text-default-400">{connection.scopeId ? `代理 #${connection.scopeId}` : "共享出口"}</span>
                               </span>
                               <Chip
                                 color={state.color}
@@ -673,14 +674,14 @@ export default function MysteriumPanel() {
                                 isDisabled={account.suspended}
                                 isLoading={
                                   busy ===
-                                  `reconnect-${account.nodeId}-${connection.country}`
+                                  `reconnect-${account.nodeId}-${connection.country}-${connection.scopeId || 0}`
                                 }
                                 size="sm"
                                 startContent={<Shuffle size={13} />}
                                 title="换一个同国家的家宽节点"
                                 variant="light"
                                 onPress={() =>
-                                  void reconnect(account, connection.country)
+                                  void reconnect(account, connection.country, connection.scopeId)
                                 }
                               >
                                 换节点

@@ -884,6 +884,10 @@ public class PrivateProxyService {
      * then points the running proxy at its router, its residential route or straight out.
      */
     public R updateRouting(Long id, String exitType, String country, Long customId, List<Map<String, Object>> rules) {
+        return updateRouting(id, exitType, country, customId, rules, null);
+    }
+
+    public R updateRouting(Long id, String exitType, String country, Long customId, List<Map<String, Object>> rules, Boolean independent) {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
         String type = StringUtils.defaultIfBlank(exitType, "node");
@@ -933,6 +937,10 @@ public class PrivateProxyService {
             // No router before or after: the plain exit switch handles it.
             return updateExit(id, type, country);
         }
+        if (independent != null && !Objects.equals(Boolean.TRUE.equals(proxy.getMysteriumIndependent()), independent)) {
+            if (!isAdmin()) return R.err("独立 Mysterium 出口仅管理员可以配置");
+            proxy.setMysteriumIndependent(independent);
+        }
         boolean wasActive = routing.active(proxy);
         proxy.setExitType(type);
         proxy.setExitCountry(exitCountry);
@@ -950,6 +958,7 @@ public class PrivateProxyService {
         proxyMapper.update(null, new UpdateWrapper<PrivateProxy>().eq("id", proxy.getId())
                 .set("exit_type", type).set("exit_country", exitCountry)
                 .set("exit_custom_id", proxy.getExitCustomId())
+                .set("mysterium_independent", Boolean.TRUE.equals(proxy.getMysteriumIndependent()))
                 .set("route_rules", routeRules)
                 .set("route_countries", usesRouter ? proxy.getRouteCountries() : null)
                 .set("route_exit_ports", proxy.getRouteExitPorts())
@@ -1082,7 +1091,7 @@ public class PrivateProxyService {
         PrivateProxy proxy = id == null ? null : owned(id);
         if (proxy == null) return R.err("代理不存在或无权访问");
         if ("mysterium".equals(proxy.getExitType()) && "active".equals(proxy.getState())) {
-            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), isAdmin() ? "手动切换" : "用户切换");
+            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), isAdmin() ? "手动切换" : "用户切换", MysteriumService.scope(proxy));
         }
         if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
             return R.err("这个代理当前没有使用家宽出口");
@@ -1099,7 +1108,7 @@ public class PrivateProxyService {
                 .ne("state", "deleted").last("LIMIT 1"));
         if (proxy == null) return R.err("链接无效或已重置");
         if ("mysterium".equals(proxy.getExitType()) && "active".equals(proxy.getState())) {
-            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), "远程切换");
+            return mysterium.reconnect(proxy.getNodeId(), proxy.getExitCountry(), "远程切换", MysteriumService.scope(proxy));
         }
         if (!"residential".equals(proxy.getExitType()) || !"active".equals(proxy.getState())) {
             return R.err("这个代理当前没有使用家宽出口");
@@ -2055,7 +2064,7 @@ public class PrivateProxyService {
             }
         }
         if ("mysterium".equals(proxy.getExitType()) && StringUtils.isNotBlank(proxy.getExitCountry())) {
-            Map<String, Object> exit = mysterium.exitView(proxy.getNodeId(), proxy.getExitCountry());
+            Map<String, Object> exit = mysterium.exitView(proxy.getNodeId(), proxy.getExitCountry(), MysteriumService.scope(proxy));
             proxy.setExit(exit);
             if (unavailableReason == null && !"ok".equals(exit.get("status"))) unavailableReason = "Mysterium 家宽出口暂不可用，不会改走节点自身 IP";
         }

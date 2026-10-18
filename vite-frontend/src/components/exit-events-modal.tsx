@@ -19,6 +19,7 @@ interface ExitEventsModalProps {
   /** 要查看的出口；为空时弹窗关闭 */
   target: {
     groupId?: number;
+    scopeId?: number;
     nodeId?: number;
     country?: string;
     title: string;
@@ -42,7 +43,7 @@ export default function ExitEventsModal({
     setLoading(true);
     const request =
       target.nodeId && target.country
-        ? getMysteriumEvents(target.nodeId, target.country)
+        ? getMysteriumEvents(target.nodeId, target.country, target.scopeId)
         : getExitPoolEvents(target.groupId!);
     request
       .then((response) => {
@@ -56,7 +57,7 @@ export default function ExitEventsModal({
     return () => {
       cancelled = true;
     };
-  }, [target?.groupId, target?.nodeId, target?.country]);
+  }, [target?.scopeId, target?.groupId, target?.nodeId, target?.country]);
 
   return (
     <Modal
