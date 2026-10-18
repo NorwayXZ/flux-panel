@@ -1,0 +1,565 @@
+[
+  {
+    "module": "AiOpsChatController",
+    "routes": [
+      "POST /api/v1/ai-ops/chat/stop",
+      "POST /api/v1/ai-ops/chat/list",
+      "POST /api/v1/ai-ops/chat/detail",
+      "POST /api/v1/ai-ops/chat/delete",
+      "POST /api/v1/ai-ops/chat/send"
+    ]
+  },
+  {
+    "module": "AiOpsController",
+    "routes": [
+      "POST /api/v1/ai-ops/overview",
+      "POST /api/v1/ai-ops/settings",
+      "POST /api/v1/ai-ops/save",
+      "POST /api/v1/ai-ops/run",
+      "POST /api/v1/ai-ops/delete",
+      "POST /api/v1/ai-ops/detail"
+    ]
+  },
+  {
+    "module": "ApiTimingController",
+    "routes": [
+      "POST /api/v1/monitoring/api-timing"
+    ]
+  },
+  {
+    "module": "ApiTokenController",
+    "routes": [
+      "POST /api/v1/api-token/list",
+      "POST /api/v1/api-token/create",
+      "POST /api/v1/api-token/revoke"
+    ]
+  },
+  {
+    "module": "AuthorizedEntryController",
+    "routes": [
+      "POST /api/v1/authorized-entry/grants",
+      "POST /api/v1/authorized-entry/port/create",
+      "POST /api/v1/authorized-entry/port/delete",
+      "POST /api/v1/authorized-entry/port/update",
+      "POST /api/v1/authorized-entry/template/list",
+      "POST /api/v1/authorized-entry/template/save",
+      "POST /api/v1/authorized-entry/grant/save",
+      "POST /api/v1/authorized-entry/grant/state",
+      "POST /api/v1/authorized-entry/grant/revoke"
+    ]
+  },
+  {
+    "module": "AwsAccessController",
+    "routes": [
+      "POST /api/v1/aws-access/list",
+      "POST /api/v1/aws-access/save",
+      "POST /api/v1/aws-access/sync",
+      "POST /api/v1/aws-access/delete"
+    ]
+  },
+  {
+    "module": "BandwidthTestController",
+    "routes": [
+      "POST /api/v1/bandwidth-test/overview",
+      "POST /api/v1/bandwidth-test/save",
+      "POST /api/v1/bandwidth-test/run",
+      "POST /api/v1/bandwidth-test/delete",
+      "POST /api/v1/bandwidth-test/detail"
+    ]
+  },
+  {
+    "module": "CaptchaController",
+    "routes": [
+      "POST /api/v1/captcha/check",
+      "POST /api/v1/captcha/generate",
+      "POST /api/v1/captcha/verify"
+    ]
+  },
+  {
+    "module": "CrossEntryFailoverController",
+    "routes": [
+      "POST /api/v1/cross-entry-failover/list",
+      "POST /api/v1/cross-entry-failover/eligible-forwards",
+      "POST /api/v1/cross-entry-failover/probe-sources",
+      "POST /api/v1/cross-entry-failover/save",
+      "POST /api/v1/cross-entry-failover/delete",
+      "POST /api/v1/cross-entry-failover/check",
+      "POST /api/v1/cross-entry-failover/group-enabled",
+      "POST /api/v1/cross-entry-failover/member-enabled",
+      "POST /api/v1/cross-entry-failover/traffic-quota",
+      "POST /api/v1/cross-entry-failover/traffic-quota/reset",
+      "POST /api/v1/cross-entry-failover/events"
+    ]
+  },
+  {
+    "module": "DnsProviderController",
+    "routes": [
+      "POST /api/v1/dns-provider/list",
+      "POST /api/v1/dns-provider/zones",
+      "POST /api/v1/dns-provider/account/save",
+      "POST /api/v1/dns-provider/account/sync",
+      "POST /api/v1/dns-provider/account/delete"
+    ]
+  },
+  {
+    "module": "DockerAppCenterController",
+    "routes": [
+      "POST /api/v1/docker-apps/overview",
+      "POST /api/v1/docker-apps/inspect",
+      "POST /api/v1/docker-apps/deploy",
+      "POST /api/v1/docker-apps/action",
+      "POST /api/v1/docker-apps/command",
+      "POST /api/v1/docker-apps/events"
+    ]
+  },
+  {
+    "module": "DynamicDnsController",
+    "routes": [
+      "POST /api/v1/dynamic-dns/overview",
+      "POST /api/v1/dynamic-dns/history",
+      "POST /api/v1/dynamic-dns/provider/save",
+      "POST /api/v1/dynamic-dns/provider/delete",
+      "POST /api/v1/dynamic-dns/rule/save",
+      "POST /api/v1/dynamic-dns/rule/delete",
+      "POST /api/v1/dynamic-dns/rule/run"
+    ]
+  },
+  {
+    "module": "ExitPoolController",
+    "routes": [
+      "POST /api/v1/exit-pool/countries",
+      "POST /api/v1/exit-pool/overview",
+      "POST /api/v1/exit-pool/events",
+      "POST /api/v1/exit-pool/refresh",
+      "POST /api/v1/exit-pool/block",
+      "POST /api/v1/exit-pool/switch",
+      "POST /api/v1/exit-pool/candidates",
+      "POST /api/v1/exit-pool/prefer",
+      "POST /api/v1/exit-pool/country-candidates",
+      "POST /api/v1/exit-pool/reputation",
+      "POST /api/v1/exit-pool/settings",
+      "POST /api/v1/exit-pool/settings/save",
+      "POST /api/v1/exit-pool/check-country"
+    ]
+  },
+  {
+    "module": "ExitSwitchOpenController",
+    "routes": [
+      "GET /api/v1/open_api/exit-switch"
+    ]
+  },
+  {
+    "module": "ForwardController",
+    "routes": [
+      "POST /api/v1/forward/create",
+      "POST /api/v1/forward/list",
+      "POST /api/v1/forward/update",
+      "POST /api/v1/forward/delete",
+      "POST /api/v1/forward/force-delete",
+      "POST /api/v1/forward/pause",
+      "POST /api/v1/forward/resume",
+      "POST /api/v1/forward/diagnose",
+      "POST /api/v1/forward/route-events",
+      "POST /api/v1/forward/update-order"
+    ]
+  },
+  {
+    "module": "IpQualityController",
+    "routes": [
+      "POST /api/v1/ip-quality/overview",
+      "POST /api/v1/ip-quality/run",
+      "POST /api/v1/ip-quality/history",
+      "POST /api/v1/ip-quality/providers/save"
+    ]
+  },
+  {
+    "module": "LayoutPreferenceController",
+    "routes": [
+      "POST /api/v1/layout/order",
+      "POST /api/v1/layout/order/save"
+    ]
+  },
+  {
+    "module": "McpController",
+    "routes": []
+  },
+  {
+    "module": "MonitoringController",
+    "routes": [
+      "POST /api/v1/monitoring/overview",
+      "POST /api/v1/monitoring/alerts",
+      "POST /api/v1/monitoring/alerts/read",
+      "POST /api/v1/monitoring/alerts/read-all",
+      "POST /api/v1/monitoring/alerts/unread-count",
+      "POST /api/v1/monitoring/notifications/settings",
+      "POST /api/v1/monitoring/notifications/settings/save",
+      "POST /api/v1/monitoring/notifications/test"
+    ]
+  },
+  {
+    "module": "MultiLineAggregationController",
+    "routes": [
+      "POST /api/v1/multi-line-aggregation/overview",
+      "POST /api/v1/multi-line-aggregation/save",
+      "POST /api/v1/multi-line-aggregation/deploy",
+      "POST /api/v1/multi-line-aggregation/recalculate",
+      "POST /api/v1/multi-line-aggregation/repair",
+      "POST /api/v1/multi-line-aggregation/toggle",
+      "POST /api/v1/multi-line-aggregation/test",
+      "POST /api/v1/multi-line-aggregation/events",
+      "POST /api/v1/multi-line-aggregation/delete"
+    ]
+  },
+  {
+    "module": "MysteriumController",
+    "routes": [
+      "POST /api/v1/mysterium/overview",
+      "POST /api/v1/mysterium/countries",
+      "POST /api/v1/mysterium/settings",
+      "POST /api/v1/mysterium/setup",
+      "POST /api/v1/mysterium/topup",
+      "POST /api/v1/mysterium/refresh",
+      "POST /api/v1/mysterium/reconnect",
+      "POST /api/v1/mysterium/events"
+    ]
+  },
+  {
+    "module": "MysteriumSharedBillingController",
+    "routes": [
+      "POST /api/v1/mysterium-shared/overview",
+      "POST /api/v1/mysterium-shared/configure",
+      "POST /api/v1/mysterium-shared/pay"
+    ]
+  },
+  {
+    "module": "NetworkDiagnosticController",
+    "routes": [
+      "POST /api/v1/network-tools/run"
+    ]
+  },
+  {
+    "module": "NetworkRouteApplicationController",
+    "routes": [
+      "POST /api/v1/network-route-application/overview",
+      "POST /api/v1/network-route-application/create",
+      "POST /api/v1/network-route-application/deploy",
+      "POST /api/v1/network-route-application/test",
+      "POST /api/v1/network-route-application/pause",
+      "POST /api/v1/network-route-application/resume",
+      "POST /api/v1/network-route-application/delete"
+    ]
+  },
+  {
+    "module": "NftForwardController",
+    "routes": [
+      "POST /api/v1/nft-forward/overview",
+      "POST /api/v1/nft-forward/save",
+      "POST /api/v1/nft-forward/toggle",
+      "POST /api/v1/nft-forward/check",
+      "POST /api/v1/nft-forward/preflight",
+      "POST /api/v1/nft-forward/rollback",
+      "POST /api/v1/nft-forward/delete",
+      "POST /api/v1/nft-forward/events"
+    ]
+  },
+  {
+    "module": "NodeController",
+    "routes": [
+      "POST /api/v1/node/create",
+      "POST /api/v1/node/list",
+      "POST /api/v1/node/update",
+      "POST /api/v1/node/delete",
+      "POST /api/v1/node/check-status",
+      "POST /api/v1/node/install",
+      "POST /api/v1/node/upgrade/status",
+      "POST /api/v1/node/upgrade/start",
+      "POST /api/v1/node/upgrade/batch",
+      "POST /api/v1/node/upgrade/manual-command",
+      "POST /api/v1/node/upgrade/history",
+      "POST /api/v1/node/discovery/scan",
+      "POST /api/v1/node/user/assign",
+      "POST /api/v1/node/user/list",
+      "POST /api/v1/node/user/remove"
+    ]
+  },
+  {
+    "module": "OpenApiController",
+    "routes": [
+      "GET /api/v1/open_api/sub_store"
+    ]
+  },
+  {
+    "module": "OpenWrtDnsController",
+    "routes": [
+      "POST /api/v1/openwrt-dns/list",
+      "POST /api/v1/openwrt-dns/options",
+      "POST /api/v1/openwrt-dns/configure",
+      "POST /api/v1/openwrt-dns/remove",
+      "POST /api/v1/openwrt-dns/repair"
+    ]
+  },
+  {
+    "module": "PrivateNetworkController",
+    "routes": [
+      "POST /api/v1/private-network/overview",
+      "POST /api/v1/private-network/save",
+      "POST /api/v1/private-network/verify",
+      "POST /api/v1/private-network/delete"
+    ]
+  },
+  {
+    "module": "PrivateProxyController",
+    "routes": [
+      "POST /api/v1/private-proxy/create",
+      "POST /api/v1/private-proxy/grant",
+      "POST /api/v1/private-proxy/grant-list",
+      "POST /api/v1/private-proxy/grant-update",
+      "POST /api/v1/private-proxy/grant-reset",
+      "POST /api/v1/private-proxy/list",
+      "POST /api/v1/private-proxy/update",
+      "POST /api/v1/private-proxy/test",
+      "POST /api/v1/private-proxy/camouflage-targets",
+      "POST /api/v1/private-proxy/traffic",
+      "POST /api/v1/private-proxy/subscription",
+      "POST /api/v1/private-proxy/client-config",
+      "POST /api/v1/private-proxy/exit",
+      "POST /api/v1/private-proxy/routing",
+      "POST /api/v1/private-proxy/exit-switch",
+      "POST /api/v1/private-proxy/exit-switch-token",
+      "POST /api/v1/private-proxy/pause",
+      "POST /api/v1/private-proxy/resume",
+      "POST /api/v1/private-proxy/delete"
+    ]
+  },
+  {
+    "module": "PrivateProxySubscriptionController",
+    "routes": [
+      "GET /api/v1/open_api/proxy-sub"
+    ]
+  },
+  {
+    "module": "ProxyExitController",
+    "routes": [
+      "POST /api/v1/proxy-exit/presets",
+      "POST /api/v1/proxy-exit/presets/refresh",
+      "POST /api/v1/proxy-exit/list",
+      "POST /api/v1/proxy-exit/group/save",
+      "POST /api/v1/proxy-exit/route-test",
+      "POST /api/v1/proxy-exit/warp",
+      "POST /api/v1/proxy-exit/warp/test",
+      "POST /api/v1/proxy-exit/warp/optimize",
+      "POST /api/v1/proxy-exit/warp/license",
+      "POST /api/v1/proxy-exit/warp/reset",
+      "POST /api/v1/proxy-exit/catalog",
+      "POST /api/v1/proxy-exit/catalog/refresh",
+      "POST /api/v1/proxy-exit/ruleset/list",
+      "POST /api/v1/proxy-exit/ruleset/create",
+      "POST /api/v1/proxy-exit/ruleset/update",
+      "POST /api/v1/proxy-exit/ruleset/delete",
+      "POST /api/v1/proxy-exit/ruleset/refresh",
+      "POST /api/v1/proxy-exit/clash-import",
+      "POST /api/v1/proxy-exit/parse",
+      "POST /api/v1/proxy-exit/create",
+      "POST /api/v1/proxy-exit/rename",
+      "POST /api/v1/proxy-exit/delete",
+      "POST /api/v1/proxy-exit/test"
+    ]
+  },
+  {
+    "module": "ProxyProviderController",
+    "routes": [
+      "POST /api/v1/proxy-provider/list",
+      "POST /api/v1/proxy-provider/save",
+      "POST /api/v1/proxy-provider/delete",
+      "POST /api/v1/proxy-provider/countries",
+      "POST /api/v1/proxy-provider/carriers",
+      "POST /api/v1/proxy-provider/usage",
+      "POST /api/v1/proxy-provider/exit/create",
+      "POST /api/v1/proxy-provider/exit/rotate"
+    ]
+  },
+  {
+    "module": "QualityLabController",
+    "routes": [
+      "POST /api/v1/quality-lab/overview",
+      "POST /api/v1/quality-lab/preflight",
+      "POST /api/v1/quality-lab/save",
+      "POST /api/v1/quality-lab/run",
+      "POST /api/v1/quality-lab/toggle",
+      "POST /api/v1/quality-lab/delete",
+      "POST /api/v1/quality-lab/detail",
+      "POST /api/v1/quality-lab/report"
+    ]
+  },
+  {
+    "module": "ServerAssetController",
+    "routes": [
+      "POST /api/v1/server-assets/list",
+      "POST /api/v1/server-assets/save",
+      "POST /api/v1/server-assets/delete"
+    ]
+  },
+  {
+    "module": "ServicePublishingController",
+    "routes": [
+      "POST /api/v1/service-publishing/home-proxy/create",
+      "POST /api/v1/service-publishing/home-proxy/list",
+      "POST /api/v1/service-publishing/home-proxy/refresh-ipv6",
+      "POST /api/v1/service-publishing/home-proxy/delete",
+      "POST /api/v1/service-publishing/home-proxy/nat/retry",
+      "POST /api/v1/service-publishing/home-proxy/nat/events",
+      "POST /api/v1/service-publishing/connector/create",
+      "POST /api/v1/service-publishing/connector/list",
+      "POST /api/v1/service-publishing/connector/install",
+      "POST /api/v1/service-publishing/connector/delete",
+      "POST /api/v1/service-publishing/connector/discovery/settings",
+      "POST /api/v1/service-publishing/connector/discovery/scan",
+      "POST /api/v1/service-publishing/connector/discovery/results",
+      "POST /api/v1/service-publishing/connector/discovery/clear",
+      "POST /api/v1/service-publishing/pool/create",
+      "POST /api/v1/service-publishing/pool/list",
+      "POST /api/v1/service-publishing/grant/list",
+      "POST /api/v1/service-publishing/ledger/list",
+      "POST /api/v1/service-publishing/ledger/diagnose",
+      "POST /api/v1/service-publishing/pool/delete",
+      "POST /api/v1/service-publishing/service/create",
+      "POST /api/v1/service-publishing/service/list",
+      "POST /api/v1/service-publishing/telemetry/summary",
+      "POST /api/v1/service-publishing/telemetry/detail",
+      "POST /api/v1/service-publishing/service/renew",
+      "POST /api/v1/service-publishing/service/delete",
+      "POST /api/v1/service-publishing/domain/create",
+      "POST /api/v1/service-publishing/domain/backend/update",
+      "POST /api/v1/service-publishing/domain/pool/update",
+      "POST /api/v1/service-publishing/domain/list",
+      "POST /api/v1/service-publishing/domain/delete",
+      "POST /api/v1/service-publishing/certificate/list",
+      "POST /api/v1/service-publishing/certificate/retry",
+      "POST /api/v1/service-publishing/service/events"
+    ]
+  },
+  {
+    "module": "SmartEntryController",
+    "routes": [
+      "POST /api/v1/smart-entry/overview",
+      "POST /api/v1/smart-entry/options",
+      "POST /api/v1/smart-entry/domains",
+      "POST /api/v1/smart-entry/save",
+      "POST /api/v1/smart-entry/check",
+      "POST /api/v1/smart-entry/diagnose-dns",
+      "POST /api/v1/smart-entry/events",
+      "POST /api/v1/smart-entry/delete"
+    ]
+  },
+  {
+    "module": "SourceIpEntryController",
+    "routes": [
+      "POST /api/v1/source-ip-entry/overview",
+      "POST /api/v1/source-ip-entry/save",
+      "POST /api/v1/source-ip-entry/check",
+      "POST /api/v1/source-ip-entry/delete",
+      "POST /api/v1/source-ip-entry/carriers/refresh",
+      "POST /api/v1/source-ip-entry/asn/refresh",
+      "POST /api/v1/source-ip-entry/debug"
+    ]
+  },
+  {
+    "module": "SpeedLimitController",
+    "routes": [
+      "POST /api/v1/speed-limit/create",
+      "POST /api/v1/speed-limit/list",
+      "POST /api/v1/speed-limit/update",
+      "POST /api/v1/speed-limit/delete",
+      "POST /api/v1/speed-limit/tunnels"
+    ]
+  },
+  {
+    "module": "SystemSelfCheckController",
+    "routes": [
+      "POST /api/v1/system-self-check/overview",
+      "POST /api/v1/system-self-check/run",
+      "POST /api/v1/system-self-check/identity/reset"
+    ]
+  },
+  {
+    "module": "SystemUpdateController",
+    "routes": [
+      "POST /api/v1/system-update/status",
+      "POST /api/v1/system-update/trigger"
+    ]
+  },
+  {
+    "module": "TerminalController",
+    "routes": [
+      "POST /api/v1/terminal/node/toggle",
+      "POST /api/v1/terminal/session/create",
+      "POST /api/v1/terminal/audit/list"
+    ]
+  },
+  {
+    "module": "TopologyController",
+    "routes": [
+      "POST /api/v1/topology/graph"
+    ]
+  },
+  {
+    "module": "TunnelController",
+    "routes": [
+      "POST /api/v1/tunnel/create",
+      "POST /api/v1/tunnel/list",
+      "POST /api/v1/tunnel/update",
+      "POST /api/v1/tunnel/delete",
+      "POST /api/v1/tunnel/user/assign",
+      "POST /api/v1/tunnel/user/list",
+      "POST /api/v1/tunnel/user/remove",
+      "POST /api/v1/tunnel/user/update",
+      "POST /api/v1/tunnel/user/tunnel",
+      "POST /api/v1/tunnel/precheck",
+      "POST /api/v1/tunnel/diagnose"
+    ]
+  },
+  {
+    "module": "UdpQuicDiagnosticController",
+    "routes": [
+      "POST /api/v1/udp-quic-diagnostic/overview",
+      "POST /api/v1/udp-quic-diagnostic/save",
+      "POST /api/v1/udp-quic-diagnostic/run",
+      "POST /api/v1/udp-quic-diagnostic/delete",
+      "POST /api/v1/udp-quic-diagnostic/detail"
+    ]
+  },
+  {
+    "module": "UserController",
+    "routes": [
+      "POST /api/v1/user/login",
+      "POST /api/v1/user/create",
+      "POST /api/v1/user/list",
+      "POST /api/v1/user/update",
+      "POST /api/v1/user/delete",
+      "POST /api/v1/user/package",
+      "POST /api/v1/user/updatePassword",
+      "POST /api/v1/user/reset"
+    ]
+  },
+  {
+    "module": "VirtualLanController",
+    "routes": [
+      "POST /api/v1/virtual-lan/overview",
+      "POST /api/v1/virtual-lan/create",
+      "POST /api/v1/virtual-lan/deploy",
+      "POST /api/v1/virtual-lan/pause",
+      "POST /api/v1/virtual-lan/resume",
+      "POST /api/v1/virtual-lan/refresh",
+      "POST /api/v1/virtual-lan/delete"
+    ]
+  },
+  {
+    "module": "ViteConfigController",
+    "routes": [
+      "POST /api/v1/config/list",
+      "POST /api/v1/config/get",
+      "POST /api/v1/config/update",
+      "POST /api/v1/config/update-single"
+    ]
+  }
+]

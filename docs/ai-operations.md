@@ -44,3 +44,26 @@
 聊天可调用 `inspect_agent_upgrade` 查询节点版本、面板升级任务和安装日志；旧 Agent 不支持 OpsCapabilities 时，磁盘检查可回退到固定的只读终端探针。探针只运行面板内置的磁盘、inode、日志用量及升级诊断命令，不接收模型生成的 shell。旧节点连终端协议也不支持时，会报告通道不可用，需先恢复受支持的管理通道；AI 不能凭空访问服务器。
 
 要让聊天执行官方 Agent 升级，选择节点，把权限改成“允许维护”，并单独开启“允许升级所选节点 Agent”。后端要求同一轮先检查升级记录，只能升级已选节点，调用面板已有升级流程并记录操作者。提交成功代表异步升级已排队，不代表升级完成，须查询任务和重新上线版本验证。升级可能短暂中断代理连接。定时任务不提供自动升级工具。
+
+## Panel context and scheduled terminal maintenance
+
+`inspect_panel` is available only with `allowPanelRead`. It provides a controller-derived
+API reference, selected-node metadata, tunnel/forward relationships and global monitoring
+metadata (at most 200 entries). It does not expose node secrets or turn API paths into callable
+operations. Regenerate the API reference with `python3 scripts/generate-ai-panel-catalog.py`
+after controller changes. The embedded guidance explains ownership and health semantics;
+it cannot replace live evidence or guarantee model understanding of every feature.
+
+Scheduled tasks may explicitly save `allowTerminal=true` with maintenance mode. They then use
+the same selected-node terminal tool as chat, without per-run confirmation. User requirements
+must describe thresholds, permitted cleanup and retention. Do not delete unknown files, backups,
+credentials, databases or live logs. Verify free space and affected services after repair.
+Each run remains bounded by the existing 10-minute / 30-call limits; more than 50 nodes need
+multiple tasks. Global alert metadata is visible only after opting into panel reads. Disabled
+or read-only tasks do not gain terminal execution.
+
+Current limits: control-plane mutation tools for DNS, exit switching, private proxies and
+aggregation are not implemented by this context feature. The assistant must report this
+boundary rather than modifying panel SQL or claiming universal automatic repair. A catalog
+of an API is documentation, not evidence that the assistant can invoke it. No production
+schedule is automatically created: the user defines its cadence, scope and requirements.

@@ -37,6 +37,11 @@ final class AiOpsToolSession {
       JSONObject fn = call.getJSONObject("function");
       String name = fn.getString("name");
       JSONObject args = JSON.parseObject(fn.getString("arguments"));
+      if (name.equals("inspect_panel") && allowed.contains(name)) {
+        result.put("data", ops.inspectPanel(args.getString("section"), nodes));
+        result.put("success", true);
+        return result;
+      }
       long node = args.getLongValue("nodeId");
       if (!nodes.contains(node) || !allowed.contains(name))
         throw new IllegalArgumentException("工具或节点超出任务权限");

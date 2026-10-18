@@ -400,6 +400,10 @@ export default function AiOpsChat({
             >
               完整服务器管理（终端命令、安装服务）
             </Switch>
+            <Switch size="sm" isSelected={!!config.allowPanelRead} isDisabled={running}
+              onValueChange={(enabled) => setConfig({ ...config, allowPanelRead: enabled })}>
+              读取面板功能、全局告警和所选节点线路
+            </Switch>
             {config.allowTerminal && (
               <p className="text-xs text-warning-700">
                 已授权助手以节点 Agent 的系统身份执行命令，通常为 root，可安装、修改配置或删除文件。仅作用于本轮所选节点；刷新页面后需重新开启。

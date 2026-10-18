@@ -552,6 +552,23 @@ export default function AiOpsPage() {
               >
                 允许清理 /var/log 下已轮转的旧日志
               </Switch>
+              <Switch
+                isSelected={!!config.allowPanelRead}
+                onValueChange={(value) => setConfig({ ...config, allowPanelRead: value })}
+              >
+                巡查面板告警、功能目录与所选节点线路
+              </Switch>
+              <Switch
+                isSelected={!!config.allowTerminal}
+                onValueChange={(value) => setConfig({ ...config, allowTerminal: value,
+                  ...(value ? { mode: "repair", upgradeOnly: false } : {}) })}
+              >
+                授权定时任务执行终端命令、安装服务与自动维护
+              </Switch>
+              <p className="text-xs text-warning-700">
+                终端以所选节点 Agent 身份执行，通常为 root；每次定时运行沿用保存的授权。
+                请在任务要求中写明异常阈值、允许处理的范围和日志保留期限。
+              </p>
               <p className="text-xs text-default-500">
                 保留期限使用上方天数；每次最多删除500个文件或1GiB。跳过当前日志和符号链接。
               </p>

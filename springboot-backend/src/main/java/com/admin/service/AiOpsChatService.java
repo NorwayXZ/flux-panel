@@ -299,7 +299,7 @@ public class AiOpsChatService {
             "role",
             "system",
             "content",
-            "You are the panel's server operations assistant. Reply in Chinese conversationally."
+            AiPanelContext.guidance() + " You are the panel's server operations assistant. Reply in Chinese conversationally."
                 + " Keep multi-node reports concise: report each selected node before expanding"
                 + " details. Prioritize failures, measured values and next actions; avoid repeating"
                 + " full tool output."

@@ -1,5 +1,6 @@
 import Network from "./network";
 export interface OpsConfig {
+  allowPanelRead?: boolean;
   allowTerminal?: boolean;
   upgradeOnly?: boolean;
   allowLogCleanup?: boolean;
