@@ -10,7 +10,10 @@ final class AiOpsToolSession {
   private final JSONObject policy;
   private final Set<Long> nodes;
   private final Set<String> allowed = new HashSet<>();
-  private final Set<Long> checked = new HashSet<>(), disks = new HashSet<>();
+  private final Set<Long> checked = new HashSet<>(),
+      disks = new HashSet<>(),
+      upgrades = new HashSet<>(),
+      legacy = new HashSet<>();
   private final Set<String> services = new HashSet<>();
   private final long started;
   private int calls;
@@ -37,6 +40,18 @@ final class AiOpsToolSession {
       long node = args.getLongValue("nodeId");
       if (!nodes.contains(node) || !allowed.contains(name))
         throw new IllegalArgumentException("工具或节点超出任务权限");
+      if (name.equals("inspect_agent_upgrade")) {
+        result.put("data", ops.inspectUpgrade(node));
+        result.put("success", true);
+        upgrades.add(node);
+        return result;
+      }
+      if (name.equals("upgrade_agent")) {
+        if (!upgrades.contains(node)) throw new IllegalArgumentException("升级前必须先检查升级状态");
+        result.put("data", ops.requestUpgrade(node, policy.getIntValue("_chatOwner")));
+        result.put("success", true);
+        return result;
+      }
       String service = Objects.toString(args.getString("service"), "");
       if (name.contains("service") && !policy.getJSONArray("serviceAllowlist").contains(service))
         throw new IllegalArgumentException("服务超出白名单");
@@ -46,13 +61,23 @@ final class AiOpsToolSession {
         throw new IllegalArgumentException("重启前必须先检查该服务");
       if (!checked.contains(node)) {
         if (!ops.nodeOnline(node)) throw new IllegalStateException("节点离线");
-        AiOpsService.requireOK(
+        GostDto capabilities =
             ops.callAgent(
                 node,
                 Map.of(),
                 "OpsCapabilities",
-                Math.min(8, AiOpsService.remainingSeconds(started))));
+                Math.min(8, AiOpsService.remainingSeconds(started)));
+        if (AiOpsService.legacyCapabilities(capabilities)) legacy.add(node);
+        else AiOpsService.requireOK(capabilities);
         checked.add(node);
+      }
+      if (legacy.contains(node)) {
+        result.put(
+            "data",
+            ops.legacyProbe(node, name, Math.min(40, AiOpsService.remainingSeconds(started))));
+        result.put("success", true);
+        if (name.equals("inspect_disk")) disks.add(node);
+        return result;
       }
       JSONObject payload = new JSONObject();
       payload.put("tool", name);

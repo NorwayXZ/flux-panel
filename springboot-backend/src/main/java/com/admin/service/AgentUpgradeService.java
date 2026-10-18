@@ -76,6 +76,10 @@ public class AgentUpgradeService {
         return start(node, null, null, JwtUtil.getUserIdFromToken());
     }
 
+    public R startForAi(long nodeId, int requestedBy) {
+        return start(requireNode(nodeId), null, null, requestedBy);
+    }
+
     private R start(Node node, String batchId, Integer sequenceNo, Integer requestedBy) {
         Long nodeId = node.getId();
         if (!WebSocketServer.isNodeOnline(nodeId)) {

@@ -314,7 +314,7 @@ export default function AiOpsChat({
           </summary>
           <div className="mt-3 space-y-3">
             <p className="text-xs text-default-500">
-              不选节点也可以聊天。选择节点后可检查服务器；权限每轮单独生效。
+              不选节点也可以聊天。旧节点可先查升级记录和安装日志；执行清理、重启或升级需切换到允许维护，升级还需单独勾选。权限每轮生效。
             </p>
             <div className="flex gap-2">
               <Button
@@ -347,6 +347,7 @@ export default function AiOpsChat({
                 >
                   <input
                     type="checkbox"
+                    aria-label={node.name}
                     checked={config.nodeIds.includes(node.id)}
                     disabled={running}
                     onChange={(e) =>
@@ -359,6 +360,9 @@ export default function AiOpsChat({
                     }
                   />
                   {node.name}
+                  <span className="text-default-400">
+                    {node.version || "版本未知"}
+                  </span>
                 </label>
               ))}
             </div>
@@ -416,8 +420,19 @@ export default function AiOpsChat({
                 >
                   允许清理旧轮转日志
                 </Switch>
+                <Switch
+                  size="sm"
+                  isSelected={!!config.allowAgentUpgrade}
+                  isDisabled={running}
+                  onValueChange={(v) =>
+                    setConfig({ ...config, allowAgentUpgrade: v })
+                  }
+                >
+                  允许升级所选节点 Agent
+                </Switch>
                 <p className="text-xs text-warning-700">
-                  清理会删除符合保留期限的日志；服务重启可能中断连接。
+                  清理会删除符合保留期限的日志；服务重启或 Agent
+                  升级可能中断连接。
                 </p>
               </>
             )}

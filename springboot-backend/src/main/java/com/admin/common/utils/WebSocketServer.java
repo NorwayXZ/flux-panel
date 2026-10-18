@@ -50,6 +50,9 @@ public class WebSocketServer extends TextWebSocketHandler {
     AgentUpgradeService agentUpgradeService;
 
     @Resource
+    com.admin.service.AiLegacyDiagnostics aiLegacyDiagnostics;
+
+    @Resource
     NatTraversalService natTraversalService;
 
     @Resource
@@ -138,7 +141,8 @@ public class WebSocketServer extends TextWebSocketHandler {
                         }
                         if (agentMessageType != null && agentMessageType.startsWith("Terminal")) {
                             try {
-                                if (!agentUpgradeService.handleTerminalEvent(Long.valueOf(id), agentMessage)) {
+                                if (!aiLegacyDiagnostics.handle(Long.valueOf(id), agentMessage)
+                                        && !agentUpgradeService.handleTerminalEvent(Long.valueOf(id), agentMessage)) {
                                     terminalSessionManager.handleAgentMessage(Long.valueOf(id), agentMessage);
                                 }
                             } catch (Exception terminalError) {

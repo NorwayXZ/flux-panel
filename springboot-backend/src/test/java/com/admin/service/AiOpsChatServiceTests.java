@@ -327,6 +327,68 @@ class AiOpsChatServiceTests {
   }
 
   @Test
+  void legacyFallbackAndUpgradeRequireSelectedNodesAndExplicitPermission() {
+    AtomicInteger probes = new AtomicInteger(), upgrades = new AtomicInteger();
+    TestOps compatible =
+        new TestOps() {
+          @Override
+          GostDto callAgent(long node, Object body, String type, long timeout) {
+            var response = new GostDto();
+            response.setMsg("未知命令类型: OpsCapabilities");
+            return response;
+          }
+
+          @Override
+          Object legacyProbe(long node, String kind, int timeout) {
+            probes.incrementAndGet();
+            return Map.of("disk", "44%");
+          }
+
+          @Override
+          JSONObject inspectUpgrade(long node) {
+            return new JSONObject(Map.of("version", "old"));
+          }
+
+          @Override
+          Object requestUpgrade(long node, int owner) {
+            assertEquals(7, owner);
+            upgrades.incrementAndGet();
+            return Map.of("submitted", true);
+          }
+        };
+    try {
+      JSONObject c = config();
+      c.put("nodeIds", List.of(1));
+      c.put("_chatOwner", 7);
+      var readonly = new AiOpsToolSession(compatible, c, Set.of(1L), System.currentTimeMillis());
+      assertTrue(
+          readonly.invoke(tool("inspect_disk", "{\"nodeId\":1}")).getBooleanValue("success"));
+      assertEquals(1, probes.get());
+      assertFalse(
+          readonly.invoke(tool("inspect_disk", "{\"nodeId\":2}")).getBooleanValue("success"));
+      assertFalse(
+          readonly.invoke(tool("upgrade_agent", "{\"nodeId\":1}")).getBooleanValue("success"));
+      c.put("mode", "repair");
+      c.put("allowAgentUpgrade", true);
+      var repair = new AiOpsToolSession(compatible, c, Set.of(1L), System.currentTimeMillis());
+      assertFalse(
+          repair.invoke(tool("upgrade_agent", "{\"nodeId\":1}")).getBooleanValue("success"));
+      assertTrue(
+          repair
+              .invoke(tool("inspect_agent_upgrade", "{\"nodeId\":1}"))
+              .getBooleanValue("success"));
+      assertTrue(repair.invoke(tool("upgrade_agent", "{\"nodeId\":1}")).getBooleanValue("success"));
+      assertEquals(1, upgrades.get());
+      assertFalse(
+          repair.invoke(tool("vacuum_journal", "{\"nodeId\":1}")).getBooleanValue("success"));
+      AiOpsService.validate(c, true);
+      assertFalse(c.containsKey("_chatOwner"));
+    } finally {
+      compatible.close();
+    }
+  }
+
+  @Test
   void thinkingToolRoundTripsPreserveProviderContext() throws Exception {
     AtomicInteger requests = new AtomicInteger();
     AtomicReference<JSONObject> followup = new AtomicReference<>();

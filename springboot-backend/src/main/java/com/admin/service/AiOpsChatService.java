@@ -111,6 +111,7 @@ public class AiOpsChatService {
     JSONObject settings = ops.storedSettings();
     if (!ops.configured(settings)) throw new IllegalArgumentException("AI 模型未配置，请先填写模型地址、名称和密钥");
     JSONObject config = policy(body);
+    config.put("_chatOwner", (int) owner);
     Long existing = body.getLong("chatId");
     if (existing != null) own(owner, existing);
     if (!activeOwners.add(owner)) throw new IllegalArgumentException("已有对话正在回复，请等待或停止");
@@ -308,13 +309,17 @@ public class AiOpsChatService {
                 + config.getIntValue("retentionDays")
                 + " days / "
                 + config.getIntValue("maxJournalMb")
-                + " MB"
-                + ". Only use provided tools. No nodes selected means general conversation only."
+                + " MB. Only use provided tools. No nodes selected means general conversation only."
                 + " Inspect a node or service again in this turn before any repair; previous turns'"
                 + " observations do not count. Never claim execution without a successful tool"
                 + " result. Clearly explain tool limitations, offline nodes and failed actions."
                 + " Cannot create or change schedules from chat; direct the user to the task form"
-                + " when asked. No arbitrary shell."));
+                + " when asked. No arbitrary shell. For Agent installation failures use"
+                + " inspect_agent_upgrade before guessing disk causes. Old Agents can use fixed"
+                + " legacy read-only diagnostics. upgrade_agent requires this turn repair mode plus"
+                + " explicit upgrade permission. Journal retention settings are authorization"
+                + " limits, not the server journald configuration. When blocked by permission tell"
+                + " the user which control to enable, not to run commands manually."));
     for (var previous :
         db.queryForList(
             "SELECT user_content,events FROM (SELECT * FROM ai_ops_chat_turn WHERE chat_id=? AND"

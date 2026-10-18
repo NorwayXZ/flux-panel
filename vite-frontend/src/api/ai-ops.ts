@@ -1,6 +1,7 @@
 import Network from "./network";
 export interface OpsConfig {
   allowLogCleanup?: boolean;
+  allowAgentUpgrade?: boolean;
   notify?: boolean;
   name: string;
   prompt: string;

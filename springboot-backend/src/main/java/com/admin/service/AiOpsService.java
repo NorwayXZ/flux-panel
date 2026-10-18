@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AiOpsService {
+  @javax.annotation.Resource private AiLegacyDiagnostics legacyDiagnostics;
+  @javax.annotation.Resource private AgentUpgradeService agentUpgrades;
   private final JdbcTemplate db;
   private final AESCrypto crypto;
   private final TelegramNotificationService notifications;
@@ -153,6 +155,7 @@ public class AiOpsService {
   }
 
   static void validate(JSONObject c, boolean allowEmptyNodes) {
+    c.remove("_chatOwner");
     if (str(c, "name").isBlank() || str(c, "name").length() > 100)
       throw new IllegalArgumentException("请填写任务名称（不超过100字）");
     if (str(c, "prompt").isBlank() || str(c, "prompt").length() > 8000)
@@ -286,6 +289,8 @@ public class AiOpsService {
     for (String name :
         List.of(
             "inspect_disk",
+            "inspect_agent_upgrade",
+            "upgrade_agent",
             "inspect_service",
             "vacuum_journal",
             "restart_service",
@@ -294,6 +299,10 @@ public class AiOpsService {
           && (name.equals("vacuum_journal")
               || name.equals("restart_service")
               || name.equals("cleanup_rotated_logs"))) continue;
+      if (name.equals("upgrade_agent")
+          && (!c.getString("mode").equals("repair")
+              || !c.getBooleanValue("allowAgentUpgrade")
+              || !c.containsKey("_chatOwner"))) continue;
       if (name.equals("cleanup_rotated_logs") && !c.getBooleanValue("allowLogCleanup")) continue;
       JSONObject props = new JSONObject();
       props.put(
@@ -308,6 +317,14 @@ public class AiOpsService {
       String desc =
           switch (name) {
             case "inspect_disk" -> "Inspect disk, inodes, /var/log size and journal usage";
+            case "inspect_agent_upgrade" ->
+                "Read panel Agent version and upgrade history, inspect installation failure logs"
+                    + " using a fixed read-only legacy terminal probe; works before Agent upgrade";
+            case "upgrade_agent" ->
+                "Start the panel official Agent upgrade after inspecting upgrade status in this"
+                    + " turn; asynchronous, may interrupt proxy connections; query"
+                    + " inspect_agent_upgrade afterwards to verify, never claim completion from a"
+                    + " queued result";
             case "inspect_service" -> "Inspect an allowlisted systemd service";
             case "cleanup_rotated_logs" ->
                 "Remove only rotated logs under /var/log older than task retention, up to 500 files"
@@ -338,6 +355,47 @@ public class AiOpsService {
                       false))));
     }
     return list;
+  }
+
+  JSONObject inspectUpgrade(long node) {
+    JSONObject result = new JSONObject();
+    result.put("node", db.queryForList("SELECT id,name,version,status FROM node WHERE id=?", node));
+    result.put(
+        "upgrades",
+        db.queryForList(
+            "SELECT task_id,state,message,from_version,target_version,updated_at FROM"
+                + " agent_upgrade_task WHERE node_id=? ORDER BY id DESC LIMIT 3",
+            node));
+    try {
+      result.put("diagnostics", legacyProbe(node, "inspect_agent_upgrade", 40));
+    } catch (Exception e) {
+      result.put("diagnosticError", safeError(e));
+    }
+    return result;
+  }
+
+  Object legacyProbe(long node, String name, int timeout) throws Exception {
+    if (legacyDiagnostics == null) throw new IllegalStateException("旧节点诊断服务不可用");
+    String encoded = JSON.toJSONString(legacyDiagnostics.inspect(node, name, timeout));
+    for (var row : db.queryForList("SELECT secret FROM node WHERE id=?", node)) {
+      String secret = Objects.toString(row.get("secret"), "");
+      if (!secret.isBlank()) encoded = encoded.replace(secret, "[REDACTED]");
+    }
+    return JSON.parseObject(encoded);
+  }
+
+  Object requestUpgrade(long node, int owner) {
+    R response = agentUpgrades.startForAi(node, owner);
+    if (response.getCode() != 0) throw new IllegalStateException(response.getMsg());
+    return Map.of(
+        "submitted", true, "status", response.getData(), "note", "升级异步进行，尚未确认成功；请查询升级状态验证");
+  }
+
+  static boolean legacyCapabilities(GostDto response) {
+    return response != null
+        && response.getMsg() != null
+        && response.getMsg().contains("OpsCapabilities")
+        && response.getMsg().contains("未知命令");
   }
 
   boolean nodeOnline(long id) {
@@ -392,8 +450,9 @@ public class AiOpsService {
       for (long node : nodes) {
         try {
           if (!nodeOnline(node)) throw new IllegalStateException();
-          requireOK(
-              callAgent(node, Map.of(), "OpsCapabilities", Math.min(8, remainingSeconds(started))));
+          GostDto capabilities =
+              callAgent(node, Map.of(), "OpsCapabilities", Math.min(8, remainingSeconds(started)));
+          if (!legacyCapabilities(capabilities)) requireOK(capabilities);
           ready.add(node);
         } catch (Exception e) {
           audit.add(Map.of("nodeId", node, "error", "节点离线或 Agent 不支持运维工具，请升级至 2.84.0-beta.3"));
