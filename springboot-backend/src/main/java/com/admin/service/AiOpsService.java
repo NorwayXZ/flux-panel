@@ -137,7 +137,7 @@ public class AiOpsService {
             "nodes",
             db.queryForList("SELECT id,name,ip,status,version FROM node ORDER BY id"),
             "minimumAgentVersion",
-            "2.84.0-beta.2"));
+            "2.84.0-beta.3"));
   }
 
   static long next(JSONObject c) {
@@ -389,7 +389,7 @@ public class AiOpsService {
               callAgent(node, Map.of(), "OpsCapabilities", Math.min(8, remainingSeconds(started))));
           ready.add(node);
         } catch (Exception e) {
-          audit.add(Map.of("nodeId", node, "error", "节点离线或 Agent 不支持运维工具，请升级至 2.84.0-beta.2"));
+          audit.add(Map.of("nodeId", node, "error", "节点离线或 Agent 不支持运维工具，请升级至 2.84.0-beta.3"));
         }
       }
       if (ready.isEmpty()) throw new IllegalStateException("所选节点均不可用");

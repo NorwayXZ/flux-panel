@@ -7,6 +7,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentVersionUtilTests {
     @Test
+    void upgradeComparisonIncludesPrereleaseOrdering() {
+        assertFalse(AgentVersionUtil.isReleaseAtLeast("2.84.0-beta.1", "2.84.0-beta.3"));
+        assertFalse(AgentVersionUtil.isReleaseAtLeast("2.84.0-beta.2", "2.84.0-beta.3"));
+        assertTrue(AgentVersionUtil.isReleaseAtLeast("2.84.0-beta.3", "2.84.0-beta.3"));
+        assertTrue(AgentVersionUtil.isReleaseAtLeast("2.84.0-beta.10", "2.84.0-beta.3"));
+        assertFalse(AgentVersionUtil.isReleaseAtLeast("2.84.0-beta.3", "2.84.0"));
+        assertTrue(AgentVersionUtil.isReleaseAtLeast("2.84.0", "2.84.0-beta.3"));
+        assertTrue(AgentVersionUtil.isReleaseAtLeast("v2.84.0-beta.3+build.1", "2.84.0-beta.3"));
+        assertTrue(AgentVersionUtil.isReleaseAtLeast("2.85.0-beta.1", "2.84.0-beta.3"));
+        assertFalse(AgentVersionUtil.isReleaseAtLeast("unknown", "2.84.0-beta.3"));
+        assertFalse(AgentVersionUtil.isReleaseAtLeast(null, "2.84.0-beta.3"));
+    }
+
+    @Test
     void acceptsEqualAndNewerVersions() {
         assertTrue(AgentVersionUtil.isAtLeast("2.7.0", "2.7.0"));
         assertTrue(AgentVersionUtil.isAtLeast("v2.7.1", "2.7.0"));

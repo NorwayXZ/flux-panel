@@ -26,8 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class AgentUpgradeService {
-    public static final String TARGET_VERSION = "2.84.0-beta.2";
-    private static final String INSTALLER_RELEASE = "2.84.0-beta.2";
+    public static final String TARGET_VERSION = "2.84.0-beta.3";
+    private static final String INSTALLER_RELEASE = "2.84.0-beta.3";
     public static final String TERMINAL_BOOTSTRAP_MIN_VERSION = "2.8.0";
     private static final String BATCH_MODE_PARALLEL = "parallel";
     private static final String BATCH_MODE_STAGED = "staged";
@@ -59,7 +59,7 @@ public class AgentUpgradeService {
             item.put("currentVersion", node.getVersion());
             item.put("targetVersion", TARGET_VERSION);
             item.put("online", WebSocketServer.isNodeOnline(node.getId()));
-            item.put("upToDate", AgentVersionUtil.isAtLeast(node.getVersion(), TARGET_VERSION));
+            item.put("upToDate", AgentVersionUtil.isReleaseAtLeast(node.getVersion(), TARGET_VERSION));
             item.put("mode", upgradeMode(node.getVersion()));
             item.put("task", latest.get(node.getId()));
             items.add(item);
@@ -81,7 +81,7 @@ public class AgentUpgradeService {
         if (!WebSocketServer.isNodeOnline(nodeId)) {
             return R.err(409, "节点离线，无法远程升级");
         }
-        if (AgentVersionUtil.isAtLeast(node.getVersion(), TARGET_VERSION)) {
+        if (AgentVersionUtil.isReleaseAtLeast(node.getVersion(), TARGET_VERSION)) {
             return R.ok(statusForNode(nodeId));
         }
         if (hasActiveTask(nodeId)) {
@@ -131,7 +131,7 @@ public class AgentUpgradeService {
         List<Node> eligible = new ArrayList<>();
         for (Node node : nodeService.list()) {
             if (eligible.size() >= 100 || !WebSocketServer.isNodeOnline(node.getId())
-                    || AgentVersionUtil.isAtLeast(node.getVersion(), TARGET_VERSION)
+                    || AgentVersionUtil.isReleaseAtLeast(node.getVersion(), TARGET_VERSION)
                     || "manual".equals(upgradeMode(node.getVersion())) || hasActiveTask(node.getId())) {
                 continue;
             }
@@ -251,7 +251,7 @@ public class AgentUpgradeService {
         String taskId = Objects.toString(active.get("taskId"), "");
         String target = Objects.toString(active.get("targetVersion"), TARGET_VERSION);
         String state = Objects.toString(active.get("state"), "");
-        if (!"success".equals(state) && AgentVersionUtil.isAtLeast(version, target)) {
+        if (!"success".equals(state) && AgentVersionUtil.isReleaseAtLeast(version, target)) {
             updateTask(taskId, "success", "Agent 已升级并重新上线", System.currentTimeMillis());
             String batchId = Objects.toString(active.get("batchId"), "");
             if (!batchId.isBlank()) refreshBatchProgress(batchId);
@@ -450,7 +450,7 @@ public class AgentUpgradeService {
                 Map<String, Object> task = latest.get(node.getId());
                 if (task == null || "success".equals(Objects.toString(task.get("state"), ""))) continue;
                 String target = Objects.toString(task.get("targetVersion"), TARGET_VERSION);
-                if (!AgentVersionUtil.isAtLeast(node.getVersion(), target)) continue;
+                if (!AgentVersionUtil.isReleaseAtLeast(node.getVersion(), target)) continue;
                 jdbcTemplate.update("UPDATE agent_upgrade_task SET state='success',message=?,updated_at=?,finished_at=? WHERE task_id=?",
                         "Agent 已上报目标版本，升级状态已自动校正", now, now, Objects.toString(task.get("taskId"), ""));
                 String batchId = Objects.toString(task.get("batchId"), "");

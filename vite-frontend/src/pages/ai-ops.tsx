@@ -200,7 +200,7 @@ export default function AiOpsPage() {
       <div className="rounded-xl bg-default-50 p-4 text-sm text-default-600">
         支持 Linux 节点的磁盘、inode、日志占用检查；可按权限清理 systemd
         journal、重启指定服务，也可单独授权清理已轮转的旧日志。节点需升级至{" "}
-        {data?.minimumAgentVersion || "2.84.0-beta.2"}
+        {data?.minimumAgentVersion || "2.84.0-beta.3"}
         。检查结果会发送给你配置的模型服务。
       </div>
       <Tabs

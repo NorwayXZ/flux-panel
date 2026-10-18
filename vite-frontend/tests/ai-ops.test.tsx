@@ -66,8 +66,8 @@ beforeEach(() => {
     data: {
       settings: { baseUrl: "", model: "", keyConfigured: false },
       tasks: [],
-      nodes: [{ id: 1, name: "测试节点", version: "2.84.0-beta.2", status: 1 }],
-      minimumAgentVersion: "2.84.0-beta.2",
+      nodes: [{ id: 1, name: "测试节点", version: "2.84.0-beta.3", status: 1 }],
+      minimumAgentVersion: "2.84.0-beta.3",
     },
   });
   vi.mocked(opsSave).mockResolvedValue({ code: 0, msg: "", data: null });

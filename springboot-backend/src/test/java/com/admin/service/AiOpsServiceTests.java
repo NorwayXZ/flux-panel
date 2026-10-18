@@ -64,7 +64,7 @@ class AiOpsServiceTests {
     db = new JdbcTemplate(source);
     new AiOpsSchemaInitializer(db).init();
     db.execute("CREATE TABLE node(id bigint,name varchar,ip varchar,status int,version varchar)");
-    db.update("INSERT INTO node VALUES(1,'test','127.0.0.1',1,'2.84.0-beta.2')");
+    db.update("INSERT INTO node VALUES(1,'test','127.0.0.1',1,'2.84.0-beta.3')");
     service = new TestService();
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     server.createContext(
