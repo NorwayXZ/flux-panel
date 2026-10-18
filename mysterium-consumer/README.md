@@ -43,9 +43,11 @@ commands to preserve all 256-bit integer values.
 
 - The panel and funded node must stay online for new invoices. They carry billing
   requests, not application traffic. Existing tunnels may close when payment fails.
-- A lost payment sender can leave the pool pending. The signer deliberately blocks
-  new allocations until the old signed promise is confirmed; it does not reclaim
-  or reuse signed spending capacity. Administrative recovery is not implemented.
+- A lost payment sender leaves a signed promise that Hermes never sees. The signer
+  blocks new allocations for 3 minutes, then treats it as lost and continues above
+  it, so no amount is signed twice. Only the lost increment is paid to Hermes
+  without reaching a provider. Ledgers from 1.39.7-1 have no signing time, so a
+  pending payment in them counts as overdue after the upgrade.
 - Protect and back up the signer's `shared-billing.db` with its account. Do not run
   an unmodified client with the shared key or restore an old ledger while spending.
 - Consumer keys are imported to member nodes because the upstream connection

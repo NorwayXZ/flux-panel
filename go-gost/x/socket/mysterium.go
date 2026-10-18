@@ -738,6 +738,11 @@ func (m *mysteriumManager) connect(request mysteriumConnection) (mysteriumConnec
 				lastErr = err
 				break
 			}
+			// A fresh daemon starts with the identity locked ("unlock required").
+			if id, err = m.identity(); err != nil {
+				lastErr = err
+				break
+			}
 		}
 	}
 	if request.FallbackProvider != "" && time.Until(deadline) > 10*time.Second {

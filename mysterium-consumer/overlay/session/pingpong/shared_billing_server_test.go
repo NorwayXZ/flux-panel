@@ -2,6 +2,7 @@ package pingpong
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,66 @@ func TestSharedSignerPersistenceAndPendingGate(t *testing.T) {
 	wrong.Consumer = common.HexToAddress("0x9999").Hex()
 	if _, err := s.pay(wrong); err == nil {
 		t.Fatal("wrong consumer accepted")
+	}
+}
+
+func TestSharedSignerMovesPastALostPayment(t *testing.T) {
+	ks := identity.NewMockKeystoreWith(identity.MockKeys)
+	account := ks.Accounts()[0]
+	if err := ks.Unlock(account, ""); err != nil {
+		t.Fatal(err)
+	}
+	addr := &mockAddressProvider{}
+	db, err := bolt.Open(filepath.Join(t.TempDir(), "billing.db"), 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Unix(1_800_000_000, 0)
+	sharedNow = func() time.Time { return now }
+	defer func() { sharedNow = time.Now }()
+	info := &sharedInfoMock{}
+	s := &SharedBillingServer{db: db, signer: ks, info: info, addresses: addr, consumer: account.Address, chain: 137}
+	channel, _ := addr.GetActiveChannelAddress(137, account.Address)
+	hermes, _ := addr.GetActiveHermes(137)
+	req := SharedPaymentRequest{Consumer: account.Address.Hex(), Channel: channel.Hex(), Hermes: hermes.Hex(), Invoice: crypto.Invoice{
+		ChainID: 137, Provider: common.HexToAddress("0x1234").Hex(), AgreementID: big.NewInt(1), AgreementTotal: big.NewInt(7), TransactorFee: big.NewInt(0), Hashlock: strings.Repeat("01", 32)}}
+	if _, err := s.pay(req); err != nil {
+		t.Fatal(err)
+	}
+	// The signed payment never reaches a provider, so Hermes never reports it.
+	other := req
+	other.Invoice.Provider = common.HexToAddress("0x5678").Hex()
+	other.Invoice.AgreementTotal = big.NewInt(5)
+	other.Invoice.Hashlock = strings.Repeat("02", 32)
+	now = now.Add(2 * time.Minute)
+	if _, err := s.pay(other); err == nil || !strings.Contains(err.Error(), "awaiting Hermes") {
+		t.Fatal("a recent payment must still block", err)
+	}
+	now = now.Add(2 * time.Minute)
+	next, err := s.pay(other)
+	if err != nil {
+		t.Fatal("an overdue payment must not block the pool forever", err)
+	}
+	if next.Promise.Amount.Int64() != 12 {
+		t.Fatalf("next promise %d must continue above the lost one", next.Promise.Amount.Int64())
+	}
+	// The new payment is pending again until Hermes sees it.
+	third := other
+	third.Invoice.AgreementID = big.NewInt(3)
+	third.Invoice.Hashlock = strings.Repeat("03", 32)
+	if _, err := s.pay(third); err == nil || !strings.Contains(err.Error(), "awaiting Hermes") {
+		t.Fatal("the new payment must be confirmed before the next", err)
+	}
+}
+
+func TestSharedSignerTreatsOldLedgerPendingAsOverdue(t *testing.T) {
+	state := sharedState{}
+	if err := json.Unmarshal([]byte(`{"Total":7,"Pending":null}`), &state); err != nil || state.PendingAt != 0 {
+		t.Fatal("older ledgers have no signing time", err)
+	}
+	if sharedNow().Sub(time.Unix(state.PendingAt, 0)) < sharedPendingTimeout {
+		t.Fatal("a pending payment without a time must count as overdue")
 	}
 }
 

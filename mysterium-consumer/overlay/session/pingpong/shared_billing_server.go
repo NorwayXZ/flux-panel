@@ -22,7 +22,17 @@ import (
 type sharedState struct {
 	Total   *big.Int
 	Pending *crypto.ExchangeMessage
+	// PendingAt is when Pending was signed (Unix seconds); zero in older ledgers.
+	PendingAt int64 `json:",omitempty"`
 }
+
+// A signed payment that Hermes has not seen after this long was lost on the way
+// to the provider (for example while the panel restarted). Waiting longer cannot
+// help: nobody holds it, so it is never confirmed.
+var (
+	sharedPendingTimeout = 3 * time.Minute
+	sharedNow            = time.Now
+)
 
 type SharedBillingServer struct {
 	db        *bolt.DB
@@ -153,8 +163,11 @@ func (s *SharedBillingServer) pay(request SharedPaymentRequest) (*crypto.Exchang
 		}
 		// Do not issue the next promise until the previous signed one is observed at
 		// Hermes. A crashed sender leaves an explicit pending payment, never reuse.
+		// Once it is overdue it counts as lost: the next promise is allocated above
+		// it from state.Total, so no amount is signed twice. At most the lost
+		// payment's increment is paid to Hermes without reaching a provider.
 		if state.Pending != nil && state.Pending.Promise.Amount.Sign() > 0 {
-			if latest.Cmp(state.Pending.Promise.Amount) < 0 {
+			if latest.Cmp(state.Pending.Promise.Amount) < 0 && sharedNow().Sub(time.Unix(state.PendingAt, 0)) < sharedPendingTimeout {
 				return fmt.Errorf("previous payment awaiting Hermes confirmation")
 			}
 			if latest.Cmp(state.Pending.Promise.Amount) > 0 {
@@ -205,6 +218,7 @@ func (s *SharedBillingServer) pay(request SharedPaymentRequest) (*crypto.Exchang
 		}
 		state.Total = amount
 		state.Pending = msg
+		state.PendingAt = sharedNow().Unix()
 		raw, err := json.Marshal(state)
 		if err != nil {
 			return err
