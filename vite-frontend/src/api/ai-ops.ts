@@ -93,6 +93,13 @@ export const opsChatStop = () => Network.post("/ai-ops/chat/stop", {});
 export interface OpsPreferences {
   alertDiagnosis: boolean;
   weeklyReport: boolean;
+  /** Extra models allowed for per-conversation switching, comma separated. */
+  models?: string;
+  /** Price per million input / output tokens, used to estimate cost. */
+  inputPrice?: string;
+  outputPrice?: string;
+  currency?: string;
+  availableModels?: string[];
 }
 export interface OpsReport {
   id: number;
@@ -106,5 +113,41 @@ export const opsPreferences = () =>
 export const opsSavePreferences = (data: Partial<OpsPreferences>) =>
   Network.post<OpsPreferences>("/ai-ops/preferences/save", data);
 export const opsReports = () => Network.post<OpsReport[]>("/ai-ops/reports", {});
+export const opsChatRename = (id: number, title: string) =>
+  Network.post("/ai-ops/chat/rename", { id, title });
+export const opsChatSearch = (q: string) =>
+  Network.post<{ id: number; title: string; updatedAt: number }[]>("/ai-ops/chat/search", { q });
+
+export interface OpsNodeNote {
+  nodeId: number;
+  name: string;
+  content?: string;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+export interface OpsChange {
+  id: number;
+  nodeId: number;
+  nodeName?: string;
+  kind: "file" | "command";
+  source: string;
+  summary: string;
+  path?: string;
+  beforeContent?: string;
+  afterContent?: string;
+  existedBefore?: number;
+  command?: string;
+  exitCode?: number;
+  output?: string;
+  restoredAt?: number;
+  createdAt: number;
+}
+export const opsNotes = () => Network.post<OpsNodeNote[]>("/ai-ops/notes", {});
+export const opsSaveNote = (nodeId: number, content: string) =>
+  Network.post("/ai-ops/notes/save", { nodeId, content });
+export const opsChanges = (nodeId?: number) =>
+  Network.post<OpsChange[]>("/ai-ops/changes", nodeId ? { nodeId } : {});
+export const opsRestoreChange = (id: number) =>
+  Network.post<{ restored: boolean; path: string }>("/ai-ops/changes/restore", { id });
 export const opsGenerateReport = () =>
   Network.post<{ queued: boolean; message: string }>("/ai-ops/reports/generate", {});

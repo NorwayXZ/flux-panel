@@ -11,6 +11,11 @@ import { Switch } from "@heroui/switch";
 import {
   AlertCircle,
   ArrowUp,
+  Brain,
+  Download,
+  Pencil,
+  RotateCcw,
+  Search,
   CheckCircle2,
   ChevronRight,
   Copy,
@@ -29,6 +34,10 @@ import {
   opsChatDetail,
   opsChatDelete,
   opsChatStop,
+  opsChatRename,
+  opsChatSearch,
+  opsPreferences,
+  type OpsPreferences,
   type OpsOverview,
   type OpsConfig,
   type OpsChatEvent,
@@ -37,6 +46,8 @@ import {
 import { streamOpsChat } from "@/api/ai-chat-stream";
 import { AssistantMarkdown, copyText } from "@/components/ai-chat-markdown";
 
+const modelStorageKey = () =>
+  `ai-ops-chat-model-v1:${localStorage.getItem("name") || "admin"}`;
 const permissionStorageKey = () =>
   `ai-ops-chat-permissions-v1:${localStorage.getItem("name") || "admin"}`;
 const policy = (): OpsConfig => {
@@ -292,13 +303,93 @@ function parseEvents(turn: OpsChatTurn): OpsChatEvent[] {
     return [];
   }
 }
-function UserMessage({ text }: { text: string }) {
+function UserMessage({
+  text,
+  onEdit,
+}: {
+  text: string;
+  onEdit?: (text: string) => void;
+}) {
   return (
-    <div className="flex justify-end">
+    <div className="group/user flex flex-col items-end gap-1">
       <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-default-100 px-4 py-2.5 text-[15px] leading-7 text-foreground">
         {text}
       </div>
+      {onEdit && (
+        <button
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-default-400 opacity-70 transition hover:bg-default-100 hover:text-foreground sm:opacity-0 sm:group-hover/user:opacity-100"
+          type="button"
+          onClick={() => onEdit(text)}
+        >
+          <Pencil size={12} />
+          编辑后重发
+        </button>
+      )}
     </div>
+  );
+}
+
+export interface ChatPricing {
+  inputPrice?: string;
+  outputPrice?: string;
+  currency?: string;
+}
+
+/** Token usage summed over a turn's model calls. */
+export function usageOf(events: OpsChatEvent[]) {
+  let input = 0;
+  let output = 0;
+
+  for (const event of events) {
+    const usage = (event as any).usage;
+
+    if (event.type === "assistant" && usage) {
+      input += Number(usage.prompt_tokens || 0);
+      output += Number(usage.completion_tokens || 0);
+    }
+  }
+
+  return { input, output };
+}
+
+export function usageText(
+  usage: { input: number; output: number },
+  pricing?: ChatPricing,
+) {
+  if (!usage.input && !usage.output) return "";
+  const tokens = `${(usage.input + usage.output).toLocaleString()} tokens（输入 ${usage.input.toLocaleString()} / 输出 ${usage.output.toLocaleString()}）`;
+  const inPrice = Number(pricing?.inputPrice || 0);
+  const outPrice = Number(pricing?.outputPrice || 0);
+
+  if (!inPrice && !outPrice) return tokens;
+  const cost = (usage.input * inPrice + usage.output * outPrice) / 1_000_000;
+
+  return `${tokens} · 约 ${cost < 0.1 ? cost.toFixed(4) : cost.toFixed(2)} ${pricing?.currency || "CNY"}`;
+}
+
+function Reasoning({ events }: { events: OpsChatEvent[] }) {
+  const text = events
+    .filter((e) => e.type === "assistant")
+    .map((e) => e.message?.reasoning_content || "")
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!text) return null;
+
+  return (
+    <details className="group/think mb-3 rounded-xl border border-default-200 text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-default-500 [&::-webkit-details-marker]:hidden">
+        <Brain size={14} />
+        思考过程
+        <ChevronRight
+          className="ml-auto transition-transform group-open/think:rotate-90"
+          size={14}
+        />
+      </summary>
+      <div className="max-h-80 overflow-auto whitespace-pre-wrap border-t border-default-200 px-3 py-2 text-[13px] leading-6 text-default-500">
+        {text}
+      </div>
+    </details>
   );
 }
 function AssistantFrame({
@@ -341,9 +432,15 @@ function AssistantFrame({
 function Turn({
   turn,
   nodeName,
+  pricing,
+  onEdit,
+  onRegenerate,
 }: {
   turn: OpsChatTurn;
   nodeName: (id: number) => string;
+  pricing?: ChatPricing;
+  onEdit?: (text: string) => void;
+  onRegenerate?: () => void;
 }) {
   const events = parseEvents(turn);
   const reply = events
@@ -354,17 +451,35 @@ function Turn({
 
   return (
     <div className="space-y-5">
-      <UserMessage text={turn.userContent} />
+      <UserMessage text={turn.userContent} onEdit={onEdit} />
       <AssistantFrame
         reply={reply}
         footer={
-          turn.status !== "success" && (
-            <span className="rounded-full bg-default-100 px-2 py-0.5 text-default-500">
-              状态：{statusLabels[turn.status] || turn.status}
-            </span>
-          )
+          <>
+            {turn.status !== "success" && (
+              <span className="rounded-full bg-default-100 px-2 py-0.5 text-default-500">
+                状态：{statusLabels[turn.status] || turn.status}
+              </span>
+            )}
+            {usageText(usageOf(events), pricing) && (
+              <span className="text-default-400">
+                {usageText(usageOf(events), pricing)}
+              </span>
+            )}
+            {onRegenerate && (
+              <button
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-default-100 hover:text-foreground"
+                type="button"
+                onClick={onRegenerate}
+              >
+                <RotateCcw size={13} />
+                重新生成
+              </button>
+            )}
+          </>
         }
       >
+        <Reasoning events={events} />
         <Events events={events} nodeName={nodeName} />
         {reply ? (
           <AssistantMarkdown content={reply} />
@@ -407,6 +522,11 @@ export default function AiOpsChat({
   const [events, setEvents] = useState<OpsChatEvent[]>([]),
     [progress, setProgress] = useState("");
   const [error, setError] = useState("");
+  const [preferences, setPreferences] = useState<OpsPreferences>();
+  const [model, setModel] = useState(
+    () => localStorage.getItem(modelStorageKey()) || "",
+  );
+  const [query, setQuery] = useState("");
   const [permissionsOpen, setPermissionsOpen] = useState(
     () =>
       typeof window.matchMedia === "function" &&
@@ -454,10 +574,74 @@ export default function AiOpsChat({
   useEffect(() => {
     localStorage.setItem(permissionStorageKey(), JSON.stringify(config));
   }, [config]);
-  const refreshChats = async () => {
-    const r = await opsChatList();
+  const refreshChats = async (search = query) => {
+    const r = search.trim()
+      ? await opsChatSearch(search.trim())
+      : await opsChatList();
 
     if (r.code === 0) setChats(r.data);
+  };
+
+  useEffect(() => {
+    void opsPreferences().then((r) => {
+      if (r.code === 0) setPreferences(r.data);
+    });
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void refreshChats(query), 300);
+
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  useEffect(() => {
+    localStorage.setItem(modelStorageKey(), model);
+  }, [model]);
+  const models = preferences?.availableModels || [];
+  const renameChat = (id: number, title: string) => {
+    const next = window.prompt("会话名称", title)?.trim();
+
+    if (!next || next === title) return;
+    void opsChatRename(id, next).then((r) => {
+      if (r.code === 0) void refreshChats();
+      else toast.error(r.msg);
+    });
+  };
+  const exportChat = () => {
+    const title = chats.find((c) => c.id === chatId)?.title || "AI 运维对话";
+    const lines = [`# ${title}`, ""];
+
+    for (const turn of turns) {
+      const turnEvents = parseEvents(turn);
+
+      lines.push(`## 你`, "", turn.userContent, "");
+      for (const event of turnEvents.filter((e) => e.type === "tool")) {
+        const name = event.call?.function?.name;
+
+        lines.push(
+          `> 工具：${toolLabels[name] || name} ${event.result?.success ? "（成功）" : "（失败）"}`,
+          "",
+        );
+      }
+      const reply = turnEvents
+        .filter((e) => e.type === "assistant")
+        .map((e) => e.message?.content || "")
+        .filter(Boolean)
+        .join("\n\n");
+
+      lines.push(`## 助手`, "", reply || "（无回复）", "");
+    }
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const link = document.createElement("a");
+
+    link.href = URL.createObjectURL(blob);
+    link.download = `${title.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  const editAndResend = (text: string) => {
+    setMessage(text);
+    composer.current?.focus();
   };
 
   useEffect(() => {
@@ -512,12 +696,14 @@ export default function AiOpsChat({
     controller.current?.abort();
     void opsChatStop();
   };
-  const send = async (authorizedUpgrade = false) => {
+  const send = async (authorizedUpgrade = false, resend?: string) => {
     const upgradeRequest =
       "我授权升级所选节点，允许升级造成短暂连接中断。先检查当前升级状态，已有任务运行时先跟踪，不要重复提交；执行后查询结果，未完成请明确说明。";
-    const text = authorizedUpgrade
-      ? `${message.trim() || "请继续处理所选节点的 Agent 升级问题。"}\n${upgradeRequest}`
-      : message.trim();
+    const text = resend
+      ? resend.trim()
+      : authorizedUpgrade
+        ? `${message.trim() || "请继续处理所选节点的 Agent 升级问题。"}\n${upgradeRequest}`
+        : message.trim();
 
     if (!text || running || historyRunning || !configured) return;
     const turnConfig = authorizedUpgrade
@@ -530,7 +716,7 @@ export default function AiOpsChat({
       : config;
 
     if (authorizedUpgrade) setConfig(turnConfig);
-    setMessage("");
+    if (!resend) setMessage("");
     setLivePrompt(text);
     setLiveText("");
     setError("");
@@ -547,6 +733,7 @@ export default function AiOpsChat({
         {
           chatId,
           message: text,
+          ...(model && models.includes(model) ? { model } : {}),
           config: {
             ...turnConfig,
             prompt: text,
@@ -567,7 +754,7 @@ export default function AiOpsChat({
             if (event.text?.trim()) setProgress("正在回复");
           }
           if (event.type === "status") setProgress(String(event.message));
-          if (event.type === "tool")
+          if (event.type === "tool" || event.type === "usage")
             setEvents((previous) => [...previous, event]);
           if (event.type === "error") setError(String(event.message));
         },
@@ -659,8 +846,20 @@ export default function AiOpsChat({
               aria-label="会话列表"
               className="mt-1 max-h-64 overflow-y-auto"
             >
+              <label className="mx-1 mb-1 mt-1 flex items-center gap-2 rounded-lg bg-default-100/70 px-2 py-1.5 text-sm">
+                <Search size={13} className="text-default-400" />
+                <input
+                  aria-label="搜索会话"
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-default-400"
+                  placeholder="搜索会话"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </label>
               {chats.length > 0 && (
-                <p className="px-3 pb-1 pt-2 text-xs text-default-400">最近</p>
+                <p className="px-3 pb-1 pt-2 text-xs text-default-400">
+                  {query.trim() ? "搜索结果" : "最近"}
+                </p>
               )}
               {chats.map((c) => (
                 <div
@@ -678,6 +877,15 @@ export default function AiOpsChat({
                       className="shrink-0 text-default-400"
                     />
                     <span className="truncate">{c.title}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`重命名会话 ${c.title}`}
+                    disabled={running}
+                    className="rounded-lg p-1.5 text-default-400 opacity-0 transition hover:bg-default-200 hover:text-foreground group-hover:opacity-100"
+                    onClick={() => renameChat(c.id, c.title)}
+                  >
+                    <Pencil size={13} />
                   </button>
                   <button
                     type="button"
@@ -937,8 +1145,31 @@ export default function AiOpsChat({
                 )}
               </div>
             )}
-            {turns.map((turn) => (
-              <Turn key={turn.id} turn={turn} nodeName={nodeName} />
+            {turns.length > 0 && (
+              <div className="-mb-4 flex justify-end">
+                <button
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-default-400 transition hover:bg-default-100 hover:text-foreground"
+                  type="button"
+                  onClick={exportChat}
+                >
+                  <Download size={13} />
+                  导出 Markdown
+                </button>
+              </div>
+            )}
+            {turns.map((turn, index) => (
+              <Turn
+                key={turn.id}
+                nodeName={nodeName}
+                pricing={preferences}
+                turn={turn}
+                onEdit={running || historyRunning ? undefined : editAndResend}
+                onRegenerate={
+                  index === turns.length - 1 && !running && !historyRunning
+                    ? () => void send(false, turn.userContent)
+                    : undefined
+                }
+              />
             ))}
             {livePrompt && (
               <div className="space-y-5">
@@ -1043,6 +1274,22 @@ export default function AiOpsChat({
                     · {modeLabel}
                   </span>
                 </button>
+                {models.length > 1 && (
+                  <select
+                    aria-label="对话模型"
+                    className="min-w-0 max-w-40 truncate rounded-full border border-default-200 bg-transparent px-2 py-1 text-xs text-default-600 outline-none"
+                    disabled={running}
+                    value={models.includes(model) ? model : ""}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    <option value="">默认 {models[0]}</option>
+                    {models.slice(1).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {running || historyRunning ? (
                   <Button
                     isIconOnly

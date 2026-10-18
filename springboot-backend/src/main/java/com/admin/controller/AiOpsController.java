@@ -11,10 +11,13 @@ import org.springframework.web.bind.annotation.*;
 public class AiOpsController {
   private final AiOpsService service;
   private final com.admin.service.AiOpsAutomation automation;
+  private final com.admin.service.AiNodeMemory memory;
 
-  public AiOpsController(AiOpsService service, com.admin.service.AiOpsAutomation automation) {
+  public AiOpsController(AiOpsService service, com.admin.service.AiOpsAutomation automation,
+      com.admin.service.AiNodeMemory memory) {
     this.service = service;
     this.automation = automation;
+    this.memory = memory;
   }
 
   @RequireRole
@@ -27,6 +30,38 @@ public class AiOpsController {
   @PostMapping("/preferences/save")
   public R savePreferences(@RequestBody JSONObject body) {
     return automation.savePreferences(body);
+  }
+
+  @RequireRole
+  @PostMapping("/notes")
+  public R notes() {
+    return memory.listNotes();
+  }
+
+  @RequireRole
+  @PostMapping("/notes/save")
+  public R saveNote(@RequestBody JSONObject body) {
+    try {
+      return memory.saveNote(body.getLongValue("nodeId"), body.getString("content"));
+    } catch (IllegalArgumentException e) {
+      return R.err(e.getMessage());
+    }
+  }
+
+  @RequireRole
+  @PostMapping("/changes")
+  public R changes(@RequestBody JSONObject body) {
+    return memory.changes(body.getLong("nodeId"));
+  }
+
+  @RequireRole
+  @PostMapping("/changes/restore")
+  public R restore(@RequestBody JSONObject body) {
+    try {
+      return memory.restore(body.getLongValue("id"));
+    } catch (Exception e) {
+      return R.err("还原失败：" + com.admin.service.AiOpsService.safeErrorPublic(e));
+    }
   }
 
   @RequireRole

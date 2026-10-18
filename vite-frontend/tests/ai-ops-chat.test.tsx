@@ -14,6 +14,12 @@ vi.mock("@/api/ai-ops", () => ({
   opsChatDetail: vi.fn(),
   opsChatDelete: vi.fn(),
   opsChatStop: vi.fn(),
+  opsChatRename: vi.fn(),
+  opsChatSearch: vi.fn(async () => ({ code: 0, data: [] })),
+  opsPreferences: vi.fn(async () => ({
+    code: 0,
+    data: { alertDiagnosis: true, weeklyReport: true, availableModels: ["model-a"] },
+  })),
 }));
 vi.mock("@/api/ai-chat-stream", () => ({ streamOpsChat: vi.fn() }));
 vi.mock("@heroui/button", () => ({

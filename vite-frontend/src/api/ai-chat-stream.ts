@@ -32,7 +32,7 @@ export function createChatEventDecoder(onEvent: (event: OpsChatEvent) => void) {
   };
 }
 export async function streamOpsChat(
-  body: { chatId?: number; message: string; config: OpsConfig },
+  body: { chatId?: number; message: string; config: OpsConfig; model?: string },
   signal: AbortSignal,
   onEvent: (event: OpsChatEvent) => void,
 ) {

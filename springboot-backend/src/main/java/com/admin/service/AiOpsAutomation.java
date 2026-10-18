@@ -69,10 +69,42 @@ public class AiOpsAutomation {
       for (var row : db.queryForList("SELECT name,value FROM ai_ops_preference")) result.put(row.get("name").toString(), row.get("value"));
     } catch (Exception ignored) {
     }
-    return Map.of("alertDiagnosis", "1".equals(result.get("alert_diagnosis")), "weeklyReport", "1".equals(result.get("weekly_report")));
+    Map<String, Object> view = new LinkedHashMap<>();
+    view.put("alertDiagnosis", "1".equals(result.get("alert_diagnosis")));
+    view.put("weeklyReport", "1".equals(result.get("weekly_report")));
+    view.put("models", Objects.toString(result.get("models"), ""));
+    view.put("inputPrice", Objects.toString(result.get("input_price"), ""));
+    view.put("outputPrice", Objects.toString(result.get("output_price"), ""));
+    view.put("currency", Objects.toString(result.getOrDefault("currency", "CNY"), "CNY"));
+    try {
+      view.put("availableModels", ops == null ? List.of() : ops.allowedModels(ops.storedSettings()));
+    } catch (Exception e) {
+      view.put("availableModels", List.of());
+    }
+    return view;
   }
 
   public R savePreferences(JSONObject body) {
+    Map<String, String> texts = new LinkedHashMap<>();
+    if (body.containsKey("models")) {
+      String models = String.join(",", Arrays.stream(Objects.toString(body.getString("models"), "").split("[,\\s]+"))
+          .map(String::trim).filter(m -> !m.isEmpty()).distinct().toList());
+      if (models.length() > 255 || !models.matches("[A-Za-z0-9._:/@,-]*")) return R.err("模型名称只能包含字母、数字和 ._:/@-，用逗号分隔");
+      texts.put("models", models);
+    }
+    for (var key : Map.of("inputPrice", "input_price", "outputPrice", "output_price").entrySet()) {
+      if (!body.containsKey(key.getKey())) continue;
+      String value = Objects.toString(body.getString(key.getKey()), "").trim();
+      if (!value.isEmpty() && !value.matches("\\d{1,4}(\\.\\d{1,4})?")) return R.err("价格需为 0 至 9999 的数字（每百万 token）");
+      texts.put(key.getValue(), value);
+    }
+    if (body.containsKey("currency")) {
+      String currency = Objects.toString(body.getString("currency"), "").trim().toUpperCase(Locale.ROOT);
+      if (!currency.matches("[A-Z]{3}")) return R.err("币种需为三位字母，例如 CNY 或 USD");
+      texts.put("currency", currency);
+    }
+    texts.forEach((name, value) -> db.update(
+        "INSERT INTO ai_ops_preference(name,value) VALUES(?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)", name, value));
     for (var entry : Map.of("alertDiagnosis", "alert_diagnosis", "weeklyReport", "weekly_report").entrySet()) {
       if (!body.containsKey(entry.getKey())) continue;
       db.update("INSERT INTO ai_ops_preference(name,value) VALUES(?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)",

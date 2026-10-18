@@ -27,6 +27,10 @@ final class AiOpsToolSession {
       allowed.add(((JSONObject) JSON.toJSON(item)).getJSONObject("function").getString("name"));
   }
 
+  private String source() {
+    return policy.containsKey("_chatOwner") ? "chat" : "task";
+  }
+
   JSONObject invoke(JSONObject call) {
     JSONObject result = new JSONObject();
     try {
@@ -64,6 +68,22 @@ final class AiOpsToolSession {
       long node = args.getLongValue("nodeId");
       if (!nodes.contains(node) || !allowed.contains(name))
         throw new IllegalArgumentException("工具或节点超出任务权限");
+      if (name.equals("remember_node_note")) {
+        result.put("data", ops.rememberNote(node, args.getString("note")));
+        result.put("success", true);
+        return result;
+      }
+      if (name.equals("security_audit")) {
+        result.put("data", ops.securityAudit(node, Math.min(90, AiOpsService.remainingSeconds(started))));
+        result.put("success", true);
+        return result;
+      }
+      if (name.equals("write_file")) {
+        result.put("data", ops.writeFile(node, args.getString("path"), args.getString("content"), args.getString("reason"),
+            source(), Math.min(60, AiOpsService.remainingSeconds(started))));
+        result.put("success", true);
+        return result;
+      }
       if (name.equals("network_probe")) {
         Long targetNode = args.containsKey("targetNodeId") ? args.getLong("targetNodeId") : null;
         Integer port = args.containsKey("port") ? args.getInteger("port") : null;
@@ -77,6 +97,7 @@ final class AiOpsToolSession {
             Math.min(140, AiOpsService.remainingSeconds(started)));
         result.put("data", data);
         result.put("success", ((Number) ((Map<?, ?>) data).get("exitCode")).intValue() == 0);
+        ops.recordCommand(node, source(), args.getString("command"), data);
         return result;
       }
       if (name.equals("inspect_agent_upgrade")) {

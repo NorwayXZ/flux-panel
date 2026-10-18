@@ -44,6 +44,23 @@ public class AiOpsChatController {
   }
 
   @RequireRole
+  @PostMapping("/rename")
+  public R rename(@RequestBody JSONObject body) {
+    try {
+      service.rename(JwtUtil.getUserIdFromToken(), body.getLongValue("id"), body.getString("title"));
+      return R.ok();
+    } catch (IllegalArgumentException e) {
+      return R.err(e.getMessage());
+    }
+  }
+
+  @RequireRole
+  @PostMapping("/search")
+  public R search(@RequestBody JSONObject body) {
+    return R.ok(service.search(JwtUtil.getUserIdFromToken(), body.getString("q")));
+  }
+
+  @RequireRole
   @PostMapping("/delete")
   public R delete(@RequestBody JSONObject body) {
     try {

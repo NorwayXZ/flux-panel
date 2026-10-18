@@ -19,6 +19,7 @@ import {
   Settings,
   History,
   FileBarChart,
+  NotebookPen,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
@@ -36,6 +37,7 @@ import {
 
 import AiOpsChat from "@/components/ai-ops-chat";
 import AiOpsReports from "@/components/ai-ops-reports";
+import AiOpsMemory from "@/components/ai-ops-memory";
 
 const defaults = (): OpsConfig => ({
   name: "",
@@ -235,6 +237,17 @@ export default function AiOpsPage() {
           }
         >
           <AiOpsReports configured={!!data?.settings.keyConfigured} />
+        </Tab>
+        <Tab
+          key="memory"
+          title={
+            <span className="flex items-center gap-2">
+              <NotebookPen size={16} />
+              记忆与改动
+            </span>
+          }
+        >
+          <AiOpsMemory />
         </Tab>
         <Tab
           key="tasks"

@@ -25,6 +25,8 @@ public class AiOpsService {
   @javax.annotation.Resource private AiNetworkTools networkTools;
   @javax.annotation.Resource private AiPanelKnowledge knowledge;
   @javax.annotation.Resource private AiBatchChecks batchChecks;
+  @javax.annotation.Resource private AiNodeMemory memory;
+  @javax.annotation.Resource private AiSecurityAudit securityAudit;
   private final JdbcTemplate db;
   private final AESCrypto crypto;
   private final TelegramNotificationService notifications;
@@ -339,6 +341,19 @@ public class AiOpsService {
               + " for questions about many nodes; the UI shows the table, so summarize only problems and actions.",
           "parameters", Map.of("type", "object", "properties", Map.of("check", Map.of("type", "string", "enum", AiBatchChecks.CHECKS)),
               "required", List.of("check"), "additionalProperties", false))));
+      list.add(Map.of("type", "function", "function", Map.of("name", "remember_node_note",
+          "description", "Save what you learned about a selected node for future conversations: OS, role, installed"
+              + " services and ports, recurring problems and how they were fixed. Pass the complete rewritten note"
+              + " (merge the saved note shown in the system prompt), at most 2000 characters, facts only.",
+          "parameters", Map.of("type", "object", "properties", Map.of(
+              "nodeId", Map.of("type", "integer"), "note", Map.of("type", "string")),
+              "required", List.of("nodeId", "note"), "additionalProperties", false))));
+      list.add(Map.of("type", "function", "function", Map.of("name", "security_audit",
+          "description", "Read-only security inspection of a selected node: SSH settings (root/password login),"
+              + " listening ports, failed logins in 7 days and top source IPs, fail2ban, firewall, pending security"
+              + " updates, reboot required, users with shells and authorized keys. Report risks by priority.",
+          "parameters", Map.of("type", "object", "properties", Map.of("nodeId", Map.of("type", "integer")),
+              "required", List.of("nodeId"), "additionalProperties", false))));
       list.add(Map.of("type", "function", "function", Map.of("name", "node_speed_test",
           "description", "Measure real TCP bandwidth and RTT between two selected nodes (both directions, 4 streams,"
               + " 3-15 s, at most 50 MB per stream and direction; uses port 5201 on the target). Consumes traffic;"
@@ -353,13 +368,14 @@ public class AiOpsService {
         List.of(
             "inspect_disk",
             "execute_command",
+            "write_file",
             "inspect_agent_upgrade",
             "upgrade_agent",
             "inspect_service",
             "vacuum_journal",
             "restart_service",
             "cleanup_rotated_logs")) {
-      if (name.equals("execute_command") && (!c.getBooleanValue("allowTerminal")
+      if ((name.equals("execute_command") || name.equals("write_file")) && (!c.getBooleanValue("allowTerminal")
           || !"repair".equals(c.getString("mode")) || c.getBooleanValue("upgradeOnly"))) continue;
       if (c.getBooleanValue("upgradeOnly")
           && Set.of("vacuum_journal", "restart_service", "cleanup_rotated_logs").contains(name))
@@ -378,6 +394,14 @@ public class AiOpsService {
           "nodeId", Map.of("type", "integer", "description", "Target node ID from selected nodes"));
       JSONArray required = new JSONArray();
       required.add("nodeId");
+      if (name.equals("write_file")) {
+        props.put("path", Map.of("type", "string", "description", "Absolute path of a text file, e.g. /etc/nginx/conf.d/site.conf"));
+        props.put("content", Map.of("type", "string", "description", "Complete new file content, at most 32 KB"));
+        props.put("reason", Map.of("type", "string", "description", "Why the file changes, shown in the change log"));
+        required.add("path");
+        required.add("content");
+        required.add("reason");
+      }
       if (name.equals("execute_command")) {
         props.put("command", Map.of("type", "string", "description",
             "Shell script executed as the Agent OS user (often root). Use noninteractive commands. Inspect OS/init before changes, install/configure requested services, then verify. Max 16000 characters."));
@@ -392,6 +416,9 @@ public class AiOpsService {
           switch (name) {
             case "execute_command" -> "Execute an administrator-authorized shell script on a selected node via its existing terminal, including legacy Agents. Returns output and exitCode. Bounded runtime; after timeout inspect before retrying. For long tasks launch with log/status files then poll. Never treat submission as verified success.";
             case "inspect_disk" -> "Inspect disk, inodes, /var/log size and journal usage";
+            case "write_file" -> "Replace a text configuration file on a selected node. The previous content is"
+                + " recorded so the administrator can review the diff and restore it. Prefer this over sed/echo"
+                + " in execute_command for config edits; read the file first with execute_command (cat).";
             case "inspect_agent_upgrade" ->
                 "Read panel Agent version and upgrade history, inspect installation failure logs"
                     + " using a fixed read-only legacy terminal probe; works before Agent upgrade";
@@ -455,6 +482,48 @@ public class AiOpsService {
   Object checkNodes(String check, Set<Long> nodes, int timeout) {
     if (batchChecks == null) throw new IllegalStateException("批量检查不可用");
     return batchChecks.run(check, nodes, timeout);
+  }
+
+  Object rememberNote(long node, String note) {
+    if (memory == null) throw new IllegalStateException("节点笔记不可用");
+    return memory.remember(node, note, "assistant");
+  }
+
+  String notesSection(Collection<Long> nodes) {
+    return memory == null ? "" : memory.promptSection(nodes);
+  }
+
+  Object securityAudit(long node, int timeout) throws Exception {
+    if (securityAudit == null) throw new IllegalStateException("安全巡检不可用");
+    if (!nodeOnline(node)) throw new IllegalStateException("节点离线");
+    return securityAudit.audit(node, timeout);
+  }
+
+  Object writeFile(long node, String path, String content, String reason, String source, int timeout) throws Exception {
+    if (memory == null) throw new IllegalStateException("改动记录不可用");
+    if (!nodeOnline(node)) throw new IllegalStateException("节点离线");
+    return memory.writeFile(node, path, content, reason, source, timeout);
+  }
+
+  void recordCommand(long node, String source, String command, Object data) {
+    if (memory != null && data instanceof Map<?, ?> map) {
+      @SuppressWarnings("unchecked") Map<String, Object> result = (Map<String, Object>) map;
+      memory.recordCommand(node, source, command, result);
+    }
+  }
+
+  /** Models the administrator allowed for per-conversation switching, plus the configured default. */
+  List<String> allowedModels(JSONObject settings) {
+    LinkedHashSet<String> models = new LinkedHashSet<>();
+    models.add(str(settings, "model"));
+    try {
+      for (var row : db.queryForList("SELECT value FROM ai_ops_preference WHERE name='models'"))
+        for (String model : Objects.toString(row.get("value"), "").split(","))
+          if (model.trim().matches("[A-Za-z0-9._:/@-]{1,100}")) models.add(model.trim());
+    } catch (Exception ignored) {
+    }
+    models.removeIf(String::isBlank);
+    return new ArrayList<>(models);
   }
 
   Object nodeSpeedTest(long source, long target, int seconds) {
@@ -532,6 +601,10 @@ public class AiOpsService {
   static void requireOK(GostDto r) {
     if (r == null || !"OK".equals(r.getMsg()) || r.getData() == null)
       throw new IllegalStateException(r == null ? "Agent 无响应" : r.getMsg());
+  }
+
+  public static String safeErrorPublic(Exception e) {
+    return safeError(e);
   }
 
   static String safeError(Exception e) {
@@ -808,6 +881,22 @@ public class AiOpsService {
     }
     if (payload.toJSONString().length() > 200000)
       throw new IllegalStateException("模型上下文超过200000字符上限");
+    // Token usage is reported only when asked; providers that reject the option get a plain retry.
+    if (usageSupported) payload.put("stream_options", Map.of("include_usage", true));
+    try {
+      return streamOnce(settings, payload, seconds, onText);
+    } catch (IllegalStateException e) {
+      if (!payload.containsKey("stream_options") || !Objects.toString(e.getMessage(), "").contains("HTTP 400")) throw e;
+      usageSupported = false;
+      payload.remove("stream_options");
+      return streamOnce(settings, payload, seconds, onText);
+    }
+  }
+
+  private volatile boolean usageSupported = true;
+
+  private JSONObject streamOnce(JSONObject settings, JSONObject payload, int seconds, java.util.function.Consumer<String> onText)
+      throws Exception {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(settings.getString("base_url") + "/chat/completions"))
             .timeout(Duration.ofSeconds(seconds))
@@ -851,6 +940,9 @@ public class AiOpsService {
               .getJSONObject("message");
       if (assembled == null || !"assistant".equals(assembled.getString("role")))
         throw new IllegalStateException("模型响应格式无效");
+      JSONObject usage =
+          JSON.parseObject(new String(response.body(), java.nio.charset.StandardCharsets.UTF_8)).getJSONObject("usage");
+      if (usage != null) assembled.put("_usage", usage);
       String content = assembled.getString("content");
       if (content != null) masked.accept(content);
     }

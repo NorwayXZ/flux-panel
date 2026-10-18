@@ -75,6 +75,24 @@ public class AiOpsChatService {
         owner);
   }
 
+  public void rename(long owner, long chat, String title) {
+    own(owner, chat);
+    String value = Objects.toString(title, "").trim();
+    if (value.isEmpty() || value.length() > 100) throw new IllegalArgumentException("会话名称需为 1 至 100 字");
+    db.update("UPDATE ai_ops_chat SET title=? WHERE id=? AND owner_id=?", value, chat, owner);
+  }
+
+  /** Conversations whose title or questions contain the text. */
+  public List<Map<String, Object>> search(long owner, String query) {
+    String q = Objects.toString(query, "").trim();
+    if (q.isEmpty()) return list(owner);
+    String like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+    return db.queryForList(
+        "SELECT c.id,c.title,c.updated_at AS updatedAt FROM ai_ops_chat c WHERE c.owner_id=? AND (c.title LIKE ? OR EXISTS"
+            + " (SELECT 1 FROM ai_ops_chat_turn t WHERE t.chat_id=c.id AND t.user_content LIKE ?)) ORDER BY c.updated_at DESC LIMIT 50",
+        owner, like, like);
+  }
+
   public Map<String, Object> detail(long owner, long chat) {
     own(owner, chat);
     return Map.of(
@@ -108,8 +126,13 @@ public class AiOpsChatService {
   }
 
   public synchronized SseEmitter send(long owner, JSONObject body) {
-    JSONObject settings = ops.storedSettings();
-    if (!ops.configured(settings)) throw new IllegalArgumentException("AI 模型未配置，请先填写模型地址、名称和密钥");
+    JSONObject stored = ops.storedSettings();
+    if (!ops.configured(stored)) throw new IllegalArgumentException("AI 模型未配置，请先填写模型地址、名称和密钥");
+    String model = body.getString("model");
+    if (model != null && !model.isBlank() && !ops.allowedModels(stored).contains(model.trim()))
+      throw new IllegalArgumentException("模型不在“模型配置”允许的列表中");
+    final JSONObject settings = model == null || model.isBlank() ? stored : JSON.parseObject(stored.toJSONString());
+    if (settings != stored) settings.put("model", model.trim());
     JSONObject config = policy(body);
     config.put("_chatOwner", (int) owner);
     Long existing = body.getLong("chatId");
@@ -306,7 +329,11 @@ public class AiOpsChatService {
                 + " do not ask the user to describe the panel or where things are. For current problems use"
                 + " inspect_panel issues/alerts; for slow or failing lines combine inspect_panel health/routes/"
                 + "probes with network_probe from the involved nodes and say which segment fails. For one check"
-                + " across several nodes use check_nodes; the UI renders its table, so only summarize problems.\n"
+                + " across several nodes use check_nodes; the UI renders its table, so only summarize problems."
+                + " When you learn durable facts about a node (OS, role, services, ports, a fixed problem), save"
+                + " them with remember_node_note as one merged note. Edit configuration files with write_file so"
+                + " the change can be reviewed and restored. For security questions run security_audit.\n"
+                + ops.notesSection(nodes) + "\n"
                 + ops.knowledgeIndex() + "\n"
                 + " Keep multi-node reports concise: report each selected node before expanding"
                 + " details. Prioritize failures, measured values and next actions; avoid repeating"
@@ -416,8 +443,14 @@ public class AiOpsChatService {
                       true)));
         throw e;
       }
+      Object usage = message.remove("_usage");
       messages.add(message);
-      audit.add(new JSONObject(Map.of("type", "assistant", "message", message)));
+      JSONObject assistantEvent = new JSONObject(Map.of("type", "assistant", "message", message));
+      if (usage != null) {
+        assistantEvent.put("usage", usage);
+        emit.accept(new JSONObject(Map.of("type", "usage", "usage", usage)));
+      }
+      audit.add(assistantEvent);
       persist(turn, audit, settings);
       JSONArray calls = message.getJSONArray("tool_calls");
       if (calls == null || calls.isEmpty()) {

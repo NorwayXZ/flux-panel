@@ -85,11 +85,13 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
 
   static JSONObject assemble(byte[] bytes) {
     StringBuilder content = new StringBuilder(), reasoning = new StringBuilder();
+    JSONObject usage = null;
     TreeMap<Integer, JSONObject> tools = new TreeMap<>();
     boolean finished = false;
     for (String raw : new String(bytes, StandardCharsets.UTF_8).split("\n")) {
       JSONObject part = event(raw);
       if (part == null) continue;
+      if (part.getJSONObject("usage") != null) usage = part.getJSONObject("usage");
       JSONArray choices = part.getJSONArray("choices");
       if (choices == null || choices.isEmpty()) continue;
       JSONObject choice = choices.getJSONObject(0);
@@ -133,6 +135,8 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
     JSONObject message = new JSONObject(Map.of("role", "assistant", "content", content.toString()));
     if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning.toString());
     if (!tools.isEmpty()) message.put("tool_calls", new JSONArray(new ArrayList<>(tools.values())));
+    // Kept out of the conversation history by the caller; only shown as the turn's token usage.
+    if (usage != null) message.put("_usage", usage);
     if (JSON.toJSONBytes(message).length > 262144) throw new IllegalStateException("模型回复正文超过容量限制");
     return message;
   }
