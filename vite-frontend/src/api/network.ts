@@ -37,6 +37,8 @@ export const reinitializeBaseURL = () => {
 
 reinitializeBaseURL();
 
+export const getApiBaseUrl = () => baseURL;
+
 interface ApiResponse<T = any> {
   code: number;
   msg: string;

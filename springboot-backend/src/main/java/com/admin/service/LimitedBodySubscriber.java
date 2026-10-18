@@ -30,7 +30,7 @@ final class LimitedBodySubscriber implements HttpResponse.BodySubscriber<byte[]>
 
   public void onNext(List<ByteBuffer> buffers) {
     for (ByteBuffer buffer : buffers) {
-      if (bytes.size() + buffer.remaining() > limit) {
+      if (buffer.remaining() > limit - bytes.size()) {
         subscription.cancel();
         result.completeExceptionally(
             new IllegalStateException("Model response exceeds size limit"));

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import AiOpsPage from "@/pages/ai-ops";
 import { opsOverview, opsSave, opsRun } from "@/api/ai-ops";
+vi.mock("@/components/ai-ops-chat", () => ({ default: () => <div /> }));
 vi.mock("@/api/ai-ops", () => ({
   opsOverview: vi.fn(),
   opsSave: vi.fn(),

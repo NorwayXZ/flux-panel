@@ -55,3 +55,33 @@ export const opsRun = (id: number) => Network.post("/ai-ops/run", { id });
 export const opsDelete = (id: number) => Network.post("/ai-ops/delete", { id });
 export const opsDetail = (id: number) =>
   Network.post<{ task: OpsTask; runs: OpsRun[] }>("/ai-ops/detail", { id });
+
+export interface OpsChatEvent {
+  type: string;
+  text?: string;
+  message?: any;
+  call?: any;
+  result?: any;
+  status?: string;
+  chatId?: number;
+  turnId?: number;
+}
+export interface OpsChatTurn {
+  id: number;
+  userContent: string;
+  status: string;
+  events: string;
+  createdAt: number;
+}
+export const opsChatList = () =>
+  Network.post<{ id: number; title: string; updatedAt: number }[]>(
+    "/ai-ops/chat/list",
+    {},
+  );
+export const opsChatDetail = (id: number) =>
+  Network.post<{ id: number; turns: OpsChatTurn[] }>("/ai-ops/chat/detail", {
+    id,
+  });
+export const opsChatDelete = (id: number) =>
+  Network.post("/ai-ops/chat/delete", { id });
+export const opsChatStop = () => Network.post("/ai-ops/chat/stop", {});

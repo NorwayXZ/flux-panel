@@ -49,7 +49,7 @@ public class AiOpsService {
     this.notifications = notifications;
   }
 
-  private JSONObject storedSettings() {
+  JSONObject storedSettings() {
     var rows = db.queryForList("SELECT * FROM ai_ops_settings WHERE id=1");
     return rows.isEmpty() ? new JSONObject() : new JSONObject(rows.get(0));
   }
@@ -69,7 +69,7 @@ public class AiOpsService {
             !str(s, "encrypted_key").isBlank()));
   }
 
-  private boolean configured(JSONObject s) {
+  boolean configured(JSONObject s) {
     return !str(s, "base_url").isBlank()
         && !str(s, "model").isBlank()
         && !str(s, "encrypted_key").isBlank();
@@ -149,6 +149,10 @@ public class AiOpsService {
   }
 
   static void validate(JSONObject c) {
+    validate(c, false);
+  }
+
+  static void validate(JSONObject c, boolean allowEmptyNodes) {
     if (str(c, "name").isBlank() || str(c, "name").length() > 100)
       throw new IllegalArgumentException("请填写任务名称（不超过100字）");
     if (str(c, "prompt").isBlank() || str(c, "prompt").length() > 8000)
@@ -156,7 +160,10 @@ public class AiOpsService {
     if (!List.of("inspect", "repair").contains(str(c, "mode")))
       throw new IllegalArgumentException("请选择执行权限");
     JSONArray ids = c.getJSONArray("nodeIds");
-    if (ids == null || ids.isEmpty() || ids.size() > 50 || new HashSet<>(ids).size() != ids.size())
+    if (ids == null
+        || (ids.isEmpty() && !allowEmptyNodes)
+        || ids.size() > 50
+        || new HashSet<>(ids).size() != ids.size())
       throw new IllegalArgumentException("请选择1至50个节点");
     for (Object id : ids)
       if (Long.parseLong(id.toString()) <= 0) throw new IllegalArgumentException("节点无效");
@@ -341,18 +348,18 @@ public class AiOpsService {
     return WebSocketServer.send_msg(id, body, type, timeout);
   }
 
-  private static int remainingSeconds(long started) {
+  static int remainingSeconds(long started) {
     long remaining = 600000 - (System.currentTimeMillis() - started);
     if (remaining < 1000) throw new IllegalStateException("任务超过10分钟上限");
     return (int) Math.min(145, remaining / 1000);
   }
 
-  private static void requireOK(GostDto r) {
+  static void requireOK(GostDto r) {
     if (r == null || !"OK".equals(r.getMsg()) || r.getData() == null)
       throw new IllegalStateException(r == null ? "Agent 无响应" : r.getMsg());
   }
 
-  private static String safeError(Exception e) {
+  static String safeError(Exception e) {
     if (e instanceof IllegalArgumentException || e instanceof IllegalStateException)
       return Objects.toString(e.getMessage(), "执行失败")
           .substring(0, Math.min(300, Objects.toString(e.getMessage(), "执行失败").length()));
@@ -416,12 +423,9 @@ public class AiOpsService {
                   + " MB."));
       messages.add(Map.of("role", "user", "content", c.getString("prompt")));
       JSONArray available = tools(c);
-      Set<String> allowed = new HashSet<>();
-      for (Object t : available)
-        allowed.add(((JSONObject) JSON.toJSON(t)).getJSONObject("function").getString("name"));
       boolean hadErrors = ready.size() != nodes.size(), hadInspection = false;
-      Set<Long> inspected = new HashSet<>(), disksInspected = new HashSet<>();
-      Set<String> servicesInspected = new HashSet<>();
+      Set<Long> inspected = new HashSet<>();
+      AiOpsToolSession toolSession = new AiOpsToolSession(this, c, ready, started);
       int calls = 0;
       for (int step = 0; step < 12; step++) {
         if (System.currentTimeMillis() - started > 600000)
@@ -449,59 +453,24 @@ public class AiOpsService {
           if (++calls > 30) throw new IllegalStateException("工具调用超过30次上限");
           JSONObject call = (JSONObject) raw, fn = call.getJSONObject("function");
           String name = fn.getString("name");
-          JSONObject result = new JSONObject();
-          try {
+          JSONObject result = toolSession.invoke(call);
+          if (result.getBooleanValue("success")) {
             JSONObject args = JSON.parseObject(fn.getString("arguments"));
             long node = args.getLongValue("nodeId");
-            if (!ready.contains(node) || !allowed.contains(name))
-              throw new IllegalArgumentException("工具或节点超出任务权限");
-            boolean mutation =
-                name.equals("vacuum_journal")
-                    || name.equals("restart_service")
-                    || name.equals("cleanup_rotated_logs");
-            if ((name.equals("vacuum_journal") || name.equals("cleanup_rotated_logs"))
-                && !disksInspected.contains(node))
-              throw new IllegalArgumentException("清理前必须先检查该节点磁盘");
-            if (name.equals("restart_service")
-                && !servicesInspected.contains(node + ":" + args.getString("service")))
-              throw new IllegalArgumentException("重启前必须先检查该服务");
-            if (name.contains("service")
-                && !c.getJSONArray("serviceAllowlist").contains(args.getString("service")))
-              throw new IllegalArgumentException("服务超出白名单");
-            JSONObject payload = new JSONObject();
-            payload.put("tool", name);
-            payload.put("timeoutSeconds", Math.min(140, remainingSeconds(started)));
-            payload.put("args", Map.of("service", str(args, "service")));
-            payload.put("allowLogCleanup", c.getBooleanValue("allowLogCleanup"));
-            payload.put("allowRepair", c.getString("mode").equals("repair"));
-            payload.put("allowlist", c.getJSONArray("serviceAllowlist"));
-            payload.put("retentionDays", c.getIntValue("retentionDays"));
-            payload.put("maxJournalMb", c.getIntValue("maxJournalMb"));
-            GostDto response = callAgent(node, payload, "OpsToolCall", remainingSeconds(started));
-            if (response != null) result.put("data", response.getData());
-            requireOK(response);
-            result.put("success", true);
-            result.put("data", response.getData());
-            if (!mutation) {
+            if (name.startsWith("inspect_")) {
               inspected.add(node);
               hadInspection = true;
-              if (name.equals("inspect_disk")) disksInspected.add(node);
-              if (name.equals("inspect_service"))
-                servicesInspected.add(node + ":" + args.getString("service"));
             } else repairs++;
-          } catch (Exception e) {
-            hadErrors = true;
-            result.put("success", false);
-            result.put("error", safeError(e));
-          }
+          } else hadErrors = true;
           String toolContent = result.toJSONString();
           if (toolContent.length() > 16000)
             toolContent =
                 toolContent.substring(0, 16000) + "\n[output truncated; full result in run audit]";
-          messages.add(
-              Map.of("role", "tool", "tool_call_id", call.getString("id"), "content", toolContent));
           audit.add(Map.of("call", call, "result", result));
           db.update("UPDATE ai_ops_run SET detail=? WHERE id=?", redact(audit, settings), runId);
+          if (call.getString("id") == null) throw new IllegalStateException("模型返回无效工具调用 ID");
+          messages.add(
+              Map.of("role", "tool", "tool_call_id", call.getString("id"), "content", toolContent));
         }
       }
       if (status.equals("failed")) throw new IllegalStateException("模型未在12轮内完成任务");
@@ -564,7 +533,7 @@ public class AiOpsService {
     return redactText(audit.toJSONString(), settings);
   }
 
-  private String redactText(String text, JSONObject settings) {
+  String redactText(String text, JSONObject settings) {
     try {
       String key = crypto.decryptString(settings.getString("encrypted_key"));
       return text.replace(key, "[REDACTED]")
@@ -628,6 +597,81 @@ public class AiOpsService {
     if (message.containsKey("tool_calls"))
       clean.put("tool_calls", message.getJSONArray("tool_calls"));
     return clean;
+  }
+
+  JSONObject streamCompletion(
+      JSONObject settings,
+      JSONArray messages,
+      JSONArray tools,
+      int seconds,
+      java.util.function.Consumer<String> onText)
+      throws Exception {
+    JSONObject payload =
+        new JSONObject(
+            Map.of(
+                "model",
+                settings.getString("model"),
+                "messages",
+                messages,
+                "stream",
+                true,
+                "max_tokens",
+                2048));
+    if (!tools.isEmpty()) {
+      payload.put("tools", tools);
+      payload.put("tool_choice", "auto");
+    }
+    if (payload.toJSONString().length() > 200000)
+      throw new IllegalStateException("模型上下文超过200000字符上限");
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(settings.getString("base_url") + "/chat/completions"))
+            .timeout(Duration.ofSeconds(seconds))
+            .header(
+                "Authorization",
+                "Bearer " + crypto.decryptString(settings.getString("encrypted_key")))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(payload.toJSONString()))
+            .build();
+    String key = crypto.decryptString(settings.getString("encrypted_key"));
+    AiChatTextRedactor redactor = new AiChatTextRedactor(key, onText);
+    java.util.function.Consumer<String> masked = redactor::push;
+    var pending =
+        http.sendAsync(
+            request,
+            info ->
+                info.statusCode() == 200
+                        && info.headers()
+                            .firstValue("Content-Type")
+                            .orElse("")
+                            .contains("text/event-stream")
+                    ? new AiChatStreamSubscriber(masked)
+                    : new LimitedBodySubscriber(262144));
+    HttpResponse<byte[]> response;
+    try {
+      response = pending.get(seconds, TimeUnit.SECONDS);
+    } catch (Exception e) {
+      pending.cancel(true);
+      throw e;
+    }
+    if (response.statusCode() != 200)
+      throw new IllegalStateException("模型 API 返回 HTTP " + response.statusCode());
+    JSONObject assembled;
+    if (response.headers().firstValue("Content-Type").orElse("").contains("text/event-stream"))
+      assembled = AiChatStreamSubscriber.assemble(response.body());
+    else {
+      assembled =
+          JSON.parseObject(new String(response.body(), java.nio.charset.StandardCharsets.UTF_8))
+              .getJSONArray("choices")
+              .getJSONObject(0)
+              .getJSONObject("message");
+      if (assembled == null || !"assistant".equals(assembled.getString("role")))
+        throw new IllegalStateException("模型响应格式无效");
+      String content = assembled.getString("content");
+      if (content != null) masked.accept(content);
+    }
+
+    redactor.flush();
+    return assembled;
   }
 
   @PreDestroy

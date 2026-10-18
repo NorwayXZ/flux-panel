@@ -33,6 +33,8 @@ import {
   type OpsRun,
 } from "@/api/ai-ops";
 
+import AiOpsChat from "@/components/ai-ops-chat";
+
 const defaults = (): OpsConfig => ({
   name: "",
   prompt: "",
@@ -91,7 +93,7 @@ function RunDetail({ run }: { run: OpsRun }) {
 }
 export default function AiOpsPage() {
   const [data, setData] = useState<OpsOverview>();
-  const [tab, setTab] = useState("tasks");
+  const [tab, setTab] = useState("chat");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [taskId, setTaskId] = useState<number>();
@@ -204,10 +206,22 @@ export default function AiOpsPage() {
         。检查结果会发送给你配置的模型服务。
       </div>
       <Tabs
+        destroyInactiveTabPanel={false}
         selectedKey={tab}
         onSelectionChange={(k) => setTab(String(k))}
         aria-label="AI运维页面"
       >
+        <Tab
+          key="chat"
+          title={
+            <span className="flex items-center gap-2">
+              <Bot size={16} />
+              实时对话
+            </span>
+          }
+        >
+          <AiOpsChat overview={data} onSettings={() => setTab("settings")} />
+        </Tab>
         <Tab
           key="tasks"
           title={
