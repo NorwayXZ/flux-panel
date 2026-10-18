@@ -842,7 +842,7 @@ export default function AiOpsChat({
           {wide && (
             <nav
               aria-label="会话列表"
-              className="mt-1 max-h-64 overflow-y-auto"
+              className="ai-ops-scroll mt-1 max-h-64 overflow-y-auto rounded-xl"
             >
               <label className="mx-1 mb-1 mt-1 flex items-center gap-2 rounded-lg bg-default-100/70 px-2 py-1.5 text-sm">
                 <Search size={13} className="text-default-400" />
@@ -912,7 +912,7 @@ export default function AiOpsChat({
           )}
         </div>
         <details
-          className="min-h-0 overflow-y-auto rounded-2xl border border-default-200 bg-content1 p-3"
+          className="ai-ops-scroll min-h-0 overflow-y-auto rounded-2xl border border-default-200 bg-content1 p-3 [clip-path:inset(0_round_1rem)]"
           open={permissionsOpen}
           onToggle={(e) => setPermissionsOpen(e.currentTarget.open)}
         >
@@ -954,7 +954,7 @@ export default function AiOpsChat({
                 清空
               </Button>
             </div>
-            <div className="max-h-44 space-y-0.5 overflow-auto rounded-xl border border-default-100 p-1">
+            <div className="ai-ops-scroll max-h-44 space-y-0.5 overflow-auto rounded-xl border border-default-100 p-1 [clip-path:inset(0_round_0.75rem)]">
               {overview?.nodes.map((node) => (
                 <label
                   key={node.id}

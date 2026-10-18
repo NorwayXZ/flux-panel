@@ -141,6 +141,31 @@ html, body {
 }
 
 /* Thin scrollbars, adapted from NodePassDash (BSD-3-Clause). */
+.ai-ops-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--heroui-default-300)) transparent;
+}
+
+.ai-ops-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ai-ops-scroll::-webkit-scrollbar-track {
+  margin-block: 12px;
+  background: transparent;
+  border-radius: 999px;
+}
+
+.ai-ops-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--heroui-default-300));
+  border-radius: 999px;
+}
+
+.ai-ops-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 .scrollbar-thin {
   scrollbar-width: thin;
 }
