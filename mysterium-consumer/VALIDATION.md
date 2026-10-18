@@ -79,3 +79,17 @@ to the matching Agent; both reconnected successfully.
 This establishes the real two-server HTTPS panel/Agent/signing/traffic path in
 one short validation run. Sustained operation at dozens of nodes, lost pending
 payment recovery, same-provider compatibility and exact budgets remain unproven.
+
+## Panel restart with 1.39.7-3 — 2026-10-18
+
+Production panel, payer node NNC日本 and member 懒猫云美国vimiss, both with a US
+residential connection through the shared balance (Agent 2.84.0-beta.16).
+
+| Restart | Panel API unavailable | Exits afterwards | Session traffic counter | Reconnect events |
+|---|---|---|---|---|
+| beta.16 → beta.15 | 17:10:26–17:10:50 (CST) | unchanged: 165.140.26.183, 99.190.44.223 | kept rising (37,744 → 48,344; 39,488 → 50,088) | none |
+| beta.15 → beta.16 | 17:13:11–17:13:42 | unchanged | kept rising (48,376 → 49,544; 50,120 → 51,336) | none |
+
+Each check ran more than two minutes after the panel returned, beyond the
+providers' unpaid-payment leeway. Before this change a panel restart could end
+both sessions and, with a lost payment, keep the pool blocked.
