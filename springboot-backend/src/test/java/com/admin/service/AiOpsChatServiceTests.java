@@ -273,6 +273,11 @@ class AiOpsChatServiceTests {
     var mvc =
         org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
                 new com.admin.controller.AiOpsChatController(chat))
+            .setMessageConverters(
+                new org.springframework.http.converter.ByteArrayHttpMessageConverter(),
+                new org.springframework.http.converter.StringHttpMessageConverter(
+                    StandardCharsets.ISO_8859_1),
+                new org.springframework.http.converter.json.MappingJackson2HttpMessageConverter())
             .build();
     String token =
         "x."

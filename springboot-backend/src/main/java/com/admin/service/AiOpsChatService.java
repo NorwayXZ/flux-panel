@@ -166,7 +166,13 @@ public class AiOpsChatService {
         event -> {
           if (stopped.get()) throw new IllegalStateException("对话已停止");
           try {
-            emitter.send(SseEmitter.event().data(ops.redactText(event.toJSONString(), settings)));
+            // Explicit bytes avoid the MVC String converter's default charset.
+            emitter.send(
+                SseEmitter.event()
+                    .data(
+                        ops.redactText(event.toJSONString(), settings)
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
           } catch (Exception e) {
             stopped.set(true);
             throw new IllegalStateException("对话连接已断开");
