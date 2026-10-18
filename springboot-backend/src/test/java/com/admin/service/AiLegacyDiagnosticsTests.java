@@ -47,7 +47,8 @@ class AiLegacyDiagnosticsTests {
       assertTrue(service.handle(73, event));
       String script = input.get(1, TimeUnit.SECONDS);
       assertTrue(script.contains("b2291fa7-6bd.log"));
-      assertFalse(script.contains("curl"));
+      assertTrue(script.contains("curl -I -L --connect-timeout 4 --max-time 8"));
+      assertFalse(script.contains("curl -o"));
       assertFalse(script.contains("systemctl restart"));
       int pos = script.indexOf("AI_PROBE_");
       int end = script.indexOf("'", pos);

@@ -64,7 +64,7 @@ public class AiLegacyDiagnostics {
             + "=== INODES ===\\n"
             + "'; df -Pi; printf '\\n"
             + "=== LOGS ===\\n"
-            + "'; du -xk --max-depth=2 /var/log 2>/dev/null | sort -nr | head -20; printf '\\n"
+            + "'; du -xk -d 2 /var/log 2>&1 | sort -nr | head -20; printf '\\n"
             + "=== JOURNAL ===\\n"
             + "'; journalctl --disk-usage 2>&1; ";
     String extra = "";
@@ -78,6 +78,18 @@ public class AiLegacyDiagnostics {
               + "=== AGENT SERVICE ===\\n"
               + "'; systemctl show gost -p ActiveState -p SubState -p ExecMainStatus --no-pager"
               + " 2>&1; ";
+      extra +=
+          "printf '\\n"
+              + "=== OS AND INIT ===\\n"
+              + "'; cat /etc/os-release 2>/dev/null; for x in curl wget sh rc-service rc-update"
+              + " systemctl systemd-run setsid nohup; do command -v \"$x\" || true; done; if"
+              + " command -v rc-service >/dev/null 2>&1; then rc-service gost status 2>&1; fi;"
+              + " printf '\\n"
+              + "=== INSTALLER NETWORK ===\\n"
+              + "'; curl -I -L --connect-timeout 4 --max-time 8 "
+              + "https://raw.githubusercontent.com/NorwayXZ/flux-panel/"
+              + AgentUpgradeService.TARGET_VERSION
+              + "/install.sh 2>&1 | head -15; ";
       var rows =
           db.queryForList(
               "SELECT task_id FROM agent_upgrade_task WHERE node_id=? ORDER BY id DESC LIMIT 1",
