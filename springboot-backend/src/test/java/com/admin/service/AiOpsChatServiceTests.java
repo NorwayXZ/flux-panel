@@ -183,6 +183,42 @@ class AiOpsChatServiceTests {
   }
 
   @Test
+  void sseFramingOverheadDoesNotConsumeTheReplyBodyBudget() {
+    StringBuilder wire = new StringBuilder();
+    for (int i = 0; i < 1400; i++) {
+      JSONObject packet =
+          new JSONObject(
+              Map.of(
+                  "id",
+                  "metadata-".repeat(30),
+                  "model",
+                  "thinking-model",
+                  "choices",
+                  List.of(Map.of("delta", Map.of("reasoning_content", "r")))));
+      wire.append("data: ").append(packet.toJSONString()).append("\n\n");
+    }
+    wire.append(chunk(new JSONObject(Map.of("content", "检查完成")), "stop"));
+    byte[] raw = wire.toString().getBytes(StandardCharsets.UTF_8);
+    assertTrue(raw.length > 262144);
+    var subscriber = new AiChatStreamSubscriber(s -> {});
+    subscriber.onSubscribe(
+        new Flow.Subscription() {
+          public void request(long n) {}
+
+          public void cancel() {}
+        });
+    subscriber.onNext(List.of(ByteBuffer.wrap(raw)));
+    subscriber.onComplete();
+    JSONObject assembled =
+        AiChatStreamSubscriber.assemble(subscriber.getBody().toCompletableFuture().join());
+    assertEquals("检查完成", assembled.getString("content"));
+    assertEquals(1400, assembled.getString("reasoning_content").length());
+    assertEquals(
+        "模型响应超过容量限制",
+        AiOpsService.safeError(new ExecutionException(new IllegalStateException("模型响应超过容量限制"))));
+  }
+
+  @Test
   void ordinaryChatWithoutNodesStreamsAndKeepsProviderKeyPrivate() throws Exception {
     provider(
         chunk(new JSONObject(Map.of("content", "secret-")), null)

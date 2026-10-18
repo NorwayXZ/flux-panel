@@ -418,6 +418,9 @@ public class AiOpsService {
   }
 
   static String safeError(Exception e) {
+    while ((e instanceof java.util.concurrent.ExecutionException
+            || e instanceof java.util.concurrent.CompletionException)
+        && e.getCause() instanceof Exception cause) e = cause;
     if (e instanceof IllegalArgumentException || e instanceof IllegalStateException)
       return Objects.toString(e.getMessage(), "执行失败")
           .substring(0, Math.min(300, Objects.toString(e.getMessage(), "执行失败").length()));

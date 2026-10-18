@@ -34,7 +34,7 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
   public void onNext(List<ByteBuffer> buffers) {
     try {
       for (ByteBuffer b : buffers) {
-        if (b.remaining() > 262144 - body.size()) throw new IllegalStateException("模型响应超过容量限制");
+        if (b.remaining() > 2097152 - body.size()) throw new IllegalStateException("模型响应超过容量限制");
         while (b.hasRemaining()) {
           byte next = b.get();
           body.write(next);
@@ -133,6 +133,7 @@ final class AiChatStreamSubscriber implements HttpResponse.BodySubscriber<byte[]
     JSONObject message = new JSONObject(Map.of("role", "assistant", "content", content.toString()));
     if (!reasoning.isEmpty()) message.put("reasoning_content", reasoning.toString());
     if (!tools.isEmpty()) message.put("tool_calls", new JSONArray(new ArrayList<>(tools.values())));
+    if (JSON.toJSONBytes(message).length > 262144) throw new IllegalStateException("模型回复正文超过容量限制");
     return message;
   }
 }
