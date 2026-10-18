@@ -12,17 +12,20 @@ import (
 // stopStrayMysterium ends myst processes started from binDir that the
 // manager does not track. It reads /proc and does nothing where that is absent.
 func stopStrayMysterium(binDir string) {
-	pids := strayMysteriumPIDs("/proc", binDir)
-	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+	processes := []*os.Process{}
+	for _, pid := range strayMysteriumPIDs("/proc", binDir) {
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Signal(syscall.SIGTERM)
+			processes = append(processes, process)
+		}
 	}
 	deadline := time.Now().Add(15 * time.Second)
-	for _, pid := range pids {
-		for time.Now().Before(deadline) && syscall.Kill(pid, 0) == nil {
+	for _, process := range processes {
+		for time.Now().Before(deadline) && process.Signal(syscall.Signal(0)) == nil {
 			time.Sleep(200 * time.Millisecond)
 		}
-		if syscall.Kill(pid, 0) == nil {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+		if process.Signal(syscall.Signal(0)) == nil {
+			_ = process.Kill()
 		}
 	}
 }
