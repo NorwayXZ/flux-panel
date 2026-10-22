@@ -8,6 +8,37 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ForwardServiceImplTests {
     @Test
+    void diagnosticPreviewSkipsPortsOccupiedOutsideThePanelLedger() {
+        var node = new com.admin.entity.Node();
+        node.setId(2L);
+        node.setPortSta(16351);
+        node.setPortEnd(16353);
+        var attempts = new java.util.ArrayList<Integer>();
+        var service = org.mockito.Mockito.spy(new ForwardServiceImpl() {
+            @Override
+            boolean isAgentPortAvailable(com.admin.entity.Node target,
+                    java.util.List<com.admin.common.utils.AgentPortCheckUtil.Check> checks, int port) {
+                assertEquals(1, checks.size());
+                assertEquals("tcp", checks.get(0).getNetwork());
+                attempts.add(port);
+                return port != 16351;
+            }
+        });
+        service.nodeService = org.mockito.Mockito.mock(com.admin.service.NodeService.class);
+        var tunnels = org.mockito.Mockito.mock(com.admin.service.TunnelService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "tunnelService", tunnels);
+        service.jdbcTemplate = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        org.mockito.Mockito.when(service.nodeService.getById(2L)).thenReturn(node);
+        org.mockito.Mockito.when(service.nodeService.list()).thenReturn(java.util.List.of(node));
+        org.mockito.Mockito.when(tunnels.list()).thenReturn(java.util.List.of());
+        org.mockito.Mockito.doReturn(java.util.List.of()).when(service).list(
+                org.mockito.ArgumentMatchers.any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+
+        assertEquals(16352, service.previewHopPort(2L));
+        assertEquals(java.util.List.of(16351, 16352), attempts);
+    }
+
+    @Test
     void missingBalanceStrategyDefaultsToRound() throws Exception {
         Method method = ForwardServiceImpl.class.getDeclaredMethod("normalizeBalanceStrategy", String.class);
         method.setAccessible(true);

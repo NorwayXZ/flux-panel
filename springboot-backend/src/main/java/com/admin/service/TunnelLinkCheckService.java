@@ -176,7 +176,8 @@ public class TunnelLinkCheckService {
         String openError = agent.openListener(hop.to.getId(), session, hop.previewPort);
         if (openError != null) {
             link.put("status", "warn");
-            link.put("message", "端口 " + hop.previewPort + " 已被 " + hop.to.getName() + " 上的其他程序占用，建转发时会跳过它");
+            link.put("message", hop.to.getName() + " 的临时诊断监听端口 " + hop.previewPort
+                    + " 启动失败：" + openError + "；这不代表隧道已经使用该端口，请重新诊断");
             return;
         }
         try {

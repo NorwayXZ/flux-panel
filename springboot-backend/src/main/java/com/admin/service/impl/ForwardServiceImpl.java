@@ -2923,7 +2923,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
      */
     @Override
     public Integer previewHopPort(Long nodeId) {
-        return allocatePortForNode(nodeId, null);
+        // Diagnosis opens a temporary TCP listener. Check the OS as well as the
+        // panel ledger, just as real route allocation does, or every diagnosis
+        // selects the same externally occupied port again.
+        return allocatePortForNode(nodeId, null, Collections.emptySet(),
+                Collections.singletonList(new AgentPortCheckUtil.Check("tcp", "", null)));
     }
 
     private Integer allocatePortForNode(Long nodeId, Long excludeForwardId) {
@@ -2957,7 +2961,7 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         return null;
     }
 
-    private boolean isAgentPortAvailable(Node node, List<AgentPortCheckUtil.Check> checks, int port) {
+    boolean isAgentPortAvailable(Node node, List<AgentPortCheckUtil.Check> checks, int port) {
         if (checks == null || checks.isEmpty()) {
             return true;
         }

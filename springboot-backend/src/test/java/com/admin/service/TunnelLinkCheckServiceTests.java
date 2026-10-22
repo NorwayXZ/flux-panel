@@ -126,6 +126,20 @@ class TunnelLinkCheckServiceTests {
                 .check(List.of(entry, exit), List.of(hop(entry, exit, null, 20005)), "tls", false);
 
         assertEquals("warn", link(report, 0).get("status"));
+        assertTrue(String.valueOf(link(report, 0).get("message")).contains("address already in use"));
+        assertTrue(agent.closed.isEmpty());
+    }
+
+    @Test
+    void aListenerTransportFailureIsNotReportedAsAnOccupiedPort() {
+        FakeAgent agent = new FakeAgent();
+        agent.listenerErrors.put(2L, "节点无响应");
+        Map<String, Object> report = new TunnelLinkCheckService(agent)
+                .check(List.of(entry, exit), List.of(hop(entry, exit, null, 20005)), "tls", false);
+
+        String message = String.valueOf(link(report, 0).get("message"));
+        assertTrue(message.contains("节点无响应"));
+        org.junit.jupiter.api.Assertions.assertFalse(message.contains("其他程序占用"));
     }
 
     @Test
