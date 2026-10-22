@@ -46,6 +46,11 @@ final class AiOpsToolSession {
         result.put("success", true);
         return result;
       }
+      if (name.equals("propose_action") && allowed.contains(name)) {
+        result.put("data", ops.proposeAction(policy, args));
+        result.put("success", true);
+        return result;
+      }
       if (name.equals("check_nodes") && allowed.contains(name)) {
         result.put("data", ops.checkNodes(args.getString("check"), nodes, Math.min(120, AiOpsService.remainingSeconds(started))));
         result.put("success", true);

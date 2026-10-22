@@ -20,6 +20,7 @@ import {
   History,
   FileBarChart,
   NotebookPen,
+  ClipboardCheck,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import {
@@ -38,6 +39,7 @@ import {
 import AiOpsChat from "@/components/ai-ops-chat";
 import AiOpsReports from "@/components/ai-ops-reports";
 import AiOpsMemory from "@/components/ai-ops-memory";
+import AiOpsProposals from "@/components/ai-ops-proposals";
 
 const defaults = (): OpsConfig => ({
   name: "",
@@ -237,6 +239,17 @@ export default function AiOpsPage() {
           }
         >
           <AiOpsReports configured={!!data?.settings.keyConfigured} />
+        </Tab>
+        <Tab
+          key="proposals"
+          title={
+            <span className="flex items-center gap-2">
+              <ClipboardCheck size={16} />
+              变更提案
+            </span>
+          }
+        >
+          <AiOpsProposals />
         </Tab>
         <Tab
           key="memory"

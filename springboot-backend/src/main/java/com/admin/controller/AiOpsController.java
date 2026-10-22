@@ -2,6 +2,8 @@ package com.admin.controller;
 
 import com.admin.common.annotation.RequireRole;
 import com.admin.common.lang.R;
+import com.admin.common.utils.JwtUtil;
+import com.admin.service.AiOpsProposalService;
 import com.admin.service.AiOpsService;
 import com.alibaba.fastjson2.JSONObject;
 import org.springframework.web.bind.annotation.*;
@@ -12,12 +14,51 @@ public class AiOpsController {
   private final AiOpsService service;
   private final com.admin.service.AiOpsAutomation automation;
   private final com.admin.service.AiNodeMemory memory;
+  private final AiOpsProposalService proposals;
 
   public AiOpsController(AiOpsService service, com.admin.service.AiOpsAutomation automation,
-      com.admin.service.AiNodeMemory memory) {
+      com.admin.service.AiNodeMemory memory, AiOpsProposalService proposals) {
     this.service = service;
     this.automation = automation;
     this.memory = memory;
+    this.proposals = proposals;
+  }
+
+  @RequireRole
+  @PostMapping("/proposals")
+  public R proposals(@RequestBody(required = false) JSONObject body) {
+    return proposals.list(body == null ? null : body.getString("status"));
+  }
+
+  @RequireRole
+  @PostMapping("/proposals/create")
+  public R createProposal(@RequestBody JSONObject body) {
+    try {
+      Integer userId = JwtUtil.getUserIdFromToken();
+      return R.ok(proposals.propose(
+          userId == null ? 0 : userId,
+          "manual",
+          body.getString("action"),
+          body.getLongValue("targetId"),
+          body.getString("title"),
+          body.getString("reason")));
+    } catch (IllegalArgumentException e) {
+      return R.err(e.getMessage());
+    }
+  }
+
+  @RequireRole
+  @PostMapping("/proposals/approve")
+  public R approveProposal(@RequestBody JSONObject body) {
+    Integer userId = JwtUtil.getUserIdFromToken();
+    return proposals.approve(body.getLongValue("id"), userId == null ? 0 : userId);
+  }
+
+  @RequireRole
+  @PostMapping("/proposals/reject")
+  public R rejectProposal(@RequestBody JSONObject body) {
+    Integer userId = JwtUtil.getUserIdFromToken();
+    return proposals.reject(body.getLongValue("id"), userId == null ? 0 : userId);
   }
 
   @RequireRole

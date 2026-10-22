@@ -98,6 +98,10 @@ const toolLabels: Record<string, string> = {
   cleanup_rotated_logs: "清理旧日志",
   inspect_agent_upgrade: "检查 Agent 升级",
   upgrade_agent: "升级 Agent",
+  propose_action: "提交变更提案",
+  remember_node_note: "记录节点笔记",
+  security_audit: "安全巡检",
+  write_file: "写入文件",
 };
 const suggestions = [
   "检查所选服务器的磁盘、内存和负载",

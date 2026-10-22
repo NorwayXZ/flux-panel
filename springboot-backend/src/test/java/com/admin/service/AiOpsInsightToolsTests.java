@@ -83,7 +83,7 @@ class AiOpsInsightToolsTests {
     List<String> names = names(AiOpsService.tools(config));
     assertTrue(names.containsAll(List.of("panel_knowledge", "inspect_panel", "network_probe", "node_speed_test")), names.toString());
     assertFalse(names.contains("execute_command"), "read-only mode never gains shell access");
-    assertEquals(List.of("panel_knowledge", "inspect_panel"), names(AiOpsService.generalTools(config)));
+    assertEquals(List.of("panel_knowledge", "propose_action", "inspect_panel"), names(AiOpsService.generalTools(config)));
     config.put("upgradeOnly", true);
     assertFalse(names(AiOpsService.tools(config)).contains("network_probe"));
 

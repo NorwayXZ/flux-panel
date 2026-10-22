@@ -27,6 +27,7 @@ public class AiOpsService {
   @javax.annotation.Resource private AiBatchChecks batchChecks;
   @javax.annotation.Resource private AiNodeMemory memory;
   @javax.annotation.Resource private AiSecurityAudit securityAudit;
+  @javax.annotation.Resource private AiOpsProposalService proposals;
   private final JdbcTemplate db;
   private final AESCrypto crypto;
   private final TelegramNotificationService notifications;
@@ -295,7 +296,8 @@ public class AiOpsService {
     JSONArray list = new JSONArray();
     for (Object tool : tools(c)) {
       String name = ((JSONObject) JSON.toJSON(tool)).getJSONObject("function").getString("name");
-      if (name.equals("panel_knowledge") || name.equals("inspect_panel")) list.add(tool);
+      if (name.equals("panel_knowledge") || name.equals("inspect_panel")
+          || name.equals("propose_action")) list.add(tool);
     }
     return list;
   }
@@ -309,6 +311,22 @@ public class AiOpsService {
         "parameters", Map.of("type", "object", "properties", Map.of("query", Map.of("type", "string",
             "description", "Feature name, page or problem in Chinese or English, e.g. 私人代理 出口 or Mysterium 充值")),
             "required", List.of("query"), "additionalProperties", false))));
+    list.add(Map.of("type", "function", "function", Map.of("name", "propose_action",
+        "description", "Propose a panel control-plane change for administrator approval; it is NOT"
+            + " executed when proposed. Supported actions: pause_forward (stop one forward from"
+            + " accepting connections, configuration kept) and resume_forward. Use after"
+            + " diagnosing a problem that one of these reversible actions would fix: give the"
+            + " forward ID, a short title and the evidence-based reason. The administrator"
+            + " reviews it under AI 运维 → 变更提案 and approves or rejects it; tell the user the"
+            + " proposal number and that nothing has changed yet. Never propose the same action"
+            + " for the same forward twice.",
+        "parameters", Map.of("type", "object", "properties", Map.of(
+            "action", Map.of("type", "string", "enum", List.of("pause_forward", "resume_forward")),
+            "targetId", Map.of("type", "integer", "description", "Forward ID"),
+            "title", Map.of("type", "string", "description", "Short proposal title"),
+            "reason", Map.of("type", "string", "description", "Why, with the evidence found")),
+            "required", List.of("action", "targetId", "title", "reason"),
+            "additionalProperties", false))));
     if (c.getBooleanValue("allowPanelRead")) {
       list.add(Map.of("type", "function", "function", Map.of("name", "inspect_panel",
           "description", "Read panel state. capabilities: API catalog; nodes; alerts: current monitoring of all resources;"
@@ -461,6 +479,20 @@ public class AiOpsService {
 
   Object inspectPanel(String section, Set<Long> nodes) throws Exception {
     return panelContext.inspect(section, nodes);
+  }
+
+  /** Files a change proposal; execution waits for an administrator's approval in the panel. */
+  Object proposeAction(JSONObject policy, JSONObject args) {
+    if (proposals == null) throw new IllegalStateException("变更提案不可用");
+    long creator = policy.getLongValue("_chatOwner");
+    String source = policy.containsKey("_chatOwner") ? "chat" : "task";
+    return proposals.propose(
+        creator,
+        source,
+        args.getString("action"),
+        args.getLongValue("targetId"),
+        args.getString("title"),
+        args.getString("reason"));
   }
 
   Object searchKnowledge(String query) {
@@ -663,6 +695,9 @@ public class AiOpsService {
                   + " health.\n" + knowledgeIndex() + "\n"
                   + " Only use provided tools. Inspect before repair, verify after repair. Report"
                   + " partial failures accurately. Never claim actions without successful tools."
+                  + " For panel control-plane changes (pause or resume a forward) use propose_action"
+                  + " instead of acting directly: the proposal changes nothing until an administrator"
+                  + " approves it in the panel, so say it is pending approval, not done."
                   + " Finish with JSON: {\"summary\":\"Chinese"
                   + " report\",\"attentionRequired\":true/false}. Allowed nodes: "
                   + ready

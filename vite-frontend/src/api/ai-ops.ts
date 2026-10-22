@@ -151,3 +151,27 @@ export const opsRestoreChange = (id: number) =>
   Network.post<{ restored: boolean; path: string }>("/ai-ops/changes/restore", { id });
 export const opsGenerateReport = () =>
   Network.post<{ queued: boolean; message: string }>("/ai-ops/reports/generate", {});
+
+export interface OpsProposal {
+  id: number;
+  creatorId: number;
+  source: string;
+  action: string;
+  actionLabel: string;
+  targetId: number;
+  targetName?: string;
+  title: string;
+  reason: string;
+  status: "pending" | "executed" | "failed" | "rejected" | "expired";
+  createdAt: number;
+  decidedBy?: number;
+  decidedAt?: number;
+  executedAt?: number;
+  result?: string;
+}
+export const opsProposals = (status?: string) =>
+  Network.post<OpsProposal[]>("/ai-ops/proposals", status ? { status } : {});
+export const opsApproveProposal = (id: number) =>
+  Network.post<OpsProposal>("/ai-ops/proposals/approve", { id });
+export const opsRejectProposal = (id: number) =>
+  Network.post<OpsProposal>("/ai-ops/proposals/reject", { id });
