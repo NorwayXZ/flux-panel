@@ -227,8 +227,16 @@ function ResidentialExits() {
         <>
           {overview?.lastRefreshError && (
             <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
-              最近一次读取候选列表失败：{overview.lastRefreshError}
-              。已有的出口不受影响，系统会自动重试。
+              VPN Gate 候选源刷新失败：{overview.lastRefreshError}
+              。已连接的出口继续独立检测，新建和更换出口可能受影响。
+              {overview.nextRefreshAt
+                ? `下次自动重试：${formatDateTime(overview.nextRefreshAt)}。`
+                : "系统会自动重试。"}
+            </div>
+          )}
+          {overview?.lastLookupError && (
+            <div className="rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+              {overview.lastLookupError}。已确认的出口继续使用，新出口将在归属确认后选用。
             </div>
           )}
 
@@ -287,7 +295,9 @@ function ResidentialExits() {
             </div>
             {countries.length === 0 ? (
               <p className="px-5 py-6 text-sm text-default-500">
-                还没有读取到候选。点击右上角“刷新候选列表”试一次。
+                {overview?.lastRefreshError
+                  ? "候选源暂时不可用，目前没有新鲜候选；已连接出口的状态见下方。系统会自动重试，也可以点击“刷新候选列表”。"
+                  : "还没有读取到候选。点击右上角“刷新候选列表”试一次。"}
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-6">

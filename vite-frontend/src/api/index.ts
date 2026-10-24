@@ -834,6 +834,10 @@ export interface ExitCountriesResponse {
   countries: ExitCountry[];
   lastRefreshAt?: number;
   lastRefreshError?: string;
+  lastLookupError?: string;
+  lastRefreshSource?: string;
+  nextRefreshAt?: number;
+  refreshing?: boolean;
 }
 
 export interface ExitMember {
@@ -877,6 +881,10 @@ export interface ExitPoolOverview {
   groups: ExitGroup[];
   lastRefreshAt?: number;
   lastRefreshError?: string;
+  lastLookupError?: string;
+  lastRefreshSource?: string;
+  nextRefreshAt?: number;
+  refreshing?: boolean;
 }
 
 export interface ExitEvent {

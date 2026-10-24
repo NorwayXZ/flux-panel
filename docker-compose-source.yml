@@ -29,7 +29,7 @@ services:
       retries: 20
 
   backend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.84.1}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-backend:${PANEL_VERSION:-2.84.2}
     container_name: springboot-backend
     restart: unless-stopped
     environment:
@@ -39,6 +39,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       LOG_DIR: /app/logs
+      EXIT_POOL_VPNGATE_URL: ${EXIT_POOL_VPNGATE_URL:-http://api.vpngate.net/api/iphone/}
+      EXIT_POOL_IP_LOOKUP_URL: ${EXIT_POOL_IP_LOOKUP_URL:-http://ip-api.com/batch}
       JAVA_OPTS: ${JAVA_OPTS:--Xms192m -Xmx512m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai}
       DB_POOL_MIN_IDLE: ${DB_POOL_MIN_IDLE:-1}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
@@ -72,7 +74,7 @@ services:
       start_period: ${BACKEND_HEALTH_START_PERIOD:-420s}
 
   frontend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.84.1}
+    image: ${IMAGE_REGISTRY:-ghcr.io/norwayxz}/flux-panel-frontend:${PANEL_VERSION:-2.84.2}
     container_name: vite-frontend
     restart: unless-stopped
     ports:

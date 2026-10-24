@@ -77,6 +77,7 @@ public class ExitPoolService {
 
     private static final String SOURCE_VPNGATE = "vpngate";
     private static final long LIST_REFRESH_MS = 10 * 60_000L;
+    private static final long LIST_RETRY_MS = 60_000L;
     private static final long CANDIDATE_FRESH_MS = 30 * 60_000L;
     private static final long IP_INFO_TTL_MS = 7 * 86_400_000L;
     private static final long CONNECT_PATIENCE_MS = 5 * 60_000L;
@@ -100,7 +101,7 @@ public class ExitPoolService {
     private final JdbcTemplate jdbc;
     private final NodeMapper nodeMapper;
     private final IpQualityService ipQualityService;
-    private final String listUrl;
+    private final VpnGateListFetcher listFetcher;
     private final String lookupUrl;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8))
             .followRedirects(HttpClient.Redirect.NORMAL).build();
@@ -114,18 +115,19 @@ public class ExitPoolService {
     private volatile long lastRefreshAt;
     private volatile long lastRefreshAttemptAt;
     private volatile String lastRefreshError;
+    private final AtomicBoolean listRefreshing = new AtomicBoolean(false);
     private volatile String lastLookupError;
     private volatile long lastLookupAt;
     private final Map<String, Long> lookupRetryAt = new ConcurrentHashMap<>();
     private volatile long lastCleanupAt;
 
     public ExitPoolService(JdbcTemplate jdbc, NodeMapper nodeMapper, IpQualityService ipQualityService,
-                           @Value("${exit-pool.vpngate-url:http://www.vpngate.net/api/iphone/}") String listUrl,
+                           @Value("${exit-pool.vpngate-url:http://api.vpngate.net/api/iphone/}") String listUrl,
                            @Value("${exit-pool.ip-lookup-url:http://ip-api.com/batch}") String lookupUrl) {
         this.jdbc = jdbc;
         this.nodeMapper = nodeMapper;
         this.ipQualityService = ipQualityService;
-        this.listUrl = listUrl;
+        this.listFetcher = new VpnGateListFetcher(listUrl);
         this.lookupUrl = lookupUrl;
     }
 
@@ -176,7 +178,7 @@ public class ExitPoolService {
         result.put("supportedProxyTypes", SUPPORTED_PROXY_TYPES);
         result.put("countries", countryRows());
         result.put("lastRefreshAt", lastRefreshAt == 0 ? null : lastRefreshAt);
-        result.put("lastRefreshError", refreshProblem());
+        refreshMetadata(result);
         return R.ok(result);
     }
 
@@ -216,7 +218,7 @@ public class ExitPoolService {
         result.put("countries", countryRows());
         result.put("groups", groups);
         result.put("lastRefreshAt", lastRefreshAt == 0 ? null : lastRefreshAt);
-        result.put("lastRefreshError", refreshProblem());
+        refreshMetadata(result);
         return R.ok(result);
     }
 
@@ -227,13 +229,18 @@ public class ExitPoolService {
     }
 
     public R refresh() {
-        refreshCandidatesIfDue(true);
+        if (!refreshCandidatesIfDue(true)) return R.err("候选列表正在刷新，请稍后查看");
         requestReconcile();
         return lastRefreshError == null ? R.ok() : R.err("候选列表刷新失败：" + lastRefreshError);
     }
 
-    private String refreshProblem() {
-        return lastRefreshError != null ? lastRefreshError : lastLookupError;
+    private void refreshMetadata(Map<String, Object> result) {
+        result.put("lastRefreshError", lastRefreshError);
+        result.put("lastLookupError", lastLookupError);
+        result.put("lastRefreshSource", listFetcher.sourceHost());
+        result.put("refreshing", listRefreshing.get());
+        result.put("nextRefreshAt", lastRefreshAttemptAt == 0 ? null
+                : lastRefreshAttemptAt + (lastRefreshError == null ? LIST_REFRESH_MS : LIST_RETRY_MS));
     }
 
     /** 手动排除一个出口。它如果正在使用，节点会立即切到另一个已批准的出口。 */
@@ -566,40 +573,42 @@ public class ExitPoolService {
 
     // ---------------------------------------------------------------- 候选收集与判定
 
-    void refreshCandidatesIfDue(boolean force) {
+    boolean refreshCandidatesIfDue(boolean force) {
         long now = System.currentTimeMillis();
-        synchronized (this) {
-            if (!force && now - lastRefreshAttemptAt < LIST_REFRESH_MS) return;
-            lastRefreshAttemptAt = now;
-        }
+        if (!listRefreshing.compareAndSet(false, true)) return false;
         try {
-            HttpResponse<String> response = http.send(HttpRequest.newBuilder(URI.create(listUrl))
-                    .timeout(Duration.ofSeconds(12)).GET().build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() != 200) throw new IllegalStateException("出口列表返回 HTTP " + response.statusCode());
-            List<ExitCandidateParser.Candidate> candidates = ExitCandidateParser.parseVpnGateList(response.body());
-            if (candidates.isEmpty()) throw new IllegalStateException("出口列表为空或格式无法识别");
-            for (ExitCandidateParser.Candidate candidate : candidates) {
-                // 先更新再插入：已有的候选每十分钟刷新一次，不为它们消耗新的自增编号
-                int updated = jdbc.update("UPDATE exit_candidate SET country=?, cipher=?, auth=?, ca=?, cert=?, client_key=?, list_score=?, "
-                                + "list_sessions=?, list_speed=?, list_uptime=?, last_seen=? WHERE source=? AND host=? AND port=? AND proto=?",
-                        candidate.getCountry(), candidate.getCipher(), candidate.getAuth(), candidate.getCa(), candidate.getCert(),
-                        candidate.getKey(), candidate.getScore(), candidate.getSessions(), candidate.getSpeed(), candidate.getUptime(), now,
-                        SOURCE_VPNGATE, candidate.getHost(), candidate.getPort(), candidate.getProto());
-                if (updated > 0) continue;
-                jdbc.update("INSERT IGNORE INTO exit_candidate (source,country,host,port,proto,cipher,auth,ca,cert,client_key,list_score,"
-                                + "list_sessions,list_speed,list_uptime,first_seen,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        SOURCE_VPNGATE, candidate.getCountry(), candidate.getHost(), candidate.getPort(), candidate.getProto(),
-                        candidate.getCipher(), candidate.getAuth(), candidate.getCa(), candidate.getCert(), candidate.getKey(),
-                        candidate.getScore(), candidate.getSessions(), candidate.getSpeed(), candidate.getUptime(), now, now);
+            long interval = lastRefreshError == null ? LIST_REFRESH_MS : LIST_RETRY_MS;
+            if (!force && now - lastRefreshAttemptAt < interval) return false;
+            lastRefreshAttemptAt = now;
+            try {
+                List<ExitCandidateParser.Candidate> candidates = listFetcher.fetch();
+                for (ExitCandidateParser.Candidate candidate : candidates) {
+                    // 先更新再插入：已有的候选每十分钟刷新一次，不为它们消耗新的自增编号
+                    int updated = jdbc.update("UPDATE exit_candidate SET country=?, cipher=?, auth=?, ca=?, cert=?, client_key=?, list_score=?, "
+                                    + "list_sessions=?, list_speed=?, list_uptime=?, last_seen=? WHERE source=? AND host=? AND port=? AND proto=?",
+                            candidate.getCountry(), candidate.getCipher(), candidate.getAuth(), candidate.getCa(), candidate.getCert(),
+                            candidate.getKey(), candidate.getScore(), candidate.getSessions(), candidate.getSpeed(), candidate.getUptime(), now,
+                            SOURCE_VPNGATE, candidate.getHost(), candidate.getPort(), candidate.getProto());
+                    if (updated > 0) continue;
+                    jdbc.update("INSERT IGNORE INTO exit_candidate (source,country,host,port,proto,cipher,auth,ca,cert,client_key,list_score,"
+                                    + "list_sessions,list_speed,list_uptime,first_seen,last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            SOURCE_VPNGATE, candidate.getCountry(), candidate.getHost(), candidate.getPort(), candidate.getProto(),
+                            candidate.getCipher(), candidate.getAuth(), candidate.getCa(), candidate.getCert(), candidate.getKey(),
+                            candidate.getScore(), candidate.getSessions(), candidate.getSpeed(), candidate.getUptime(), now, now);
+                }
+                classifyCandidates(now);
+                lastRefreshAt = now;
+                lastRefreshError = null;
+            } catch (Exception e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                lastRefreshError = concise(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                log.warn("Exit candidate refresh failed: {}", lastRefreshError);
             }
-            classifyCandidates(now);
-            lastRefreshAt = now;
-            lastRefreshError = null;
-        } catch (Exception e) {
-            lastRefreshError = concise(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-            log.warn("Exit candidate refresh failed: {}", lastRefreshError);
+            cleanupIfDue(now);
+            return true;
+        } finally {
+            listRefreshing.set(false);
         }
-        cleanupIfDue(now);
     }
 
     private void classifyCandidates(long now) {

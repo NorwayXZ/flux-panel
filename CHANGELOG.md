@@ -2,6 +2,7 @@
 
 本文件是各版本的一行摘要汇总（原 README「近期版本」栏目）。每个版本的完整说明见仓库 `.github/release-notes.md` 与 [GitHub Releases](https://github.com/NorwayXZ/flux-panel/releases)。
 
+`2.84.2` 修复 VPN Gate 单一候选源超时后缺少切源和重试过慢的问题，区分候选源与 IP 归属查询故障。仅更新面板，Agent 保持 `2.84.0`。
 `2.84.1` 修复隧道创建前诊断反复选择系统已占用端口的问题，保留临时监听真实错误。仅更新面板，Agent 保持 `2.84.0`。
 `2.84.0` 正式版：2.84 系列首个稳定版，汇总 beta.3 至 beta.28 的全部功能（AI 运维对话与定时任务、Mysterium 家宽与独立出口、代理服务商、面板知识库与 MCP 接口等）。新增 AI 运维「变更提案」：助手只能提议暂停/恢复转发，管理员在 AI 运维页批准后才执行。README 拆分：历史版本摘要移至 CHANGELOG.md，功能详解移至 docs/FEATURES.md。面板和 Agent 均为 `2.84.0`。
 `2.84.0-beta.28` 预览版：Mysterium 共享付款恢复修复（付款改用独立且有超时限制的 Hermes 连接、结算查询不再占用账本写锁，未确认付款等待缩短为 10 秒）。仅更新面板，Agent 保持 `2.84.0-beta.27`。
