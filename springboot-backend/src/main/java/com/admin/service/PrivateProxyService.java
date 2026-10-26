@@ -1681,6 +1681,7 @@ public class PrivateProxyService {
             return R.err("自检需要节点 Agent " + MIN_PROTOCOL_AGENT_VERSION + " 或更高版本，请先升级该节点");
         }
         CheckResult result = runCheck(proxy, node);
+        if (result == null) return R.err(409, "这个代理正在自检，请等待本次完成后再试");
         recordCheck(proxy.getId(), result, true);
         return R.ok(result.view());
     }
@@ -1733,19 +1734,12 @@ public class PrivateProxyService {
         return request;
     }
 
-    /** 同一个代理的自检排队进行：WireGuard 的同一把密钥同时只能有一个连接端点。 */
+    /** Only one check may use a proxy at once; a duplicate is busy, not a connectivity failure. */
     private final Map<Long, java.util.concurrent.locks.ReentrantLock> checkLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     private CheckResult runCheck(PrivateProxy proxy, Node node) {
         java.util.concurrent.locks.ReentrantLock lock = checkLocks.computeIfAbsent(proxy.getId(), id -> new java.util.concurrent.locks.ReentrantLock());
-        try {
-            if (!lock.tryLock(90, java.util.concurrent.TimeUnit.SECONDS)) {
-                return new CheckResult(false, null, null, null, "这个代理正在自检，请稍后再试");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return new CheckResult(false, null, null, null, "自检被中断");
-        }
+        if (!lock.tryLock()) return null;
         try {
             return probe(proxy, node);
         } finally {
@@ -1838,6 +1832,7 @@ public class PrivateProxyService {
                 return;
             }
             CheckResult result = runCheck(proxy, node);
+            if (result == null) return;
             boolean exitDown = !result.ok && "residential".equals(proxy.getExitType())
                     && !"ok".equals(exitPoolService.exitView(proxy.getNodeId(), proxy.getExitCountry()).get("status"));
             // 家宽出口不可用时由出口告警负责，这里不累计失败，也不修复
@@ -1853,7 +1848,10 @@ public class PrivateProxyService {
                 return;
             }
             PrivateProxy repaired = proxyMapper.selectById(proxyId);
-            if (repaired != null && "active".equals(repaired.getState())) recordCheck(proxyId, runCheck(repaired, node), true);
+            if (repaired != null && "active".equals(repaired.getState())) {
+                CheckResult repairedResult = runCheck(repaired, node);
+                if (repairedResult != null) recordCheck(proxyId, repairedResult, true);
+            }
         } catch (Exception e) {
             log.warn("Private proxy {} check failed: {}", proxyId, e.getMessage());
         }

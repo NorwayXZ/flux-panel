@@ -1046,10 +1046,11 @@ export const updatePrivateProxy = (data: PrivateProxyUpdateRequest) =>
   Network.mutate<PrivateProxyItem>("/private-proxy/update", data, [
     "/private-proxy/list",
   ]);
+// The node probe waits up to 60 seconds; allow time to return its result.
 export const testPrivateProxy = (id: number) =>
   Network.mutate<PrivateProxyCheckResult>("/private-proxy/test", { id }, [
     "/private-proxy/list",
-  ]);
+  ], 75_000);
 export const getPrivateProxyTraffic = (
   id: number,
   range: "24h" | "7d" | "30d",

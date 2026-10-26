@@ -1302,13 +1302,15 @@ export default function PrivateProxyPage() {
                             : item.state === "active"
                               ? {
                                   icon: <Stethoscope size={15} />,
-                                  label: "自检",
-                                  value: !item.lastCheckAt
-                                    ? "尚未自检"
-                                    : item.lastCheckOk
-                                      ? `正常 · 出口 ${item.lastCheckIp} · ${item.lastCheckLatency} ms`
-                                      : `失败：${item.lastCheckError || "原因未知"}`,
-                                  tone: !item.lastCheckAt
+                                  label: testing === item.id ? "自检中" : "上次自检",
+                                  value: testing === item.id
+                                    ? "正在等待节点返回检查结果…"
+                                    : !item.lastCheckAt
+                                      ? "尚未自检"
+                                      : item.lastCheckOk
+                                        ? `正常 · 出口 ${item.lastCheckIp} · ${item.lastCheckLatency} ms`
+                                        : `失败：${item.lastCheckError || "原因未知"}`,
+                                  tone: testing === item.id || !item.lastCheckAt
                                     ? "default"
                                     : item.lastCheckOk
                                       ? "success"

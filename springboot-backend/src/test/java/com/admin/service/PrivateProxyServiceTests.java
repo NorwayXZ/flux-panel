@@ -15,6 +15,44 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class PrivateProxyServiceTests {
 
     @Test
+    void duplicateChecksReturnBusyWithoutWaitingForTheActiveProbe() throws Exception {
+        var mapper = org.mockito.Mockito.mock(com.admin.mapper.PrivateProxyMapper.class);
+        var service = new PrivateProxyService(mapper, null, null, null, null, null, null,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class), null, null, null, null, null, "test-secret");
+        var proxy = new PrivateProxy();
+        proxy.setId(32L);
+        var lock = new java.util.concurrent.locks.ReentrantLock();
+        @SuppressWarnings("unchecked")
+        var locks = (java.util.Map<Long, java.util.concurrent.locks.ReentrantLock>)
+                org.springframework.test.util.ReflectionTestUtils.getField(service, "checkLocks");
+        locks.put(proxy.getId(), lock);
+        var acquired = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            executor.submit(() -> {
+                lock.lock();
+                try {
+                    acquired.countDown();
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    lock.unlock();
+                }
+            });
+            assertTrue(acquired.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            var duplicate = executor.submit(() -> org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                    service, "runCheck", proxy, new com.admin.entity.Node()));
+            assertNull(duplicate.get(1, java.util.concurrent.TimeUnit.SECONDS));
+            org.mockito.Mockito.verifyNoInteractions(mapper);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void assignsUniqueDatabaseSafeRuntimeNamesBeforeInsert() {
         PrivateProxy first = new PrivateProxy();
         PrivateProxy second = new PrivateProxy();
