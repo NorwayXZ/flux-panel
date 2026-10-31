@@ -167,8 +167,8 @@ public class PrivateProxyService {
                 && !AgentVersionUtil.isAtLeast(node.getVersion(), MIN_PROTOCOL_AGENT_VERSION)) {
             return R.err("Hysteria2 混淆需要节点 Agent " + MIN_PROTOCOL_AGENT_VERSION + " 或更高版本");
         }
-        if (node.getPortSta() != null && dto.getListenPort() < node.getPortSta()
-                || node.getPortEnd() != null && dto.getListenPort() > node.getPortEnd()) {
+        if (dto.getListenPort() != null && (node.getPortSta() != null && dto.getListenPort() < node.getPortSta()
+                || node.getPortEnd() != null && dto.getListenPort() > node.getPortEnd())) {
             return R.err("监听端口不在节点允许范围内");
         }
         String bindIp = StringUtils.trimToEmpty(dto.getBindIp());
@@ -188,8 +188,14 @@ public class PrivateProxyService {
             R exitCheck = checkResidentialExit(proxyType, node, exitCountry);
             if (exitCheck.getCode() != 0) return exitCheck;
         }
-        R portCheck = checkListenPort(node, proxyType, bindIp, dto.getListenPort());
-        if (portCheck.getCode() != 0) return portCheck;
+        if (dto.getListenPort() == null) {
+            R allocation = allocateListenPort(node, proxyType, bindIp);
+            if (allocation.getCode() != 0) return allocation;
+            dto.setListenPort((Integer) allocation.getData());
+        } else {
+            R portCheck = checkListenPort(node, proxyType, bindIp, dto.getListenPort());
+            if (portCheck.getCode() != 0) return portCheck;
+        }
 
         long now = System.currentTimeMillis();
         PrivateProxy proxy = new PrivateProxy();
@@ -752,15 +758,55 @@ public class PrivateProxyService {
         return R.ok();
     }
 
-    private R checkListenPort(Node node, String proxyType, String bindIp, int port) {
-        if (Boolean.TRUE.equals(portLedgerService.diagnose(node.getId(), port).get("occupied"))) {
-            return R.err("端口已被面板中的其他业务占用");
+    R allocateListenPort(Node node, String proxyType, String bindIp) {
+        int first = Math.max(1, node.getPortSta() == null ? 10000 : node.getPortSta());
+        int last = Math.min(65535, node.getPortEnd() == null ? 65535 : node.getPortEnd());
+        if (first > last) return R.err("节点允许的端口范围无效");
+        var query = new com.admin.common.dto.PortLedgerQueryDto();
+        query.setNodeId(node.getId());
+        @SuppressWarnings("unchecked")
+        List<com.admin.common.dto.PortLedgerEntryDto> entries =
+                (List<com.admin.common.dto.PortLedgerEntryDto>) portLedgerService.list(query).get("entries");
+        java.util.BitSet occupied = new java.util.BitSet(65536);
+        for (var entry : entries) {
+            int start = Math.max(first, entry.getPortStart());
+            int end = Math.min(last, entry.getPortEnd());
+            if (start <= end) occupied.set(start, end + 1);
         }
-        List<AgentPortCheckUtil.Check> checks = "shadowsocks".equals(proxyType) || "shadowsocks2022".equals(proxyType)
+        int range = last - first + 1;
+        int offset = java.util.concurrent.ThreadLocalRandom.current().nextInt(range);
+        int probes = 0;
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        // The allocation transaction also protects the existing shared port ledger.
+        for (int i = 0; i < range; i++) {
+            int port = first + (offset + i) % range;
+            if (occupied.get(port)) continue;
+            AgentPortCheckUtil.Result result = checkCandidatePort(node, listenChecks(proxyType, bindIp, port));
+            if (!result.isChecked()) return R.err("自动分配需要节点支持系统端口检查，请先升级 Agent");
+            if (result.isAvailable()) return R.ok(port);
+            if (result.getConflicts().isEmpty()) return R.err(result.getMessage());
+            if (++probes >= 64 || System.nanoTime() >= deadline) return R.err("已检查的候选端口均被占用，请检查节点端口范围或稍后重试");
+        }
+        return R.err("节点允许范围内没有可分配端口");
+    }
+
+    private List<AgentPortCheckUtil.Check> listenChecks(String proxyType, String bindIp, int port) {
+        return "shadowsocks".equals(proxyType) || "shadowsocks2022".equals(proxyType)
                 ? List.of(new AgentPortCheckUtil.Check("tcp", bindIp, port), new AgentPortCheckUtil.Check("udp", bindIp, port))
                 : isUdpAdvancedRuntime(proxyType)
                 ? List.of(new AgentPortCheckUtil.Check("udp", bindIp, port))
                 : List.of(new AgentPortCheckUtil.Check("tcp", bindIp, port));
+    }
+
+    AgentPortCheckUtil.Result checkCandidatePort(Node node, List<AgentPortCheckUtil.Check> checks) {
+        return AgentPortCheckUtil.check(node, checks);
+    }
+
+    private R checkListenPort(Node node, String proxyType, String bindIp, int port) {
+        if (Boolean.TRUE.equals(portLedgerService.diagnose(node.getId(), port).get("occupied"))) {
+            return R.err("端口已被面板中的其他业务占用");
+        }
+        List<AgentPortCheckUtil.Check> checks = listenChecks(proxyType, bindIp, port);
         AgentPortCheckUtil.Result result = AgentPortCheckUtil.check(node, checks);
         return result.isAvailable() ? R.ok() : R.err(result.getMessage());
     }

@@ -901,7 +901,7 @@ export interface PrivateProxyCreateRequest {
   nodeId: number;
   proxyType: PrivateProxyType;
   bindIp?: string;
-  listenPort: number;
+  listenPort?: number;
   authUsername?: string;
   authPassword?: string;
   cipher?: "aes-128-gcm" | "aes-256-gcm" | "chacha20-ietf-poly1305";

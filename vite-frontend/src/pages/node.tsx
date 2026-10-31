@@ -211,6 +211,9 @@ export default function NodePage() {
   const [upgradeTargetVersion, setUpgradeTargetVersion] = useState("");
   const [upgradeBatchStatus, setUpgradeBatchStatus] =
     useState<AgentUpgradeBatch | null>(null);
+  const [dismissedUpgradeBatch, setDismissedUpgradeBatch] = useState(
+    () => sessionStorage.getItem("dismissed-agent-upgrade-batch") || "",
+  );
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const [upgradeNode, setUpgradeNode] = useState<Node | null>(null);
   const [upgradeBatch, setUpgradeBatch] = useState(false);
@@ -1952,6 +1955,8 @@ export default function NodePage() {
 
       {adminMode &&
         upgradeBatchStatus &&
+        (upgradeBatchStatus.state === "running" ||
+          dismissedUpgradeBatch !== upgradeBatchStatus.batchId) &&
         ["running", "paused", "completed_with_errors"].includes(
           upgradeBatchStatus.state,
         ) && (
@@ -1977,24 +1982,41 @@ export default function NodePage() {
                   : ""}
               </p>
             </div>
-            <Chip
-              size="sm"
-              variant="flat"
-              color={
-                upgradeBatchStatus.state === "paused" ||
-                upgradeBatchStatus.state === "completed_with_errors"
-                  ? "danger"
-                  : "warning"
-              }
-            >
-              {upgradeBatchStatus.state === "paused"
-                ? "后续未执行"
-                : upgradeBatchStatus.state === "completed_with_errors"
-                  ? "可重试失败节点"
-                  : upgradeBatchStatus.mode === "parallel"
-                    ? "同时执行"
-                    : "逐台确认"}
-            </Chip>
+            <div className="flex items-center gap-2">
+              <Chip
+                size="sm"
+                variant="flat"
+                color={
+                  upgradeBatchStatus.state === "paused" ||
+                  upgradeBatchStatus.state === "completed_with_errors"
+                    ? "danger"
+                    : "warning"
+                }
+              >
+                {upgradeBatchStatus.state === "paused"
+                  ? "后续未执行"
+                  : upgradeBatchStatus.state === "completed_with_errors"
+                    ? "可重试失败节点"
+                    : upgradeBatchStatus.mode === "parallel"
+                      ? "同时执行"
+                      : "逐台确认"}
+              </Chip>
+              {upgradeBatchStatus.state !== "running" && (
+                <Button
+                  size="sm"
+                  variant="light"
+                  onPress={() => {
+                    sessionStorage.setItem(
+                      "dismissed-agent-upgrade-batch",
+                      upgradeBatchStatus.batchId,
+                    );
+                    setDismissedUpgradeBatch(upgradeBatchStatus.batchId);
+                  }}
+                >
+                  关闭提示
+                </Button>
+              )}
+            </div>
           </div>
         )}
 

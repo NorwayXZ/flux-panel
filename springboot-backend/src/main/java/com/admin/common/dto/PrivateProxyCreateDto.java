@@ -19,7 +19,7 @@ public class PrivateProxyCreateDto {
     private String proxyType;
     @Size(max = 128)
     private String bindIp;
-    @NotNull @Min(1) @Max(65535)
+    @Min(1) @Max(65535)
     private Integer listenPort;
     @Size(max = 64)
     private String authUsername;
