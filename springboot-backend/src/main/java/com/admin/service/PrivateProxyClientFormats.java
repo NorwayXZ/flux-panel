@@ -2,6 +2,7 @@ package com.admin.service;
 
 import com.alibaba.fastjson.JSONObject;
 import org.apache.commons.lang3.StringUtils;
+import com.admin.common.utils.AddressTextUtil;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +42,7 @@ final class PrivateProxyClientFormats {
 
     /** 分享链接。没有通用链接格式的协议返回 null。 */
     static String uri(String type, String name, String host, int port, JSONObject c) {
+        host = AddressTextUtil.host(host);
         String label = url(name);
         String authority = authority(host) + ":" + port;
         switch (type) {
@@ -139,6 +141,7 @@ final class PrivateProxyClientFormats {
 
     /** Clash（mihomo）的代理条目。不支持的协议返回 null。 */
     static Map<String, Object> clash(String type, String name, String host, int port, JSONObject c) {
+        host = AddressTextUtil.host(host);
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("name", name);
         p.put("server", host);
@@ -291,6 +294,7 @@ final class PrivateProxyClientFormats {
     }
 
     static SingBoxClient singBox(String type, String tag, String host, int port, JSONObject c) {
+        host = AddressTextUtil.host(host);
         SingBoxClient client = new SingBoxClient();
         Map<String, Object> o = new LinkedHashMap<>();
         o.put("tag", tag);
@@ -450,6 +454,7 @@ final class PrivateProxyClientFormats {
 
     /** xray 客户端出站，用于 sing-box 不支持的 VLESS + XHTTP + REALITY。 */
     static Map<String, Object> xrayXhttpOutbound(String tag, String host, int port, JSONObject c) {
+        host = AddressTextUtil.host(host);
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("id", c.getString("clientId"));
         user.put("encryption", "none");
@@ -476,6 +481,7 @@ final class PrivateProxyClientFormats {
     }
 
     static String authority(String host) {
+        host = AddressTextUtil.host(host);
         return host.contains(":") ? "[" + host + "]" : host;
     }
 

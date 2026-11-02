@@ -93,7 +93,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.84.3/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.84.4/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -345,6 +345,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private Node buildNewNode(NodeDto nodeDto) {
         Node node = new Node();
         BeanUtils.copyProperties(nodeDto, node);
+        node.setServerIp(com.admin.common.utils.AddressTextUtil.trim(node.getServerIp()));
         
         // 验证端口范围
         validatePortRange(node.getPortSta(), node.getPortEnd());
@@ -484,7 +485,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         node.setId(nodeUpdateDto.getId());
         node.setName(nodeUpdateDto.getName());
         node.setIp(nodeUpdateDto.getIp());
-        node.setServerIp(nodeUpdateDto.getServerIp());
+        node.setServerIp(com.admin.common.utils.AddressTextUtil.trim(nodeUpdateDto.getServerIp()));
         node.setPortSta(nodeUpdateDto.getPortSta());
         node.setPortEnd(nodeUpdateDto.getPortEnd());
         node.setHttp(nodeUpdateDto.getHttp());

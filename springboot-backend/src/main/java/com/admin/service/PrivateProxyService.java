@@ -9,6 +9,7 @@ import com.admin.common.lang.R;
 import com.admin.common.utils.AESCrypto;
 import com.admin.common.utils.AgentPortCheckUtil;
 import com.admin.common.utils.AgentVersionUtil;
+import com.admin.common.utils.AddressTextUtil;
 import com.admin.common.utils.GostUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.WebSocketServer;
@@ -819,7 +820,7 @@ public class PrivateProxyService {
 
     /** 留空返回空字符串；格式不对返回 null。 */
     private String normalizeConnectHost(String value) {
-        String host = StringUtils.trimToEmpty(value).toLowerCase(Locale.ROOT);
+        String host = StringUtils.defaultString(AddressTextUtil.trim(value)).toLowerCase(Locale.ROOT);
         if (host.isEmpty()) return "";
         if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
         if (validIp(host)) return host;
@@ -1263,7 +1264,7 @@ public class PrivateProxyService {
         if (proxy == null) return R.err("代理不存在或无权访问");
         Node node = nodeMapper.selectById(proxy.getNodeId());
         String host = clientHost(proxy, node);
-        if (StringUtils.isBlank(host)) return R.err("节点未配置公网地址");
+        if (StringUtils.isBlank(host)) return R.err("节点服务器地址或代理连接地址为空或包含无效字符，请检查地址配置");
         attachRoutingView(proxy);
         try {
             JSONObject config = clientConfigOf(proxy);
@@ -1286,8 +1287,12 @@ public class PrivateProxyService {
 
     /** 客户端连接用的地址：代理设置的连接地址，否则为节点的公网地址。 */
     String clientHost(PrivateProxy proxy, Node node) {
-        if (StringUtils.isNotBlank(proxy.getConnectHost())) return proxy.getConnectHost();
-        return node == null ? null : StringUtils.defaultIfBlank(node.getServerIp(), node.getIp());
+        String host = AddressTextUtil.trim(proxy.getConnectHost());
+        if (StringUtils.isBlank(host) && node != null) {
+            host = StringUtils.defaultIfBlank(AddressTextUtil.trim(node.getServerIp()), AddressTextUtil.trim(node.getIp()));
+        }
+        try { return AddressTextUtil.host(host); }
+        catch (IllegalArgumentException e) { return null; }
     }
 
     /** 解密后的客户端配置；早期版本的 SOCKS5/HTTP/Shadowsocks 没有保存，从账号密码还原。 */
@@ -2089,7 +2094,8 @@ public class PrivateProxyService {
         Node node = nodeMapper.selectById(proxy.getNodeId());
         User owner = userMapper.selectById(proxy.getUserId());
         proxy.setNodeName(node == null ? "节点已删除" : node.getName());
-        proxy.setPublicHost(node == null ? null : StringUtils.defaultIfBlank(node.getServerIp(), node.getIp()));
+        proxy.setPublicHost(clientHost(new PrivateProxy(), node));
+        proxy.setConnectHost(AddressTextUtil.trim(proxy.getConnectHost()));
         proxy.setOwnerUserName(owner == null ? "未知用户" : owner.getUser());
         proxy.setNodeOnline(node != null && WebSocketServer.isNodeOnline(node.getId()));
         proxy.setPasswordConfigured(StringUtils.isNotBlank(proxy.getAuthPassword()));

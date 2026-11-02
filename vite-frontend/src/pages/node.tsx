@@ -954,6 +954,7 @@ export default function NodePage() {
       const submitData = {
         ...form,
         ip: ipString,
+        serverIp: form.serverIp.trim(),
       };
 
       delete (submitData as any).ipString;
@@ -964,7 +965,7 @@ export default function NodePage() {
         : {
             name: form.name,
             ip: ipString,
-            serverIp: form.serverIp,
+            serverIp: form.serverIp.trim(),
             portSta: form.portSta,
             portEnd: form.portEnd,
             http: form.http,

@@ -14,8 +14,37 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PrivateProxyClientFormatsTests {
+    @Test void paddedDomainProducesSameLinksAndExportsAsCleanDomain() {
+        JSONObject c = config("username", "alice", "password", "secret-123", "cipher", "aes-128-gcm",
+                "method", "2022-blake3-aes-128-gcm", "clientId", "client-id", "transport", "tcp",
+                "serverName", "tls.example.com", "publicKey", "key", "shortId", "sid", "path", "/test",
+                "clientAddress", "10.0.0.2/32", "clientPrivateKey", "private", "serverPublicKey", "public");
+        String clean = "pqs.example.com";
+        for (String padding : List.of(" ", "\r\n\t", "\u00a0", "\u3000", "\ufeff\u200b")) {
+            String padded = padding + clean + padding;
+            for (String type : List.of("socks5", "http", "mixed", "shadowsocks", "shadowsocks2022",
+                    "trojan", "hysteria2", "tuic", "anytls", "vmess", "vless", "vless_reality", "vless_xhttp", "wireguard")) {
+                assertEquals(PrivateProxyClientFormats.uri(type, "PQS", clean, 1080, c),
+                        PrivateProxyClientFormats.uri(type, "PQS", padded, 1080, c), type);
+            }
+            assertEquals(clean, PrivateProxyClientFormats.clash("socks5", "PQS", padded, 1080, c).get("server"));
+            assertEquals(clean, PrivateProxyClientFormats.singBox("socks5", "PQS", padded, 1080, c).outbounds.get(0).get("server"));
+            assertEquals(JSONObject.toJSONString(PrivateProxyClientFormats.xrayXhttpOutbound("x", clean, 1080, c)),
+                    JSONObject.toJSONString(PrivateProxyClientFormats.xrayXhttpOutbound("x", padded, 1080, c)));
+        }
+    }
+
+    @Test void handlesIpv6BracketsOnceAndRejectsWhitespaceInsideHost() {
+        assertEquals("[2001:db8::1]", PrivateProxyClientFormats.authority(" \t[2001:db8::1]\n"));
+        assertEquals("[2001:db8::1]", PrivateProxyClientFormats.authority("2001:db8::1"));
+        for (String host : List.of("pqs .example.com", "pqs\n.example.com", "pqs\u200b.example.com", "https://pqs.example.com", "")) {
+            assertThrows(IllegalArgumentException.class, () -> PrivateProxyClientFormats.authority(host));
+        }
+    }
+
     private static JSONObject config(Object... pairs) {
         JSONObject c = new JSONObject();
         for (int i = 0; i < pairs.length; i += 2) c.put((String) pairs[i], pairs[i + 1]);
