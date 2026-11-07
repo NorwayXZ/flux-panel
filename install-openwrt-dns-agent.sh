@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-RELEASE="${FLUX_PANEL_DNS_AGENT_RELEASE:-2.84.2}"
+RELEASE="${FLUX_PANEL_DNS_AGENT_RELEASE:-2.84.7}"
 DIRECTORY=/etc/flux-panel-dns
 SERVICE=/etc/init.d/flux-panel-dns
 STATE="$DIRECTORY/state.json"

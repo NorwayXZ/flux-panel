@@ -34,6 +34,27 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Check Agent release number is free
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 安装脚本按 Agent 版本号下载程序；该号码若已是另一个面板发布，节点会装到旧程序。
+          agent_version="$(tr -d '[:space:]' < AGENT_VERSION)"
+          if [[ "${agent_version}" == "${VERSION}" ]] || ! gh release view "${agent_version}" >/dev/null 2>&1; then exit 0; fi
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "${tmp}"' EXIT
+          gh release download "${agent_version}" --pattern gost-amd64 --dir "${tmp}"
+          chmod +x "${tmp}/gost-amd64"
+          published="$("${tmp}/gost-amd64" --agent-version)"
+          if [[ "${published}" != "${agent_version}" ]]; then
+            echo "Release ${agent_version} already exists and ships Agent ${published}; set AGENT_VERSION to ${VERSION} instead" >&2
+            exit 1
+          fi
+
       - name: Test deployment scripts and Compose files
         run: |
           sh scripts/check-version-consistency.sh
