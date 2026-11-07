@@ -345,6 +345,14 @@ public class DynamicDnsService {
         String previousStatus = Objects.toString(rule.get("last_status"), "pending");
         String oldIp = Objects.toString(rule.get("last_applied_ip"), null);
         long now = System.currentTimeMillis();
+        String missing = missingSource(rule);
+        if (missing != null) {
+            // A deleted source can never come back online; pause instead of alerting forever.
+            jdbcTemplate.update("UPDATE dynamic_dns_rule SET enabled=0,last_status='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    missing, now, now, id);
+            if (manual) addHistory(id, oldIp, null, "failed", missing, now);
+            throw new IllegalStateException(missing);
+        }
         try {
             String type = Objects.toString(rule.get("record_type"));
             String ip = queryPublicIp(rule, type);
@@ -375,6 +383,16 @@ public class DynamicDnsService {
             }
             throw new IllegalStateException(message);
         }
+    }
+
+    String missingSource(Map<String, Object> rule) {
+        boolean connector = "connector".equals(normalizeSourceType(Objects.toString(rule.get("source_type"), "node")));
+        Object ref = rule.get(connector ? "connector_id" : "node_id");
+        Integer count = ref == null ? Integer.valueOf(0) : connector
+                ? jdbcTemplate.queryForObject("SELECT COUNT(*) FROM internal_connector WHERE id=? AND connector_role='service'", Integer.class, number(ref))
+                : jdbcTemplate.queryForObject("SELECT COUNT(*) FROM node WHERE id=?", Integer.class, number(ref));
+        if (count == null || count > 0) return null;
+        return (connector ? "检测用的家庭接入端" : "检测节点") + "已被删除，规则已自动停用；请编辑规则改选检测来源后再启用";
     }
 
     private String queryPublicIp(Map<String, Object> rule, String recordType) {

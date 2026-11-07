@@ -20,6 +20,23 @@ class DynamicDnsServiceTests {
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.startsWith("DELETE FROM dynamic_dns_provider"), org.mockito.ArgumentMatchers.anyLong());
     }
     @Test
+    void pausesRulesWhoseDetectionNodeWasDeleted() {
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        var service = new DynamicDnsService(jdbc, org.mockito.Mockito.mock(org.springframework.web.client.RestTemplate.class),
+                org.mockito.Mockito.mock(TelegramNotificationService.class));
+        org.mockito.Mockito.when(jdbc.queryForObject("SELECT COUNT(*) FROM node WHERE id=?", Integer.class, 12L)).thenReturn(0);
+        org.mockito.Mockito.when(jdbc.queryForObject("SELECT COUNT(*) FROM node WHERE id=?", Integer.class, 13L)).thenReturn(1);
+        org.mockito.Mockito.when(jdbc.queryForList("SELECT * FROM dynamic_dns_rule WHERE id=?", 9L)).thenReturn(List.of(
+                new java.util.HashMap<>(java.util.Map.of("id", 9L, "name", "PQS", "source_type", "node", "node_id", 12L, "last_status", "error"))));
+
+        assertEquals(null, service.missingSource(java.util.Map.of("source_type", "node", "node_id", 13L)));
+        org.junit.jupiter.api.Assertions.assertTrue(service.missingSource(java.util.Map.of("source_type", "node", "node_id", 12L)).contains("已被删除"));
+        org.junit.jupiter.api.Assertions.assertNotEquals(0, service.runNow(9L).getCode());
+        org.mockito.Mockito.verify(jdbc).update(org.mockito.ArgumentMatchers.startsWith("UPDATE dynamic_dns_rule SET enabled=0"),
+                org.mockito.ArgumentMatchers.contains("已被删除"), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.eq(9L));
+    }
+
+    @Test
     void formatsAliyunApiErrorsWithoutDroppingTheProviderCode() {
         assertEquals(
                 "阿里云 DNS：Forbidden.RAM - User not authorized to operate on the specified resource",

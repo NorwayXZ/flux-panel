@@ -18,14 +18,14 @@ class AgentUpgradeBatchReconciliationTests {
         jdbc.update("INSERT INTO agent_upgrade_task(task_id,batch_id,node_id,target_version,state) VALUES ('old','batch',1,'2.84.0','failed')");
         jdbc.update("INSERT INTO agent_upgrade_task(task_id,node_id,target_version,state) VALUES ('retry',1,'2.84.0','success')");
         var service = spy(new AgentUpgradeService(mock(NodeService.class), jdbc));
-        var node = new Node(); node.setId(1L); node.setVersion("2.84.0");
+        var node = new Node(); node.setId(1L); node.setVersion(AgentUpgradeService.TARGET_VERSION);
         doReturn(false).when(service).isNodeOnline(1L);
         service.reconcileBatchTasks(List.of(node));
         assertEquals("failed", jdbc.queryForObject("SELECT state FROM agent_upgrade_task WHERE task_id='old'", String.class));
         doReturn(true).when(service).isNodeOnline(1L);
         node.setVersion("2.83.0"); service.reconcileBatchTasks(List.of(node));
         assertEquals("completed_with_errors", jdbc.queryForObject("SELECT state FROM agent_upgrade_batch", String.class));
-        node.setVersion("2.84.0"); service.reconcileBatchTasks(List.of(node));
+        node.setVersion(AgentUpgradeService.TARGET_VERSION); service.reconcileBatchTasks(List.of(node));
         assertEquals("success", jdbc.queryForObject("SELECT state FROM agent_upgrade_batch", String.class));
         assertEquals("success", jdbc.queryForObject("SELECT state FROM agent_upgrade_task WHERE task_id='old'", String.class));
     }

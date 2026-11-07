@@ -96,14 +96,14 @@
 
         <dependency>
             <groupId>cn.hutool</groupId>
-            <artifactId>hutool-all</artifactId>
-            <version>5.3.3</version>
+            <artifactId>hutool-core</artifactId>
+            <version>5.8.48</version>
         </dependency>
 
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
-            <version>3.11</version>
+            <version>3.21.0</version>
         </dependency>
 
         <dependency>
