@@ -3,6 +3,9 @@ package socket
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,5 +68,31 @@ func TestSystemSelfCheckChecksPanelAndRequestedTargets(t *testing.T) {
 	}
 	if len(response.Reachability) != 1 || !response.Reachability[0].Reachable {
 		t.Fatalf("expected panel endpoint to be reachable, got %#v", response.Reachability)
+	}
+}
+
+func TestQueryPublicDNSFallsBackToSecondResolver(t *testing.T) {
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer down.Close()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") != "example.com" || r.URL.Query().Get("type") != "A" {
+			t.Errorf("unexpected query %s", r.URL.RawQuery)
+		}
+		fmt.Fprint(w, `{"Status":0,"Answer":[{"type":5,"data":"alias.example.com."},{"type":1,"data":"192.0.2.7"}]}`)
+	}))
+	defer up.Close()
+	previous := publicDNSEndpoints
+	publicDNSEndpoints = []string{down.URL, up.URL}
+	defer func() { publicDNSEndpoints = previous }()
+
+	values, err := queryPublicDNS("example.com", "A")
+	if err != nil || len(values) != 1 || values[0] != "192.0.2.7" {
+		t.Fatalf("expected fallback answer, got %v %v", values, err)
+	}
+	publicDNSEndpoints = []string{down.URL}
+	if _, err := queryPublicDNS("example.com", "A"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("expected the resolver failure to be reported, got %v", err)
 	}
 }

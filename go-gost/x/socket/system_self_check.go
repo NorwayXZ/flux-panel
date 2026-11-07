@@ -368,10 +368,25 @@ func inspectDomain(domain string) systemSelfCheckDNS {
 	return result
 }
 
+// Cloudflare first; AliDNS answers the same JSON format where 1.1.1.1 is unreachable (mainland China).
+var publicDNSEndpoints = []string{"https://1.1.1.1/dns-query", "https://223.5.5.5/resolve"}
+
 func queryPublicDNS(domain, recordType string) ([]string, error) {
+	var failures []string
+	for _, endpoint := range publicDNSEndpoints {
+		values, err := queryPublicDNSAt(endpoint, domain, recordType)
+		if err == nil {
+			return values, nil
+		}
+		failures = append(failures, err.Error())
+	}
+	return nil, errors.New(strings.Join(failures, "; "))
+}
+
+func queryPublicDNSAt(base, domain, recordType string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	endpoint := "https://1.1.1.1/dns-query?name=" + url.QueryEscape(domain) + "&type=" + recordType
+	endpoint := base + "?name=" + url.QueryEscape(domain) + "&type=" + recordType
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
