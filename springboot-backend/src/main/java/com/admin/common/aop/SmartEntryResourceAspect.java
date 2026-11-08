@@ -48,6 +48,8 @@ public class SmartEntryResourceAspect {
             String predicate = "(r.forward_id=? OR r.current_forward_id=?)";
             Object[] parameters = {id, id};
             if (owner.contains("NodeService")) {
+                // Deleting a node detaches its strategy routes itself and queues their DNS cleanup.
+                if ("deleteNode".equals(joinPoint.getSignature().getName())) return proceed(joinPoint);
                 if (argument instanceof NodeUpdateDto dto) {
                     List<Map<String, Object>> nodes = jdbc.queryForList("SELECT ip,server_ip,port_sta,port_end FROM node WHERE id=?", id);
                     if (!nodes.isEmpty() && Objects.equals(nodes.get(0).get("ip"), dto.getIp())

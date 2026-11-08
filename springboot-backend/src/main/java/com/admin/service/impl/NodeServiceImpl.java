@@ -10,11 +10,8 @@ import com.admin.common.utils.TunnelRouteUtil;
 import com.admin.common.utils.JwtUtil;
 import com.admin.common.utils.PortNamespaceUtil;
 import com.admin.common.utils.WebSocketServer;
-import com.admin.entity.Forward;
 import com.admin.entity.Node;
-import com.admin.entity.SpeedLimit;
 import com.admin.entity.Tunnel;
-import com.admin.entity.UserTunnel;
 import com.admin.entity.UserNode;
 import com.admin.entity.User;
 import com.admin.entity.ViteConfig;
@@ -22,13 +19,9 @@ import com.admin.mapper.NodeMapper;
 import com.admin.mapper.TunnelMapper;
 import com.admin.mapper.UserNodeMapper;
 import com.admin.mapper.UserMapper;
-import com.admin.service.ForwardService;
+import com.admin.service.NodeDeletionCascade;
 import com.admin.service.NodeService;
-import com.admin.service.PrivateProxyService;
-import com.admin.service.SpeedLimitService;
-import com.admin.service.ServicePublishingService;
 import com.admin.service.TunnelService;
-import com.admin.service.UserTunnelService;
 import com.admin.service.UserQuotaService;
 import com.admin.service.ViteConfigService;
 import com.alibaba.fastjson.JSONObject;
@@ -37,11 +30,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.beans.BeanUtils;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
@@ -81,7 +72,6 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_UPDATE_MSG = "节点更新失败";
     private static final String ERROR_DELETE_MSG = "节点删除失败";
     private static final String ERROR_NODE_NOT_FOUND = "节点不存在";
-    private static final String ERROR_ONLINE_NODE_HAS_TUNNELS = "节点当前在线，并且还有 %d 个关联隧道。请在隧道管理中删除需要清理的失效隧道，或确认节点离线后再删除节点。";
     
     /** 隧道使用检查相关消息 */
     private static final String ERROR_IN_NODE_IN_USE = "该节点还有 %d 个隧道作为入口节点在使用，请先删除相关隧道";
@@ -93,7 +83,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private static final String ERROR_PORT_RANGE_INVALID = "端口必须在1-65535范围内";
     private static final String ERROR_PORT_ORDER_INVALID = "结束端口不能小于起始端口";
     private static final String AGENT_INSTALL_SCRIPT_URL =
-            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.84.7/install.sh";
+            "https://raw.githubusercontent.com/NorwayXZ/flux-panel/2.84.8/install.sh";
 
     // ========== 依赖注入 ==========
     
@@ -105,30 +95,13 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
     private TunnelService tunnelService;
 
     @Resource
-    @Lazy
-    private ForwardService forwardService;
-
-    @Resource
-    @Lazy
-    private PrivateProxyService privateProxyService;
-
-    @Resource
-    @Lazy
-    private UserTunnelService userTunnelService;
-
-    @Resource
-    @Lazy
-    private SpeedLimitService speedLimitService;
-
-    @Resource
-    private JdbcTemplate jdbcTemplate;
-
-    @Resource
-    @Lazy
-    private ServicePublishingService servicePublishingService;
-
-    @Resource
     private UserNodeMapper userNodeMapper;
+
+    @Resource
+    private NodeDeletionCascade nodeDeletionCascade;
+
+    @Resource
+    private PlatformTransactionManager transactionManager;
 
     @Resource
     private UserMapper userMapper;
@@ -254,13 +227,13 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
 
     /**
      * 删除节点
-     * 在线节点仍有隧道关联时不允许级联删除；离线节点允许清理依赖该节点的转发、隧道、用户隧道权限和限速规则
+     * 连带删除经过该节点的隧道、转发、授权和限速规则，以及三网优化线路、入口容灾成员、DNS 检测来源等所有引用；
+     * 在线和离线节点都能删除，远端清理失败不会阻止删除
      * 
      * @param id 节点ID
      * @return 删除结果响应
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public R deleteNode(Long id) {
         // 1. 验证节点是否存在
         Node node = this.getById(id);
@@ -271,32 +244,38 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
             return R.err("共享节点为只读，不能修改");
         }
 
+        List<Tunnel> relatedTunnels = findTunnelsByNodePath(id);
+        List<Long> tunnelIds = relatedTunnels.stream().map(Tunnel::getId).toList();
+        List<Long> forwardIds = nodeDeletionCascade.forwardIds(tunnelIds);
+        List<Long> portPoolIds = nodeDeletionCascade.portPools(id);
+
+        // 2. 尽力清理 Agent 与 DNS；在事务之外进行，离线节点或 DNS 失败既不阻塞也不回滚数据库清理
+        Map<String, Object> cleanupSummary = new HashMap<>(
+                nodeDeletionCascade.releaseRuntime(id, isNodeOnlineForDeletion(node), relatedTunnels, forwardIds));
+
+        // 3. 删除所有指向该节点的记录和节点本身
+        Map<String, Integer> removedRows;
         try {
-            long nftForwardCount = countNftForwardRules(id);
-            if (nftForwardCount > 0) {
-                return R.err("该节点还有 " + nftForwardCount + " 条 nftables 转发规则，请先在 nftables 转发页面删除并等待 Agent 确认");
-            }
-            long relatedTunnelCount = countNodeTunnels(id);
-            if (isNodeOnlineForDeletion(node) && relatedTunnelCount > 0) {
-                return R.err(String.format(ERROR_ONLINE_NODE_HAS_TUNNELS, relatedTunnelCount));
-            }
-
-            Map<String, Object> cleanupSummary = cleanupNodeDependencies(id);
-
-            // 3. 执行删除操作
-            boolean result = this.removeById(id);
-            if (!result) {
-                throw new IllegalStateException(ERROR_DELETE_MSG);
-            }
-
-            cleanupSummary.put("nodeId", id);
-            cleanupSummary.put("nodeName", node.getName());
-            cleanupSummary.put("message", SUCCESS_DELETE_MSG);
-            return R.ok(cleanupSummary);
+            removedRows = new TransactionTemplate(transactionManager).execute(status -> {
+                Map<String, Integer> rows = nodeDeletionCascade.purge(id, tunnelIds, forwardIds);
+                if (!this.removeById(id)) {
+                    throw new IllegalStateException(ERROR_DELETE_MSG);
+                }
+                return rows;
+            });
         } catch (RuntimeException e) {
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return R.err(e.getMessage());
         }
+        nodeDeletionCascade.releasePortPools(portPoolIds);
+
+        cleanupSummary.put("tunnelCount", tunnelIds.size());
+        cleanupSummary.put("forwardCount", forwardIds.size());
+        cleanupSummary.put("portPoolCount", portPoolIds.size());
+        cleanupSummary.put("removedRows", removedRows);
+        cleanupSummary.put("nodeId", id);
+        cleanupSummary.put("nodeName", node.getName());
+        cleanupSummary.put("message", SUCCESS_DELETE_MSG);
+        return R.ok(cleanupSummary);
     }
 
     @Override
@@ -389,79 +368,6 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
 
     private boolean isNodeOnlineForDeletion(Node node) {
         return refreshNodeStatus(node) == 1;
-    }
-
-    private long countNodeTunnels(Long nodeId) {
-        return findTunnelsByNodePath(nodeId).size();
-    }
-
-    private long countNftForwardRules(Long nodeId) {
-        try {
-            Long count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM nft_forward_rule WHERE node_id=? AND state<>'deleted'", Long.class, nodeId);
-            return count == null ? 0L : count;
-        } catch (DataAccessException ignored) {
-            return 0L;
-        }
-    }
-
-    private Map<String, Object> cleanupNodeDependencies(Long nodeId) {
-        List<Tunnel> relatedTunnels = findTunnelsByNodePath(nodeId);
-
-        Map<String, Object> summary = new HashMap<>();
-        summary.put("tunnelCount", relatedTunnels.size());
-        summary.put("forwardCount", 0L);
-        summary.put("userTunnelCount", 0L);
-        summary.put("speedLimitCount", 0L);
-        summary.put("domainRouteCount", 0);
-        summary.put("privateProxyCount", 0);
-
-        int domainRouteCount = servicePublishingService.cleanupDomainRoutesForNode(nodeId);
-        int privateProxyCount = privateProxyService.deleteForNode(nodeId);
-
-        List<Long> tunnelIds = new ArrayList<>();
-        List<Integer> tunnelIdInts = new ArrayList<>();
-        for (Tunnel tunnel : relatedTunnels) {
-            tunnelIds.add(tunnel.getId());
-            tunnelIdInts.add(tunnel.getId().intValue());
-        }
-
-        long forwardCount = tunnelIdInts.isEmpty() ? 0L : forwardService.count(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
-        if (forwardCount > 0) {
-            boolean removed = forwardService.remove(new QueryWrapper<Forward>().in("tunnel_id", tunnelIdInts));
-            if (!removed) {
-                throw new IllegalStateException("关联转发删除失败");
-            }
-        }
-
-        long userTunnelCount = tunnelIdInts.isEmpty() ? 0L : userTunnelService.count(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
-        if (userTunnelCount > 0) {
-            boolean removed = userTunnelService.remove(new QueryWrapper<UserTunnel>().in("tunnel_id", tunnelIdInts));
-            if (!removed) {
-                throw new IllegalStateException("关联用户隧道权限删除失败");
-            }
-        }
-
-        long speedLimitCount = tunnelIds.isEmpty() ? 0L : speedLimitService.count(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
-        if (speedLimitCount > 0) {
-            boolean removed = speedLimitService.remove(new QueryWrapper<SpeedLimit>().in("tunnel_id", tunnelIds));
-            if (!removed) {
-                throw new IllegalStateException("关联限速规则删除失败");
-            }
-        }
-
-        boolean tunnelsRemoved = tunnelIds.isEmpty() || tunnelService.removeByIds(tunnelIds);
-        if (!tunnelsRemoved) {
-            throw new IllegalStateException("关联隧道删除失败");
-        }
-
-        summary.put("forwardCount", forwardCount);
-        summary.put("userTunnelCount", userTunnelCount);
-        summary.put("speedLimitCount", speedLimitCount);
-        summary.put("domainRouteCount", domainRouteCount);
-        summary.put("privateProxyCount", privateProxyCount);
-        userNodeMapper.delete(new QueryWrapper<UserNode>().eq("node_id", nodeId));
-        return summary;
     }
 
     private List<Tunnel> findTunnelsByNodePath(Long nodeId) {

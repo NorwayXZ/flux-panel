@@ -829,24 +829,28 @@ export default function NodePage() {
         const summary = res.data || {};
         const tunnelCount = Number(summary.tunnelCount || 0);
         const forwardCount = Number(summary.forwardCount || 0);
-        const userTunnelCount = Number(summary.userTunnelCount || 0);
-        const speedLimitCount = Number(summary.speedLimitCount || 0);
-        const domainRouteCount = Number(summary.domainRouteCount || 0);
+        const removedRows = Object.values(summary.removedRows || {}).reduce(
+          (total: number, count) => total + Number(count || 0),
+          0,
+        );
+        const failures: string[] = Array.isArray(summary.runtimeCleanupFailures)
+          ? summary.runtimeCleanupFailures
+          : [];
         const cleanupParts = [];
 
-        if (domainRouteCount > 0)
-          cleanupParts.push(`${domainRouteCount} 个域名直达`);
         if (tunnelCount > 0)
-          cleanupParts.push(
-            `${tunnelCount} 个隧道`,
-            `${forwardCount} 个转发`,
-            `${userTunnelCount} 个授权`,
-            `${speedLimitCount} 个限速规则`,
-          );
+          cleanupParts.push(`${tunnelCount} 个隧道`, `${forwardCount} 个转发`);
+        if (removedRows > 0) cleanupParts.push(`共 ${removedRows} 条关联记录`);
         const cleanupText =
-          cleanupParts.length > 0 ? `，已清理 ${cleanupParts.join("、")}` : "";
+          cleanupParts.length > 0
+            ? `，已连带清理 ${cleanupParts.join("、")}`
+            : "";
 
         toast.success(`节点删除成功${cleanupText}`);
+        if (failures.length > 0)
+          toast(
+            `有 ${failures.length} 项远端清理未完成（${failures[0]}），面板数据已删除`,
+          );
         setNodeList((prev) => prev.filter((n) => n.id !== nodeToDelete.id));
         setDeleteModalOpen(false);
         setNodeToDelete(null);
@@ -2557,7 +2561,27 @@ export default function NodePage() {
                   确定要删除节点 <strong>"{nodeToDelete?.name}"</strong> 吗？
                 </p>
                 <p className="text-small text-default-500">
-                  节点在线且有关联隧道时，系统会阻止删除；如需清理失效隧道，请到隧道管理删除隧道。删除节点会同时清理以它作为入口或后端的域名直达；节点离线时还会删除相关隧道、转发、用户隧道授权和限速规则，且不可恢复。
+                  删除节点会连带删除与它相关的全部内容，且不可恢复：
+                </p>
+                <ul className="list-disc space-y-1 pl-5 text-small text-default-500">
+                  <li>
+                    经过该节点的隧道，以及隧道上的转发、用户隧道授权和限速规则
+                  </li>
+                  <li>
+                    使用该节点的三网优化线路和入口容灾成员（对应 DNS
+                    记录自动清理，策略没有剩余线路时整条删除）、来源 IP
+                    分流、多线路并发调度
+                  </li>
+                  <li>
+                    出口应用、家庭代理、私人代理、域名直达、端口池、nftables
+                    转发、虚拟局域网和内网互联
+                  </li>
+                  <li>以该节点为检测来源的动态 DNS 规则</li>
+                  <li>该节点的监控、测速、诊断和审计记录</li>
+                </ul>
+                <p className="text-small text-default-500">
+                  节点在线时会同时清理 Agent
+                  上的配置；节点离线时只清理面板数据。
                 </p>
               </ModalBody>
               <ModalFooter>

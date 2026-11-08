@@ -24,6 +24,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -489,6 +491,72 @@ public class SmartEntryService {
                 });
             }
         });
+    }
+
+    /**
+     * Removes the routes that use a deleted node or forward. Their DNS records are queued for release;
+     * a strategy left without routes is deleted the same way as {@link #delete(Long)}.
+     */
+    public int detachNodeResources(Long nodeId, Collection<Long> forwardIds) {
+        Set<Long> forwards = new HashSet<>(forwardIds);
+        return mutationLocks.withLock(() -> {
+            List<Long> groupIds = jdbcTemplate.queryForList(
+                    "SELECT DISTINCT group_id FROM smart_entry_route WHERE entry_node_id=?" + forwardFilter(forwards),
+                    Long.class, forwardArguments(nodeId, forwards));
+            int removed = 0;
+            for (Long id : groupIds) {
+                synchronized (locks.computeIfAbsent(id, ignored -> new Object())) {
+                    Integer count = transactions.execute(status -> detachGroupRoutes(id, nodeId, forwards));
+                    removed += count == null ? 0 : count;
+                }
+            }
+            activityGroups.clear();
+            return removed;
+        });
+    }
+
+    private int detachGroupRoutes(Long id, Long nodeId, Set<Long> forwards) {
+        Map<String, Object> group = one("SELECT * FROM smart_entry_group WHERE id=?", id);
+        if (group == null) return 0;
+        List<Map<String, Object>> all = routes(id);
+        List<Map<String, Object>> affected = all.stream().filter(route -> number(route.get("entryNodeId")) == nodeId
+                || forwards.contains(number(route.get("forwardId")))).toList();
+        if (affected.isEmpty()) return 0;
+        boolean deleting = "deleting".equals(group.get("state"));
+        long now = System.currentTimeMillis();
+        for (Map<String, Object> route : affected) {
+            if (!deleting) queueCleanup(id, group, route, now);
+            jdbcTemplate.update("DELETE FROM smart_entry_route WHERE id=?", route.get("id"));
+        }
+        if (deleting) return affected.size();
+        if (affected.size() == all.size()) {
+            dnsBindings.setBindings(id, List.of());
+            jdbcTemplate.update("UPDATE smart_entry_group SET enabled=0,state='deleting',sync_requested=0,last_error=NULL WHERE id=?", id);
+            event(id, null, "delete", "pending", "关联节点已删除，策略没有剩余线路，正在清理 DNS，完成后自动移除策略");
+        } else {
+            if (!forwards.isEmpty()) {
+                jdbcTemplate.update("UPDATE smart_entry_route SET current_forward_id=NULL,dns_dirty=1 WHERE group_id=?"
+                        + " AND current_forward_id IN (" + placeholders(forwards.size()) + ")", forwardArguments(id, forwards));
+            }
+            jdbcTemplate.update("UPDATE smart_entry_group SET sync_requested=1,updated_time=? WHERE id=?", now, id);
+            event(id, null, "configuration", "pending", "关联节点已删除，已移除 " + affected.size() + " 条线路，等待 DNS 重新同步");
+        }
+        return affected.size();
+    }
+
+    private static String forwardFilter(Set<Long> forwards) {
+        return forwards.isEmpty() ? "" : " OR forward_id IN (" + placeholders(forwards.size()) + ")";
+    }
+
+    private static Object[] forwardArguments(Long first, Set<Long> forwards) {
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(first);
+        arguments.addAll(forwards);
+        return arguments.toArray();
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",", Collections.nCopies(count, "?"));
     }
 
     @Scheduled(initialDelay = 25_000L, fixedDelay = 10_000L)

@@ -459,4 +459,34 @@ class CrossEntryLifecycleTests {
         return new HashMap<>(Map.of("id",id,"name","forward","status",1,"inPort",10000,"inNodeId",node,
                 "entryHost",ip,"protocolMode","tcp","nodeName","entry","tunnelId",(int) node));
     }
+
+    @Test
+    void deletingAnEntryNodeRemovesItsMembersAndClearsTheActiveLine() {
+        List<String> writes = new ArrayList<>();
+        JdbcTemplate jdbc = mock(JdbcTemplate.class, call -> {
+            if (call.getArguments().length == 0 || !(call.getArgument(0) instanceof String sql)) return RETURNS_DEFAULTS.answer(call);
+            switch (call.getMethod().getName()) {
+                case "queryForList":
+                    if (sql.startsWith("SELECT DISTINCT group_id FROM cross_entry_failover_member")) return List.of(3L);
+                    if (sql.startsWith("SELECT id FROM cross_entry_failover_member WHERE group_id=?")) return List.of(31L);
+                    return List.of();
+                case "queryForObject":
+                    return sql.startsWith("SELECT COUNT(*) FROM cross_entry_failover_member WHERE group_id=?") ? 2 : 0;
+                case "update":
+                    writes.add(sql);
+                    return 1;
+                default:
+                    return RETURNS_DEFAULTS.answer(call);
+            }
+        });
+        CrossEntryFailoverService service = service(jdbc, mock(ForwardService.class), mock(DnsProviderService.class));
+
+        assertEquals(1, service.detachNodeResources(36L, List.of(100L)));
+
+        verify(jdbc).update("DELETE FROM cross_entry_failover_member WHERE group_id=? AND (entry_node_id=? OR forward_id IN (?))", 3L, 36L, 100L);
+        assertTrue(writes.stream().anyMatch(sql -> sql.startsWith("UPDATE cross_entry_failover_group SET active_member_id=NULL")
+                && sql.endsWith("active_member_id IN (31)")));
+        assertTrue(writes.stream().anyMatch(sql -> sql.contains("locked_member_id=NULL") && sql.endsWith("locked_member_id IN (31)")));
+        assertFalse(writes.stream().anyMatch(sql -> sql.startsWith("DELETE FROM cross_entry_failover_group")));
+    }
 }

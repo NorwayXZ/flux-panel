@@ -41,6 +41,7 @@ class SmartEntryLifecycleTests {
                     return List.of(Map.of("id", id, "name", "forward" + id, "inPort", 443,
                             "protocolMode", "tcp", "inNodeId", id, "nodeName", "node" + id, "entryHost", "192.0.2." + id));
                 }
+                if (sql.startsWith("SELECT DISTINCT group_id FROM smart_entry_route WHERE entry_node_id=?")) return List.of(7L);
                 if (sql.startsWith("SELECT * FROM smart_entry_group")) return List.of(group);
                 if (sql.startsWith("SELECT id,group_id")) return routes;
                 return List.of();
@@ -267,5 +268,27 @@ class SmartEntryLifecycleTests {
         assertTrue(writes.stream().anyMatch(sql -> sql.startsWith("DELETE FROM smart_entry_dns_cleanup")));
         assertTrue(writes.stream().anyMatch(sql -> sql.startsWith("DELETE FROM smart_entry_group")));
         verify(dns, never()).deleteLineRoutingRecord(anyLong(), anyString(), anyString());
+    }
+
+    @Test void deletingTheNodeOfOneRouteKeepsTheStrategyAndReleasesThatRouteDns() {
+        assertEquals(1, service.detachNodeResources(2L, List.of(2L)));
+
+        assertTrue(writes.contains("INSERT INTO smart_entry_dns_cleanup (group_id,payload,created_time) VALUES (?,?,?)"));
+        verify(jdbc).update("DELETE FROM smart_entry_route WHERE id=?", 2L);
+        verify(jdbc, never()).update("DELETE FROM smart_entry_route WHERE id=?", 1L);
+        verify(jdbc).update(eq("UPDATE smart_entry_route SET current_forward_id=NULL,dns_dirty=1 WHERE group_id=? AND current_forward_id IN (?)"),
+                eq(7L), eq(2L));
+        assertTrue(writes.stream().anyMatch(sql -> sql.startsWith("UPDATE smart_entry_group SET sync_requested=1")));
+        assertFalse(writes.stream().anyMatch(sql -> sql.contains("state='deleting'")));
+    }
+
+    @Test void deletingTheNodesOfAllRoutesDeletesTheStrategyThroughDnsCleanup() {
+        assertEquals(2, service.detachNodeResources(1L, List.of(2L)));
+
+        assertEquals(2, writes.stream().filter(sql -> sql.startsWith("INSERT INTO smart_entry_dns_cleanup")).count());
+        verify(jdbc).update("DELETE FROM smart_entry_route WHERE id=?", 1L);
+        verify(jdbc).update("DELETE FROM smart_entry_route WHERE id=?", 2L);
+        verify(bindings).setBindings(7L, List.of());
+        assertTrue(writes.stream().anyMatch(sql -> sql.startsWith("UPDATE smart_entry_group SET enabled=0,state='deleting'")));
     }
 }

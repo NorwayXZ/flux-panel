@@ -66,6 +66,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1049,6 +1050,55 @@ public class CrossEntryFailoverService {
                     "message", "容灾组已删除，但有 " + cleanupFailed + " 个托管资源清理失败，节点恢复后请在转发管理中检查"));
         }
         return R.ok();
+    }
+
+    /**
+     * Removes members that use a deleted node or forward. Their DNS records become stale and are released on the
+     * next sync; a group left without members is deleted together with its DNS records.
+     */
+    public int detachNodeResources(Long nodeId, Collection<Long> forwardIds) {
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(nodeId);
+        arguments.addAll(forwardIds);
+        String predicate = "(entry_node_id=?" + (forwardIds.isEmpty() ? "" : " OR forward_id IN ("
+                + String.join(",", Collections.nCopies(forwardIds.size(), "?")) + ")") + ")";
+        List<Long> groupIds = jdbcTemplate.queryForList(
+                "SELECT DISTINCT group_id FROM cross_entry_failover_member WHERE " + predicate, Long.class, arguments.toArray());
+        int removed = 0;
+        for (Long groupId : groupIds) {
+            synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
+                Integer count = mutationLocks == null ? detachGroupMembers(groupId, predicate, arguments)
+                        : mutationLocks.withLock(groupId, () -> detachGroupMembers(groupId, predicate, arguments));
+                removed += count == null ? 0 : count;
+            }
+        }
+        activityGroups.clear();
+        return removed;
+    }
+
+    private int detachGroupMembers(Long groupId, String predicate, List<Object> arguments) {
+        List<Object> scoped = new ArrayList<>(arguments);
+        scoped.add(0, groupId);
+        List<Long> memberIds = jdbcTemplate.queryForList(
+                "SELECT id FROM cross_entry_failover_member WHERE group_id=? AND " + predicate, Long.class, scoped.toArray());
+        Integer total = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_failover_member WHERE group_id=?", Integer.class, groupId);
+        if (memberIds.isEmpty()) return 0;
+        if (total != null && total <= memberIds.size()) {
+            try {
+                if (delete(groupId).getCode() == 0) return memberIds.size();
+            } catch (RuntimeException e) {
+                log.warn("Cross-entry group {} could not be deleted with its node: {}", groupId, e.getMessage());
+            }
+        }
+        long now = System.currentTimeMillis();
+        jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=? AND " + predicate, scoped.toArray());
+        String removedIds = memberIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET manual_control_mode='auto',locked_member_id=NULL,manual_lock_until=NULL,"
+                + "updated_time=? WHERE id=? AND locked_member_id IN (" + removedIds + ")", now, groupId);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=NULL,state='unknown',updated_time=? "
+                + "WHERE id=? AND active_member_id IN (" + removedIds + ")", now, groupId);
+        addEvent(groupId, null, null, "node_deleted", "pending", "关联节点已删除，已移除 " + memberIds.size() + " 条入口线路，等待重新检测");
+        return memberIds.size();
     }
 
     private void deleteLegacyCloudflareRecord(Map<String, Object> group) {
