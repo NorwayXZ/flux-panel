@@ -99,38 +99,44 @@ assert len(overview["data"]["groups"]) == 4
 events = api("smart-entry/events", {"id": group_id})
 assert any(event["eventType"] == "configuration" for event in events["data"])
 
-# Deleting a node removes the strategy routes on it instead of refusing; strategies keep their other routes.
-response = api("node/delete", {"id": 900002})
-assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 3, response
-assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE forward_id=900002 OR entry_node_id=900002") == "0"
-assert sql("SELECT COUNT(*) FROM smart_entry_group WHERE state<>'deleting'") == "4"
-assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE carrier='default'") == "4"
-assert sql("SELECT CONCAT((SELECT COUNT(*) FROM node WHERE id=900002),':',(SELECT COUNT(*) FROM tunnel WHERE id=900002),':',"
-           "(SELECT COUNT(*) FROM forward WHERE id=900002))") == "0:0:0"
-# A strategy whose routes were all on deleted nodes is deleted through the DNS cleanup worker.
+# Deleting a node removes the strategy routes on it instead of refusing. Use separate nodes: later runtime
+# tests reuse nodes 900001-900003 and their forwards.
 sql("""
 INSERT INTO node(id,owner_user_id,name,secret,server_ip,port_sta,port_end,created_time,status)
-VALUES (900004,1,'isolated-node-4','test-node-4','203.0.113.4',10000,10010,1,0);
+VALUES (900012,1,'isolated-node-12','test-node-12','203.0.113.12',10000,10010,1,0),
+       (900013,1,'isolated-node-13','test-node-13','203.0.113.13',10000,10010,1,0);
 INSERT INTO tunnel(id,name,in_node_id,in_ip,out_node_id,out_ip,type,protocol,flow,created_time,updated_time,status)
-VALUES (900004,'isolated-tunnel-4',900004,'203.0.113.4',900004,'203.0.113.4',1,'tcp',1,1,1,1);
+VALUES (900012,'isolated-tunnel-12',900012,'203.0.113.12',900012,'203.0.113.12',1,'tcp',1,1,1,1),
+       (900013,'isolated-tunnel-13',900013,'203.0.113.13',900013,'203.0.113.13',1,'tcp',1,1,1,1);
 INSERT INTO forward(id,user_id,user_name,name,tunnel_id,in_port,remote_addr,protocol_mode,created_time,updated_time,status)
-VALUES (900004,1,'admin','isolated-forward-4',900004,10000,'192.0.2.1:443','tcp',1,1,1);
+VALUES (900012,1,'admin','isolated-forward-12',900012,10000,'192.0.2.1:443','tcp',1,1,1),
+       (900013,1,'admin','isolated-forward-13',900013,10000,'192.0.2.1:443','tcp',1,1,1);
 """)
-single = {"name": "isolated-single", "providerRefId": 900001, "zoneName": "example.com", "domain": "isolated-single.example.com",
-          "recordType": "A", "ttl": 60, "enabled": False,
-          "routes": [{"carrier": "default", "forwardId": 900003}, {"carrier": "telecom", "forwardId": 900004}]}
-response = api("smart-entry/save", single)
-assert response["code"] == 0, response
-single["id"] = response["data"]["id"]
+mixed = {"name": "isolated-node-delete", "providerRefId": 900001, "zoneName": "example.com",
+         "domain": "isolated-node-delete.example.com", "recordType": "A", "ttl": 60, "enabled": False,
+         "routes": [{"carrier": "default", "forwardId": 900001}, {"carrier": "telecom", "forwardId": 900012},
+                    {"carrier": "unicom", "forwardId": 900013}]}
+single = {"name": "isolated-single", "providerRefId": 900001, "zoneName": "example.com",
+          "domain": "isolated-single.example.com", "recordType": "A", "ttl": 60, "enabled": False,
+          "routes": [{"carrier": "default", "forwardId": 900012}, {"carrier": "telecom", "forwardId": 900013}]}
+for strategy in (mixed, single):
+    response = api("smart-entry/save", strategy)
+    assert response["code"] == 0, response
+    strategy["id"] = int(response["data"]["id"])
 sql("UPDATE smart_entry_group SET last_checked_at=4102444800000,sync_requested=0")
-response = api("node/delete", {"id": 900003})
+response = api("node/delete", {"id": 900012})
 assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 2, response
-assert sql(f"SELECT carrier FROM smart_entry_route WHERE group_id={group_id}") == "default"
-assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "1"
-response = api("node/delete", {"id": 900004})
-assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 1, response
-assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "0"
-configurations.append(single)
+assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE forward_id=900012 OR entry_node_id=900012") == "0"
+assert sql(f"SELECT GROUP_CONCAT(carrier ORDER BY carrier) FROM smart_entry_route WHERE group_id={mixed['id']}") == "default,unicom"
+assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id IN ({mixed['id']},{single['id']}) AND state<>'deleting'") == "2"
+assert sql("SELECT CONCAT((SELECT COUNT(*) FROM node WHERE id=900012),':',(SELECT COUNT(*) FROM tunnel WHERE id=900012),':',"
+           "(SELECT COUNT(*) FROM forward WHERE id=900012))") == "0:0:0"
+# The strategy whose routes were all on deleted nodes is deleted through the DNS cleanup worker.
+response = api("node/delete", {"id": 900013})
+assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 2, response
+assert sql(f"SELECT carrier FROM smart_entry_route WHERE group_id={mixed['id']}") == "default"
+assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={single['id']} AND state<>'deleting'") == "0"
+configurations.extend([mixed, single])
 for config in configurations:
     assert api("smart-entry/delete", {"id": config["id"]})["code"] == 0
 deadline = time.monotonic() + 45
