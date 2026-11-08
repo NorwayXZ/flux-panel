@@ -84,7 +84,7 @@ assert api("smart-entry/save", config)["code"] == 0
 assert sql(f"SELECT CONCAT(id,':',status,':',current_forward_id,':',total_connections,':',reported_total_connections) "
            f"FROM smart_entry_route WHERE group_id={group_id} AND carrier='telecom'") == f"{route_id}:unhealthy:900001:123:77"
 # Dependency guard must stop both normal and forced deletion before contacting an Agent.
-for endpoint in ["forward/delete", "forward/force-delete", "node/delete", "tunnel/delete"]:
+for endpoint in ["forward/delete", "forward/force-delete", "tunnel/delete"]:
     response = api(endpoint, {"id": 900002})
     assert response["code"] != 0 and "三网优化" in response["msg"], response
 
@@ -98,6 +98,27 @@ assert overview["code"] == 0, overview
 assert len(overview["data"]["groups"]) == 4
 events = api("smart-entry/events", {"id": group_id})
 assert any(event["eventType"] == "configuration" for event in events["data"])
+
+# Deleting a node removes the strategy routes on it instead of refusing; strategies keep their other routes.
+response = api("node/delete", {"id": 900002})
+assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 3, response
+assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE forward_id=900002 OR entry_node_id=900002") == "0"
+assert sql("SELECT COUNT(*) FROM smart_entry_group WHERE state<>'deleting'") == "4"
+assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE carrier='default'") == "4"
+assert sql("SELECT CONCAT((SELECT COUNT(*) FROM node WHERE id=900002),':',(SELECT COUNT(*) FROM tunnel WHERE id=900002),':',"
+           "(SELECT COUNT(*) FROM forward WHERE id=900002))") == "0:0:0"
+# A strategy whose only route was on the deleted node is deleted through the DNS cleanup worker.
+single = {"name": "isolated-single", "providerRefId": 900001, "zoneName": "example.com", "domain": "isolated-single.example.com",
+          "recordType": "A", "ttl": 60, "enabled": False, "routes": [{"carrier": "default", "forwardId": 900003}]}
+response = api("smart-entry/save", single)
+assert response["code"] == 0, response
+single["id"] = response["data"]["id"]
+sql("UPDATE smart_entry_group SET last_checked_at=4102444800000,sync_requested=0")
+response = api("node/delete", {"id": 900003})
+assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 2, response
+assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "0"
+assert sql(f"SELECT carrier FROM smart_entry_route WHERE group_id={group_id}") == "default"
+configurations.append(single)
 for config in configurations:
     assert api("smart-entry/delete", {"id": config["id"]})["code"] == 0
 deadline = time.monotonic() + 45
