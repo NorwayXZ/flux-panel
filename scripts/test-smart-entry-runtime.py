@@ -107,12 +107,14 @@ assert sql("SELECT COUNT(*) FROM smart_entry_group WHERE state<>'deleting'") == 
 assert sql("SELECT COUNT(*) FROM smart_entry_route WHERE carrier='default'") == "4"
 assert sql("SELECT CONCAT((SELECT COUNT(*) FROM node WHERE id=900002),':',(SELECT COUNT(*) FROM tunnel WHERE id=900002),':',"
            "(SELECT COUNT(*) FROM forward WHERE id=900002))") == "0:0:0"
-# A strategy whose routes were all on the deleted node is deleted through the DNS cleanup worker.
+# A strategy whose routes were all on deleted nodes is deleted through the DNS cleanup worker.
 sql("""
+INSERT INTO node(id,owner_user_id,name,secret,server_ip,port_sta,port_end,created_time,status)
+VALUES (900004,1,'isolated-node-4','test-node-4','203.0.113.4',10000,10010,1,0);
 INSERT INTO tunnel(id,name,in_node_id,in_ip,out_node_id,out_ip,type,protocol,flow,created_time,updated_time,status)
-VALUES (900004,'isolated-tunnel-4',900003,'203.0.113.3',900003,'203.0.113.3',1,'tcp',1,1,1,1);
+VALUES (900004,'isolated-tunnel-4',900004,'203.0.113.4',900004,'203.0.113.4',1,'tcp',1,1,1,1);
 INSERT INTO forward(id,user_id,user_name,name,tunnel_id,in_port,remote_addr,protocol_mode,created_time,updated_time,status)
-VALUES (900004,1,'admin','isolated-forward-4',900004,10001,'192.0.2.1:443','tcp',1,1,1);
+VALUES (900004,1,'admin','isolated-forward-4',900004,10000,'192.0.2.1:443','tcp',1,1,1);
 """)
 single = {"name": "isolated-single", "providerRefId": 900001, "zoneName": "example.com", "domain": "isolated-single.example.com",
           "recordType": "A", "ttl": 60, "enabled": False,
@@ -122,9 +124,12 @@ assert response["code"] == 0, response
 single["id"] = response["data"]["id"]
 sql("UPDATE smart_entry_group SET last_checked_at=4102444800000,sync_requested=0")
 response = api("node/delete", {"id": 900003})
-assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 3, response
-assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "0"
+assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 2, response
 assert sql(f"SELECT carrier FROM smart_entry_route WHERE group_id={group_id}") == "default"
+assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "1"
+response = api("node/delete", {"id": 900004})
+assert response["code"] == 0 and response["data"]["smartEntryRouteCount"] == 1, response
+assert sql(f"SELECT COUNT(*) FROM smart_entry_group WHERE id={int(single['id'])} AND state<>'deleting'") == "0"
 configurations.append(single)
 for config in configurations:
     assert api("smart-entry/delete", {"id": config["id"]})["code"] == 0
