@@ -24,6 +24,7 @@ class CrossEntryResilienceTests {
     private JdbcTemplate jdbc;
     private CrossEntryFailoverService service;
     private DnsProviderService dns;
+    private TelegramNotificationService telegram;
 
     @BeforeEach
     void setUp() {
@@ -49,7 +50,9 @@ class CrossEntryResilienceTests {
                 + "telemetry_generation BIGINT DEFAULT 0,last_telemetry_at BIGINT,activity_in_flow BIGINT DEFAULT 0,activity_out_flow BIGINT DEFAULT 0,"
                 + "last_in_flow_at BIGINT,last_out_flow_at BIGINT,last_activity_at BIGINT,pending_probe_connections INT DEFAULT 0,updated_time BIGINT)");
         jdbc.execute("CREATE TABLE cross_entry_failover_group (id BIGINT PRIMARY KEY,state VARCHAR(24),last_error VARCHAR(500),"
-                + "active_member_id BIGINT,last_checked_at BIGINT,last_switch_at BIGINT,active_since_at BIGINT,updated_time BIGINT)");
+                + "active_member_id BIGINT,last_checked_at BIGINT,last_switch_at BIGINT,active_since_at BIGINT,updated_time BIGINT,"
+                + "availability_alert_signature VARCHAR(255),detached_active_address VARCHAR(128),manual_control_mode VARCHAR(16) DEFAULT 'auto',"
+                + "locked_member_id BIGINT,manual_lock_until BIGINT,quality_probe_status VARCHAR(24),quality_probe_error VARCHAR(500),quality_probe_at BIGINT)");
         jdbc.execute("CREATE TABLE cross_entry_switch_pending (group_id BIGINT PRIMARY KEY,from_member_id BIGINT,to_member_id BIGINT,"
                 + "from_address VARCHAR(128),to_address VARCHAR(128),reason VARCHAR(255),phase VARCHAR(24),last_error VARCHAR(500),"
                 + "attempts INT DEFAULT 0,created_time BIGINT,updated_time BIGINT)");
@@ -64,7 +67,8 @@ class CrossEntryResilienceTests {
         insertMember(1, "8.8.8.8", "8.8.8.8", "healthy");
         insertMember(2, "1.1.1.1", "1.1.1.1", "unhealthy");
         dns = mock(DnsProviderService.class);
-        service = spy(new CrossEntryFailoverService(jdbc, null, null, dns, null, null, null, null, null, null));
+        telegram = mock(TelegramNotificationService.class);
+        service = spy(new CrossEntryFailoverService(jdbc, null, telegram, dns, null, null, null, null, null, null));
     }
 
     private void insertMember(long id, String host, String address, String status) {
@@ -150,8 +154,10 @@ class CrossEntryResilienceTests {
         doReturn("9.9.9.9").when(service).readProviderRecordContent(anyMap());
         List<Map<String, Object>> list = members();
         ReflectionTestUtils.invokeMethod(service, "switchEntry", group(), list.get(0), list.get(1), "故障", 1000L);
-        assertEquals("conflict", jdbc.queryForObject("SELECT phase FROM cross_entry_switch_pending WHERE group_id=7", String.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cross_entry_switch_pending", Integer.class));
+        assertEquals("error", jdbc.queryForObject("SELECT state FROM cross_entry_failover_group WHERE id=7", String.class));
         verify(dns, never()).updateManagedRecord(anyLong(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyLong());
+        verify(telegram).notifyCrossEntryAlert(eq(7L), any(), any(), contains("外部修改"), anyString(), eq(false), eq(1000L));
     }
 
     @Test
@@ -205,9 +211,164 @@ class CrossEntryResilienceTests {
     void externalDnsConflictStopsAutomaticOverwrite() {
         jdbc.update("INSERT INTO cross_entry_switch_pending VALUES(7,1,2,'8.8.8.8','1.1.1.1','故障','applying',NULL,0,1000,1000)");
         doReturn("9.9.9.9").when(service).readProviderRecordContent(anyMap());
-        assertEquals(true, ReflectionTestUtils.invokeMethod(service, "reconcilePendingSwitch", group()));
-        assertEquals("conflict", jdbc.queryForObject("SELECT phase FROM cross_entry_switch_pending WHERE group_id=7", String.class));
+        assertEquals(false, ReflectionTestUtils.invokeMethod(service, "reconcilePendingSwitch", group()));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cross_entry_switch_pending", Integer.class));
         verifyNoInteractions(dns);
+    }
+
+    @Test
+    void dnsMovedToAnotherEntryIsFollowedInsteadOfBlocked() {
+        doReturn("1.1.1.1").when(service).readProviderRecordContent(anyMap());
+        List<Map<String, Object>> list = members();
+        Object outcome = ReflectionTestUtils.invokeMethod(service, "checkDnsDrift", group(), list, list.get(0), false, 1000L);
+        assertEquals("ADOPTED", outcome.toString());
+        assertEquals(2L, jdbc.queryForObject("SELECT active_member_id FROM cross_entry_failover_group WHERE id=7", Long.class));
+        verifyNoInteractions(dns);
+    }
+
+    @Test
+    void unknownDnsBlocksSwitchingOnlyUntilTheRecordReturns() {
+        Map<String, Object> group = group();
+        List<Map<String, Object>> list = members();
+        doReturn("9.9.9.9").when(service).readProviderRecordContent(anyMap());
+        assertEquals("BLOCKED", ReflectionTestUtils.invokeMethod(service, "checkDnsDrift", group, list, list.get(0), false, 1000L).toString());
+        assertEquals("BLOCKED", ReflectionTestUtils.invokeMethod(service, "checkDnsDrift", group, list, list.get(0), false, 2000L).toString());
+        verify(service, times(1)).readProviderRecordContent(anyMap());
+        verify(telegram, times(1)).notifyCrossEntryAlert(eq(7L), any(), any(), contains("外部修改"), anyString(), eq(false), anyLong());
+        doReturn("8.8.8.8").when(service).readProviderRecordContent(anyMap());
+        assertEquals("CLEAR", ReflectionTestUtils.invokeMethod(service, "checkDnsDrift", group, list, list.get(0), false, 40_000L).toString());
+        verify(telegram).notifyCrossEntryAlert(eq(7L), any(), any(), contains("恢复"), anyString(), eq(true), anyLong());
+    }
+
+    @Test
+    void deletingTheActiveNodeMovesDnsOffItsAddress() {
+        assertEquals(1, service.detachNodeResources(1L, List.of()));
+        assertNull(jdbc.queryForObject("SELECT active_member_id FROM cross_entry_failover_group WHERE id=7", Long.class));
+        assertEquals("8.8.8.8", jdbc.queryForObject("SELECT detached_active_address FROM cross_entry_failover_group WHERE id=7", String.class));
+
+        Map<String, Object> group = group();
+        group.put("activeMemberId", null);
+        group.put("detachedActiveAddress", "8.8.8.8");
+        doReturn("8.8.8.8").when(service).readProviderRecordContent(anyMap());
+        List<Map<String, Object>> list = members();
+        assertEquals("CLEAR", ReflectionTestUtils.invokeMethod(service, "checkDnsDrift", group, list, null, true, 1000L).toString());
+        ReflectionTestUtils.invokeMethod(service, "switchEntry", group, null, list.get(0), "当前入口不存在", 1000L);
+
+        verify(dns).updateManagedRecord(eq(5L), anyString(), anyString(), anyString(), eq("1.1.1.1"), anyInt(), eq(7L));
+        assertEquals(2L, jdbc.queryForObject("SELECT active_member_id FROM cross_entry_failover_group WHERE id=7", Long.class));
+        assertNull(jdbc.queryForObject("SELECT detached_active_address FROM cross_entry_failover_group WHERE id=7", String.class));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cross_entry_switch_pending", Integer.class));
+    }
+
+    @Test
+    void interruptedSwitchOffADeletedEntryIsRetried() {
+        jdbc.update("UPDATE cross_entry_failover_group SET active_member_id=NULL WHERE id=7");
+        jdbc.update("DELETE FROM cross_entry_failover_member WHERE id=1");
+        jdbc.update("INSERT INTO cross_entry_switch_pending VALUES(7,NULL,2,'8.8.8.8','1.1.1.1','当前入口不存在','applying',NULL,0,1000,1000)");
+        doReturn("8.8.8.8").when(service).readProviderRecordContent(anyMap());
+        Map<String, Object> group = group();
+        group.put("activeMemberId", null);
+        assertEquals(false, ReflectionTestUtils.invokeMethod(service, "reconcilePendingSwitch", group));
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM cross_entry_switch_pending", Integer.class));
+        assertEquals("8.8.8.8", group.get("detachedActiveAddress"));
+    }
+
+    @Test
+    void offlineEntryAlertsOncePerChangeAndAgainOnRecovery() {
+        long now = 1_000_000L;
+        Map<String, Object> group = group();
+        jdbc.update("UPDATE cross_entry_failover_member SET last_healthy_at=? WHERE id=2", now - 5_000L);
+        ReflectionTestUtils.invokeMethod(service, "evaluateAvailabilityAlert", group, members(), now);
+        verify(telegram, never()).notifyCrossEntryAlert(anyLong(), any(), any(), anyString(), anyString(), anyBoolean(), anyLong());
+
+        long later = now + CrossEntryFailoverService.AVAILABILITY_ALERT_DEBOUNCE_MS;
+        ReflectionTestUtils.invokeMethod(service, "evaluateAvailabilityAlert", group, members(), later);
+        ReflectionTestUtils.invokeMethod(service, "evaluateAvailabilityAlert", group, members(), later + 2_000L);
+        verify(telegram, times(1)).notifyCrossEntryAlert(eq(7L), any(), any(), contains("没有备用"), anyString(), eq(false), eq(later));
+
+        jdbc.update("UPDATE cross_entry_failover_member SET status='healthy' WHERE id=2");
+        ReflectionTestUtils.invokeMethod(service, "evaluateAvailabilityAlert", group, members(), later + 4_000L);
+        verify(telegram).notifyCrossEntryAlert(eq(7L), any(), any(), contains("恢复"), anyString(), eq(true), eq(later + 4_000L));
+        assertNull(jdbc.queryForObject("SELECT availability_alert_signature FROM cross_entry_failover_group WHERE id=7", String.class));
+    }
+
+    @Test
+    void silentProbeSourceKeepsEntryQualityAndStopsQualityDecisions() {
+        jdbc.update("UPDATE cross_entry_failover_member SET quality_state='healthy',quality_latency_ms=30,quality_loss_percent=0");
+        Map<String, Object> group = group();
+        group.put("qualityProbeSourceType", "panel");
+        group.put("qualityProbeCount", 4);
+        doAnswer(call -> CrossEntryFailoverService.QualityProbeResult.sourceFailed(call.getArgument(1), "探测源无响应"))
+                .when(service).probeQuality(anyMap(), anyMap(), anyInt(), anyInt());
+
+        assertEquals(false, ReflectionTestUtils.invokeMethod(service, "updateQuality", group, members(), 300, 1000L));
+        assertEquals(false, ReflectionTestUtils.invokeMethod(service, "updateQuality", group, members(), 300, 2000L));
+
+        verify(service, times(2)).probeQuality(anyMap(), anyMap(), anyInt(), anyInt());
+        assertEquals("failed", jdbc.queryForObject("SELECT quality_probe_status FROM cross_entry_failover_group WHERE id=7", String.class));
+        assertEquals("healthy", jdbc.queryForObject("SELECT quality_state FROM cross_entry_failover_member WHERE id=1", String.class));
+        assertEquals(0.0, jdbc.queryForObject("SELECT quality_loss_percent FROM cross_entry_failover_member WHERE id=1", Double.class));
+    }
+
+    @Test
+    void oneMissingSampleLeavesThatEntryUntouched() {
+        jdbc.update("UPDATE cross_entry_failover_member SET quality_state='healthy',quality_loss_percent=0");
+        Map<String, Object> group = group();
+        group.put("qualityProbeSourceType", "panel");
+        doAnswer(call -> {
+            Map<String, Object> member = call.getArgument(1);
+            return ((Number) member.get("id")).longValue() == 1L
+                    ? CrossEntryFailoverService.QualityProbeResult.sourceFailed(member, "等待响应超时")
+                    : new CrossEntryFailoverService.QualityProbeResult(member, true, 30, 30, 1, 0.0, null);
+        }).when(service).probeQuality(anyMap(), anyMap(), anyInt(), anyInt());
+        assertEquals(true, ReflectionTestUtils.invokeMethod(service, "updateQuality", group, members(), 300, 1000L));
+        assertEquals("healthy", jdbc.queryForObject("SELECT quality_state FROM cross_entry_failover_member WHERE id=1", String.class));
+        assertEquals(0.0, jdbc.queryForObject("SELECT quality_loss_percent FROM cross_entry_failover_member WHERE id=1", Double.class));
+    }
+
+    @Test
+    void qualityRoundIsInconclusiveOnlyWhenEveryEntryFailed() {
+        assertTrue(CrossEntryFailoverService.qualityRoundInconclusive(3, 3));
+        assertFalse(CrossEntryFailoverService.qualityRoundInconclusive(3, 2));
+        assertFalse(CrossEntryFailoverService.qualityRoundInconclusive(0, 0));
+    }
+
+    @Test
+    void nodeDisconnectIsJudgedByTheEntryPortUntilGraceRunsOut() throws Exception {
+        doReturn(false).when(service).isEntryNodeOnline(anyLong());
+        try (java.net.ServerSocket listener = new java.net.ServerSocket(0, 5, java.net.InetAddress.getByName("127.0.0.1"))) {
+            Map<String, Object> member = members().get(0);
+            member.put("entryAddress", "127.0.0.1");
+            member.put("entryPort", listener.getLocalPort());
+            member.put("status", "healthy");
+            assertTrue(service.probe(member, 500).healthy());
+            member.put("status", "unhealthy");
+            assertEquals("入口节点离线", service.probe(member, 500).error());
+            member.put("status", "healthy");
+
+            Map<Long, Long> offlineSince = (Map<Long, Long>) ReflectionTestUtils.getField(service, "nodeOfflineSince");
+            long nodeId = ((Number) member.get("entryNodeId")).longValue();
+            offlineSince.put(nodeId, System.currentTimeMillis() - CrossEntryFailoverService.NODE_OFFLINE_GRACE_MS);
+            CrossEntryFailoverService.ProbeResult expired = service.probe(member, 500);
+            assertFalse(expired.healthy());
+            assertEquals("入口节点离线", expired.error());
+
+            doReturn(true).when(service).isEntryNodeOnline(anyLong());
+            assertTrue(service.probe(member, 500).healthy());
+            assertFalse(offlineSince.containsKey(nodeId));
+        }
+    }
+
+    @Test
+    void editedNodeAddressReachesTheEntryAfterVerification() {
+        doReturn("4.4.4.4").when(service).currentEntryHost(anyMap(), anyLong());
+        doAnswer(call -> new CrossEntryFailoverService.ProbeResult(call.getArgument(0), true, 10, null))
+                .when(service).probe(anyMap(), anyInt());
+        Map<String, Object> group = group();
+        jdbc.update("UPDATE cross_entry_failover_group SET active_member_id=1 WHERE id=7");
+        jdbc.update("UPDATE cross_entry_failover_member SET enabled=FALSE WHERE id=1");
+        assertEquals(false, ReflectionTestUtils.invokeMethod(service, "refreshMemberAddresses", group, members(), 1000L));
+        assertEquals("4.4.4.4", jdbc.queryForObject("SELECT entry_address FROM cross_entry_failover_member WHERE id=2", String.class));
     }
 
     @Test

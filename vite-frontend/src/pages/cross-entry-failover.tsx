@@ -1158,6 +1158,8 @@ const eventActionText = (event: CrossEntryEvent) => {
   const reason = event.reason || "";
 
   if (event.status === "failed") return "切换失败";
+  if (event.status === "alert") return "入口告警";
+  if (event.status === "notice") return "状态同步";
   if (reason.includes("初始化")) return "初始化主入口";
   if (reason.includes("回切") || reason.includes("主入口延迟已回到"))
     return "回到主入口";
@@ -2308,7 +2310,7 @@ export default function CrossEntryFailoverPage() {
               return (
                 <article
                   key={group.id}
-                  className={`flex h-full flex-col rounded-md border bg-default-50/70 p-3 dark:bg-content1/60 sm:p-4 ${event.status === "failed" ? "border-danger/40 border-l-2" : latest ? "border-secondary/50 border-l-2" : "border-divider border-l-2"}`}
+                  className={`flex h-full flex-col rounded-md border bg-default-50/70 p-3 dark:bg-content1/60 sm:p-4 ${event.status === "failed" || event.status === "alert" ? "border-danger/40 border-l-2" : latest ? "border-secondary/50 border-l-2" : "border-divider border-l-2"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -2322,7 +2324,7 @@ export default function CrossEntryFailoverPage() {
                           {group.name}
                         </h3>
                         <Chip
-                          color={event.status === "failed" ? "danger" : "success"}
+                          color={event.status === "failed" || event.status === "alert" ? "danger" : "success"}
                           size="sm"
                           variant="flat"
                         >
@@ -5149,14 +5151,16 @@ export default function CrossEntryFailoverPage() {
                 {events.map((event) => (
                   <div key={event.id} className="flex gap-3 py-4">
                     <div
-                      className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === "success" ? "bg-success" : "bg-danger"}`}
+                      className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${event.status === "success" || event.status === "notice" ? "bg-success" : "bg-danger"}`}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Chip
                             color={
-                              event.status === "success" ? "success" : "danger"
+                              event.status === "success" || event.status === "notice"
+                                ? "success"
+                                : "danger"
                             }
                             size="sm"
                             variant="flat"
@@ -5204,7 +5208,9 @@ export default function CrossEntryFailoverPage() {
                           </span>
                           {event.status === "success"
                             ? " DNS 已写入目标入口。"
-                            : " 切换失败，按详情处理或已尝试回滚。"}
+                            : event.status === "alert" || event.status === "notice"
+                              ? " 面板未写入 DNS，仅记录状态变化。"
+                              : " 切换失败，按详情处理或已尝试回滚。"}
                         </p>
                         {event.detail && (
                           <p className="mt-1">

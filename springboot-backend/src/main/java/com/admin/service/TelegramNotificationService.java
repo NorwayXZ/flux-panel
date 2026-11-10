@@ -200,6 +200,28 @@ public class TelegramNotificationService {
     }
 
     @Async
+    public void notifyCrossEntryAlert(long groupId, String groupName, String domain,
+                                      String title, String detail, boolean recovery, long occurredAt) {
+        try {
+            Settings settings = loadSettings();
+            if (!settings.enabled() || !settings.forwardEnabled()) return;
+            String eventKey = shortenKey("cross-entry-alert:" + groupId + ":" + occurredAt);
+            synchronized (deliveryLock) {
+                if (loadDelivery(eventKey).sendCount() > 0) return;
+                String message = "[入口容灾" + (recovery ? "恢复" : "告警") + "]\n"
+                        + "业务：" + clean(groupName) + "\n"
+                        + "域名：" + clean(domain) + "\n"
+                        + "状态：" + clean(title) + "\n"
+                        + "详情：" + clean(detail) + "\n"
+                        + "时间：" + formatTime(occurredAt);
+                deliver(settings, eventKey, "cross_entry", "forward", groupId, message, false);
+            }
+        } catch (Exception e) {
+            log.warn("Telegram cross-entry alert failed for group {}: {}", groupId, e.getMessage());
+        }
+    }
+
+    @Async
     public void notifyServerAssetExpiry(long assetId, String assetName, String provider, long expiryAt, long remainingDays) {
         try {
             Settings settings = loadSettings();

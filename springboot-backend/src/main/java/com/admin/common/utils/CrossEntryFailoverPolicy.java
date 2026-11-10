@@ -8,6 +8,7 @@ import java.util.Set;
 public final class CrossEntryFailoverPolicy {
     private static final String MODE_PAUSE = "pause";
     private static final String MODE_LOCK = "lock";
+    private static final double MIN_FALLBACK_LOSS_GAIN_PERCENT = 10.0;
 
     private CrossEntryFailoverPolicy() {
     }
@@ -88,7 +89,10 @@ public final class CrossEntryFailoverPolicy {
                 Member best = members.stream().filter(Member::healthy)
                         .min(qualityComparator(active, settings)).orElse(null);
                 if (best != null && !Objects.equals(best.id(), active.id())) {
-                    return Decision.switchTo(best.id(), "全部入口质量不佳，选择差中最优");
+                    if (hasMeaningfulQualityGain(active, best, settings)) {
+                        return Decision.switchTo(best.id(), "全部入口质量不佳，选择差中最优");
+                    }
+                    return Decision.stay("当前入口质量劣化，其他入口没有明显更好");
                 }
                 return Decision.stay("当前入口质量劣化，但已是差中最优");
             }
@@ -280,6 +284,22 @@ public final class CrossEntryFailoverPolicy {
         return active.latencyMs() - target.latencyMs() >= Math.max(1, thresholdMs);
     }
 
+    /** All entries are poor: moving DNS only helps when the other entry is clearly better. */
+    private static boolean hasMeaningfulQualityGain(Member active, Member best, Settings settings) {
+        if (active.suppressed() != best.suppressed()) return !best.suppressed();
+        if (active.acceptableForQualitySwitch() != best.acceptableForQualitySwitch()) {
+            return best.acceptableForQualitySwitch();
+        }
+        double activeLoss = active.lossPercent() == null ? 0.0 : active.lossPercent();
+        double bestLoss = best.lossPercent() == null ? 0.0 : best.lossPercent();
+        if (activeLoss - bestLoss >= MIN_FALLBACK_LOSS_GAIN_PERCENT) return true;
+        if (bestLoss > activeLoss || best.latencyMs() == null) return false;
+        if (active.latencyMs() == null) return true;
+        int percentGain = (int) Math.ceil(active.latencyMs() * settings.failbackGainPercent() / 100.0);
+        int requiredGain = Math.max(1, Math.max(settings.failbackGainMs(), percentGain));
+        return active.latencyMs() - best.latencyMs() >= requiredGain;
+    }
+
     private static boolean isStableTcpCandidate(Member member, Member active, Settings settings) {
         return member != null
                 && member.healthy()
@@ -312,7 +332,7 @@ public final class CrossEntryFailoverPolicy {
     }
 
     private static int sameFaultPenalty(Member active, Member member, Settings settings) {
-        if (!settings.sameFaultAvoidanceEnabled() || active == null) return 0;
+        if (!settings.sameFaultAvoidanceEnabled() || active == null || member.id() == active.id()) return 0;
         String activeFault = normalizeFault(active.faultKind());
         String memberFault = normalizeFault(member.faultKind());
         if ("none".equals(activeFault) || "none".equals(memberFault)) return 0;
@@ -320,7 +340,7 @@ public final class CrossEntryFailoverPolicy {
     }
 
     private static int topologyPenalty(Member active, Member member, Settings settings) {
-        if (!settings.topologyAvoidanceEnabled() || active == null) return 0;
+        if (!settings.topologyAvoidanceEnabled() || active == null || member.id() == active.id()) return 0;
         if (active.entryNodeId() > 0 && active.entryNodeId() == member.entryNodeId()) return 1;
         Set<String> activeKeys = CrossEntryTopology.keysFromSignatureOrAddress(active.topologySignature(), active.entryAddress());
         Set<String> memberKeys = CrossEntryTopology.keysFromSignatureOrAddress(member.topologySignature(), member.entryAddress());

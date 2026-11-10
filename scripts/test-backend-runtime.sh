@@ -157,6 +157,13 @@ done
 address_refresh_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_member' AND column_name='address_refresh_error'")
 [[ "${address_refresh_column_exists}" -eq 1 ]]
+audit_column_count=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_group' AND column_name IN ('availability_alert_signature','detached_active_address')")
+[[ "${audit_column_count}" -eq 2 ]]
+for audit_migration_pass in 1 2; do
+  docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
+    "${PROJECT_DIR}/migrations/20261111_cross_entry_audit_fixes.sql"
+done
 # Run the standalone migration twice against the schema created at startup.
 for resilience_migration_pass in 1 2; do
   docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \

@@ -257,6 +257,8 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_managed_resource", "cleanup_last_at",
                     "bigint DEFAULT NULL AFTER cleanup_last_error");
             normalizeFailbackToleranceDefaults();
+            ensureColumn("cross_entry_failover_group", "availability_alert_signature", "varchar(255) DEFAULT NULL");
+            ensureColumn("cross_entry_failover_group", "detached_active_address", "varchar(128) DEFAULT NULL");
             ensureColumn("cross_entry_failover_event", "from_forward_name", "varchar(100) DEFAULT NULL");
             ensureColumn("cross_entry_failover_event", "to_forward_name", "varchar(100) DEFAULT NULL");
             ensureColumn("cross_entry_failover_event", "from_entry_address", "varchar(128) DEFAULT NULL");

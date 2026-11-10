@@ -49,6 +49,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.annotation.Resource;
 import java.math.BigDecimal;
@@ -78,6 +79,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -100,6 +103,14 @@ public class CrossEntryFailoverService {
     private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
     private static final long TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS = 15_000L;
     private static final long ENTRY_DNS_REFRESH_MS = 60_000L;
+    private static final long CHECK_INITIAL_DELAY_MS = 15_000L;
+    private static final long CHECK_INTERVAL_MS = 1_000L;
+    private static final long QUALITY_SOURCE_BACKOFF_MS = 30_000L;
+    private static final long RECENT_QUALITY_MAX_AGE_MS = 60_000L;
+    static final long NODE_OFFLINE_GRACE_MS = 120_000L;
+    static final long AVAILABILITY_ALERT_DEBOUNCE_MS = 60_000L;
+    private static final long DNS_DRIFT_CHECK_MS = 300_000L;
+    private static final long DNS_DRIFT_RETRY_MS = 30_000L;
     private static final String MIGRATION_PREPARE_CLEANUP_REASON = "入口迁移预部署资源";
     static final String DAILY_USAGE_SELECT_SQL = "SELECT member_id AS memberId,active_millis AS activeMillis,"
             + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
@@ -132,6 +143,16 @@ public class CrossEntryFailoverService {
     private final Set<Long> inFlightGroups = ConcurrentHashMap.newKeySet();
     private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
     private final Map<Long, Long> lastEntryDnsRefresh = new ConcurrentHashMap<>();
+    private final Map<Long, Long> nodeOfflineSince = new ConcurrentHashMap<>();
+    private final Map<Long, Long> qualitySourceBackoffUntil = new ConcurrentHashMap<>();
+    private final Map<Long, Long> lastDnsDriftCheck = new ConcurrentHashMap<>();
+    private final Map<Long, DnsDriftState> dnsDriftStates = new ConcurrentHashMap<>();
+    /** Failover ticks do not share Spring's single-threaded @Scheduled pool with the panel's other jobs. */
+    private final ScheduledExecutorService checkScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "cross-entry-check");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Value("${jwt-secret}")
     private String encryptionSecret;
@@ -1128,12 +1149,20 @@ public class CrossEntryFailoverService {
             }
         }
         long now = System.currentTimeMillis();
-        jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=? AND " + predicate, scoped.toArray());
         String removedIds = memberIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+        // The DNS record still points here; keep it so the next probe can move the record off the deleted entry.
+        List<String> removedActiveAddress = jdbcTemplate.queryForList("SELECT m.entry_address FROM cross_entry_failover_member m "
+                + "JOIN cross_entry_failover_group g ON g.active_member_id=m.id WHERE g.id=? AND m.id IN (" + removedIds + ")",
+                String.class, groupId);
+        jdbcTemplate.update("DELETE FROM cross_entry_failover_member WHERE group_id=? AND " + predicate, scoped.toArray());
         jdbcTemplate.update("UPDATE cross_entry_failover_group SET manual_control_mode='auto',locked_member_id=NULL,manual_lock_until=NULL,"
                 + "updated_time=? WHERE id=? AND locked_member_id IN (" + removedIds + ")", now, groupId);
-        jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=NULL,state='unknown',updated_time=? "
-                + "WHERE id=? AND active_member_id IN (" + removedIds + ")", now, groupId);
+        if (!removedActiveAddress.isEmpty()) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET manual_control_mode='auto' WHERE id=? AND manual_control_mode='pause'", groupId);
+        }
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=NULL,state='unknown',detached_active_address=?,updated_time=? "
+                + "WHERE id=? AND active_member_id IN (" + removedIds + ")",
+                removedActiveAddress.isEmpty() ? null : removedActiveAddress.get(0), now, groupId);
         addEvent(groupId, null, null, "node_deleted", "pending", "关联节点已删除，已移除 " + memberIds.size() + " 条入口线路，等待重新检测");
         return memberIds.size();
     }
@@ -1397,7 +1426,17 @@ public class CrossEntryFailoverService {
                 + "WHERE e.group_id=? ORDER BY e.created_time DESC LIMIT 100", id));
     }
 
-    @Scheduled(initialDelay = 15000, fixedDelay = 1000)
+    @PostConstruct
+    void startCheckScheduler() {
+        checkScheduler.scheduleWithFixedDelay(() -> {
+            try {
+                scheduledCheck();
+            } catch (RuntimeException e) {
+                log.warn("Cross-entry scheduler tick failed: {}", e.getMessage());
+            }
+        }, CHECK_INITIAL_DELAY_MS, CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
     public void scheduledCheck() {
         if (!checking.compareAndSet(false, true)) return;
         try {
@@ -1656,35 +1695,50 @@ public class CrossEntryFailoverService {
         boolean tcpLatencySelection = bool(group.get("tcpLatencySelectionEnabled"));
         boolean qualityDecisionEnabled = false;
         boolean detailedLatencyMeasured = false;
+        boolean activeAwaitingFailover = !"active_active".equals(Objects.toString(group.get("routingMode"), "failover"))
+                && needsFastFailoverDecision(memberById(members, nullableLong(group.get("activeMemberId"))));
         if (tcpLatencySelection) {
-            detailedLatencyMeasured = updateTcpLatencyMeasurements(group, members, timeout, now);
-            members = loadMembers(groupId);
+            if (activeAwaitingFailover) {
+                detailedLatencyMeasured = recentQualityUsable(group, now);
+            } else {
+                detailedLatencyMeasured = updateTcpLatencyMeasurements(group, members, timeout, now);
+                members = loadMembers(groupId);
+            }
         } else if (qualityEnabledForFailover(group)) {
-            qualityDecisionEnabled = updateQuality(group, members, timeout, now);
+            if (activeAwaitingFailover) {
+                qualityDecisionEnabled = recentQualityUsable(group, now);
+            } else {
+                qualityDecisionEnabled = updateQuality(group, members, timeout, now);
+                members = loadMembers(groupId);
+            }
             detailedLatencyMeasured = qualityDecisionEnabled;
-            members = loadMembers(groupId);
         } else {
             markQualityDisabledIfNeeded(group, now);
         }
+        // Without fresh quality data, a primary last seen as degraded must not win failback on TCP alone.
+        boolean primaryLastSeenDegraded = !tcpLatencySelection && qualityEnabledForFailover(group) && !qualityDecisionEnabled
+                && !members.isEmpty() && isQualityDegraded(members.get(0));
         Map<String, Object> active = memberById(members, nullableLong(group.get("activeMemberId")));
-        if (active == null && !members.isEmpty()) active = members.get(0);
         expireManualLockIfNeeded(group, active, now);
         if ("active_active".equals(Objects.toString(group.get("routingMode"), "failover"))) {
             updateActiveActiveGroup(group, members, now);
+            evaluateAvailabilityAlert(group, members, now);
             return;
         }
         boolean activeFailed = active == null || !bool(active.get("enabled"))
                 || Set.of("unhealthy", "recovering").contains(Objects.toString(active.get("status"), "unknown"));
+        DnsDriftOutcome dnsDrift = checkDnsDrift(group, members, active, activeFailed, now);
+        if (dnsDrift == DnsDriftOutcome.ADOPTED) return;
         final boolean useQualityDecision = qualityDecisionEnabled;
         final boolean useDetailedLatency = detailedLatencyMeasured;
-        boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
+        boolean activeQualityDegraded = useQualityDecision && active != null && isQualityDegraded(active);
         List<CrossEntryFailoverPolicy.Member> snapshots = members.stream()
                 .map(member -> policyMember(group, member, useQualityDecision, useDetailedLatency, now))
                 .collect(Collectors.toList());
         boolean smartSelection = useQualityDecision && bool(group.get("smartSelectionEnabled"));
         boolean adaptiveSelection = smartSelection || tcpLatencySelection;
         CrossEntryFailoverPolicy.Settings policySettings = new CrossEntryFailoverPolicy.Settings(
-                bool(group.get("autoFailback")), number(group.get("recoveryThreshold")).intValue(),
+                bool(group.get("autoFailback")) && !primaryLastSeenDegraded, number(group.get("recoveryThreshold")).intValue(),
                 cooldownElapsed(group, now),
                 (!adaptiveSelection && !schedule.configured()) || minResidencyElapsed(group, now),
                 smartSelection && bool(group.get("degradedFallbackEnabled")),
@@ -1715,7 +1769,7 @@ public class CrossEntryFailoverService {
         }
         Map<String, Object> target = decision.switchRequired() ? memberById(members, decision.targetId()) : null;
 
-        if (target != null) {
+        if (target != null && dnsDrift != DnsDriftOutcome.BLOCKED) {
             switchEntry(group, active, target, decision.reason(), now);
         } else {
             long enabledCount = members.stream().filter(member -> bool(member.get("enabled"))).count();
@@ -1734,9 +1788,161 @@ public class CrossEntryFailoverService {
                 state = "healthy".equals(state) ? "degraded" : state;
                 error = addressWarning;
             }
+            DnsDriftState drift = dnsDrift == DnsDriftOutcome.BLOCKED ? dnsDriftStates.get(groupId) : null;
+            if (drift != null) {
+                state = target != null ? "error" : "degraded";
+                error = drift.message();
+            }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
                     state, error, now, now, groupId);
         }
+        evaluateAvailabilityAlert(group, members, now);
+    }
+
+    private boolean needsFastFailoverDecision(Map<String, Object> active) {
+        return active == null || !bool(active.get("enabled")) || number(active.get("failCount")).intValue() > 0
+                || Set.of("unhealthy", "recovering").contains(Objects.toString(active.get("status"), "unknown"));
+    }
+
+    private boolean recentQualityUsable(Map<String, Object> group, long now) {
+        Long checkedAt = nullableLong(group.get("qualityProbeAt"));
+        return checkedAt != null && now - checkedAt <= RECENT_QUALITY_MAX_AGE_MS
+                && Set.of("ok", "warning").contains(Objects.toString(group.get("qualityProbeStatus"), ""));
+    }
+
+    /** A probe round with no entry reachable cannot tell entries apart, so it says nothing about which is better. */
+    static boolean qualityRoundInconclusive(int total, int failed) {
+        return total > 0 && failed >= total;
+    }
+
+    private enum DnsDriftOutcome { CLEAR, BLOCKED, ADOPTED }
+
+    private record DnsDriftState(String actual, String message) {}
+
+    private static final class DnsDriftException extends RuntimeException {
+        private final String actual;
+
+        private DnsDriftException(String actual) {
+            super("DNS 当前记录与原入口不一致：" + actual);
+            this.actual = actual;
+        }
+    }
+
+    /** Compares the provider record with the panel while nothing is failing, so drift is not first found mid-outage. */
+    private DnsDriftOutcome checkDnsDrift(Map<String, Object> group, List<Map<String, Object>> members,
+                                          Map<String, Object> active, boolean activeFailed, long now) {
+        long groupId = number(group.get("id")).longValue();
+        DnsDriftOutcome current = dnsDriftStates.containsKey(groupId) ? DnsDriftOutcome.BLOCKED : DnsDriftOutcome.CLEAR;
+        if (current == DnsDriftOutcome.CLEAR && active != null && activeFailed) return current;
+        Long lastCheck = lastDnsDriftCheck.get(groupId);
+        long interval = current == DnsDriftOutcome.BLOCKED || active == null ? DNS_DRIFT_RETRY_MS : DNS_DRIFT_CHECK_MS;
+        if (lastCheck != null && now - lastCheck < interval) return current;
+        lastDnsDriftCheck.put(groupId, now);
+        String actual;
+        try {
+            actual = readProviderRecordContent(group);
+        } catch (RuntimeException e) {
+            log.debug("Cross-entry DNS drift check failed for group {}: {}", groupId, e.getMessage());
+            return current;
+        }
+        String expected = active != null ? Objects.toString(active.get("entryAddress"), "")
+                : Objects.toString(group.get("detachedActiveAddress"), "");
+        if (StringUtils.isNotBlank(expected) && dnsAddressMatches(expected, actual)) {
+            clearDnsDrift(group, active, actual);
+            return DnsDriftOutcome.CLEAR;
+        }
+        return handleDnsDrift(group, members, active, actual, now);
+    }
+
+    private void clearDnsDrift(Map<String, Object> group, Map<String, Object> active, String actual) {
+        long groupId = number(group.get("id")).longValue();
+        if (dnsDriftStates.remove(groupId) == null) return;
+        Long activeId = active == null ? null : nullableLong(active.get("id"));
+        addEvent(groupId, activeId, activeId, "DNS 记录已恢复", "notice", "服务商记录已回到 " + actual + "，自动切换恢复");
+        sendAlert(group, "DNS 记录已恢复，自动切换恢复", "服务商记录：" + actual, true, System.currentTimeMillis());
+    }
+
+    /** A record moved to a known entry is adopted; an unknown value is never overwritten but no longer freezes probing. */
+    private DnsDriftOutcome handleDnsDrift(Map<String, Object> group, List<Map<String, Object>> members,
+                                           Map<String, Object> active, String actual, long now) {
+        long groupId = number(group.get("id")).longValue();
+        lastDnsDriftCheck.put(groupId, now);
+        Long activeId = active == null ? null : nullableLong(active.get("id"));
+        Map<String, Object> known = members.stream()
+                .filter(member -> dnsAddressMatches(Objects.toString(member.get("entryAddress"), ""), actual))
+                .findFirst().orElse(null);
+        if (known != null) {
+            Long knownId = nullableLong(known.get("id"));
+            settleActiveUsage(groupId, activeId, nullableLong(group.get("activeSinceAt")), now);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,active_since_at=?,detached_active_address=NULL,"
+                            + "state='degraded',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    knownId, now, "DNS 记录已被改到其他入口，面板已同步，等待重新检测", now, now, groupId);
+            group.put("activeMemberId", knownId);
+            group.put("activeSinceAt", now);
+            group.put("detachedActiveAddress", null);
+            dnsDriftStates.remove(groupId);
+            String detail = "服务商记录指向 " + entryLabel(known) + "，面板当前入口已同步";
+            addEvent(groupId, activeId, knownId, "DNS 记录被外部修改", "notice", detail);
+            sendAlert(group, "DNS 记录被外部修改，面板已同步到对应入口", detail, false, now);
+            return DnsDriftOutcome.ADOPTED;
+        }
+        String message = shorten("DNS 记录已被外部改成 " + StringUtils.defaultIfBlank(actual, "空值")
+                + "，不是任何入口的地址，已暂停自动切换；把记录改回任一入口地址后自动恢复", 500);
+        DnsDriftState previous = dnsDriftStates.put(groupId, new DnsDriftState(actual, message));
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                message, now, now, groupId);
+        if (previous == null || !dnsAddressMatches(previous.actual(), actual)) {
+            addEvent(groupId, activeId, activeId, "DNS 记录被外部修改", "alert", message);
+            sendAlert(group, "DNS 记录被外部修改，自动切换已暂停", message, false, now);
+        }
+        return DnsDriftOutcome.BLOCKED;
+    }
+
+    private void sendAlert(Map<String, Object> group, String title, String detail, boolean recovery, long now) {
+        if (telegramNotificationService == null) return;
+        telegramNotificationService.notifyCrossEntryAlert(number(group.get("id")).longValue(), Objects.toString(group.get("name")),
+                Objects.toString(group.get("domain")), title, detail, recovery, now);
+    }
+
+    /** Reports each change in which entries are down; flapping shorter than the debounce window stays quiet. */
+    private void evaluateAvailabilityAlert(Map<String, Object> group, List<Map<String, Object>> members, long now) {
+        long groupId = number(group.get("id")).longValue();
+        List<Map<String, Object>> enabled = members.stream().filter(member -> bool(member.get("enabled"))).collect(Collectors.toList());
+        if (enabled.isEmpty()) return;
+        List<Map<String, Object>> offline = enabled.stream()
+                .filter(member -> "unhealthy".equals(member.get("status")))
+                .filter(member -> {
+                    Long lastHealthy = nullableLong(member.get("lastHealthyAt"));
+                    return lastHealthy == null || now - lastHealthy >= AVAILABILITY_ALERT_DEBOUNCE_MS;
+                })
+                .collect(Collectors.toList());
+        String level = offline.isEmpty() ? null
+                : offline.size() == enabled.size() ? "all_offline"
+                : enabled.size() - offline.size() == 1 ? "no_backup" : "partial";
+        String signature = level == null ? "" : level + ":" + offline.stream()
+                .map(member -> String.valueOf(number(member.get("id")).longValue()))
+                .sorted().collect(Collectors.joining(","));
+        String previous = Objects.toString(group.get("availabilityAlertSignature"), "");
+        if (signature.equals(previous)) return;
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET availability_alert_signature=? WHERE id=?",
+                signature.isEmpty() ? null : signature, groupId);
+        group.put("availabilityAlertSignature", signature);
+        if (level == null) {
+            addEvent(groupId, null, null, "入口已全部恢复", "notice", "所有启用入口恢复在线");
+            sendAlert(group, "入口已全部恢复", "所有启用入口恢复在线", true, now);
+            return;
+        }
+        String title = switch (level) {
+            case "all_offline" -> "所有入口都已离线";
+            case "no_backup" -> "只剩一条可用入口，已没有备用";
+            default -> "部分入口离线";
+        };
+        String detail = shorten(offline.stream()
+                .map(member -> Objects.toString(member.get("nodeName"), "入口") + "（"
+                        + StringUtils.defaultIfBlank(Objects.toString(member.get("lastError"), ""), "连接失败") + "）")
+                .collect(Collectors.joining("；")), 500);
+        addEvent(groupId, null, null, title, "alert", detail);
+        sendAlert(group, title, detail, false, now);
     }
 
     record GroupHealth(String state, String error) { }
@@ -1762,7 +1968,13 @@ public class CrossEntryFailoverService {
         for (Map<String, Object> member : members) {
             if (!bool(member.get("enabled"))) continue;
             String host = StringUtils.trimToEmpty(Objects.toString(member.get("entryHost"), ""));
-            if (host.isEmpty() || IpLiteralUtil.isLiteral(host)) continue;
+            String nodeHost = StringUtils.trimToEmpty(currentEntryHost(member, now));
+            if (!nodeHost.isEmpty() && !nodeHost.equalsIgnoreCase(host)) host = nodeHost;
+            if (host.isEmpty()) continue;
+            if (IpLiteralUtil.isLiteral(host) && dnsAddressMatches(host, Objects.toString(member.get("entryAddress"), ""))) {
+                clearAddressRefreshError(member, now);
+                continue;
+            }
             if (StringUtils.removeEnd(host, ".").equalsIgnoreCase(serviceDomain)) {
                 setAddressRefreshError(member, "入口域名与容灾业务域名相同，已停止自动解析以避免循环", now);
                 continue;
@@ -1804,6 +2016,35 @@ public class CrossEntryFailoverService {
             }
         }
         return false;
+    }
+
+    /** Follows node address edits; returns null when the forward can no longer be traced to a node. */
+    String currentEntryHost(Map<String, Object> member, long now) {
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList("SELECT COALESCE(NULLIF(n.server_ip,''),n.ip,t.in_ip) AS entryHost,"
+                    + "COALESCE(n.name,CONCAT('节点',t.in_node_id)) AS nodeName,f.name AS forwardName,"
+                    + "a.provider AS assetProvider,a.asn AS assetAsn FROM forward f JOIN tunnel t ON t.id=f.tunnel_id "
+                    + "LEFT JOIN node n ON n.id=t.in_node_id LEFT JOIN server_asset a ON a.node_id=t.in_node_id WHERE f.id=?",
+                    member.get("forwardId"));
+        } catch (DataAccessException e) {
+            log.debug("Cross-entry node address lookup failed: {}", e.getMessage());
+            return null;
+        }
+        if (rows.isEmpty()) return null;
+        Map<String, Object> row = rows.get(0);
+        String host = StringUtils.trimToEmpty(Objects.toString(row.get("entryHost"), ""));
+        if (host.isEmpty() || host.equalsIgnoreCase(StringUtils.trimToEmpty(Objects.toString(member.get("entryHost"), "")))) return host;
+        String signature = IpLiteralUtil.isLiteral(host)
+                ? CrossEntryTopology.signature(host, Objects.toString(row.get("assetProvider"), ""),
+                        Objects.toString(row.get("assetAsn"), ""),
+                        Objects.toString(row.get("nodeName"), "") + " " + Objects.toString(row.get("forwardName"), ""))
+                : Objects.toString(member.get("topologySignature"), "");
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET entry_host=?,topology_signature=?,updated_time=? WHERE id=?",
+                host, signature, now, member.get("id"));
+        member.put("entryHost", host);
+        member.put("topologySignature", signature);
+        return host;
     }
 
     private boolean hasAuthorizedAddressLoop(long groupId, String address) {
@@ -1876,6 +2117,9 @@ public class CrossEntryFailoverService {
                 throw new IllegalStateException("服务商记录尚未确认新地址");
             }
             confirmActiveEntryAddress(groupId, member, address, now);
+        } catch (DnsDriftException drift) {
+            jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+            handleDnsDrift(group, loadMembers(groupId), member, drift.actual, now);
         } catch (RuntimeException error) {
             String detail = shorten("入口域名变更的 DNS 结果待核对：" + error.getMessage(), 500);
             jdbcTemplate.update("UPDATE cross_entry_switch_pending SET last_error=?,updated_time=? WHERE group_id=?", detail, now, groupId);
@@ -1898,6 +2142,7 @@ public class CrossEntryFailoverService {
     private boolean updateTcpLatencyMeasurements(Map<String, Object> group, List<Map<String, Object>> members,
                                                  int timeoutMs, long now) {
         long groupId = number(group.get("id")).longValue();
+        if (qualitySourceBackingOff(groupId, now)) return false;
         String sourceError = qualitySourceError(group);
         if (sourceError != null) {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
@@ -1910,6 +2155,10 @@ public class CrossEntryFailoverService {
                 .map(member -> CompletableFuture.supplyAsync(() -> probeQuality(group, member, count, timeoutMs), probeExecutor))
                 .collect(Collectors.toList());
         List<QualityProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+        if (results.stream().anyMatch(QualityProbeResult::sourceFailure)) {
+            recordSourceFailure(group, results, now);
+            return false;
+        }
         List<String> errors = new ArrayList<>();
         for (QualityProbeResult result : results) {
             jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_latency_ms=?,quality_p95_ms=?,quality_jitter_ms=?,"
@@ -1928,8 +2177,27 @@ public class CrossEntryFailoverService {
         return successful > 0;
     }
 
+    private boolean qualitySourceBackingOff(long groupId, long now) {
+        Long until = qualitySourceBackoffUntil.get(groupId);
+        if (until == null) return false;
+        if (now < until) return true;
+        qualitySourceBackoffUntil.remove(groupId, until);
+        return false;
+    }
+
+    private void recordSourceFailure(Map<String, Object> group, List<QualityProbeResult> results, long now) {
+        long groupId = number(group.get("id")).longValue();
+        boolean allFromSource = results.stream().allMatch(QualityProbeResult::sourceFailure);
+        if (allFromSource) qualitySourceBackoffUntil.put(groupId, now + QUALITY_SOURCE_BACKOFF_MS);
+        String firstError = results.stream().map(QualityProbeResult::error).filter(StringUtils::isNotBlank).findFirst().orElse("探测无结果");
+        String message = shorten("本轮探测未取得可比较的结果，已暂停质量切换：" + firstError, 500);
+        jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
+                message, now, now, groupId);
+    }
+
     private boolean updateQuality(Map<String, Object> group, List<Map<String, Object>> members, int timeoutMs, long now) {
         long groupId = number(group.get("id")).longValue();
+        if (qualitySourceBackingOff(groupId, now)) return false;
         String sourceError = qualitySourceError(group);
         if (sourceError != null) {
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET quality_probe_status='failed',quality_probe_error=?,quality_probe_at=?,updated_time=? WHERE id=?",
@@ -1947,11 +2215,22 @@ public class CrossEntryFailoverService {
                 .map(member -> CompletableFuture.supplyAsync(() -> probeQuality(group, member, count, timeoutMs), probeExecutor))
                 .collect(Collectors.toList());
         List<QualityProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
+        if (qualityRoundInconclusive(results.size(), (int) results.stream().filter(result -> !result.success()).count())) {
+            recordSourceFailure(group, results, now);
+            return false;
+        }
 
         int degraded = 0;
         int failures = 0;
         List<String> errors = new ArrayList<>();
         for (QualityProbeResult result : results) {
+            if (result.sourceFailure()) {
+                // No sample for this entry: its previous quality stands.
+                jdbcTemplate.update("UPDATE cross_entry_failover_member SET quality_last_error=?,updated_time=? WHERE id=?",
+                        shorten(result.error(), 500), now, result.member().get("id"));
+                errors.add(Objects.toString(result.member().get("nodeName"), "入口") + "：" + result.error());
+                continue;
+            }
             String state = updateMemberQuality(group, result, now);
             if ("degraded".equals(state)) degraded++;
             if (!result.success()) failures++;
@@ -1967,7 +2246,7 @@ public class CrossEntryFailoverService {
         return true;
     }
 
-    private QualityProbeResult probeQuality(Map<String, Object> group, Map<String, Object> member, int count, int timeoutMs) {
+    QualityProbeResult probeQuality(Map<String, Object> group, Map<String, Object> member, int count, int timeoutMs) {
         String address = Objects.toString(member.get("entryAddress"));
         int port = number(member.get("entryPort")).intValue();
         String sourceType = Objects.toString(group.get("qualityProbeSourceType"), "panel");
@@ -1983,11 +2262,10 @@ public class CrossEntryFailoverService {
                 ? WebSocketServer.send_msg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds)
                 : WebSocketServer.sendConnectorMsg(nullableLong(group.get("qualityProbeSourceId")), request, "TcpPing", timeoutSeconds);
         if (response == null || !"OK".equals(response.getMsg())) {
-            return new QualityProbeResult(member, false, null, null, null, 100.0,
-                    response == null ? "探测源无响应" : response.getMsg());
+            return QualityProbeResult.sourceFailed(member, response == null ? "探测源无响应" : response.getMsg());
         }
         JSONObject data = responseData(response.getData());
-        if (data == null) return new QualityProbeResult(member, false, null, null, null, 100.0, "探测源返回为空");
+        if (data == null) return QualityProbeResult.sourceFailed(member, "探测源返回为空");
         boolean success = data.getBooleanValue("success");
         double loss = data.containsKey("packetLoss") ? data.getDoubleValue("packetLoss") : (success ? 0.0 : 100.0);
         List<Integer> samples = numericSamples(data.getJSONArray("samples"));
@@ -1999,7 +2277,7 @@ public class CrossEntryFailoverService {
         Integer jitter = roundedMetric(data, "jitter", 0);
         if (jitter == null) jitter = jitter(samples);
         if (success && latency == null) {
-            return new QualityProbeResult(member, false, null, null, null, 100.0, "探测源没有返回有效延迟样本");
+            return QualityProbeResult.sourceFailed(member, "探测源没有返回有效延迟样本");
         }
         String error = success ? null : StringUtils.defaultIfBlank(data.getString("errorMessage"), "TCP 探测失败");
         return new QualityProbeResult(member, success, latency, p95, jitter, loss, error);
@@ -2206,8 +2484,16 @@ public class CrossEntryFailoverService {
     ProbeResult probe(Map<String, Object> member, int timeoutMs) {
         long started = System.nanoTime();
         long nodeId = number(member.get("entryNodeId")).longValue();
-        if (!WebSocketServer.isNodeOnline(nodeId)) {
-            return new ProbeResult(member, false, null, "入口节点离线");
+        // A short control-plane gap (panel restart, Agent reconnect) does not stop forwarding, so the port decides.
+        if (isEntryNodeOnline(nodeId)) {
+            nodeOfflineSince.remove(nodeId);
+        } else {
+            long now = System.currentTimeMillis();
+            long offlineSince = nodeOfflineSince.computeIfAbsent(nodeId, ignored -> now);
+            boolean alreadyFailed = Set.of("unhealthy", "recovering").contains(Objects.toString(member.get("status"), ""));
+            if (alreadyFailed || now - offlineSince >= NODE_OFFLINE_GRACE_MS) {
+                return new ProbeResult(member, false, null, "入口节点离线");
+            }
         }
         String address = Objects.toString(member.get("entryAddress"));
         int port = number(member.get("entryPort")).intValue();
@@ -2220,6 +2506,10 @@ public class CrossEntryFailoverService {
         } catch (Exception e) {
             return new ProbeResult(member, false, null, probeFailureMessage(e, endpoint, timeoutMs));
         }
+    }
+
+    boolean isEntryNodeOnline(long nodeId) {
+        return WebSocketServer.isNodeOnline(nodeId);
     }
 
     static String probeFailureMessage(Exception error, String endpoint, int timeoutMs) {
@@ -2281,19 +2571,19 @@ public class CrossEntryFailoverService {
         long groupId = number(group.get("id")).longValue();
         boolean pendingRecorded = false;
         boolean targetRejected = false;
+        String expectedAddress = Objects.toString(from == null ? group.get("detachedActiveAddress") : from.get("entryAddress"), "");
         try {
             jdbcTemplate.update("INSERT INTO cross_entry_switch_pending "
                             + "(group_id,from_member_id,to_member_id,from_address,to_address,reason,phase,created_time,updated_time) "
                             + "VALUES (?,?,?,?,?,?,'applying',?,?)",
                     groupId, from == null ? null : nullableLong(from.get("id")), to.get("id"),
-                    from == null ? null : from.get("entryAddress"), to.get("entryAddress"), shorten(reason, 255), now, now);
+                    StringUtils.defaultIfBlank(expectedAddress, null), to.get("entryAddress"), shorten(reason, 255), now, now);
             pendingRecorded = true;
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='switching',updated_time=? WHERE id=?", now, groupId);
             if (from != null && ("unhealthy".equals(from.get("status")) || isQualityDegraded(from))) {
                 recordSwitchTrigger(from, reason, now);
             }
-            if (from == null) throw new IllegalStateException("原入口不存在，无法确认 DNS 切换前状态");
-            requireExpectedDnsBeforeSwitch(group, Objects.toString(from.get("entryAddress"), ""), groupId);
+            requireExpectedDnsBeforeSwitch(group, expectedAddress, groupId);
             updateCloudflareDns(group, to);
             if (bool(group.get("postSwitchVerifyEnabled"))) {
                 ProbeResult targetProbe = probe(to, number(group.get("connectTimeoutMs")).intValue());
@@ -2316,6 +2606,10 @@ public class CrossEntryFailoverService {
                 }
             }
             completePendingSwitch(group, from, to, reason, dnsDetail, now);
+        } catch (DnsDriftException drift) {
+            // Nothing was written, so no outcome is uncertain and probing must carry on.
+            jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+            handleDnsDrift(group, loadMembers(groupId), from, drift.actual, now);
         } catch (RuntimeException e) {
             String detail = shorten(e.getMessage(), 500);
             if (pendingRecorded && targetRejected) {
@@ -2345,9 +2639,7 @@ public class CrossEntryFailoverService {
     private void requireExpectedDnsBeforeSwitch(Map<String, Object> group, String expected, long groupId) {
         String actual = readProviderRecordContent(group);
         if (StringUtils.isBlank(expected) || !dnsAddressMatches(expected, actual)) {
-            jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='conflict',updated_time=? WHERE group_id=?",
-                    System.currentTimeMillis(), groupId);
-            throw new IllegalStateException("DNS 当前记录与原入口不一致，已暂停自动覆盖：" + actual);
+            throw new DnsDriftException(actual);
         }
     }
 
@@ -2358,7 +2650,7 @@ public class CrossEntryFailoverService {
         if (!Objects.equals(nullableLong(group.get("activeMemberId")), targetId)) {
             settleActiveUsage(groupId, from == null ? null : nullableLong(from.get("id")),
                     nullableLong(group.get("activeSinceAt")), now);
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=?,"
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=?,detached_active_address=NULL,"
                             + "last_checked_at=?,last_switch_at=?,active_since_at=?,updated_time=? WHERE id=?",
                     targetId, "recovering".equals(to.get("status")) ? "degraded" : "healthy",
                     "recovering".equals(to.get("status")) ? "紧急使用恢复观察中的入口" : null,
@@ -2366,6 +2658,7 @@ public class CrossEntryFailoverService {
             group.put("activeMemberId", targetId);
             group.put("activeSinceAt", now);
             group.put("lastSwitchAt", now);
+            group.put("detachedActiveAddress", null);
             addEvent(groupId, from == null ? null : nullableLong(from.get("id")), targetId, reason,
                     "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress") + dnsDetail);
             if (telegramNotificationService != null) {
@@ -2401,18 +2694,22 @@ public class CrossEntryFailoverService {
             String newAddress = Objects.toString(pending.get("toAddress"), "");
             boolean atOld = StringUtils.isNotBlank(oldAddress) && dnsAddressMatches(oldAddress, actual);
             boolean atNew = dnsAddressMatches(newAddress, actual);
-            if ("conflict".equals(pending.get("phase"))) {
-                if (!atOld) throw new IllegalStateException("DNS 记录曾被外部修改，请恢复切换前记录后重试核对");
+            boolean legacyConflict = "conflict".equals(pending.get("phase"));
+            if (atOld && (!atNew || legacyConflict)) {
+                if (from == null) {
+                    // The old entry was deleted: release the row so the next pass can move DNS off it again.
+                    jdbcTemplate.update("UPDATE cross_entry_failover_group SET detached_active_address=?,updated_time=? WHERE id=?", oldAddress, now, groupId);
+                    group.put("detachedActiveAddress", oldAddress);
+                    jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+                    return false;
+                }
                 restoreRecordedOldEntry(group, from, oldAddress, now);
                 return false;
             }
-            if (atOld && !atNew) {
-                restoreRecordedOldEntry(group, from, oldAddress, now);
-                return false;
-            }
-            if (!atNew) {
-                jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='conflict',updated_time=? WHERE group_id=?", now, groupId);
-                throw new IllegalStateException("DNS 当前记录与切换前后均不同，已暂停自动覆盖：" + actual);
+            if (legacyConflict || !atNew) {
+                jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+                return handleDnsDrift(group, members, memberById(members, nullableLong(group.get("activeMemberId"))), actual, now)
+                        == DnsDriftOutcome.ADOPTED;
             }
             boolean addressUpdate = Objects.equals(nullableLong(pending.get("fromMemberId")), nullableLong(pending.get("toMemberId")))
                     && !dnsAddressMatches(oldAddress, newAddress);
@@ -3647,7 +3944,8 @@ public class CrossEntryFailoverService {
                 + "(SELECT mr.target_address FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedTargetAddress,"
                 + "(SELECT mr.public_port FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedPublicPort,"
                 + "(SELECT mr.port_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedPortMode,"
-                + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedProtocolMode "
+                + "(SELECT mr.protocol_mode FROM cross_entry_managed_resource mr WHERE mr.group_id=cross_entry_failover_group.id AND mr.cleanup_state='active' LIMIT 1) AS managedProtocolMode,"
+                + "availability_alert_signature AS availabilityAlertSignature,detached_active_address AS detachedActiveAddress "
                 + "FROM cross_entry_failover_group WHERE id=?", id);
         if (rows.isEmpty()) throw new IllegalArgumentException("容灾组不存在");
         return rows.get(0);
@@ -4129,6 +4427,7 @@ public class CrossEntryFailoverService {
 
     @PreDestroy
     public void shutdown() {
+        checkScheduler.shutdownNow();
         groupExecutor.shutdownNow();
         probeExecutor.shutdownNow();
         entryDnsExecutor.shutdownNow();
@@ -4136,8 +4435,18 @@ public class CrossEntryFailoverService {
 
     record ProbeResult(Map<String, Object> member, boolean healthy, Integer latencyMs, String error) {}
 
-    private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
-                                      Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}
+    record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
+                              Integer p95Ms, Integer jitterMs, Double lossPercent, String error, boolean sourceFailure) {
+        QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
+                           Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {
+            this(member, success, latencyMs, p95Ms, jitterMs, lossPercent, error, false);
+        }
+
+        /** The probe source gave no answer, which says nothing about the entry itself. */
+        static QualityProbeResult sourceFailed(Map<String, Object> member, String error) {
+            return new QualityProbeResult(member, false, null, null, null, null, error, true);
+        }
+    }
     private record DirectTunnelResult(Tunnel tunnel, boolean created) {}
     private record ManagedResourceState(Long forwardId, Long tunnelId, Long entryNodeId, String targetAddress,
                                         int publicPort, String portMode, String protocolMode, boolean createdTunnel) {}

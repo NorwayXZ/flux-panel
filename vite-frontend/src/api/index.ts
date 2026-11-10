@@ -2450,7 +2450,7 @@ export interface CrossEntrySummary {
 export interface CrossEntryEvent {
   id: number;
   reason: string;
-  status: "success" | "failed";
+  status: "success" | "failed" | "alert" | "notice" | "pending";
   detail?: string;
   fromNodeName?: string;
   toNodeName?: string;

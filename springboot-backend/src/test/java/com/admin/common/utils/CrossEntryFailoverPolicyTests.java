@@ -530,6 +530,39 @@ class CrossEntryFailoverPolicyTests {
                 latencyMs, lossPercent, flapCount, failCount, nodeId, address, "", faultKind, preheated, penaltyLevel);
     }
 
+    private CrossEntryFailoverPolicy.Member poor(long id, int priority, Integer latency, double loss, String address) {
+        return new CrossEntryFailoverPolicy.Member(id, priority, true, 5, true, true, false, latency, loss, 0, 0,
+                id * 10, address, "", "loss", true);
+    }
+
+    private CrossEntryFailoverPolicy.Decision degradedFallback(List<CrossEntryFailoverPolicy.Member> members, long active) {
+        return CrossEntryFailoverPolicy.select(members, active, settings(true, 3, true, true, true, true, true, 5, 15.0, "auto", null));
+    }
+
+    @Test
+    void equallyPoorEntriesDoNotTradePlacesOnTheirOwnPenalty() {
+        List<CrossEntryFailoverPolicy.Member> members = List.of(
+                poor(1, 0, null, 100.0, "1.0.0.1"), poor(2, 1, null, 100.0, "2.0.0.2"));
+        assertFalse(degradedFallback(members, 1).switchRequired());
+        assertFalse(degradedFallback(members, 2).switchRequired());
+    }
+
+    @Test
+    void poorEntriesNeedARealGainBeforeMovingDns() {
+        assertFalse(degradedFallback(List.of(poor(1, 0, 100, 30.0, "1.0.0.1"), poor(2, 1, 99, 30.0, "2.0.0.2")), 1).switchRequired());
+        assertFalse(degradedFallback(List.of(poor(1, 0, 100, 30.0, "1.0.0.1"), poor(2, 1, 86, 30.0, "2.0.0.2")), 1).switchRequired());
+        CrossEntryFailoverPolicy.Decision latencyGain =
+                degradedFallback(List.of(poor(1, 0, 100, 30.0, "1.0.0.1"), poor(2, 1, 85, 30.0, "2.0.0.2")), 1);
+        assertTrue(latencyGain.switchRequired());
+        assertEquals(2L, latencyGain.targetId());
+        assertTrue(degradedFallback(List.of(poor(1, 0, 100, 50.0, "1.0.0.1"), poor(2, 1, 120, 25.0, "2.0.0.2")), 1).switchRequired());
+    }
+
+    @Test
+    void lowerLatencyDoesNotJustifyMovingToAHigherLossEntry() {
+        assertFalse(degradedFallback(List.of(poor(1, 0, 100, 25.0, "1.0.0.1"), poor(2, 1, 50, 30.0, "2.0.0.2")), 1).switchRequired());
+    }
+
     private CrossEntryFailoverPolicy.Settings settings(boolean autoFailback, int recoveryThreshold,
                                                       boolean cooldownElapsed, boolean minResidencyElapsed,
                                                       boolean degradedFallbackEnabled, boolean sameFaultAvoidanceEnabled,
