@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
@@ -60,6 +61,7 @@ const resourceLabels: Record<string, string> = {
 };
 
 export default function SystemSelfCheckPage() {
+  const navigate = useNavigate();
   const [data, setData] = useState<SystemSelfCheckOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -171,7 +173,7 @@ export default function SystemSelfCheckPage() {
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-bold text-foreground">系统自检</h1>
+            <h2 className="text-2xl font-bold text-foreground">系统自检</h2>
             <PageHelp>服务器节点由 Agent 检查自身配置；Windows、macOS、Linux 接入设备由 Connector 检查本机 DNS、IPv4/IPv6、默认路由，以及到面板和已登记入口端口的实际 TCP 可达性。所有检查均为只读。</PageHelp>
           </div>
         </div>
@@ -349,6 +351,7 @@ export default function SystemSelfCheckPage() {
               <p className="mt-1 text-sm leading-6">
                 {finding.remediation || "无需操作"}
               </p>
+              {["failed", "warning"].includes(finding.status) && <Button className="mt-3" size="sm" variant="flat" onPress={() => navigate(`/operations/issues?source=self_check&sourceId=${finding.id}`)}>诊断、处理与验证</Button>}
               {finding.category === "agent" &&
                 finding.resourceType === "node" &&
                 finding.status === "warning" &&

@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import type { ReactNode } from "react";
+import { fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import AiOpsPage from "@/pages/ai-ops";
 import { opsOverview, opsSave, opsRun } from "@/api/ai-ops";
@@ -151,3 +153,5 @@ it("disables running when the model is unconfigured", async () => {
     ).disabled,
   ).toBe(true);
 });
+
+function render(ui: ReactNode) { return baseRender(<MemoryRouter>{ui}</MemoryRouter>); }

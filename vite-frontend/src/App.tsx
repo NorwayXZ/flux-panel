@@ -1,3 +1,5 @@
+import OperationsWorkspace from "@/pages/operations-workspace";
+import { NetworkDetectionWorkspace, ForwardWorkspace, LegacyModuleRedirect } from "@/components/module-workspace";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { Component, lazy, Suspense, useEffect, useState } from "react";
 
@@ -7,8 +9,6 @@ import IndexPage from "@/pages/index";
 // so a refresh no longer downloads terminals, charts, topology, and every admin view.
 const ChangePasswordPage = lazy(() => import("@/pages/change-password"));
 const DashboardPage = lazy(() => import("@/pages/dashboard"));
-const ForwardPage = lazy(() => import("@/pages/forward"));
-const RoutingOverviewPage = lazy(() => import("@/pages/routing-overview"));
 const NftForwardPage = lazy(() => import("@/pages/nft-forward"));
 const TunnelPage = lazy(() => import("@/pages/tunnel"));
 const NodePage = lazy(() => import("@/pages/node"));
@@ -17,9 +17,7 @@ const UserPage = lazy(() => import("@/pages/user"));
 const ProfilePage = lazy(() => import("@/pages/profile"));
 const ConfigPage = lazy(() => import("@/pages/config"));
 const UpdatePage = lazy(() => import("@/pages/update"));
-const MonitoringPage = lazy(() => import("@/pages/monitoring"));
 const ServicePublishingPage = lazy(() => import("@/pages/service-publishing"));
-const DockerAppsPage = lazy(() => import("@/pages/docker-apps"));
 const TopologyPage = lazy(() => import("@/pages/topology"));
 const PortResourcesPage = lazy(() => import("@/pages/port-resources"));
 const CrossEntryFailoverPage = lazy(
@@ -29,18 +27,9 @@ const AuthorizedEntryPage = lazy(() => import("@/pages/AuthorizedEntriesPage"));
 const SourceIpEntryPage = lazy(() => import("@/pages/source-ip-entry"));
 const SmartEntryPage = lazy(() => import("@/pages/smart-entry"));
 const DnsSettingsPage = lazy(() => import("@/pages/dns-settings"));
-const AwsAccessPage = lazy(() => import("@/pages/aws-access"));
 const PrivateProxyPage = lazy(() => import("@/pages/private-proxy"));
-const NetworkToolsPage = lazy(() => import("@/pages/network-tools"));
 const AiOpsPage = lazy(() => import("@/pages/ai-ops"));
 const QualityLabPage = lazy(() => import("@/pages/quality-lab"));
-const BandwidthTestPage = lazy(() => import("@/pages/bandwidth-test"));
-const ClientSpeedTestPage = lazy(() => import("@/pages/client-speed-test"));
-const UdpQuicDiagnosticPage = lazy(() => import("@/pages/udp-quic-diagnostic"));
-const MultiLineAggregationPage = lazy(
-  () => import("@/pages/multi-line-aggregation"),
-);
-const IpQualityPage = lazy(() => import("@/pages/ip-quality"));
 const ExitPoolPage = lazy(() => import("@/pages/exit-pool"));
 const PrivateNetworkPage = lazy(() => import("@/pages/private-network"));
 const ServerAssetsPage = lazy(() => import("@/pages/server-assets"));
@@ -48,7 +37,6 @@ const DynamicDnsPage = lazy(() => import("@/pages/dynamic-dns"));
 const HomeAccessPage = lazy(() => import("@/pages/home-access"));
 const HomeDevicesPage = lazy(() => import("@/pages/home-devices"));
 const GuidePage = lazy(() => import("@/pages/guide"));
-const SystemSelfCheckPage = lazy(() => import("@/pages/system-self-check"));
 const PanelAddressPage = lazy(() =>
   import("@/pages/settings").then((module) => ({
     default: module.SettingsPage,
@@ -311,18 +299,10 @@ function App() {
             <Route
               element={
                 <ProtectedRoute>
-                  <ForwardPage />
+                  <ForwardWorkspace />
                 </ProtectedRoute>
               }
               path="/forward"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <RoutingOverviewPage />
-                </ProtectedRoute>
-              }
-              path="/routing-overview"
             />
             <Route
               element={
@@ -380,14 +360,7 @@ function App() {
               }
               path="/topology"
             />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <SystemSelfCheckPage />
-                </ProtectedRoute>
-              }
-              path="/system-self-check"
-            />
+            <Route element={<LegacyModuleRedirect to="/operations/checks" />} path="/system-self-check" />
             <Route
               element={
                 <ProtectedRoute adminOnly useSimpleLayout={true}>
@@ -395,14 +368,6 @@ function App() {
                 </ProtectedRoute>
               }
               path="/dns-settings"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly useSimpleLayout={true}>
-                  <AwsAccessPage />
-                </ProtectedRoute>
-              }
-              path="/aws-access"
             />
             <Route
               element={
@@ -476,14 +441,7 @@ function App() {
               }
               path="/config"
             />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <MonitoringPage />
-                </ProtectedRoute>
-              }
-              path="/monitoring"
-            />
+            <Route element={<LegacyModuleRedirect to="/operations/alerts" />} path="/monitoring" />
             <Route
               element={
                 <ProtectedRoute adminOnly>
@@ -499,14 +457,6 @@ function App() {
                 </ProtectedRoute>
               }
               path="/service-publishing"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <DockerAppsPage />
-                </ProtectedRoute>
-              }
-              path="/docker-apps"
             />
             <Route
               element={
@@ -532,22 +482,8 @@ function App() {
               }
               path="/home-access"
             />
-            <Route
-              element={
-                <ProtectedRoute useSimpleLayout={true}>
-                  <HomeDevicesPage />
-                </ProtectedRoute>
-              }
-              path="/home-devices"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <NetworkToolsPage />
-                </ProtectedRoute>
-              }
-              path="/network-tools"
-            />
+            <Route element={<LegacyModuleRedirect to="/devices" />} path="/home-devices" />
+            <Route element={<LegacyModuleRedirect to="/network-detection/diagnostics" />} path="/network-tools" />
             <Route
               element={
                 <ProtectedRoute adminOnly>
@@ -564,46 +500,11 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <BandwidthTestPage />
-                </ProtectedRoute>
-              }
-              path="/bandwidth-test"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <ClientSpeedTestPage />
-                </ProtectedRoute>
-              }
-              path="/client-speed-test"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <UdpQuicDiagnosticPage />
-                </ProtectedRoute>
-              }
-              path="/udp-quic-diagnostic"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <MultiLineAggregationPage />
-                </ProtectedRoute>
-              }
-              path="/multi-line-aggregation"
-            />
-            <Route
-              element={
-                <ProtectedRoute adminOnly>
-                  <IpQualityPage />
-                </ProtectedRoute>
-              }
-              path="/ip-quality"
-            />
+            <Route element={<LegacyModuleRedirect to="/network-detection/bandwidth" />} path="/bandwidth-test" />
+            <Route element={<LegacyModuleRedirect to="/network-detection/client-speed" />} path="/client-speed-test" />
+            <Route element={<LegacyModuleRedirect to="/network-detection/udp-quic" />} path="/udp-quic-diagnostic" />
+            <Route element={<LegacyModuleRedirect to="/forward?tab=line-strategy" />} path="/multi-line-aggregation" />
+            <Route element={<LegacyModuleRedirect to="/network-detection/ip-quality" />} path="/ip-quality" />
             <Route
               element={
                 <ProtectedRoute>
@@ -653,6 +554,9 @@ function App() {
               }
               path="/settings"
             />
+            <Route path="/network-detection/*" element={<ProtectedRoute adminOnly><NetworkDetectionWorkspace /></ProtectedRoute>} />
+            <Route path="/devices" element={<ProtectedRoute useSimpleLayout><HomeDevicesPage /></ProtectedRoute>} />
+            <Route path="/operations/*" element={<ProtectedRoute adminOnly><OperationsWorkspace /></ProtectedRoute>} />
           </Routes>
         </Suspense>
       </PageErrorBoundary>

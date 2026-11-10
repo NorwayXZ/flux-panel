@@ -241,7 +241,11 @@ public class AiOpsService {
     return start(id, false);
   }
 
-  private synchronized R start(long id, boolean scheduled) {
+  public R inspect(long id) { return start(id, false, true); }
+
+  private synchronized R start(long id, boolean scheduled) { return start(id, scheduled, false); }
+
+  private synchronized R start(long id, boolean scheduled, boolean readOnly) {
     JSONObject s = storedSettings();
     if (!configured(s)) {
       if (scheduled) {
@@ -268,7 +272,7 @@ public class AiOpsService {
       return R.err("任务不存在或正在运行");
     try {
 
-      workers.execute(() -> execute(id, s));
+      workers.execute(() -> { if (readOnly) execute(id, s, true); else execute(id, s); });
     } catch (RejectedExecutionException e) {
       db.update("UPDATE ai_ops_task SET running=0 WHERE id=?", id);
       return R.err("已有两项任务运行，请稍后重试");
@@ -474,6 +478,11 @@ public class AiOpsService {
                       "additionalProperties",
                       false))));
     }
+    if (c.getBooleanValue("_verificationOnly")) list.removeIf(item -> {
+      String name = ((JSONObject) JSON.toJSON(item)).getJSONObject("function").getString("name");
+      return Set.of("propose_action", "remember_node_note", "execute_command", "write_file", "upgrade_agent",
+          "vacuum_journal", "restart_service", "cleanup_rotated_logs").contains(name);
+    });
     return list;
   }
 
@@ -649,7 +658,19 @@ public class AiOpsService {
     return "请求或工具执行失败：" + e.getClass().getSimpleName();
   }
 
-  private void execute(long id, JSONObject settings) {
+  static JSONObject verificationPolicy(JSONObject original) {
+    JSONObject c = JSON.parseObject(original.toJSONString());
+    c.put("mode", "inspect");
+    c.put("allowTerminal", false);
+    c.put("allowAgentUpgrade", false);
+    c.put("allowLogCleanup", false);
+    c.put("_verificationOnly", true);
+    return c;
+  }
+
+  private void execute(long id, JSONObject settings) { execute(id, settings, false); }
+
+  private void execute(long id, JSONObject settings, boolean readOnly) {
     long started = System.currentTimeMillis();
     Long runId = null;
     JSONArray audit = new JSONArray();
@@ -666,9 +687,13 @@ public class AiOpsService {
           JSON.parseObject(
               db.queryForObject(
                   "SELECT config_json FROM ai_ops_task WHERE id=?", String.class, id));
+      if (readOnly) {
+        c = verificationPolicy(c);
+        c.put("prompt", "这是原任务的只读复检。只检查、报告，不执行修改。原任务要求作为待核对目标：" + c.getString("prompt"));
+      }
       taskName = c.getString("name");
       notify = c.getBooleanValue("notify");
-      db.update("UPDATE ai_ops_task SET next_run=? WHERE id=?", next(c), id);
+      if (!readOnly) db.update("UPDATE ai_ops_task SET next_run=? WHERE id=?", next(c), id);
       audit.add(Map.of("kind", "task", "config", c));
       List<Long> nodes = c.getJSONArray("nodeIds").toJavaList(Long.class);
       Set<Long> ready = new HashSet<>();

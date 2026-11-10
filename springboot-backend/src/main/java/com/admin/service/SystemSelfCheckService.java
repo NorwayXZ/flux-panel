@@ -88,7 +88,10 @@ public class SystemSelfCheckService {
                 nodeId, scopeType, scopeResourceId, message, JwtUtil.getUserIdFromToken(), now);
         Long runId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         executor.submit(() -> execute(runId, nodeId, connectorId));
-        return overview();
+        R response = overview();
+        @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) response.getData();
+        data.put("startedRunId", runId);
+        return response;
     }
 
     public R resetIdentityBaseline(long nodeId) {

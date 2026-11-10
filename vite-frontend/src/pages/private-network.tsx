@@ -11,7 +11,6 @@ import {
 } from "@heroui/modal";
 import { Select, SelectItem } from "@heroui/select";
 import { Spinner } from "@heroui/spinner";
-import { Switch } from "@heroui/switch";
 import {
   BookOpen,
   Copy,
@@ -41,8 +40,6 @@ import {
   deployVirtualLan,
   deployNetworkRouteApplication,
   getNetworkRouteApplications,
-  getAwsAccessAccounts,
-  getDnsZoneOptions,
   getPrivateNetworkOverview,
   getVirtualLanOverview,
   NetworkRouteApplication,
@@ -58,8 +55,6 @@ import {
   verifyPrivateNetwork,
   VirtualLanNetwork,
   VirtualLanOverview,
-  AwsAccessAccount,
-  DnsZoneOption,
 } from "@/api";
 import PageShell from "@/components/page-shell";
 import PageHelp from "@/components/page-help";
@@ -114,9 +109,6 @@ const applicationEmpty = {
   xhttpOriginDomain: "",
   xhttpUploadDomain: "",
   xhttpDownloadDomain: "",
-  autoProvisionCloudFront: true,
-  awsAccessAccountId: "",
-  dnsZoneId: "",
 };
 
 const stateMeta = (state: string) => {
@@ -220,8 +212,6 @@ export default function PrivateNetworkPage() {
   const [nativeForm, setNativeForm] = useState(nativeEmpty);
   const [automaticForm, setAutomaticForm] = useState(automaticEmpty);
   const [applicationForm, setApplicationForm] = useState(applicationEmpty);
-  const [awsAccounts, setAwsAccounts] = useState<AwsAccessAccount[]>([]);
-  const [dnsZones, setDnsZones] = useState<DnsZoneOption[]>([]);
 
   const onlineNodes = useMemo(
     () => native.nodes.filter((node) => node.status === 1),
@@ -309,18 +299,6 @@ export default function PrivateNetworkPage() {
     return () => window.cancelAnimationFrame(frame);
   }, [loading, location.search]);
 
-  useEffect(() => {
-    if (!applicationOpen || applicationForm.proxyType !== "vless_xhttp_tls")
-      return;
-    void Promise.allSettled([getAwsAccessAccounts(), getDnsZoneOptions()]).then(
-      ([aws, zones]) => {
-        if (aws.status === "fulfilled" && aws.value.code === 0)
-          setAwsAccounts(aws.value.data.accounts || []);
-        if (zones.status === "fulfilled" && zones.value.code === 0)
-          setDnsZones(zones.value.data || []);
-      },
-    );
-  }, [applicationOpen, applicationForm.proxyType]);
 
   const saveNative = async () => {
     if (
@@ -500,17 +478,9 @@ export default function PrivateNetworkPage() {
       if (!applicationForm.xhttpPath.trim().startsWith("/"))
         return toast.error("XHTTP 路径必须以 / 开头");
       if (
-        applicationForm.autoProvisionCloudFront &&
-        (!applicationForm.awsAccessAccountId ||
-          !applicationForm.dnsZoneId ||
-          !applicationForm.xhttpOriginDomain.trim())
-      )
-        return toast.error("请选择 AWS 账号、Cloudflare Zone 并填写源站域名");
-      if (
-        !applicationForm.autoProvisionCloudFront &&
         !applicationForm.xhttpUploadDomain.trim()
       )
-        return toast.error("请填写 CloudFront 上行域名");
+        return toast.error("请填写 CDN 上行域名");
     } else if (
       applicationForm.username.length < 3 ||
       applicationForm.password.length < 8
@@ -560,20 +530,6 @@ export default function PrivateNetworkPage() {
         xhttpDownloadDomain:
           applicationForm.proxyType === "vless_xhttp_tls"
             ? applicationForm.xhttpDownloadDomain.trim()
-            : undefined,
-        autoProvisionCloudFront:
-          applicationForm.proxyType === "vless_xhttp_tls"
-            ? applicationForm.autoProvisionCloudFront
-            : undefined,
-        awsAccessAccountId:
-          applicationForm.proxyType === "vless_xhttp_tls" &&
-          applicationForm.autoProvisionCloudFront
-            ? Number(applicationForm.awsAccessAccountId)
-            : undefined,
-        dnsZoneId:
-          applicationForm.proxyType === "vless_xhttp_tls" &&
-          applicationForm.autoProvisionCloudFront
-            ? Number(applicationForm.dnsZoneId)
             : undefined,
         hopConfigs: applicationForm.hops.map((hop, index) => ({
           fromNodeId: nodePath[index],
@@ -1648,7 +1604,7 @@ export default function PrivateNetworkPage() {
                 <SelectItem key="http">HTTP</SelectItem>
                 <SelectItem key="vless_reality">VLESS + REALITY</SelectItem>
                 <SelectItem key="vless_xhttp_tls">
-                  VLESS + XHTTP + TLS / CloudFront
+                  VLESS + XHTTP + TLS
                 </SelectItem>
               </Select>
             </div>
@@ -1855,21 +1811,10 @@ export default function PrivateNetworkPage() {
               />
             ) : applicationForm.proxyType === "vless_xhttp_tls" ? (
               <div className="space-y-4">
-                <Switch
-                  isSelected={applicationForm.autoProvisionCloudFront}
-                  onValueChange={(autoProvisionCloudFront) =>
-                    setApplicationForm({
-                      ...applicationForm,
-                      autoProvisionCloudFront,
-                    })
-                  }
-                >
-                  自动创建 Cloudflare DNS 和两条 CloudFront 分配
-                </Switch>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Input
                     label="XHTTP 路径"
-                    placeholder="/aws/"
+                    placeholder="/xhttp/"
                     value={applicationForm.xhttpPath}
                     onValueChange={(xhttpPath) =>
                       setApplicationForm({ ...applicationForm, xhttpPath })
@@ -1902,66 +1847,6 @@ export default function PrivateNetworkPage() {
                     }
                   />
                 </div>
-                {applicationForm.autoProvisionCloudFront ? (
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <Select
-                      isRequired
-                      label="AWS 账号"
-                      selectedKeys={
-                        applicationForm.awsAccessAccountId
-                          ? [applicationForm.awsAccessAccountId]
-                          : []
-                      }
-                      onSelectionChange={(keys) =>
-                        setApplicationForm({
-                          ...applicationForm,
-                          awsAccessAccountId: String(Array.from(keys)[0] || ""),
-                        })
-                      }
-                    >
-                      {awsAccounts
-                        .filter((item) => Boolean(item.enabled))
-                        .map((item) => (
-                          <SelectItem key={String(item.id)}>
-                            {item.name}
-                          </SelectItem>
-                        ))}
-                    </Select>
-                    <Select
-                      isRequired
-                      label="Cloudflare Zone"
-                      selectedKeys={
-                        applicationForm.dnsZoneId
-                          ? [applicationForm.dnsZoneId]
-                          : []
-                      }
-                      onSelectionChange={(keys) =>
-                        setApplicationForm({
-                          ...applicationForm,
-                          dnsZoneId: String(Array.from(keys)[0] || ""),
-                        })
-                      }
-                    >
-                      {dnsZones.map((item) => (
-                        <SelectItem key={String(item.id)}>
-                          {item.zoneName}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                    <Input
-                      isRequired
-                      label="源站域名"
-                      placeholder="origin.example.com"
-                      value={applicationForm.xhttpOriginDomain}
-                      onValueChange={(xhttpOriginDomain) =>
-                        setApplicationForm({
-                          ...applicationForm,
-                          xhttpOriginDomain,
-                        })
-                      }
-                    />
-                  </div>
-                ) : (
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Input
                       label="源站域名"
@@ -1976,8 +1861,8 @@ export default function PrivateNetworkPage() {
                     />
                     <Input
                       isRequired
-                      label="CloudFront 上行域名"
-                      placeholder="dxxx.cloudfront.net"
+                      label="CDN 上行域名"
+                      placeholder="upload.example.com"
                       value={applicationForm.xhttpUploadDomain}
                       onValueChange={(xhttpUploadDomain) =>
                         setApplicationForm({
@@ -1987,8 +1872,8 @@ export default function PrivateNetworkPage() {
                       }
                     />
                     <Input
-                      label="CloudFront 下行域名"
-                      placeholder="dyyy.cloudfront.net"
+                      label="CDN 下行域名"
+                      placeholder="download.example.com"
                       value={applicationForm.xhttpDownloadDomain}
                       onValueChange={(xhttpDownloadDomain) =>
                         setApplicationForm({
@@ -1998,7 +1883,6 @@ export default function PrivateNetworkPage() {
                       }
                     />
                   </div>
-                )}
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">

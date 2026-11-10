@@ -7,12 +7,13 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 
+/** Retains old application metadata for rollback and node deletion; deploy/management APIs were removed. */
 @Slf4j
 @Component
-public class DockerAppCenterSchemaInitializer {
+public class LegacyApplicationSchemaInitializer {
     private final JdbcTemplate jdbcTemplate;
 
-    public DockerAppCenterSchemaInitializer(JdbcTemplate jdbcTemplate) {
+    public LegacyApplicationSchemaInitializer(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

@@ -78,6 +78,15 @@ const categoryLabels: Record<GuideCategory, string> = {
 
 const entries: GuideEntry[] = [
   {
+    id: "ops-workflow", category: "system", title: "运维中心与问题处理", path: "/operations/issues", icon: ShieldCheck, adminOnly: true,
+    summary: "汇总告警、自检异常与 AI 巡查失败，跟踪诊断、处理和复检。",
+    purpose: "把问题来源、处理记录、关联 AI 会话与复检证据放到同一问题记录，避免把 AI 回复当作修复成功。",
+    prerequisites: ["管理员账号；AI 处理还需配置模型。"],
+    steps: ["从运维中心查看问题，也可从告警或自检结果进入。", "点击 AI 诊断与处理，核对关联节点和当前授权后发送。", "记录处理结果，再复检原问题。"],
+    result: "告警需要新一轮健康状态；自检需要相同检查项正常；AI 巡查只读重新检查，并明确其验证范围。",
+    notes: ["跳过、结果过期、资源缺失和检测失败都不会显示验证通过。", "不同来源保留独立证据，不能用同一节点的其他正常项目代替原问题验证。"],
+  },
+  {
     id: "dashboard",
     category: "core",
     title: "仪表板",
@@ -179,32 +188,6 @@ const entries: GuideEntry[] = [
       "不同入口节点之间的切换应使用“入口容灾”。",
       "IP 哈希适合让同一来源尽量固定到同一目标；主备适合故障切换，低延迟适合自动择优。",
     ],
-  },
-  {
-    id: "routing-overview",
-    category: "core",
-    title: "线路调度中心",
-    path: "/routing-overview",
-    icon: Waypoints,
-    adminOnly: true,
-    summary:
-      "集中查看转发、三网优化、来源 IP 分流、入口容灾和多线路并发调度的边界。",
-    purpose:
-      "当面板功能越来越多时，最容易出问题的不是单个功能，而是多个功能同时接管同一个域名、端口或入口。线路调度中心展示每种调度模式的真实作用、能力矩阵和潜在重叠，后端保存时也会阻断明确冲突。",
-    prerequisites: ["登录管理员账号。", "已有线路调度配置时信息更完整。"],
-    steps: [
-      "打开页面后查看每个模块的“职责”和“边界”。",
-      "检查静态提示里是否有同一 DNS 记录或同一端口被多个模块使用。",
-      "需要处理时点击提示里的入口，回到具体功能页修改配置。",
-    ],
-    result:
-      "先判断应该用哪一种选路方式，再进入具体页面配置，减少功能之间互相抢占。",
-    notes: [
-      "总览页面本身只读，不会删除、不暂停、不修改任何线路。",
-      "端口和 DNS 提示属于静态检查，真实可用性仍要结合 Agent 监听、DNS 公网解析和客户端测试。",
-      "同一 DNS 记录不能同时交给三网优化和入口容灾；完全相同的一组转发不能同时交给多个调度策略。",
-    ],
-    keywords: "线路调度 冲突 总览 DNS 端口 来源IP 入口容灾",
   },
   {
     id: "nft-forward",
@@ -335,7 +318,7 @@ const entries: GuideEntry[] = [
     id: "multi-line-aggregation",
     category: "core",
     title: "多线路并发调度",
-    path: "/multi-line-aggregation",
+    path: "/forward?tab=line-strategy",
     icon: Combine,
     adminOnly: true,
     summary: "把多个已存在转发组成一个入口组，按连接级别分配到不同线路。",
@@ -369,9 +352,9 @@ const entries: GuideEntry[] = [
     path: "/port-resources",
     icon: Boxes,
     adminOnly: true,
-    summary: "资源中心统一管理端口、DNS、DDNS、AWS 和家庭设备入口。",
+    summary: "资源中心统一管理端口、DNS、DDNS 和设备接入入口。",
     purpose:
-      "端口是转发、内网映射、代理和家庭出口共同使用的全局资源。资源中心把端口资源、家庭设备、域名管理、动态解析和 AWS 凭据放在同一个入口；端口资源页面继续用端口池管理可用范围，并通过全局账本记录占用、租期、用途和归属。",
+      "端口是转发、内网映射、代理和家庭出口共同使用的全局资源。资源中心把端口资源、家庭设备、域名管理、动态解析放在同一个入口；端口资源页面继续用端口池管理可用范围，并通过全局账本记录占用、租期、用途和归属。",
     prerequisites: ["至少一台在线节点。", "预先确定服务器允许开放的端口范围。"],
     steps: [
       "新建端口池，选择服务器并填写公网地址、绑定地址和端口范围。",
@@ -420,8 +403,8 @@ const entries: GuideEntry[] = [
   {
     id: "home-devices",
     category: "access",
-    title: "家庭设备",
-    path: "/home-devices",
+    title: "设备与接入端",
+    path: "/devices",
     icon: SquareTerminal,
     summary: "把家庭电脑、软路由或内网主机作为主动接入端连接面板。",
     purpose:
@@ -432,7 +415,7 @@ const entries: GuideEntry[] = [
       "执行安装服务所需的管理员权限。",
     ],
     steps: [
-      "在资源中心打开“家庭设备”，新建设备并选择操作系统。",
+      "在资源中心打开“设备与接入端”，新建设备并选择操作系统。",
       "复制对应安装命令，在设备上以管理员权限执行。",
       "等待状态变为在线并核对 Agent 版本和最近地址。",
       "不再使用时先删除关联业务，再执行页面提供的卸载命令。",
@@ -469,37 +452,6 @@ const entries: GuideEntry[] = [
       "API 密钥属于敏感信息，应只授予所需域名和 DNS 编辑权限。",
       "把域名保留在原 DNS 服务商却选择另一个服务商的凭据不会生效。",
     ],
-  },
-  {
-    id: "aws-access",
-    category: "access",
-    title: "AWS 资源",
-    path: "/aws-access",
-    icon: CloudCog,
-    adminOnly: true,
-    summary:
-      "集中保存 AWS Access Key，用于后续 CloudFront、ACM 或相关云资源自动化。",
-    purpose:
-      "AWS 资源页的存在，是为了把云厂商密钥从具体业务页面中抽出来统一管理。后续需要创建或验证 CloudFront XHTTP 分离、ACM 证书、分配域名等能力时，可以复用这里的账号，不需要在每条业务规则里重复保存 AK/SK。",
-    prerequisites: [
-      "已在 AWS IAM 中创建 Access Key。",
-      "只授予所需服务的最小权限，例如 CloudFront、ACM、Route53 读取或变更权限。",
-      "如果涉及 CloudFront 证书，通常需要关注 us-east-1 区域的 ACM 证书要求。",
-    ],
-    steps: [
-      "打开 AWS 资源，新增账号名称、Access Key ID、Secret Access Key 和默认 Region。",
-      "保存后点击验证，确认面板服务器能访问 AWS API 并读取到账号信息。",
-      "验证成功后，在需要 AWS 能力的页面选择该账号。",
-      "密钥轮换时编辑账号并重新填写 Secret；不再使用时先确认无业务依赖再删除。",
-    ],
-    result:
-      "CloudNest 获得可复用的 AWS 自动化入口，后续功能可以直接选择账号执行云资源操作。",
-    notes: [
-      "AK/SK 会加密保存，页面不会回显 Secret 明文。",
-      "不要使用主账号长期密钥；建议为面板单独创建 IAM 用户或角色并限制权限。",
-      "保存 AWS 凭据本身不会自动创建 CloudFront、证书或 DNS 记录，只有具体业务提交后才会执行。",
-    ],
-    keywords: "AWS AK SK CloudFront ACM Route53 us-east-1 资源中心",
   },
   {
     id: "dynamic-dns",
@@ -542,7 +494,7 @@ const entries: GuideEntry[] = [
       "目标服务在接入端所在网络内可访问。",
     ],
     steps: [
-      "先在“内网接入端”页签添加设备并完成 Agent 安装。",
+      "先在“设备与接入端”页面添加设备并完成 Agent 安装。",
       "在“映射列表”新建映射，选择模板或自定义目标地址和端口。",
       "选择端口资源，并设置永久或按小时到期。",
       "需要域名时，再到“域名入口”选择后端映射；托管 HTTPS 会自动申请证书，TLS 透传则由内网服务管理证书。",
@@ -553,37 +505,6 @@ const entries: GuideEntry[] = [
       "公开 SSH、RDP 和数据库时应设置来源限制、强密码或密钥认证。",
       "TCP 映射与 UDP 能力应以创建界面实际提供的协议为准。",
     ],
-  },
-  {
-    id: "docker-apps",
-    category: "access",
-    title: "Docker 应用中心",
-    path: "/docker-apps",
-    icon: Boxes,
-    adminOnly: true,
-    summary: "识别节点 Docker 环境，并一键部署、管理和发布常用容器应用。",
-    purpose:
-      "Docker 应用中心让 CloudNest 不只管理网络链路，也能把 X-UI、哪吒、Alist、Nextcloud 等服务快速部署到节点上。它统一处理容器创建、端口分配、域名绑定、反代发布、启动停止、升级和删除，减少你反复登录服务器敲命令的成本。",
-    prerequisites: [
-      "目标节点在线，Agent 版本达到页面显示的最低要求。",
-      "节点已安装 Docker，或至少允许按页面命令安装 Docker。",
-      "需要绑定域名时，资源中心已配置 Cloudflare DNS，并准备可用 HTTPS 入口节点。",
-    ],
-    steps: [
-      "先点击节点检测，确认 Docker 是否可用、Docker 版本和当前容器列表。",
-      "点击新建应用，选择模板、节点、应用名、容器名和宿主机端口。",
-      "需要公网域名时开启绑定域名，选择 DNS Zone、入口节点、监听端口和路径。",
-      "创建后在应用卡片执行启动、停止、重启、升级、备份或删除，并查看事件日志。",
-      "部署失败时打开命令窗口查看面板准备的等效 Docker 命令，方便手动排查。",
-    ],
-    result:
-      "常用自托管应用可以从面板直接部署并发布，不必把 Docker、端口、域名和反代分散到多个地方维护。",
-    notes: [
-      "应用中心管理的是容器应用，不等同于代理协议；代理仍在私人代理、转发或隧道功能中创建。",
-      "端口仍受全局端口账本约束，已被转发、代理或其他应用占用时不能重复使用。",
-      "删除应用前确认数据卷和备份策略；容器删除不一定等于业务数据已经安全备份。",
-    ],
-    keywords: "Docker 应用中心 x-ui 哪吒 Alist Nextcloud 反代 域名 容器",
   },
   {
     id: "home-access",
@@ -715,7 +636,7 @@ const entries: GuideEntry[] = [
     id: "network-tools",
     category: "tools",
     title: "网络诊断",
-    path: "/network-tools",
+    path: "/network-detection/diagnostics",
     icon: Wrench,
     adminOnly: true,
     summary: "从指定节点执行 Ping、TCP、DNS 和路由跟踪。",
@@ -769,7 +690,7 @@ const entries: GuideEntry[] = [
     id: "bandwidth-test",
     category: "tools",
     title: "真实带宽测试",
-    path: "/bandwidth-test",
+    path: "/network-detection/bandwidth",
     icon: Gauge,
     adminOnly: true,
     summary:
@@ -801,7 +722,7 @@ const entries: GuideEntry[] = [
     id: "client-speed-test",
     category: "tools",
     title: "本机单线程测速",
-    path: "/client-speed-test",
+    path: "/network-detection/client-speed",
     icon: Activity,
     adminOnly: true,
     summary:
@@ -833,7 +754,7 @@ const entries: GuideEntry[] = [
     id: "udp-quic-diagnostic",
     category: "tools",
     title: "UDP / QUIC 诊断",
-    path: "/udp-quic-diagnostic",
+    path: "/network-detection/udp-quic",
     icon: RadioTower,
     adminOnly: true,
     summary: "专门检测 UDP 端口、UDP Echo 和 QUIC 握手是否可用。",
@@ -863,7 +784,7 @@ const entries: GuideEntry[] = [
     id: "ip-quality",
     category: "tools",
     title: "IP 质量检测",
-    path: "/ip-quality",
+    path: "/network-detection/ip-quality",
     icon: MapPinned,
     adminOnly: true,
     summary:
@@ -914,7 +835,7 @@ const entries: GuideEntry[] = [
     id: "system-self-check",
     category: "system",
     title: "全系统自检",
-    path: "/system-self-check",
+    path: "/operations/checks",
     icon: SearchCheck,
     adminOnly: true,
     summary:
@@ -945,7 +866,7 @@ const entries: GuideEntry[] = [
     id: "monitoring",
     category: "system",
     title: "告警中心",
-    path: "/monitoring",
+    path: "/operations/alerts",
     icon: BellRing,
     summary: "集中查看节点、隧道、转发、证书和动态 DNS 的异常与恢复记录。",
     purpose:
@@ -1131,7 +1052,7 @@ const quickSteps = [
     number: "04",
     title: "检查状态",
     detail: "确认链路可用",
-    path: "/monitoring",
+    path: "/operations/alerts",
   },
 ];
 

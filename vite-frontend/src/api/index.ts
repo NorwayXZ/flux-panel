@@ -68,135 +68,6 @@ export interface NodeServiceDiscoveryResult {
 export const discoverNodeServices = (nodeId: number) =>
   Network.post<NodeServiceDiscoveryResult>("/node/discovery/scan", { nodeId });
 
-export interface DockerAppTemplate {
-  id: string;
-  name: string;
-  category: string;
-  image: string;
-  versionLabel?: string;
-  defaultHostPort: number;
-  containerPort: number;
-}
-export interface DockerAppNode {
-  id: number;
-  name: string;
-  serverIp?: string;
-  ip?: string;
-  status: number;
-  version?: string;
-  online: boolean;
-  compatible: boolean;
-}
-export interface DockerAppInstance {
-  id: number;
-  userId: number;
-  nodeId: number;
-  nodeName?: string;
-  nodeOnline: boolean;
-  templateId: string;
-  name: string;
-  containerName: string;
-  image: string;
-  versionLabel?: string;
-  hostPort: number;
-  containerPort: number;
-  domainRouteId?: number;
-  domain?: string;
-  state:
-    | "draft"
-    | "provisioning"
-    | "operating"
-    | "active"
-    | "error"
-    | "delete_pending"
-    | "deleted";
-  lastError?: string;
-  lastCommand?: string;
-  rollbackCommand?: string;
-  composePath?: string;
-  backupPath?: string;
-  detected: boolean;
-  createdTime: number;
-  updatedTime: number;
-}
-export interface DockerAppOverview {
-  nodes: DockerAppNode[];
-  templates: DockerAppTemplate[];
-  apps: DockerAppInstance[];
-  summary: {
-    apps: number;
-    active: number;
-    errors: number;
-    dockerReadyNodes: number;
-  };
-  minimumAgentVersion: string;
-}
-export interface DockerContainerInfo {
-  id: string;
-  name: string;
-  image: string;
-  state: string;
-  status: string;
-  ports?: Array<{
-    privatePort: number;
-    publicPort?: number;
-    type: string;
-    ip?: string;
-  }>;
-}
-export interface DockerInspectResult {
-  nodeId: number;
-  nodeName: string;
-  dockerAvailable: boolean;
-  dockerVersion?: string;
-  composeAvailable: boolean;
-  containers: DockerContainerInfo[];
-  error?: string;
-  minimumAgentVersion: string;
-}
-export interface DockerAppEvent {
-  id: number;
-  appId?: number;
-  nodeId: number;
-  eventType: string;
-  status: string;
-  detail?: string;
-  createdTime: number;
-}
-export const getDockerAppOverview = () =>
-  Network.postCached<DockerAppOverview>("/docker-apps/overview", {}, 8000);
-export const inspectDockerNode = (nodeId: number) =>
-  Network.post<DockerInspectResult>("/docker-apps/inspect", { nodeId });
-export const deployDockerApp = (data: {
-  nodeId: number;
-  templateId: string;
-  name: string;
-  containerName?: string;
-  hostPort?: number;
-  bindDomain?: boolean;
-  domain?: string;
-  dnsZoneId?: number;
-  entryNodeId?: number;
-  listenPort?: number;
-  pathPrefix?: string;
-  backendPath?: string;
-}) =>
-  Network.mutate<DockerAppOverview>("/docker-apps/deploy", data, [
-    "/docker-apps/overview",
-  ]);
-export const runDockerAppAction = (
-  id: number,
-  action: "upgrade" | "backup" | "stop" | "start" | "remove" | "rollback",
-) =>
-  Network.mutate<DockerAppOverview>("/docker-apps/action", { id, action }, [
-    "/docker-apps/overview",
-  ]);
-export const getDockerAppCommand = (
-  id: number,
-  action: "upgrade" | "backup" | "stop" | "start" | "remove" | "rollback",
-) => Network.post<string>("/docker-apps/command", { id, action });
-export const getDockerAppEvents = (id: number) =>
-  Network.post<DockerAppEvent[]>("/docker-apps/events", { id });
 export const checkNodeStatus = (nodeId?: number) => {
   const params = nodeId ? { nodeId } : {};
 
@@ -2322,8 +2193,6 @@ export interface NetworkRouteApplicationCreateInput {
   xhttpOriginDomain?: string;
   xhttpUploadDomain?: string;
   xhttpDownloadDomain?: string;
-  autoProvisionCloudFront?: boolean;
-  awsAccessAccountId?: number;
   dnsZoneId?: number;
 }
 export const getNetworkRouteApplications = () =>
@@ -3258,46 +3127,6 @@ export const deleteDnsProviderAccount = (id: number) =>
     "/dns-provider/zones",
     "/dynamic-dns/overview",
   ]);
-
-export interface AwsAccessAccount {
-  id: number;
-  name: string;
-  accessKeyId: string;
-  defaultRegion?: string;
-  enabled: boolean | number;
-  awsAccountId?: string;
-  callerArn?: string;
-  lastTestAt?: number;
-  lastError?: string;
-  createdTime: number;
-  updatedTime: number;
-}
-
-export interface AwsAccessSummary {
-  accounts: number;
-  enabled: number;
-  errors: number;
-}
-
-export interface AwsAccessOverview {
-  accounts: AwsAccessAccount[];
-  summary: AwsAccessSummary;
-}
-
-export const getAwsAccessAccounts = () =>
-  Network.post<AwsAccessOverview>("/aws-access/list");
-export const saveAwsAccessAccount = (data: {
-  id?: number;
-  name: string;
-  accessKeyId: string;
-  secretAccessKey?: string;
-  defaultRegion?: string;
-  enabled: boolean;
-}) => Network.mutate("/aws-access/save", data, ["/aws-access/list"]);
-export const syncAwsAccessAccount = (id: number) =>
-  Network.mutate("/aws-access/sync", { id }, ["/aws-access/list"]);
-export const deleteAwsAccessAccount = (id: number) =>
-  Network.mutate("/aws-access/delete", { id }, ["/aws-access/list"]);
 
 export interface TopologyResourceNode {
   [key: string]: unknown;

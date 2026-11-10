@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
@@ -18,7 +19,6 @@ import {
   ArrowDown,
   BarChart3,
   ArrowUp,
-  Copy,
   Database,
   ExternalLink,
   FileKey2,
@@ -44,13 +44,10 @@ import {
 import toast from "react-hot-toast";
 
 import {
-  createInternalConnector,
   createDomainRoute,
   createPublishedService,
-  deleteInternalConnector,
   deleteDomainRoute,
   deletePublishedService,
-  getInternalConnectorInstall,
   getDomainRoutes,
   getManagedCertificates,
   getInternalConnectors,
@@ -65,7 +62,6 @@ import {
   renewPublishedService,
   retryManagedCertificate,
   type InternalConnector,
-  type ConnectorPlatform,
   type DomainRoute,
   type DomainRouteBackendMember,
   type ManagedCertificate,
@@ -206,15 +202,6 @@ const domainRouteStatus = (route: DomainRoute) => {
   };
 };
 
-const platformMeta: Record<
-  ConnectorPlatform,
-  { label: string; commandLabel: string }
-> = {
-  linux: { label: "Linux", commandLabel: "终端命令" },
-  windows: { label: "Windows", commandLabel: "管理员 PowerShell" },
-  macos: { label: "macOS", commandLabel: "终端命令" },
-  openwrt: { label: "OpenWrt Agent", commandLabel: "OpenWrt 终端" },
-};
 
 type ServiceTemplateId =
   | "http"
@@ -358,6 +345,7 @@ const discoveredTemplate = (serviceType: string): ServiceTemplateId => {
 };
 
 export default function ServicePublishingPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [domainRoutesLoading, setDomainRoutesLoading] = useState(true);
   const [certificatesLoading, setCertificatesLoading] = useState(true);
@@ -380,18 +368,6 @@ export default function ServicePublishingPage() {
     useState<ServiceTelemetry | null>(null);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const [serviceModal, setServiceModal] = useState(false);
-  const [connectorModal, setConnectorModal] = useState(false);
-  const [commandModal, setCommandModal] = useState(false);
-  const [installCommand, setInstallCommand] = useState("");
-  const [commandLoading, setCommandLoading] = useState(false);
-  const [commandConnectorId, setCommandConnectorId] = useState<number | null>(
-    null,
-  );
-  const [commandPlatform, setCommandPlatform] =
-    useState<ConnectorPlatform>("linux");
-  const [commandAction, setCommandAction] = useState<"install" | "uninstall">(
-    "install",
-  );
   const [activeView, setActiveView] = useState("services");
   const [domainModal, setDomainModal] = useState(false);
   const [backendEditRoute, setBackendEditRoute] = useState<DomainRoute | null>(
@@ -418,15 +394,6 @@ export default function ServicePublishingPage() {
   const [serviceForm, setServiceForm] = useState(createEmptyServiceForm);
   const [selectedTemplateId, setSelectedTemplateId] =
     useState<ServiceTemplateId>("custom-tcp");
-  const [connectorForm, setConnectorForm] = useState<{
-    name: string;
-    allowedCidrs: string;
-    platform: ConnectorPlatform;
-  }>({
-    name: "",
-    allowedCidrs: "",
-    platform: "linux",
-  });
   const isAdmin = isAdminUser();
   const emptyDomainForm = () => ({
     name: "",
@@ -838,67 +805,7 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
-  const submitConnector = async () => {
-    if (!connectorForm.name.trim()) return toast.error("请输入接入端名称");
-    setSubmitting(true);
-    const res = await createInternalConnector({
-      name: connectorForm.name.trim(),
-      allowedCidrs: connectorForm.allowedCidrs.trim() || undefined,
-      platform: connectorForm.platform,
-      connectorRole:
-        connectorForm.platform === "openwrt" ? "openwrt_dns" : "service",
-    });
 
-    setSubmitting(false);
-    if (res.code !== 0) return toast.error(res.msg || "创建失败");
-    setConnectorModal(false);
-    setConnectorForm({ name: "", allowedCidrs: "", platform: "linux" });
-    setCommandConnectorId(res.data.connector.id);
-    setCommandPlatform(res.data.connector.platform || connectorForm.platform);
-    setCommandAction("install");
-    setInstallCommand(res.data.installCommand);
-    setCommandModal(true);
-    loadData();
-  };
-
-  const showInstall = async (id: number, platform: ConnectorPlatform) => {
-    setCommandConnectorId(id);
-    setCommandPlatform(platform);
-    setCommandAction("install");
-    setCommandLoading(true);
-    const res = await getInternalConnectorInstall(id, platform, "install");
-
-    setCommandLoading(false);
-    if (res.code !== 0) return toast.error(res.msg || "获取安装命令失败");
-    setInstallCommand(res.data);
-    setCommandModal(true);
-  };
-
-  const refreshInstallCommand = async (
-    platform: ConnectorPlatform,
-    action: "install" | "uninstall",
-  ) => {
-    setCommandPlatform(platform);
-    setCommandAction(action);
-    if (commandConnectorId === null) return;
-    setCommandLoading(true);
-    const res = await getInternalConnectorInstall(
-      commandConnectorId,
-      platform,
-      action,
-    );
-
-    setCommandLoading(false);
-    if (res.code !== 0) return toast.error(res.msg || "获取安装命令失败");
-    setInstallCommand(res.data);
-  };
-
-  const copyCommand = async () => {
-    await navigator.clipboard.writeText(installCommand);
-    toast.success(
-      commandAction === "install" ? "安装命令已复制" : "卸载命令已复制",
-    );
-  };
 
   const renew = async (id: number) => {
     const res = await renewPublishedService(id, 24);
@@ -1153,14 +1060,6 @@ export default function ServicePublishingPage() {
     loadData();
   };
 
-  const removeConnector = async (id: number) => {
-    if (!window.confirm("确认删除该内网接入端吗？")) return;
-    const res = await deleteInternalConnector(id);
-
-    if (res.code !== 0) return toast.error(res.msg || "删除失败");
-    toast.success("接入端已删除");
-    loadData();
-  };
 
   const renderDomainRouteCard = (route: (typeof domainRoutes)[number]) => {
     const routeStatus = domainRouteStatus(route);
@@ -1312,6 +1211,7 @@ export default function ServicePublishingPage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">内网映射</h1>
+          <Button className="mt-2" size="sm" variant="flat" onPress={() => navigate("/devices")}>设备与接入端</Button>
         </div>
         <Button
           color="primary"
@@ -1324,15 +1224,12 @@ export default function ServicePublishingPage() {
           }
           onPress={() => {
             if (activeView === "domains") setDomainModal(true);
-            else if (activeView === "connectors") setConnectorModal(true);
             else if (activeView === "certificates") loadData();
             else setServiceModal(true);
           }}
         >
           {activeView === "domains"
             ? "新增域名直达"
-            : activeView === "connectors"
-              ? "添加接入端"
               : activeView === "certificates"
                 ? "刷新证书"
                 : "新建映射"}
@@ -1782,65 +1679,6 @@ export default function ServicePublishingPage() {
             )}
           </Tab>
         ) : null}
-        <Tab key="connectors" title={`内网接入端 ${connectors.length}`}>
-          {connectorsLoading ? (
-            <div className="flex min-h-40 items-center justify-center">
-              <Spinner />
-            </div>
-          ) : connectors.length === 0 ? (
-            <div className="py-16 text-center text-default-500">
-              暂无内网接入端
-            </div>
-          ) : (
-            <ResourceCardGrid>
-              {connectors.map((connector) => (
-                <ResourceCard
-                  key={connector.id}
-                  actions={[
-                    {
-                      label: "安装命令",
-                      icon: <ServerCog size={14} />,
-                      color: "primary",
-                      onPress: () =>
-                        showInstall(
-                          connector.id,
-                          connector.platform || "linux",
-                        ),
-                    },
-                    {
-                      label: "删除",
-                      icon: <Trash2 size={14} />,
-                      color: "danger",
-                      onPress: () => removeConnector(connector.id),
-                    },
-                  ]}
-                  blocks={[
-                    {
-                      label: "最近连接地址",
-                      status: {
-                        text: connector.online ? "在线" : "离线",
-                        color: connector.online ? "success" : "default",
-                      },
-                      rows: [{ value: connector.remoteIp || "尚未连接" }],
-                    },
-                  ]}
-                  chips={[
-                    {
-                      text: platformMeta[connector.platform || "linux"].label,
-                      color: "primary",
-                    },
-                  ]}
-                  status={{
-                    text: connector.online ? "在线" : "离线",
-                    color: connector.online ? "success" : "default",
-                  }}
-                  subtitles={[isAdmin ? connector.ownerUserName : "内网接入端"]}
-                  title={connector.name}
-                />
-              ))}
-            </ResourceCardGrid>
-          )}
-        </Tab>
       </Tabs>
 
       <Modal
@@ -2901,123 +2739,7 @@ export default function ServicePublishingPage() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={connectorModal} size="xl" onOpenChange={setConnectorModal}>
-        <ModalContent>
-          <ModalHeader>添加内网接入端</ModalHeader>
-          <ModalBody className="gap-4">
-            <Input
-              label="名称"
-              value={connectorForm.name}
-              onValueChange={(value) =>
-                setConnectorForm({ ...connectorForm, name: value })
-              }
-            />
-            <div>
-              <div className="mb-2 text-sm text-default-600">安装系统</div>
-              <Tabs
-                fullWidth
-                aria-label="接入端安装系统"
-                selectedKey={connectorForm.platform}
-                onSelectionChange={(key) =>
-                  setConnectorForm({
-                    ...connectorForm,
-                    platform: String(key) as ConnectorPlatform,
-                  })
-                }
-              >
-                {Object.entries(platformMeta)
-                  .filter(([key]) => key !== "openwrt")
-                  .map(([key, meta]) => (
-                    <Tab key={key} title={meta.label} />
-                  ))}
-              </Tabs>
-            </div>
-            <Input
-              label="允许访问网段（可选）"
-              placeholder="127.0.0.1/32,192.168.0.0/16"
-              value={connectorForm.allowedCidrs}
-              onValueChange={(value) =>
-                setConnectorForm({ ...connectorForm, allowedCidrs: value })
-              }
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setConnectorModal(false)}>
-              取消
-            </Button>
-            <Button
-              color="primary"
-              isLoading={submitting}
-              onPress={submitConnector}
-            >
-              创建
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
 
-      <Modal isOpen={commandModal} size="2xl" onOpenChange={setCommandModal}>
-        <ModalContent>
-          <ModalHeader>接入端安装与卸载</ModalHeader>
-          <ModalBody className="gap-4">
-            <Tabs
-              fullWidth
-              aria-label="安装命令系统"
-              selectedKey={commandPlatform}
-              onSelectionChange={(key) =>
-                refreshInstallCommand(
-                  String(key) as ConnectorPlatform,
-                  commandAction,
-                )
-              }
-            >
-              {Object.entries(platformMeta)
-                .filter(([key]) => key !== "openwrt")
-                .map(([key, meta]) => (
-                  <Tab key={key} title={meta.label} />
-                ))}
-            </Tabs>
-            <Tabs
-              aria-label="安装或卸载"
-              selectedKey={commandAction}
-              variant="bordered"
-              onSelectionChange={(key) =>
-                refreshInstallCommand(
-                  commandPlatform,
-                  String(key) as "install" | "uninstall",
-                )
-              }
-            >
-              <Tab key="install" title="安装 / 更新" />
-              <Tab key="uninstall" title="卸载" />
-            </Tabs>
-            <div>
-              <div className="mb-2 text-xs text-default-500">
-                {platformMeta[commandPlatform].commandLabel} ·{" "}
-                {commandAction === "install"
-                  ? "安装或更新接入端"
-                  : "仅卸载内网接入端"}
-              </div>
-              <pre className="min-h-28 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default-100 p-4 font-mono text-sm">
-                {commandLoading ? "正在生成安装命令..." : installCommand}
-              </pre>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setCommandModal(false)}>
-              关闭
-            </Button>
-            <Button
-              color="primary"
-              isDisabled={commandLoading}
-              startContent={<Copy size={16} />}
-              onPress={copyCommand}
-            >
-              复制命令
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
     </PageShell>
   );
 }

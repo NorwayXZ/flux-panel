@@ -47,12 +47,10 @@ public class NetworkRouteApplicationService {
     private final TunnelTransportService transportService;
     private final PortLedgerService portLedgerService;
     private final TunnelService tunnelService;
-    private final CloudFrontXhttpService cloudFrontXhttpService;
     private final AESCrypto crypto;
 
     public NetworkRouteApplicationService(JdbcTemplate jdbcTemplate, TunnelMapper tunnelMapper, NodeMapper nodeMapper,
                                           TunnelTransportService transportService, PortLedgerService portLedgerService, TunnelService tunnelService,
-                                          CloudFrontXhttpService cloudFrontXhttpService,
                                           @Value("${jwt-secret}") String secret) {
         this.jdbcTemplate = jdbcTemplate;
         this.tunnelMapper = tunnelMapper;
@@ -60,7 +58,6 @@ public class NetworkRouteApplicationService {
         this.transportService = transportService;
         this.portLedgerService = portLedgerService;
         this.tunnelService = tunnelService;
-        this.cloudFrontXhttpService = cloudFrontXhttpService;
         this.crypto = new AESCrypto(secret + ":network-route-application");
     }
 
@@ -72,7 +69,6 @@ public class NetworkRouteApplicationService {
                         + "a.reality_server_name AS realityServerName,a.client_config AS encryptedClientConfig,a.managed_tunnel AS managedTunnel,a.state,a.last_error AS lastError,"
                         + "a.xhttp_path AS xhttpPath,a.xhttp_mode AS xhttpMode,a.xhttp_padding_bytes AS xhttpPaddingBytes,a.xhttp_origin_domain AS xhttpOriginDomain,"
                         + "a.xhttp_upload_domain AS xhttpUploadDomain,a.xhttp_download_domain AS xhttpDownloadDomain,"
-                        + "a.aws_access_account_id AS awsAccessAccountId,a.dns_zone_id AS dnsZoneId,a.cloudfront_state AS cloudfrontState,"
                         + "a.last_test_at AS lastTestAt,a.last_test_latency_ms AS lastTestLatencyMs,a.created_time AS createdTime,a.updated_time AS updatedTime,"
                         + "COALESCE(en.server_ip,en.ip) AS entryHost FROM network_route_application a LEFT JOIN tunnel t ON t.id=a.tunnel_id "
                         + "LEFT JOIN node en ON en.id=a.entry_node_id LEFT JOIN node xn ON xn.id=a.exit_node_id WHERE a.state<>'deleted' ORDER BY a.id DESC");
@@ -126,30 +122,20 @@ public class NetworkRouteApplicationService {
             String xhttpPath = xhttp ? normalizeXHTTPPath(dto.getXhttpPath()) : null;
             String xhttpMode = xhttp ? StringUtils.defaultIfBlank(dto.getXhttpMode(), "auto") : null;
             String xhttpPadding = xhttp ? StringUtils.defaultIfBlank(StringUtils.trimToNull(dto.getXhttpPaddingBytes()), "100-1000") : null;
-            boolean autoCloudFront = xhttp && Boolean.TRUE.equals(dto.getAutoProvisionCloudFront());
             String xhttpOrigin = xhttp ? normalizeOptionalDomain(dto.getXhttpOriginDomain(), "源站域名") : null;
-            String xhttpUpload = xhttp && !autoCloudFront ? normalizeOptionalDomain(dto.getXhttpUploadDomain(), "上行域名") : null;
-            String xhttpDownload = xhttp && !autoCloudFront ? normalizeOptionalDomain(dto.getXhttpDownloadDomain(), "下行域名") : null;
+            String xhttpUpload = xhttp ? normalizeOptionalDomain(dto.getXhttpUploadDomain(), "上行域名") : null;
+            String xhttpDownload = xhttp ? normalizeOptionalDomain(dto.getXhttpDownloadDomain(), "下行域名") : null;
             long now = System.currentTimeMillis();
-            jdbcTemplate.update("INSERT INTO network_route_application(name,tunnel_id,entry_node_id,exit_node_id,proxy_type,bind_ip,listen_port,auth_username,auth_password,service_name,chain_name,hop_ports,runtime_port,reality_server_name,client_config,xhttp_path,xhttp_mode,xhttp_padding_bytes,xhttp_origin_domain,xhttp_upload_domain,xhttp_download_domain,aws_access_account_id,dns_zone_id,cloudfront_state,managed_tunnel,state,created_time,updated_time) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,'pending','pending',?,?,?,?,?,?,?,?,?,?,?,?,?,?,'provisioning',?,?)",
+            jdbcTemplate.update("INSERT INTO network_route_application(name,tunnel_id,entry_node_id,exit_node_id,proxy_type,bind_ip,listen_port,auth_username,auth_password,service_name,chain_name,hop_ports,runtime_port,reality_server_name,client_config,xhttp_path,xhttp_mode,xhttp_padding_bytes,xhttp_origin_domain,xhttp_upload_domain,xhttp_download_domain,managed_tunnel,state,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,'pending','pending',?,?,?,?,?,?,?,?,?,?,?,'provisioning',?,?)",
                     dto.getName().trim(), tunnel.getId(), path.get(0).getId(), path.get(path.size() - 1).getId(),
                     dto.getProxyType().toLowerCase(Locale.ROOT), StringUtils.trimToEmpty(dto.getBindIp()), dto.getListenPort(),
                     username, crypto.encrypt(password), TunnelRouteUtil.joinHopPorts(hopPorts), runtimePort, realityServerName,
                     null, xhttpPath, xhttpMode, xhttpPadding, xhttpOrigin, xhttpUpload, xhttpDownload,
-                    autoCloudFront ? dto.getAwsAccessAccountId() : null, autoCloudFront ? dto.getDnsZoneId() : null, autoCloudFront ? "provisioning" : null,
                     dto.getTunnelId() == null ? 1 : 0, now, now);
             Long id = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             String base = "network-route-app-" + id;
             jdbcTemplate.update("UPDATE network_route_application SET service_name=?,chain_name=? WHERE id=?", base + "-entry", base, id);
-            if (autoCloudFront) {
-                CloudFrontXhttpService.ProvisionedPair pair = cloudFrontXhttpService.provision(id, dto.getAwsAccessAccountId(), dto.getDnsZoneId(),
-                        xhttpOrigin, path.get(0).getId(), dto.getListenPort());
-                jdbcTemplate.update("UPDATE network_route_application SET xhttp_origin_domain=?,xhttp_dns_record_id=?,xhttp_upload_distribution_id=?,"
-                                + "xhttp_upload_domain=?,xhttp_download_distribution_id=?,xhttp_download_domain=?,cloudfront_state='deploying',updated_time=? WHERE id=?",
-                        pair.originDomain(), pair.dnsRecordId(), pair.uploadDistributionId(), pair.uploadDomain(),
-                        pair.downloadDistributionId(), pair.downloadDomain(), System.currentTimeMillis(), id);
-            }
             R deployed = deploy(id);
             return deployed.getCode() == 0 ? overview() : deployed;
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -309,7 +295,7 @@ public class NetworkRouteApplicationService {
         requireOK(GostUtil.AddPrivateProxyWithChain(entry.getId(), routeServiceName(application), "socks5", "127.0.0.1",
                 routePort, username, password, chainName), "创建 XHTTP 内部路由失败");
         String origin = application.get("xhttp_origin_domain") == null ? "" : String.valueOf(application.get("xhttp_origin_domain"));
-        // CloudFront terminates the public TLS connection. The origin leg is plain XHTTP
+        // The configured CDN terminates the public TLS connection. The origin leg is plain XHTTP
         // unless a future certificate-file workflow explicitly supplies source TLS files.
         String security = "none";
         GostDto runtime = GostUtil.AddXHTTPRuntime(entry.getId(), xhttpRuntimeName(application), username,
@@ -393,10 +379,6 @@ public class NetworkRouteApplicationService {
     public R delete(Long id) {
         Map<String, Object> app = one("SELECT * FROM network_route_application WHERE id=? AND state<>'deleted'", id);
         if (app == null) return R.err("出口应用不存在");
-        if (app.get("aws_access_account_id") != null) {
-            R cloudfrontCleanup = cloudFrontXhttpService.cleanup(id);
-            if (cloudfrontCleanup.getCode() != 0) return cloudfrontCleanup;
-        }
         Tunnel tunnel = tunnelMapper.selectById(number(app.get("tunnel_id")));
         List<Node> path = tunnel == null ? Collections.emptyList() : nodes(tunnel);
         List<String> failures = cleanup(app, tunnel, path, true, true);
@@ -455,13 +437,9 @@ public class NetworkRouteApplicationService {
             if (!AgentVersionUtil.isAtLeast(entry.getVersion(), MIN_XHTTP_AGENT_VERSION)) {
                 throw new IllegalArgumentException(entry.getName() + " Agent 需要升级到 " + MIN_XHTTP_AGENT_VERSION + " 才能使用 VLESS + XHTTP + TLS");
             }
+            if (StringUtils.isBlank(dto.getXhttpUploadDomain())) throw new IllegalArgumentException("请填写 CDN 上行域名；自动云资源配置已移除");
             if (StringUtils.isBlank(dto.getXhttpPath())) dto.setXhttpPath("/xhttp/");
             normalizeXHTTPPath(dto.getXhttpPath());
-            if (Boolean.TRUE.equals(dto.getAutoProvisionCloudFront())) {
-                if (dto.getAwsAccessAccountId() == null) throw new IllegalArgumentException("请选择 AWS 账号");
-                if (dto.getDnsZoneId() == null) throw new IllegalArgumentException("请选择 Cloudflare Zone");
-                if (StringUtils.isBlank(dto.getXhttpOriginDomain())) throw new IllegalArgumentException("请填写源站域名");
-            }
             if (StringUtils.isNotBlank(dto.getXhttpOriginDomain())) normalizeOptionalDomain(dto.getXhttpOriginDomain(), "源站域名");
             if (StringUtils.isNotBlank(dto.getXhttpUploadDomain())) normalizeOptionalDomain(dto.getXhttpUploadDomain(), "上行域名");
             if (StringUtils.isNotBlank(dto.getXhttpDownloadDomain())) normalizeOptionalDomain(dto.getXhttpDownloadDomain(), "下行域名");

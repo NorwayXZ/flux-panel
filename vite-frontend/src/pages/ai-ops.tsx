@@ -1,3 +1,4 @@
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
@@ -78,6 +79,7 @@ function RunDetail({ run }: { run: OpsRun }) {
         {time(run.startedAt)} · {statusText[run.status] || run.status} ·{" "}
         {run.finishedAt ? time(run.finishedAt) : "等待完成"}
       </summary>
+      {["failed", "partial", "blocked", "interrupted"].includes(run.status) && <a className="mt-3 block text-sm text-primary" href={`/operations/issues?source=ai_task&sourceId=${run.id}`}>查看问题处理与验证</a>}
       <div className="mt-4 space-y-3">
         {entries.map((entry, i) => (
           <div key={i} className="rounded-lg bg-default-50 p-3 text-sm">
@@ -99,7 +101,9 @@ function RunDetail({ run }: { run: OpsRun }) {
 }
 export default function AiOpsPage() {
   const [data, setData] = useState<OpsOverview>();
-  const [tab, setTab] = useState("chat");
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const [tab, setTab] = useState(params.get("tab") === "tasks" ? "tasks" : "chat");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [taskId, setTaskId] = useState<number>();
@@ -212,6 +216,7 @@ export default function AiOpsPage() {
         {data?.minimumAgentVersion || "2.84.0-beta.3"}
         。检查结果会发送给你配置的模型服务。
       </div>
+      <Button size="sm" variant="flat" onPress={() => navigate("/operations/issues")}>问题处理与验证</Button>
       <Tabs
         destroyInactiveTabPanel={false}
         selectedKey={tab}

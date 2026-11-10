@@ -14,7 +14,6 @@ import { Chip } from "@heroui/chip";
 import {
   Boxes,
   CircleGauge,
-  CloudCog,
   Globe2,
   Laptop,
   Plus,
@@ -61,9 +60,9 @@ const resourceCards = [
     icon: Boxes,
   },
   {
-    title: "家庭设备",
+    title: "设备与接入端",
     detail: "Windows、macOS、Linux Connector 接入",
-    path: "/home-devices",
+    path: "/devices",
     icon: Laptop,
   },
   {
@@ -77,12 +76,6 @@ const resourceCards = [
     detail: "公网 IP 变化后自动更新 A/AAAA",
     path: "/dynamic-dns",
     icon: RefreshCw,
-  },
-  {
-    title: "AWS 账号",
-    detail: "CloudFront、ACM、Route53 自动化凭据",
-    path: "/aws-access",
-    icon: CloudCog,
   },
 ];
 

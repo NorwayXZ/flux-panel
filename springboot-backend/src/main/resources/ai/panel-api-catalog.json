@@ -5,6 +5,8 @@
       "POST /api/v1/ai-ops/chat/stop",
       "POST /api/v1/ai-ops/chat/list",
       "POST /api/v1/ai-ops/chat/detail",
+      "POST /api/v1/ai-ops/chat/rename",
+      "POST /api/v1/ai-ops/chat/search",
       "POST /api/v1/ai-ops/chat/delete",
       "POST /api/v1/ai-ops/chat/send"
     ]
@@ -12,6 +14,18 @@
   {
     "module": "AiOpsController",
     "routes": [
+      "POST /api/v1/ai-ops/proposals",
+      "POST /api/v1/ai-ops/proposals/create",
+      "POST /api/v1/ai-ops/proposals/approve",
+      "POST /api/v1/ai-ops/proposals/reject",
+      "POST /api/v1/ai-ops/preferences",
+      "POST /api/v1/ai-ops/preferences/save",
+      "POST /api/v1/ai-ops/notes",
+      "POST /api/v1/ai-ops/notes/save",
+      "POST /api/v1/ai-ops/changes",
+      "POST /api/v1/ai-ops/changes/restore",
+      "POST /api/v1/ai-ops/reports",
+      "POST /api/v1/ai-ops/reports/generate",
       "POST /api/v1/ai-ops/overview",
       "POST /api/v1/ai-ops/settings",
       "POST /api/v1/ai-ops/save",
@@ -49,15 +63,6 @@
     ]
   },
   {
-    "module": "AwsAccessController",
-    "routes": [
-      "POST /api/v1/aws-access/list",
-      "POST /api/v1/aws-access/save",
-      "POST /api/v1/aws-access/sync",
-      "POST /api/v1/aws-access/delete"
-    ]
-  },
-  {
     "module": "BandwidthTestController",
     "routes": [
       "POST /api/v1/bandwidth-test/overview",
@@ -84,6 +89,7 @@
       "POST /api/v1/cross-entry-failover/save",
       "POST /api/v1/cross-entry-failover/delete",
       "POST /api/v1/cross-entry-failover/check",
+      "POST /api/v1/cross-entry-failover/pool-create-confirm",
       "POST /api/v1/cross-entry-failover/group-enabled",
       "POST /api/v1/cross-entry-failover/member-enabled",
       "POST /api/v1/cross-entry-failover/traffic-quota",
@@ -99,17 +105,6 @@
       "POST /api/v1/dns-provider/account/save",
       "POST /api/v1/dns-provider/account/sync",
       "POST /api/v1/dns-provider/account/delete"
-    ]
-  },
-  {
-    "module": "DockerAppCenterController",
-    "routes": [
-      "POST /api/v1/docker-apps/overview",
-      "POST /api/v1/docker-apps/inspect",
-      "POST /api/v1/docker-apps/deploy",
-      "POST /api/v1/docker-apps/action",
-      "POST /api/v1/docker-apps/command",
-      "POST /api/v1/docker-apps/events"
     ]
   },
   {
@@ -296,6 +291,15 @@
       "POST /api/v1/openwrt-dns/configure",
       "POST /api/v1/openwrt-dns/remove",
       "POST /api/v1/openwrt-dns/repair"
+    ]
+  },
+  {
+    "module": "OpsIssueController",
+    "routes": [
+      "POST /api/v1/ops-issues/list",
+      "POST /api/v1/ops-issues/context",
+      "POST /api/v1/ops-issues/note",
+      "POST /api/v1/ops-issues/verify"
     ]
   },
   {

@@ -214,6 +214,25 @@ class AiOpsServiceTests {
   }
 
   @Test
+  void verificationOfRepairTaskCannotRepeatMutationsOrCreateProposals() {
+    JSONObject original = config();
+    original.put("mode", "repair");
+    original.put("allowTerminal", true);
+    original.put("allowAgentUpgrade", true);
+    original.put("allowLogCleanup", true);
+    original.put("allowPanelRead", true);
+    original.put("_chatOwner", 1);
+    JSONObject restricted = AiOpsService.verificationPolicy(original);
+    Set<String> names = new HashSet<>();
+    for (Object tool : AiOpsService.tools(restricted)) names.add(((JSONObject) JSON.toJSON(tool)).getJSONObject("function").getString("name"));
+    assertTrue(names.contains("inspect_disk"));
+    assertTrue(names.contains("inspect_panel"));
+    assertTrue(Collections.disjoint(names, Set.of("execute_command", "write_file", "upgrade_agent", "restart_service", "cleanup_rotated_logs", "vacuum_journal", "propose_action", "remember_node_note")));
+    assertEquals("repair", original.getString("mode"));
+    assertTrue(original.getBooleanValue("allowTerminal"));
+  }
+
+  @Test
   void readOnlyToolsExcludeMutations() {
     String tools = AiOpsService.tools(config()).toJSONString();
     assertFalse(tools.contains("restart_service"));

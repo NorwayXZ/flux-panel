@@ -90,12 +90,6 @@ export const queryKeys = {
     list: () => [...queryKeys.privateProxy.all, "list"] as const,
   },
 
-  // Docker 应用
-  dockerApps: {
-    all: ["dockerApps"] as const,
-    instances: () => [...queryKeys.dockerApps.all, "instances"] as const,
-    templates: () => [...queryKeys.dockerApps.all, "templates"] as const,
-  },
 
   // 配置相关
   config: {

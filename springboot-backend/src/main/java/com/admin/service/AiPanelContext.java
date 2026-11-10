@@ -19,7 +19,7 @@ public class AiPanelContext {
         + " Private proxies have separate protocols, routing rules and exits (VPNGate, Mysterium, custom providers)."
         + " Smart entry uses public authoritative DNS or local OpenWrt DNS; DNS success is not client handshake success."
         + " Cross-entry failover and multiline aggregation own their backing forwards: never edit those independently."
-        + " Other modules include nftables forwards, Docker apps, published services, private networks, DDNS,"
+        + " Other modules include nftables forwards, published services, private networks, DDNS,"
         + " user quotas/grants, monitoring/history/alerts and Agent upgrades. Use inspect_panel for actual state"
         + " and API catalog; catalog routes document capabilities, they are not callable tools or permission grants."
         + " Never edit the database directly to repair panel-managed configuration. Inspect topology and affected"
@@ -30,6 +30,8 @@ public class AiPanelContext {
         + " For line failures distinguish offline Agent, process/listener, DNS, transport, target and real proxy"
         + " handshake; a successful TCP connection or restart alone does not prove recovery."
         + " Scheduled repair authorization permits action within selected nodes without repeated confirmation."
+        + " Docker app management, AWS accounts and automatic CloudFront provisioning were removed; do not suggest their old pages or APIs. Network tools are under /network-detection; dynamic line policies under /forward?tab=line-strategy; devices under /devices."
+        + " Operations workflow lives at /operations/issues. A chat response or processing note is not verification; recheck the original issue after changes."
         + " Report unsupported control-plane repairs explicitly; do not fabricate complete panel control.";
   }
 
@@ -75,6 +77,8 @@ public class AiPanelContext {
   /** Known current problems: open alerts and the non-healthy findings of the latest self-check. */
   private Object issues() {
     Map<String, Object> result = new LinkedHashMap<>();
+    result.put("workflow", safe(() -> db.queryForList(
+        "SELECT id,source_type,resource_type,resource_id,title,phase,chat_id,verification,updated_at FROM ops_issue ORDER BY updated_at DESC LIMIT 100")));
     result.put("openAlerts", safe(() -> db.queryForList(
         "SELECT resource_type,resource_id,resource_name,severity,status,title,detail,started_at,updated_at FROM monitoring_alert WHERE status='open'"
             + " ORDER BY started_at DESC LIMIT 100")));

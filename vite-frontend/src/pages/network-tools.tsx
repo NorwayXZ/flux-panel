@@ -83,7 +83,7 @@ export default function NetworkToolsPage() {
     <PageShell className="space-y-5">
       <header>
         <div className="flex items-center gap-1.5">
-          <h1 className="text-2xl font-bold text-foreground">网络诊断</h1>
+          <h2 className="text-2xl font-bold text-foreground">网络诊断</h2>
           <PageHelp>从指定节点执行 Ping、TCP 连接和 DNS 解析</PageHelp>
         </div>
       </header>

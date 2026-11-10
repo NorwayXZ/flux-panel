@@ -149,7 +149,7 @@ daily_usage_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flu
 traffic_usage_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage' AND column_name='traffic_active_millis'")
 [[ "${traffic_usage_column_exists}" -eq 1 ]]
-for table in authorized_entry_template cross_entry_dns_rollback_pending cross_entry_switch_pending cross_entry_pool_sync_state cross_entry_pool_create_pending; do
+for table in ops_issue authorized_entry_template cross_entry_dns_rollback_pending cross_entry_switch_pending cross_entry_pool_sync_state cross_entry_pool_create_pending; do
   migration_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
   [[ "${migration_table_exists}" -eq 1 ]]
@@ -161,6 +161,9 @@ address_refresh_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroo
 for resilience_migration_pass in 1 2; do
   docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
     "${PROJECT_DIR}/migrations/20261110_cross_entry_resilience.sql"
+done
+for issue_migration_pass in 1 2; do
+  docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test <     "${PROJECT_DIR}/migrations/20261111_ops_issue_workflow.sql"
 done
 retirement_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='authorized_entry_forward' AND column_name='retire_at'")
@@ -213,6 +216,7 @@ alert_detail_length=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_tes
 [[ "${alert_detail_length}" -le 500 ]]
 
 runtime_port=$(docker inspect -f '{{(index (index .NetworkSettings.Ports "6365/tcp") 0).HostPort}}' "${BACKEND}")
+FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-ops-issues-runtime.py" "http://127.0.0.1:${runtime_port}"
 FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-smart-entry-runtime.py" "http://127.0.0.1:${runtime_port}"
 if [[ -n "${FLUX_PANEL_RUNTIME_DNS_BINARY:-}" ]]; then
   FLUX_PANEL_RUNTIME_TEST=1 python3 "${PROJECT_DIR}/scripts/test-openwrt-dns-runtime.py" "http://127.0.0.1:${runtime_port}" "${FLUX_PANEL_RUNTIME_DNS_BINARY}"

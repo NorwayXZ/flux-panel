@@ -1,7 +1,9 @@
+import { MemoryRouter } from "react-router-dom";
+import type { ReactNode } from "react";
 import {
   act,
   fireEvent,
-  render,
+  render as baseRender,
   screen,
   waitFor,
 } from "@testing-library/react";
@@ -198,3 +200,5 @@ it("retains terminal permission and selected nodes after reopening, including a 
   expect((screen.getByLabelText("节点A") as HTMLInputElement).checked).toBe(true);
   expect((screen.getByLabelText("对话执行权限") as HTMLSelectElement).value).toBe("inspect");
 });
+
+function render(ui: ReactNode) { return baseRender(<MemoryRouter>{ui}</MemoryRouter>); }

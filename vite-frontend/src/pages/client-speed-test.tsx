@@ -1252,7 +1252,7 @@ export default function ClientSpeedTestPage() {
       <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-bold text-foreground">本机测速</h1>
+            <h2 className="text-2xl font-bold text-foreground">本机测速</h2>
             <PageHelp>浏览器直连 Cloudflare 单线程大包测速，显示真实 Mbps / Gbps；质量引擎补充延迟、抖动和加载中延迟。</PageHelp>
           </div>
         </div>

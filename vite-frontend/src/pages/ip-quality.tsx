@@ -147,7 +147,7 @@ export default function IpQualityPage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-bold text-foreground">IP 质量检测</h1>
+            <h2 className="text-2xl font-bold text-foreground">IP 质量检测</h2>
             <PageHelp>从节点真实出口检测公网 IP、风险情报、黑名单、服务访问、DNS 解析器和常见出站端口。</PageHelp>
           </div>
         </div>

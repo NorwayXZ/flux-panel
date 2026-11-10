@@ -407,7 +407,7 @@ export default function MonitoringPage() {
       <div className="space-y-5">
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">告警中心</h1>
+            <h2 className="text-2xl font-bold text-foreground">告警中心</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-xl bg-default-100 p-1">
@@ -1208,8 +1208,8 @@ function AlertList(props: AlertListProps) {
           </div>
         ) : (
           props.alerts.items.map((alert, index) => (
+            <div key={alert.id}>
             <button
-              key={alert.id}
               className={`grid w-full gap-3 px-4 py-4 text-left transition-colors hover:bg-default-50 dark:hover:bg-default-100/50 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center ${
                 index > 0 ? "border-t border-divider" : ""
               } ${!alert.read ? "bg-blue-50/45 dark:bg-blue-500/5" : ""}`}
@@ -1277,6 +1277,8 @@ function AlertList(props: AlertListProps) {
                 )}
               </span>
             </button>
+            {props.isAdmin && <div className="px-4 pb-3 text-right"><a className="text-sm text-primary" href={`/operations/issues?source=alert&sourceId=${alert.id}`}>诊断、处理与验证</a></div>}
+            </div>
           ))
         )}
       </div>

@@ -134,7 +134,7 @@ export default function HomeDevicesPage() {
     const response = await getInternalConnectors();
 
     if (response.code === 0) setDevices(response.data || []);
-    else toast.error(response.msg || "读取家庭设备失败");
+    else toast.error(response.msg || "读取设备与接入端失败");
     setLoading(false);
   };
 
@@ -178,7 +178,7 @@ export default function HomeDevicesPage() {
 
     setSubmitting(false);
     if (response.code !== 0)
-      return toast.error(response.msg || "创建家庭设备失败");
+      return toast.error(response.msg || "创建设备失败");
     setCreateOpen(false);
     setForm({ name: "", platform: "linux", allowedCidrs: "" });
     setCommandDeviceId(response.data.connector.id);
@@ -301,12 +301,12 @@ export default function HomeDevicesPage() {
 
     setDeleting(false);
     if (response.code !== 0)
-      return toast.error(response.msg || "删除家庭设备失败");
+      return toast.error(response.msg || "删除设备失败");
     setDevices((current) =>
       current.filter((item) => item.id !== deleteDevice.id),
     );
     setDeleteDevice(null);
-    toast.success("家庭设备记录已删除");
+    toast.success("设备与接入端记录已删除");
   };
 
   const publishDiscoveredService = (service: LanDiscoveredService) => {
@@ -328,12 +328,12 @@ export default function HomeDevicesPage() {
       <AccessResourceTabs />
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">家庭设备</h1>
+          <h1 className="text-2xl font-bold text-foreground">设备与接入端</h1>
         </div>
         <div className="flex gap-2">
           <Button
             isIconOnly
-            aria-label="刷新家庭设备"
+            aria-label="刷新设备与接入端"
             variant="flat"
             onPress={load}
           >
@@ -377,7 +377,7 @@ export default function HomeDevicesPage() {
       ) : devices.length === 0 ? (
         <div className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-divider text-default-500">
           <Laptop size={30} />
-          <span>尚未添加家庭设备</span>
+          <span>尚未添加设备</span>
         </div>
       ) : (
         <ResourceCardGrid>
@@ -454,7 +454,7 @@ export default function HomeDevicesPage() {
 
       <Modal isOpen={createOpen} size="xl" onOpenChange={setCreateOpen}>
         <ModalContent>
-          <ModalHeader>添加家庭设备</ModalHeader>
+          <ModalHeader>添加设备</ModalHeader>
           <ModalBody className="space-y-4">
             <Input
               label="设备名称"
@@ -573,7 +573,7 @@ export default function HomeDevicesPage() {
         onOpenChange={(open) => !open && !deleting && setDeleteDevice(null)}
       >
         <ModalContent>
-          <ModalHeader>删除家庭设备记录</ModalHeader>
+          <ModalHeader>删除设备与接入端记录</ModalHeader>
           <ModalBody className="space-y-4">
             <div className="rounded-md border border-divider bg-default-50 px-4 py-3 text-sm">
               <div className="font-medium">{deleteDevice?.name}</div>
@@ -620,7 +620,7 @@ export default function HomeDevicesPage() {
       >
         <ModalContent>
           <ModalHeader>
-            {discoveryDevice?.name || "家庭设备"} · 局域网服务发现
+            {discoveryDevice?.name || "设备与接入端"} · 局域网服务发现
           </ModalHeader>
           <ModalBody className="space-y-5">
             {discoveryLoading ? (
@@ -666,7 +666,7 @@ export default function HomeDevicesPage() {
                       启用局域网服务发现
                     </Switch>
                     <Input
-                      description="仅允许当前家庭设备授权范围内的 IPv4 私网；单次范围不能大于 /24。"
+                      description="仅允许当前设备授权范围内的 IPv4 私网；单次范围不能大于 /24。"
                       label="扫描网段"
                       placeholder="自动识别，或填写 192.168.100.0/24"
                       startContent={
@@ -693,7 +693,7 @@ export default function HomeDevicesPage() {
 
                 {!discoveryDevice.online && (
                   <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-700 dark:text-warning-400">
-                    家庭设备当前离线，恢复在线后才能扫描。
+                    当前设备离线，恢复在线后才能扫描。
                   </div>
                 )}
                 {discoveryDevice.online &&

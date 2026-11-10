@@ -57,9 +57,4 @@ public class NetworkRouteApplicationCreateDto {
     @Size(max = 253)
     private String xhttpDownloadDomain;
 
-    private Boolean autoProvisionCloudFront;
-
-    private Long awsAccessAccountId;
-
-    private Long dnsZoneId;
 }

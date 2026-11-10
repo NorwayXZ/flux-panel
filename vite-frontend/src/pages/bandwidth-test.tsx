@@ -215,7 +215,7 @@ export default function BandwidthTestPage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-bold text-foreground">带宽测试</h1>
+            <h2 className="text-2xl font-bold text-foreground">带宽测试</h2>
             <PageHelp>两台在线 Agent 直接传输真实数据，测试端口仅在本轮测试期间开放。</PageHelp>
           </div>
         </div>

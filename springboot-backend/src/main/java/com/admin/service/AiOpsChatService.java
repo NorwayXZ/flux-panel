@@ -14,6 +14,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Service
 public class AiOpsChatService {
+  @javax.annotation.Resource private OpsIssueService issueWorkflow;
   private final JdbcTemplate db;
   private final AiOpsService ops;
   private final Map<Long, Runnable> cancellations = new ConcurrentHashMap<>();
@@ -135,6 +136,8 @@ public class AiOpsChatService {
     if (settings != stored) settings.put("model", model.trim());
     JSONObject config = policy(body);
     config.put("_chatOwner", (int) owner);
+    Long incidentId = body.getLong("incidentId");
+    if (incidentId != null) config.put("prompt", issueWorkflow.context(incidentId) + "\n用户要求：" + config.getString("prompt"));
     Long existing = body.getLong("chatId");
     if (existing != null) own(owner, existing);
     if (!activeOwners.add(owner)) throw new IllegalArgumentException("已有对话正在回复，请等待或停止");
@@ -164,6 +167,7 @@ public class AiOpsChatService {
               ops.redactText(config.toJSONString(), settings),
               now);
       db.update("UPDATE ai_ops_chat SET updated_at=? WHERE id=?", now, chat);
+      if (incidentId != null) issueWorkflow.attachChat(incidentId, chat);
     } catch (Exception e) {
       slots.release();
       activeOwners.remove(owner);

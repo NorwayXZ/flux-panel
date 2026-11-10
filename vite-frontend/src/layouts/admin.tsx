@@ -13,22 +13,18 @@ import {
 import { Input } from "@heroui/input";
 import { toast } from "react-hot-toast";
 import {
-  Activity,
   ArrowRightLeft,
   BellRing,
   BookOpen,
   Boxes,
   ChevronDown,
   ChevronRight,
-  Combine,
   FlaskConical,
-  Gauge,
   Home,
   House,
   KeyRound,
   LockKeyhole,
   LogOut,
-  MapPinned,
   Menu,
   MonitorCog,
   Moon,
@@ -36,7 +32,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RadioTower,
-  SearchCheck,
   Server,
   ShieldCheck,
   Sun,
@@ -118,12 +113,6 @@ export default function AdminLayout({
       ),
     },
     {
-      path: "/routing-overview",
-      label: "调度总览",
-      icon: <Waypoints className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
       path: "/forward",
       label: "转发管理",
       icon: (
@@ -143,8 +132,9 @@ export default function AdminLayout({
       adminOnly: true,
     },
     {
-      path: "/monitoring",
-      label: "告警中心",
+      path: "/operations/issues",
+      label: "运维中心",
+      activePaths: ["/operations/issues", "/operations/alerts", "/operations/checks"],
       icon: <BellRing className="h-5 w-5" />,
     },
     {
@@ -181,12 +171,6 @@ export default function AdminLayout({
       icon: <RadioTower className="h-5 w-5" />,
     },
     {
-      path: "/docker-apps",
-      label: "Docker 应用",
-      icon: <Boxes className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
       path: "/private-proxy",
       label: "私人代理",
       icon: <LockKeyhole className="h-5 w-5" />,
@@ -202,51 +186,22 @@ export default function AdminLayout({
       icon: <Home className="h-5 w-5" />,
     },
     {
-      path: "/network-tools",
-      label: "网络诊断",
-      icon: <Wrench className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
       path: "/ai-ops",
       label: "AI 运维",
       icon: <Bot className="h-5 w-5" />,
       adminOnly: true,
     },
     {
+      path: "/network-detection/diagnostics",
+      label: "网络检测",
+      icon: <Wrench className="h-5 w-5" />,
+      activePaths: ["/network-detection/diagnostics", "/network-detection/bandwidth", "/network-detection/client-speed", "/network-detection/udp-quic", "/network-detection/ip-quality"],
+      adminOnly: true,
+    },
+    {
       path: "/quality-lab",
       label: "质量实验室",
       icon: <FlaskConical className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/bandwidth-test",
-      label: "带宽测试",
-      icon: <Gauge className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/client-speed-test",
-      label: "本机测速",
-      icon: <Activity className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/udp-quic-diagnostic",
-      label: "UDP / QUIC 诊断",
-      icon: <RadioTower className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/multi-line-aggregation",
-      label: "多线路并发调度",
-      icon: <Combine className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/ip-quality",
-      label: "IP 质量检测",
-      icon: <MapPinned className="h-5 w-5" />,
       adminOnly: true,
     },
     {
@@ -288,10 +243,9 @@ export default function AdminLayout({
       icon: <Boxes className="h-5 w-5" />,
       activePaths: [
         "/port-resources",
-        "/home-devices",
+        "/devices",
         "/dns-settings",
         "/dynamic-dns",
-        "/aws-access",
       ],
       adminOnly: true,
     },
@@ -299,12 +253,6 @@ export default function AdminLayout({
       path: "/server-assets",
       label: "服务器资产",
       icon: <Server className="h-5 w-5" />,
-      adminOnly: true,
-    },
-    {
-      path: "/system-self-check",
-      label: "系统自检",
-      icon: <SearchCheck className="h-5 w-5" />,
       adminOnly: true,
     },
     {
@@ -366,11 +314,9 @@ export default function AdminLayout({
     {
       label: "线路调度",
       paths: [
-        "/routing-overview",
         "/smart-entry",
         "/source-ip-entry",
         "/cross-entry-failover",
-        "/multi-line-aggregation",
       ],
     },
     {
@@ -378,7 +324,6 @@ export default function AdminLayout({
       paths: [
         "/port-resources",
         "/service-publishing",
-        "/docker-apps",
         "/private-proxy",
         "/exit-pool",
         "/home-access",
@@ -392,15 +337,10 @@ export default function AdminLayout({
     {
       label: "监控与检测",
       paths: [
-        "/monitoring",
+        "/operations/issues",
         "/topology",
-        "/network-tools",
+        "/network-detection/diagnostics",
         "/quality-lab",
-        "/bandwidth-test",
-        "/client-speed-test",
-        "/udp-quic-diagnostic",
-        "/ip-quality",
-        "/system-self-check",
       ],
     },
     { label: "系统管理", paths: ["/ai-ops", "/server-assets", "/config", "/update"] },

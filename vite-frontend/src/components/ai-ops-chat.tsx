@@ -1,3 +1,5 @@
+import { useSearchParams } from "react-router-dom";
+import { getOpsIssueContext } from "@/api/ops-issues";
 import {
   useEffect,
   useLayoutEffect,
@@ -513,6 +515,11 @@ export default function AiOpsChat({
   overview?: OpsOverview;
   onSettings: () => void;
 }) {
+  const [issueParams] = useSearchParams();
+  const incidentId = Number(issueParams.get("incident")) || undefined;
+  const [activeIncidentId, setActiveIncidentId] = useState<number | undefined>(
+    incidentId,
+  );
   const [chats, setChats] = useState<{ id: number; title: string }[]>([]),
     [chatId, setChatId] = useState<number>();
   const [turns, setTurns] = useState<OpsChatTurn[]>([]),
@@ -570,6 +577,25 @@ export default function AiOpsChat({
   }, []);
   const nodeName = (id: number) =>
     overview?.nodes.find((node) => node.id === id)?.name || `节点 ${id}`;
+  useEffect(() => {
+    if (!incidentId) return;
+    setActiveIncidentId(incidentId);
+    void getOpsIssueContext(incidentId).then((r) => {
+      if (r.code === 0) {
+        setMessage(`${r.data.prompt}\n请检查并按当前授权处理此问题。`);
+        if (r.data.nodeIds.length)
+          setConfig((previous) => ({ ...previous, nodeIds: r.data.nodeIds }));
+      } else toast.error(r.msg);
+    });
+    const existing = Number(issueParams.get("chat"));
+    if (existing)
+      void opsChatDetail(existing).then((r) => {
+        if (r.code === 0) {
+          setChatId(existing);
+          setTurns(r.data.turns || []);
+        } else toast.error(r.msg);
+      });
+  }, [incidentId]);
   const historyRunning = turns.some((turn) => turn.status === "running");
   const configured = !!overview?.settings.keyConfigured;
 
@@ -683,6 +709,7 @@ export default function AiOpsChat({
     };
   }, [running, chatId, historyRunning]);
   const load = async (id: number) => {
+    setActiveIncidentId(undefined);
     const r = await opsChatDetail(id);
 
     if (r.code === 0) {
@@ -734,6 +761,7 @@ export default function AiOpsChat({
       await streamOpsChat(
         {
           chatId,
+          incidentId: activeIncidentId,
           message: text,
           ...(model && models.includes(model) ? { model } : {}),
           config: {
@@ -783,6 +811,8 @@ export default function AiOpsChat({
     }
   };
   const newChat = () => {
+    setActiveIncidentId(undefined);
+    setMessage("");
     setChatId(undefined);
     setTurns([]);
     setLivePrompt("");

@@ -29,16 +29,16 @@ class NetworkRouteApplicationServiceTests {
     }
 
     @Test
-    void buildsCloudFrontXhttpSplitClientUri() {
+    void buildsGenericCdnXhttpSplitClientUri() {
         Map<String, Object> application = new HashMap<>();
-        application.put("name", "AWS-HK"); application.put("entryHost", "18.162.196.113"); application.put("listenPort", 10086);
+        application.put("name", "CDN-HK"); application.put("entryHost", "192.0.2.10"); application.put("listenPort", 10086);
         JSONObject config = new JSONObject();
-        config.put("clientId", "9f0306a4-ac8c-470b-b2db-5ea2da71f7f7"); config.put("path", "/aws/"); config.put("mode", "auto");
-        config.put("xPaddingBytes", "100-1000"); config.put("uploadDomain", "upload.cloudfront.net"); config.put("downloadDomain", "download.cloudfront.net");
+        config.put("clientId", "9f0306a4-ac8c-470b-b2db-5ea2da71f7f7"); config.put("path", "/xhttp/"); config.put("mode", "auto");
+        config.put("xPaddingBytes", "100-1000"); config.put("uploadDomain", "upload.example.com"); config.put("downloadDomain", "download.example.com");
         String uri = NetworkRouteApplicationService.xhttpClientUri(application, config);
-        org.junit.jupiter.api.Assertions.assertTrue(uri.startsWith("vless://9f0306a4-ac8c-470b-b2db-5ea2da71f7f7@upload.cloudfront.net:443?"));
+        org.junit.jupiter.api.Assertions.assertTrue(uri.startsWith("vless://9f0306a4-ac8c-470b-b2db-5ea2da71f7f7@upload.example.com:443?"));
         org.junit.jupiter.api.Assertions.assertTrue(uri.contains("type=xhttp"));
         org.junit.jupiter.api.Assertions.assertTrue(uri.contains("downloadSettings"));
-        org.junit.jupiter.api.Assertions.assertTrue(uri.endsWith("#AWS-HK"));
+        org.junit.jupiter.api.Assertions.assertTrue(uri.endsWith("#CDN-HK"));
     }
 }
