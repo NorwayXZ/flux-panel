@@ -14,7 +14,11 @@ def api(path,payload=None,role=0):
  request=urllib.request.Request(base+'/api/v1/'+path,json.dumps(payload or {}).encode(),{'Authorization':token(role),'Content-Type':'application/json'})
  try:
   with urllib.request.urlopen(request,timeout=30) as response:return response.status,json.load(response)
- except urllib.error.HTTPError as error:return error.code,json.load(error)
+ except urllib.error.HTTPError as error:
+  raw=error.read()
+  try: result=json.loads(raw)
+  except (json.JSONDecodeError, UnicodeDecodeError): result={}
+  return error.code,result
 now=int(time.time()*1000)
 sql(f"""INSERT INTO monitoring_alert(resource_type,resource_id,resource_name,owner_user_id,severity,status,title,detail,started_at,updated_at)
  VALUES('node',991122,'isolated-issue',1,'critical','open','isolated-issue-workflow','offline',{now},{now});""")
