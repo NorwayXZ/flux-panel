@@ -149,10 +149,18 @@ daily_usage_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flu
 traffic_usage_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_member_daily_usage' AND column_name='traffic_active_millis'")
 [[ "${traffic_usage_column_exists}" -eq 1 ]]
-for table in authorized_entry_template cross_entry_dns_rollback_pending; do
+for table in authorized_entry_template cross_entry_dns_rollback_pending cross_entry_switch_pending cross_entry_pool_sync_state cross_entry_pool_create_pending; do
   migration_table_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='${table}'")
   [[ "${migration_table_exists}" -eq 1 ]]
+done
+address_refresh_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='cross_entry_failover_member' AND column_name='address_refresh_error'")
+[[ "${address_refresh_column_exists}" -eq 1 ]]
+# Run the standalone migration twice against the schema created at startup.
+for resilience_migration_pass in 1 2; do
+  docker exec -i "${DATABASE}" mysql -uroot -ptestroot flux_test < \
+    "${PROJECT_DIR}/migrations/20261110_cross_entry_resilience.sql"
 done
 retirement_column_exists=$(docker exec "${DATABASE}" mysql -uroot -ptestroot flux_test -Nse \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='authorized_entry_forward' AND column_name='retire_at'")

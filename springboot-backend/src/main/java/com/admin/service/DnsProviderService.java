@@ -17,10 +17,17 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.Inet4Address;
@@ -29,22 +36,29 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
+import javax.annotation.Resource;
 
 @Slf4j
 @Service
 public class DnsProviderService {
     private static final String CF_API = "https://api.cloudflare.com/client/v4";
+    private static final long POOL_VERIFY_INTERVAL_MS = 300_000L;
     private static final List<String> DNS_OVER_HTTPS_ENDPOINTS = List.of(
             "https://cloudflare-dns.com/dns-query",
             "https://dns.google/resolve");
 
     private final JdbcTemplate jdbcTemplate;
     private final RestTemplate restTemplate;
+    @Resource private PlatformTransactionManager transactionManager;
 
     @Value("${jwt-secret}")
     private String encryptionSecret;
@@ -392,9 +406,17 @@ public class DnsProviderService {
      * Cloudflare records required by an active-active entry group. The anchor is
      * deliberately retained for old-panel rollback compatibility.
      */
-    @Transactional(rollbackFor = Exception.class)
+    // DNS is external to the database transaction. Persist each ownership change
+    // as it happens, so a later failed operation cannot roll it back in MySQL.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public DnsPoolSyncResult syncCrossEntryActiveRecords(Long zoneRefId, String anchorRecordId, String domain, String type,
                                                            int ttl, Long groupId, List<CrossEntryDnsTarget> targets) {
+        return syncCrossEntryActiveRecords(zoneRefId, anchorRecordId, domain, type, ttl, groupId, targets, false);
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public DnsPoolSyncResult syncCrossEntryActiveRecords(Long zoneRefId, String anchorRecordId, String domain, String type,
+                                                           int ttl, Long groupId, List<CrossEntryDnsTarget> targets, boolean force) {
         if (zoneRefId == null) throw new IllegalArgumentException("多入口同时运行需要使用面板管理的 Cloudflare Zone");
         if (StringUtils.isBlank(anchorRecordId)) throw new IllegalArgumentException("缺少入口 DNS 记录");
         if (targets == null || targets.isEmpty()) throw new IllegalArgumentException("没有健康入口可写入 DNS");
@@ -403,50 +425,214 @@ public class DnsProviderService {
         for (CrossEntryDnsTarget target : targets) validateRecord(type, target.content());
 
         long now = System.currentTimeMillis();
+        String signature = JSON.toJSONString(List.of(anchorRecordId, fqdn, type, ttl, targets.stream()
+                .map(target -> List.of(target.memberId(), target.content())).toList()));
+        List<Map<String, Object>> previous = jdbcTemplate.queryForList("SELECT desired_signature AS desiredSignature,"
+                + "last_verified_at AS lastVerifiedAt FROM cross_entry_pool_sync_state WHERE group_id=?", groupId);
+        if (!force && !hasPendingPoolCreate(groupId) && !previous.isEmpty() && signature.equals(Objects.toString(previous.get(0).get("desiredSignature"), ""))
+                && now - number(previous.get(0).get("lastVerifiedAt")).longValue() < POOL_VERIFY_INTERVAL_MS) {
+            return new DnsPoolSyncResult(0, 0, targets.size());
+        }
         CrossEntryDnsTarget anchor = targets.get(0);
-        updateRecord(zone, anchorRecordId, fqdn, type, anchor.content(), ttl);
-        jdbcTemplate.update("UPDATE dns_managed_record SET content=?,ttl=?,owner_type='cross_entry',owner_id=?,status='active',last_error=NULL,updated_time=? "
-                        + "WHERE zone_id=? AND provider_record_id=?",
-                anchor.content(), ttl, groupId, now, zoneRefId, anchorRecordId);
-
+        JSONArray providerRecords = findRecords(zone, fqdn, type);
+        Map<String, JSONObject> providerById = new LinkedHashMap<>();
+        for (int i = 0; i < providerRecords.size(); i++) {
+            JSONObject record = providerRecords.getJSONObject(i);
+            providerById.put(record.getString("id"), record);
+        }
+        Map<String, Object> recovered = reconcilePoolCreate(fqdn, type, groupId, providerById, now);
+        JSONObject anchorRecord = providerById.get(anchorRecordId);
+        if (anchorRecord == null) throw new IllegalStateException("入口 DNS 锚点记录不存在，请检查 Cloudflare 配置");
         List<Map<String, Object>> existing = jdbcTemplate.queryForList(
                 "SELECT id,member_id AS memberId,provider_record_id AS providerRecordId,content FROM cross_entry_dns_record WHERE group_id=?", groupId);
         Map<Long, Map<String, Object>> byMember = new LinkedHashMap<>();
         for (Map<String, Object> row : existing) byMember.put(number(row.get("memberId")).longValue(), row);
+        if (recovered != null) byMember.put(number(recovered.get("memberId")).longValue(), recovered);
+        Set<String> ownedIds = new HashSet<>();
+        ownedIds.add(anchorRecordId);
+        for (Map<String, Object> row : byMember.values()) ownedIds.add(Objects.toString(row.get("providerRecordId")));
+        for (JSONObject record : providerById.values()) {
+            if (!ownedIds.contains(record.getString("id"))) {
+                throw new IllegalStateException("Cloudflare 存在不属于该容灾组的同名记录，已暂停自动覆盖");
+            }
+        }
         int created = 0;
         int removed = 0;
 
         // A member promoted to the stable anchor must not retain a duplicate record.
         Map<String, Object> duplicateAnchor = byMember.remove(anchor.memberId());
         if (duplicateAnchor != null) {
-            deleteRecord(zone, Objects.toString(duplicateAnchor.get("providerRecordId")));
+            String id = Objects.toString(duplicateAnchor.get("providerRecordId"));
+            if (providerById.containsKey(id)) deleteRecord(zone, id);
             jdbcTemplate.update("DELETE FROM cross_entry_dns_record WHERE id=?", duplicateAnchor.get("id"));
+            providerById.remove(id);
             removed++;
         }
+        // Updating the anchor to an address still present as a second record can
+        // be rejected by the provider. Remove only our promoted member first.
+        updateRecordIfChanged(zone, anchorRecord, fqdn, type, anchor.content(), ttl);
+        jdbcTemplate.update("UPDATE dns_managed_record SET content=?,ttl=?,owner_type='cross_entry',owner_id=?,status='active',last_error=NULL,updated_time=? "
+                        + "WHERE zone_id=? AND provider_record_id=?",
+                anchor.content(), ttl, groupId, now, zoneRefId, anchorRecordId);
         for (int index = 1; index < targets.size(); index++) {
             CrossEntryDnsTarget target = targets.get(index);
             Map<String, Object> row = byMember.remove(target.memberId());
-            if (row == null) {
-                String recordId = createRecord(zone, fqdn, type, target.content(), ttl);
-                jdbcTemplate.update("INSERT INTO cross_entry_dns_record (group_id,member_id,provider_record_id,content,created_time,updated_time) VALUES (?,?,?,?,?,?)",
-                        groupId, target.memberId(), recordId, target.content(), now, now);
+            JSONObject record = row == null ? null : providerById.get(Objects.toString(row.get("providerRecordId")));
+            if (row == null || record == null) {
+                String recordId = createPoolRecord(zone, fqdn, type, target, ttl, groupId);
+                independent(() -> {
+                    jdbcTemplate.update("INSERT INTO cross_entry_dns_record (group_id,member_id,provider_record_id,content,created_time,updated_time) VALUES (?,?,?,?,?,?) "
+                                    + "ON DUPLICATE KEY UPDATE provider_record_id=VALUES(provider_record_id),content=VALUES(content),updated_time=VALUES(updated_time)",
+                            groupId, target.memberId(), recordId, target.content(), now, now);
+                    jdbcTemplate.update("DELETE FROM cross_entry_pool_create_pending WHERE group_id=?", groupId);
+                    return null;
+                });
                 created++;
             } else {
-                updateRecord(zone, Objects.toString(row.get("providerRecordId")), fqdn, type, target.content(), ttl);
+                updateRecordIfChanged(zone, record, fqdn, type, target.content(), ttl);
                 jdbcTemplate.update("UPDATE cross_entry_dns_record SET content=?,updated_time=? WHERE id=?", target.content(), now, row.get("id"));
             }
         }
         for (Map<String, Object> stale : byMember.values()) {
-            deleteRecord(zone, Objects.toString(stale.get("providerRecordId")));
+            String id = Objects.toString(stale.get("providerRecordId"));
+            if (providerById.containsKey(id)) deleteRecord(zone, id);
             jdbcTemplate.update("DELETE FROM cross_entry_dns_record WHERE id=?", stale.get("id"));
             removed++;
         }
+        jdbcTemplate.update("INSERT INTO cross_entry_pool_sync_state (group_id,desired_signature,last_verified_at) VALUES (?,?,?) "
+                        + "ON DUPLICATE KEY UPDATE desired_signature=VALUES(desired_signature),last_verified_at=VALUES(last_verified_at)",
+                groupId, signature, now);
         return new DnsPoolSyncResult(created, removed, targets.size());
+    }
+
+    boolean hasPendingPoolCreate(Long groupId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_pool_create_pending WHERE group_id=?", Integer.class, groupId);
+        return count != null && count > 0;
+    }
+
+    /** Inspect the provider again; clearing an absent request requires explicit administrator acknowledgement. */
+    public boolean resolvePendingPoolCreate(Long zoneRefId, String domain, String type, Long groupId, String expectedTag, boolean confirmedAbsent) {
+        ZoneAccess zone = loadZoneAccess(zoneRefId);
+        String fqdn = normalizeDomain(zoneRefId, domain);
+        JSONArray records = findRecords(zone, fqdn, type);
+        Map<String, JSONObject> byId = new LinkedHashMap<>();
+        for (int i = 0; i < records.size(); i++) {
+            JSONObject record = records.getJSONObject(i);
+            byId.put(record.getString("id"), record);
+        }
+        List<Map<String, Object>> pending = jdbcTemplate.queryForList(
+                "SELECT tag FROM cross_entry_pool_create_pending WHERE group_id=?", groupId);
+        if (pending.isEmpty()) throw new IllegalStateException("该操作已结束，请刷新页面");
+        String tag = Objects.toString(pending.get(0).get("tag"));
+        if (!StringUtils.equals(tag, expectedTag)) throw new IllegalStateException("操作标签已变化，请刷新页面重新核对");
+        boolean found = byId.values().stream().anyMatch(record -> {
+            JSONArray tags = record.getJSONArray("tags");
+            return tags != null && tags.contains(tag);
+        });
+        if (found) {
+            reconcilePoolCreate(fqdn, type, groupId, byId, System.currentTimeMillis());
+            return true;
+        }
+        if (!confirmedAbsent) throw new IllegalStateException("未找到操作标签，请先在 Cloudflare 核对后确认");
+        jdbcTemplate.update("DELETE FROM cross_entry_pool_create_pending WHERE group_id=? AND tag=?", groupId, tag);
+        return false;
+    }
+
+    private String createPoolRecord(ZoneAccess zone, String fqdn, String type, CrossEntryDnsTarget target, int ttl, Long groupId) {
+        String tag = "fluxop:" + UUID.randomUUID().toString().replace("-", "");
+        long now = System.currentTimeMillis();
+        independent(() -> jdbcTemplate.update("INSERT INTO cross_entry_pool_create_pending "
+                        + "(group_id,member_id,content,tag,started_at) VALUES (?,?,?,?,?)",
+                groupId, target.memberId(), target.content(), tag, now));
+        Map<String, Object> body = recordBody(fqdn, type, target.content(), ttl);
+        body.put("tags", List.of(tag));
+        JSONObject json;
+        try {
+            json = exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records", HttpMethod.POST,
+                    new HttpEntity<>(body, headers(zone.token())));
+        } catch (PoolCreateRejected rejected) {
+            if (rejected.definitive) {
+                independent(() -> jdbcTemplate.update("DELETE FROM cross_entry_pool_create_pending WHERE group_id=?", groupId));
+            }
+            throw rejected;
+        }
+        JSONObject result = json.getJSONObject("result");
+        if (result == null || StringUtils.isBlank(result.getString("id"))) {
+            throw new IllegalStateException("Cloudflare 创建 DNS 记录后未返回记录 ID，将自动核对");
+        }
+        return result.getString("id");
+    }
+
+    private Map<String, Object> reconcilePoolCreate(String fqdn, String type, Long groupId,
+                                                    Map<String, JSONObject> providerById, long now) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT member_id AS memberId,content,tag,started_at AS startedAt "
+                + "FROM cross_entry_pool_create_pending WHERE group_id=?", groupId);
+        if (rows.isEmpty()) return null;
+        Map<String, Object> pending = rows.get(0);
+        String tag = Objects.toString(pending.get("tag"));
+        List<JSONObject> matches = providerById.values().stream().filter(record -> {
+            JSONArray tags = record.getJSONArray("tags");
+            return tags != null && tags.contains(tag);
+        }).toList();
+        if (matches.size() > 1) throw new IllegalStateException("多入口 DNS 操作标签重复，请检查 Cloudflare 同名记录");
+        if (matches.isEmpty()) {
+            throw new IllegalStateException("多入口 DNS 创建结果尚未确认，请核对 Cloudflare 记录后重试");
+        }
+        JSONObject match = matches.get(0);
+        if (!StringUtils.equalsIgnoreCase(Objects.toString(pending.get("content")), match.getString("content"))
+                || !StringUtils.equalsIgnoreCase(fqdn, match.getString("name"))
+                || !StringUtils.equalsIgnoreCase(type, match.getString("type")) || match.getBooleanValue("proxied")) {
+            throw new IllegalStateException("多入口 DNS 操作记录已被外部修改，已暂停自动覆盖");
+        }
+        return independent(() -> {
+            jdbcTemplate.update("INSERT INTO cross_entry_dns_record (group_id,member_id,provider_record_id,content,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE provider_record_id=VALUES(provider_record_id),"
+                            + "content=VALUES(content),updated_time=VALUES(updated_time)",
+                    groupId, pending.get("memberId"), match.getString("id"), pending.get("content"), now, now);
+            jdbcTemplate.update("DELETE FROM cross_entry_pool_create_pending WHERE group_id=?", groupId);
+            return jdbcTemplate.queryForMap("SELECT id,member_id AS memberId,provider_record_id AS providerRecordId,content "
+                    + "FROM cross_entry_dns_record WHERE group_id=? AND member_id=?", groupId, pending.get("memberId"));
+        });
+    }
+
+    private <T> T independent(Supplier<T> action) {
+        if (transactionManager == null) throw new IllegalStateException("DNS 操作恢复事务未初始化");
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return tx.execute(status -> action.get());
+    }
+
+    private void updateRecordIfChanged(ZoneAccess zone, JSONObject record, String fqdn, String type, String content, int ttl) {
+        if (!StringUtils.equalsIgnoreCase(type, record.getString("type"))
+                || !StringUtils.equalsIgnoreCase(fqdn, record.getString("name"))) {
+            throw new IllegalStateException("受管 DNS 记录的域名或类型已变化，已暂停自动覆盖");
+        }
+        if (record.getBooleanValue("proxied")) throw new IllegalStateException("入口 DNS 记录已开启代理，已暂停自动覆盖");
+        if (!StringUtils.equalsIgnoreCase(content, record.getString("content")) || record.getIntValue("ttl") != ttl) {
+            // PATCH preserves record comments and the operation tag; PUT is a full overwrite.
+            exchange(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records/" + record.getString("id"), HttpMethod.PATCH,
+                    new HttpEntity<>(recordBody(fqdn, type, content, ttl), headers(zone.token())));
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void clearCrossEntryActiveRecords(Long zoneRefId, Long groupId) {
         if (groupId == null) return;
+        if (hasPendingPoolCreate(groupId)) throw new IllegalStateException("多入口 DNS 创建结果仍在核对，请等待恢复后再调整容灾组");
+        if (TransactionSynchronizationManager.isSynchronizationActive()
+                && TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCompletion(int status) {
+                    if (status == STATUS_COMMITTED) return;
+                    try {
+                        independent(() -> jdbcTemplate.update("DELETE FROM cross_entry_pool_sync_state WHERE group_id=?", groupId));
+                    } catch (RuntimeException error) {
+                        log.error("Failed to invalidate cross-entry DNS state after rollback, group {}", groupId, error);
+                    }
+                }
+            });
+        }
+        jdbcTemplate.update("DELETE FROM cross_entry_pool_sync_state WHERE group_id=?", groupId);
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT provider_record_id AS providerRecordId FROM cross_entry_dns_record WHERE group_id=?", groupId);
         if (zoneRefId != null) {
@@ -495,11 +681,21 @@ public class DnsProviderService {
     }
 
     private JSONArray findRecords(ZoneAccess zone, String fqdn, String type) {
-        URI uri = UriComponentsBuilder.fromHttpUrl(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records")
-                .queryParam("type", type).queryParam("name", fqdn).build(true).toUri();
-        JSONObject json = exchange(uri, HttpMethod.GET, new HttpEntity<>(headers(zone.token())));
-        JSONArray result = json.getJSONArray("result");
-        return result == null ? new JSONArray() : result;
+        JSONArray records = new JSONArray();
+        int page = 1;
+        int pages;
+        do {
+            URI uri = UriComponentsBuilder.fromHttpUrl(CF_API + "/zones/" + zone.providerZoneId() + "/dns_records")
+                    .queryParam("type", type).queryParam("name", fqdn).queryParam("per_page", 100).queryParam("page", page).build(true).toUri();
+            JSONObject json = exchange(uri, HttpMethod.GET, new HttpEntity<>(headers(zone.token())));
+            JSONArray result = json.getJSONArray("result");
+            if (result != null) records.addAll(result);
+            JSONObject info = json.getJSONObject("result_info");
+            pages = info == null ? 1 : Math.max(1, info.getIntValue("total_pages"));
+            page++;
+        } while (page <= pages && page <= 100);
+        if (page <= pages) throw new IllegalStateException("Cloudflare 同名记录过多，无法安全完成核对");
+        return records;
     }
 
     private String createRecord(ZoneAccess zone, String fqdn, String type, String content, int ttl) {
@@ -536,11 +732,26 @@ public class DnsProviderService {
                     ? restTemplate.exchange((URI) target, method, entity, String.class)
                     : restTemplate.exchange(target.toString(), method, entity, String.class);
             JSONObject json = JSON.parseObject(response.getBody());
-            if (json == null || !json.getBooleanValue("success")) throw new IllegalStateException(cloudflareError(json));
+            if (json == null) throw new IllegalStateException("Cloudflare 返回为空，操作结果需要核对");
+            if (!json.getBooleanValue("success")) {
+                if (method == HttpMethod.POST && json.containsKey("success")) throw new PoolCreateRejected(cloudflareError(json), false);
+                throw new IllegalStateException(cloudflareError(json));
+            }
             return json;
+        } catch (HttpStatusCodeException e) {
+            if (method == HttpMethod.POST && e.getRawStatusCode() >= 400 && e.getRawStatusCode() < 500
+                    && e.getRawStatusCode() != 408 && e.getRawStatusCode() != 429) {
+                throw new PoolCreateRejected("Cloudflare 拒绝 DNS 记录创建（HTTP " + e.getRawStatusCode() + "）", true);
+            }
+            throw new IllegalStateException("无法连接 Cloudflare API，请检查网络和 Token 权限");
         } catch (RestClientException e) {
             throw new IllegalStateException("无法连接 Cloudflare API，请检查网络和 Token 权限");
         }
+    }
+
+    private static class PoolCreateRejected extends IllegalStateException {
+        private final boolean definitive;
+        PoolCreateRejected(String message, boolean definitive) { super(message); this.definitive = definitive; }
     }
 
     private Map<String, Object> loadAccount(Long id) {

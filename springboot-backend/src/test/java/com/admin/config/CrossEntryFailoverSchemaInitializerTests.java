@@ -42,6 +42,10 @@ class CrossEntryFailoverSchemaInitializerTests {
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `active_since_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_member_daily_usage")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_dns_rollback_pending")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_switch_pending")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_pool_sync_state")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("CREATE TABLE IF NOT EXISTS cross_entry_pool_create_pending")));
+        assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `address_refresh_error`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `traffic_active_millis`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `expires_at`")));
         assertTrue(statements.stream().anyMatch(value -> value.contains("ADD COLUMN `traffic_quota_resume_enabled`")));

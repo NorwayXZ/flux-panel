@@ -38,6 +38,7 @@ import toast from "react-hot-toast";
 
 import {
   checkCrossEntryGroup,
+  confirmCrossEntryPoolCreate,
   deleteCrossEntryGroup,
   getCrossEntryEvents,
   getCrossEntryForwardOptions,
@@ -748,7 +749,7 @@ const explainGroupStrategy = (group: CrossEntryGroup): StrategySummary => {
     ),
     ruleLine(
       "恢复确认",
-      `入口连续 ${group.recoveryThreshold} 次恢复后，才允许重新参与选择。`,
+      `故障入口连续 ${group.recoveryThreshold} 次成功后恢复；没有稳定备用时可紧急使用观察中的入口。`,
     ),
   );
 
@@ -950,7 +951,7 @@ const explainFormStrategy = (form: FailoverForm): StrategySummary => {
     ),
     ruleLine(
       "恢复确认",
-      `连续 ${form.recoveryThreshold} 次成功后才认为入口恢复。`,
+      `故障入口连续 ${form.recoveryThreshold} 次成功后恢复；没有稳定备用时可紧急使用观察中的入口。`,
     ),
   ];
   const blockedRules: RuleLine[] = [];
@@ -1403,6 +1404,8 @@ export default function CrossEntryFailoverPage() {
   const [quotaSubmitting, setQuotaSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checkingId, setCheckingId] = useState<number>();
+  const [poolRecoveryTarget, setPoolRecoveryTarget] = useState<CrossEntryGroup>();
+  const [poolRecoverySubmitting, setPoolRecoverySubmitting] = useState(false);
   const [togglingGroupId, setTogglingGroupId] = useState<number>();
   const [togglingMemberId, setTogglingMemberId] = useState<number>();
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(
@@ -2058,7 +2061,24 @@ export default function CrossEntryFailoverPage() {
     if (response.code !== 0) return toast.error(response.msg || "入口检测失败");
     setGroups(response.data?.groups || []);
     setSummary(response.data?.summary || emptySummary);
-    toast.success("入口检测已完成");
+    const checked = response.data?.groups?.find((group) => group.id === id);
+    if (checked && (truthy(checked.switchPending ?? false) || truthy(checked.poolCreatePending ?? false))) {
+      toast.error("检测已完成，但 DNS 结果仍待核对，请查看容灾组提示", { duration: 8000 });
+    } else {
+      toast.success("入口检测已完成");
+    }
+  };
+
+  const confirmPoolRecovery = async () => {
+    if (!poolRecoveryTarget?.poolCreateTag) return toast.error("操作标签缺失，请刷新页面");
+    setPoolRecoverySubmitting(true);
+    const response = await confirmCrossEntryPoolCreate(poolRecoveryTarget.id, poolRecoveryTarget.poolCreateTag);
+    setPoolRecoverySubmitting(false);
+    if (response.code !== 0) return toast.error(response.msg || "核对失败");
+    setGroups(response.data?.groups || []);
+    setSummary(response.data?.summary || emptySummary);
+    setPoolRecoveryTarget(undefined);
+    toast.success("已核对 DNS 创建状态，可重新开启容灾组");
   };
 
   const toggleGroupEnabled = async (
@@ -2458,6 +2478,16 @@ export default function CrossEntryFailoverPage() {
                             客户入口 DNS 回退中
                           </Chip>
                         )}
+                        {truthy(group.switchPending ?? false) && (
+                          <Chip color="warning" size="sm" variant="flat">
+                            DNS 切换待核对
+                          </Chip>
+                        )}
+                        {truthy(group.poolCreatePending ?? false) && (
+                          <Chip color="warning" size="sm" variant="flat">
+                            多入口 DNS 记录待核对
+                          </Chip>
+                        )}
                         {group.expiresAt && (
                           <Chip
                             color={
@@ -2631,6 +2661,11 @@ export default function CrossEntryFailoverPage() {
                       >
                         总开关
                       </Switch>
+                      {truthy(group.poolCreatePending ?? false) && !truthy(group.enabled) && (
+                        <Button size="sm" color="warning" variant="flat" onPress={() => setPoolRecoveryTarget(group)}>
+                          核对 DNS 创建状态
+                        </Button>
+                      )}
                       <Button
                         isIconOnly
                         aria-label="立即检测"
@@ -2854,6 +2889,8 @@ export default function CrossEntryFailoverPage() {
                                       ? "success"
                                       : member.status === "unhealthy"
                                         ? "danger"
+                                      : member.status === "recovering"
+                                        ? "warning"
                                         : "default"
                                 }
                                 size="sm"
@@ -2865,6 +2902,8 @@ export default function CrossEntryFailoverPage() {
                                     ? "可用"
                                     : member.status === "unhealthy"
                                       ? "不可用"
+                                      : member.status === "recovering"
+                                        ? `恢复观察 ${member.successCount}/${group.recoveryThreshold}`
                                       : "检测中"}
                               </Chip>
                               {qualityEnabled && memberEnabled && (
@@ -3094,6 +3133,11 @@ export default function CrossEntryFailoverPage() {
                                 {timeText(member.lastCheckedAt)}
                               </p>
                             ) : null}
+                            {member.addressRefreshError && (
+                              <p className="mt-1 text-warning">
+                                {member.addressRefreshError}
+                              </p>
+                            )}
                             {!member.lastError &&
                               member.lastFaultReason &&
                               member.lastFaultAt && (
@@ -4946,6 +4990,24 @@ export default function CrossEntryFailoverPage() {
             <Button color="primary" isLoading={submitting} onPress={submit}>
               保存并同步 DNS
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(poolRecoveryTarget)}
+        onOpenChange={(open) => { if (!open && !poolRecoverySubmitting) setPoolRecoveryTarget(undefined); }}
+      >
+        <ModalContent>
+          <ModalHeader>核对多入口 DNS 创建状态</ModalHeader>
+          <ModalBody className="gap-3 text-sm">
+            <p>请先在 Cloudflare 的 DNS 记录中检查 {poolRecoveryTarget?.domain}，查找标签：</p>
+            <code className="break-all rounded bg-default-100 p-2">{poolRecoveryTarget?.poolCreateTag || "未知"}</code>
+            <p>面板会再次查询记录；找到该标签则恢复归属。若找不到，确认后会解除待核对状态，随后可重新启用调度。请确认此前请求已结束，避免重复创建。</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setPoolRecoveryTarget(undefined)}>取消</Button>
+            <Button color="warning" isLoading={poolRecoverySubmitting} onPress={confirmPoolRecovery}>已核对，继续</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

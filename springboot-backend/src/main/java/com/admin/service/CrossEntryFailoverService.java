@@ -79,8 +79,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -94,6 +99,7 @@ public class CrossEntryFailoverService {
     private static final String MIN_REMOTE_QUALITY_VERSION = "2.19.0";
     private static final ZoneId PANEL_ZONE = ZoneId.of("Asia/Shanghai");
     private static final long TRAFFIC_USAGE_MAX_SAMPLE_WINDOW_MS = 15_000L;
+    private static final long ENTRY_DNS_REFRESH_MS = 60_000L;
     private static final String MIGRATION_PREPARE_CLEANUP_REASON = "入口迁移预部署资源";
     static final String DAILY_USAGE_SELECT_SQL = "SELECT member_id AS memberId,active_millis AS activeMillis,"
             + "traffic_active_millis AS trafficActiveMillis FROM cross_entry_member_daily_usage "
@@ -111,6 +117,12 @@ public class CrossEntryFailoverService {
     private final CrossEntryManagedCleanupService managedCleanupService;
     private final ExecutorService probeExecutor = boundedExecutor(8, 64, "cross-entry-probe");
     private final ExecutorService groupExecutor = boundedExecutor(4, 100, "cross-entry-group");
+    private final ExecutorService entryDnsExecutor = new ThreadPoolExecutor(0, 4, 30, TimeUnit.SECONDS,
+            new SynchronousQueue<>(), runnable -> {
+                Thread thread = new Thread(runnable, "cross-entry-dns");
+                thread.setDaemon(true);
+                return thread;
+            }, new ThreadPoolExecutor.AbortPolicy());
     private final AtomicBoolean checking = new AtomicBoolean(false);
     private final AtomicBoolean managedCleanupRunning = new AtomicBoolean(false);
     private final Map<Long, Object> groupLocks = new ConcurrentHashMap<>();
@@ -119,6 +131,7 @@ public class CrossEntryFailoverService {
     @Resource private PlatformTransactionManager transactionManager;
     private final Set<Long> inFlightGroups = ConcurrentHashMap.newKeySet();
     private final Map<String, List<Long>> activityGroups = new ConcurrentHashMap<>();
+    private final Map<Long, Long> lastEntryDnsRefresh = new ConcurrentHashMap<>();
 
     @Value("${jwt-secret}")
     private String encryptionSecret;
@@ -486,6 +499,9 @@ public class CrossEntryFailoverService {
                         + "traffic_quota_exhausted AS trafficQuotaExhausted,traffic_quota_paused AS trafficQuotaPaused,"
                         + "traffic_quota_exhausted_at AS trafficQuotaExhaustedAt,traffic_quota_last_error AS trafficQuotaLastError,"
                         + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_dns_rollback_pending p WHERE p.group_id=g.id) THEN 1 ELSE 0 END AS migrationPending,"
+                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_switch_pending p WHERE p.group_id=g.id) THEN 1 ELSE 0 END AS switchPending,"
+                        + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_pool_create_pending p WHERE p.group_id=g.id) THEN 1 ELSE 0 END AS poolCreatePending,"
+                        + "(SELECT p.tag FROM cross_entry_pool_create_pending p WHERE p.group_id=g.id) AS poolCreateTag,"
                         + "last_error AS lastError,last_checked_at AS lastCheckedAt,last_switch_at AS lastSwitchAt,active_since_at AS activeSinceAt,g.created_time AS createdTime,"
                         + "CASE WHEN EXISTS (SELECT 1 FROM cross_entry_managed_resource mr WHERE mr.group_id=g.id AND mr.cleanup_state='active') "
                         + "THEN 'managed_forward' ELSE 'existing_forward' END AS creationMode,"
@@ -539,6 +555,12 @@ public class CrossEntryFailoverService {
         try {
             if (dto.getId() != null && hasPendingSourceDnsRollback(dto.getId())) {
                 throw new IllegalStateException("该容灾组的 DNS 回退仍在重试，请等待恢复后再调整入口");
+            }
+            if (dto.getId() != null && hasPendingSwitch(dto.getId())) {
+                throw new IllegalStateException("上次入口切换的 DNS 结果仍在核对，请等待确认后再修改配置");
+            }
+            if (dto.getId() != null && dnsProviderService != null && dnsProviderService.hasPendingPoolCreate(dto.getId())) {
+                throw new IllegalStateException("多入口 DNS 创建结果仍在核对，请等待确认后再修改配置");
             }
             if (dto.getId() != null && !dto.isExpiresAtProvided()) {
                 List<Long> existingExpiry = jdbcTemplate.queryForList(
@@ -821,14 +843,21 @@ public class CrossEntryFailoverService {
             }
             saveStage = "dns_publish";
             if (dto.getEnabled() && !bool(savedGroup.get("trafficQuotaExhausted")) && "active_active".equals(dto.getRoutingMode())) {
-                syncActiveEntries(savedGroup, loadMembers(id), "已发布全部入口");
+                // The save transaction may have inserted the group or removed old
+                // pool rows. Publish additional records only after it commits,
+                // when the regular scheduler can see durable ownership state.
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_checked_at=NULL WHERE id=?", id);
             } else if (dto.getEnabled() && !bool(savedGroup.get("trafficQuotaExhausted"))) {
                 updateCloudflareDns(savedGroup, selectedEntry);
             }
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("id", id);
+            if (dto.getEnabled() && !bool(savedGroup.get("trafficQuotaExhausted")) && "active_active".equals(dto.getRoutingMode())) {
+                result.put("message", "配置已保存，面板将检测入口并同步多入口 DNS");
+            }
             if (sourceStage != null && !sourceStage.removedBindings().isEmpty()) {
-                result.put("message", "容灾组已更新；旧入口将保留至 DNS 缓存退役窗口结束，随后自动清理客户隐藏转发");
+                result.put("message", Objects.toString(result.get("message"), "容灾组已更新")
+                        + "；旧入口将保留至 DNS 缓存退役窗口结束，随后自动清理客户隐藏转发");
             }
             if (!removedManagedResources.isEmpty()) {
                 int cleanupFailed = cleanupRemovedManagedResources(id, removedManagedResources);
@@ -884,6 +913,12 @@ public class CrossEntryFailoverService {
 
     private boolean hasPendingSourceDnsRollback(long groupId) {
         Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_dns_rollback_pending WHERE group_id=?",
+                Integer.class, groupId);
+        return count != null && count > 0;
+    }
+
+    private boolean hasPendingSwitch(long groupId) {
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM cross_entry_switch_pending WHERE group_id=?",
                 Integer.class, groupId);
         return count != null && count > 0;
     }
@@ -1025,6 +1060,8 @@ public class CrossEntryFailoverService {
     public R delete(Long id) {
         if (!exists(id)) return R.err("容灾组不存在");
         if (hasPendingSourceDnsRollback(id)) return R.err("客户入口 DNS 回退仍在重试，请恢复后再删除容灾组");
+        if (hasPendingSwitch(id)) return R.err("入口切换的 DNS 结果仍在核对，请等待确认后再删除容灾组");
+        if (dnsProviderService != null && dnsProviderService.hasPendingPoolCreate(id)) return R.err("多入口 DNS 创建结果仍在核对，请等待确认后再删除容灾组");
         if (hasAuthorizedSourceDependents(id)) return R.err("该容灾组仍有客户入口授权，请先撤销授权后再删除，避免客户链路中断");
         List<Map<String, Object>> managedResources = jdbcTemplate.queryForList(
                 "SELECT forward_id AS forwardId,tunnel_id AS tunnelId,created_tunnel AS createdTunnel,"
@@ -1123,10 +1160,40 @@ public class CrossEntryFailoverService {
         if (!exists(id)) return R.err("容灾组不存在");
         if (hasPendingSourceDnsRollback(id)) return R.err("客户入口 DNS 回退仍在重试，暂不能手动切换线路");
         try {
+            Object lock = groupLocks.computeIfAbsent(id, ignored -> new Object());
+            synchronized (lock) {
+                Map<String, Object> group = loadGroup(id);
+                if (!bool(group.get("enabled")) && hasPendingSwitch(id)) {
+                    if (mutationLocks == null) reconcilePendingSwitch(group);
+                    else mutationLocks.withLock(id, () -> reconcilePendingSwitch(group));
+                    return listGroups();
+                }
+            }
             probeGroup(id, true);
             return listGroups();
         } catch (RuntimeException e) {
             return R.err("检测失败：" + e.getMessage());
+        }
+    }
+
+    public R resolvePendingPoolCreate(Long id, String expectedTag, boolean confirmed) {
+        if (id == null) return R.err("请指定容灾组");
+        if (!confirmed || StringUtils.isBlank(expectedTag)) return R.err("请先核对 Cloudflare 中的操作标签并确认");
+        Object lock = groupLocks.computeIfAbsent(id, ignored -> new Object());
+        synchronized (lock) {
+            try {
+                Map<String, Object> group = loadGroup(id);
+                if (bool(group.get("enabled"))) return R.err("请先关闭该组自动调度，再核对 DNS 创建结果");
+                boolean recovered = dnsProviderService.resolvePendingPoolCreate(nullableLong(group.get("dnsZoneId")),
+                        Objects.toString(group.get("domain")), Objects.toString(group.get("recordType")), id, expectedTag, true);
+                addEvent(id, null, null, "管理员核对多入口 DNS", "success",
+                        recovered ? "已按操作标签恢复记录归属" : "未找到操作标签，管理员确认后解除待核对状态");
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_checked_at=NULL,last_error=NULL,updated_time=? WHERE id=?",
+                        System.currentTimeMillis(), id);
+                return listGroups();
+            } catch (RuntimeException e) {
+                return R.err("核对失败：" + e.getMessage());
+            }
         }
     }
 
@@ -1135,6 +1202,8 @@ public class CrossEntryFailoverService {
         if (enabled && hasPendingSourceDnsRollback(groupId)) return R.err("客户入口 DNS 回退仍在重试，暂不能开启自动调度");
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
         synchronized (lock) {
+            if (enabled && hasPendingSwitch(groupId)) return R.err("入口切换的 DNS 结果仍在核对，请先手动检测完成核对");
+            if (enabled && dnsProviderService != null && dnsProviderService.hasPendingPoolCreate(groupId)) return R.err("多入口 DNS 创建结果仍在核对，请先手动检测完成核对");
             Map<String, Object> group;
             try {
                 group = loadGroup(groupId);
@@ -1167,7 +1236,7 @@ public class CrossEntryFailoverService {
                         now, now, groupId);
                 addEvent(groupId, null, nullableLong(group.get("activeMemberId")), "管理员开启容灾组", "success",
                         "将立即重新探测所有启用入口，并按现有规则恢复调度");
-                doProbeGroup(groupId, true);
+                probeGroup(groupId, true);
             }
             return listGroups();
         }
@@ -1185,6 +1254,8 @@ public class CrossEntryFailoverService {
 
     private R setMemberEnabledLocked(Long groupId, Long memberId, boolean enabled) {
         if (hasPendingSourceDnsRollback(groupId)) return R.err("客户入口 DNS 回退仍在重试，请恢复后再调整入口线路");
+        if (hasPendingSwitch(groupId)) return R.err("入口切换的 DNS 结果仍在核对，请等待确认后再调整入口线路");
+        if (dnsProviderService != null && dnsProviderService.hasPendingPoolCreate(groupId)) return R.err("多入口 DNS 创建结果仍在核对，请等待确认后再调整入口线路");
         Map<String, Object> group;
         try {
             group = loadGroup(groupId);
@@ -1236,7 +1307,7 @@ public class CrossEntryFailoverService {
             addEvent(groupId, memberId, active ? null : nullableLong(group.get("activeMemberId")), "管理员停用入口", "success",
                     "该线路已从探测、自动切换和 DNS 调度中摘除");
             if (groupEnabled && (active || activeActive)) {
-                doProbeGroup(groupId, true);
+                probeGroup(groupId, true);
                 Map<String, Object> refreshed = loadGroup(groupId);
                 if (!activeActive && Objects.equals(memberId, nullableLong(refreshed.get("activeMemberId")))) {
                     jdbcTemplate.update("UPDATE cross_entry_failover_member SET enabled=1,updated_time=? WHERE id=? AND group_id=?",
@@ -1264,7 +1335,7 @@ public class CrossEntryFailoverService {
             }
             addEvent(groupId, nullableLong(group.get("activeMemberId")), memberId, "管理员启用入口", "success",
                     "该线路将重新探测，健康后参与自动切换和 DNS 调度");
-            if (groupEnabled) doProbeGroup(groupId, true);
+            if (groupEnabled) probeGroup(groupId, true);
         }
         return listGroups();
     }
@@ -1311,7 +1382,7 @@ public class CrossEntryFailoverService {
                 String resumeError = restoreQuotaPausedGroup(groupId, now);
                 if (resumeError != null) return R.err("流量已重置，恢复转发失败，将自动重试：" + resumeError);
             }
-            if (!hasPendingSourceDnsRollback(groupId) && bool(loadGroup(groupId).get("enabled"))) doProbeGroup(groupId, true);
+            if (!hasPendingSourceDnsRollback(groupId) && bool(loadGroup(groupId).get("enabled"))) probeGroup(groupId, true);
             return listGroups();
         }
     }
@@ -1503,8 +1574,11 @@ public class CrossEntryFailoverService {
                         + "ORDER BY expires_at ASC LIMIT 50", now, now - 30_000L);
         for (Map<String, Object> row : rows) {
             try {
-                Map<String, Object> group = loadGroup(number(row.get("id")).longValue());
-                expireGroupIfDue(group, now);
+                long groupId = number(row.get("id")).longValue();
+                synchronized (groupLocks.computeIfAbsent(groupId, ignored -> new Object())) {
+                    Map<String, Object> group = loadGroup(groupId);
+                    expireGroupIfDue(group, now);
+                }
             } catch (RuntimeException e) {
                 log.warn("Failed to expire cross-entry group {}: {}", row.get("id"), e.getMessage());
             }
@@ -1535,6 +1609,7 @@ public class CrossEntryFailoverService {
             }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_error=?,updated_time=? WHERE id=?",
                     "链接已到期，DNS 记录已清理", System.currentTimeMillis(), groupId);
+            jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
         } catch (RuntimeException e) {
             String error = shorten("链接已到期，但 DNS 记录清理失败：" + e.getMessage(), 500);
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_error=?,updated_time=? WHERE id=?",
@@ -1548,7 +1623,11 @@ public class CrossEntryFailoverService {
     private void probeGroup(long groupId, boolean manual) {
         Object lock = groupLocks.computeIfAbsent(groupId, ignored -> new Object());
         synchronized (lock) {
-            doProbeGroup(groupId, manual);
+            if (mutationLocks == null) doProbeGroup(groupId, manual);
+            else mutationLocks.withLock(groupId, () -> {
+                doProbeGroup(groupId, manual);
+                return null;
+            });
         }
     }
 
@@ -1557,7 +1636,10 @@ public class CrossEntryFailoverService {
         if (expireGroupIfDue(group, System.currentTimeMillis())) return;
         if (bool(group.get("trafficQuotaExhausted"))) return;
         if (!manual && !bool(group.get("enabled"))) return;
+        if (reconcilePendingSwitch(group)) return;
         List<Map<String, Object>> members = loadMembers(groupId);
+        if (refreshMemberAddresses(group, members, System.currentTimeMillis())) return;
+        members = loadMembers(groupId);
         int timeout = number(group.get("connectTimeoutMs")).intValue();
         List<CompletableFuture<ProbeResult>> futures = members.stream()
                 .filter(member -> bool(member.get("enabled")))
@@ -1566,7 +1648,8 @@ public class CrossEntryFailoverService {
         List<ProbeResult> results = futures.stream().map(CompletableFuture::join).collect(Collectors.toList());
         long now = System.currentTimeMillis();
         int failureThreshold = number(group.get("failureThreshold")).intValue();
-        for (ProbeResult result : results) updateMemberHealth(result, failureThreshold, now);
+        int recoveryThreshold = number(group.get("recoveryThreshold")).intValue();
+        for (ProbeResult result : results) updateMemberHealth(result, failureThreshold, recoveryThreshold, now);
 
         members = loadMembers(groupId);
         ScheduleContext schedule = scheduleContext(groupId, members, now);
@@ -1590,7 +1673,8 @@ public class CrossEntryFailoverService {
             updateActiveActiveGroup(group, members, now);
             return;
         }
-        boolean activeFailed = active == null || !bool(active.get("enabled")) || "unhealthy".equals(active.get("status"));
+        boolean activeFailed = active == null || !bool(active.get("enabled"))
+                || Set.of("unhealthy", "recovering").contains(Objects.toString(active.get("status"), "unknown"));
         final boolean useQualityDecision = qualityDecisionEnabled;
         final boolean useDetailedLatency = detailedLatencyMeasured;
         boolean activeQualityDegraded = useQualityDecision && isQualityDegraded(active);
@@ -1615,6 +1699,20 @@ public class CrossEntryFailoverService {
                 schedule.preferredMemberId(), schedule.activeWindow() != null, schedule.configured());
         CrossEntryFailoverPolicy.Decision decision = CrossEntryFailoverPolicy.select(
                 snapshots, active == null ? null : number(active.get("id")).longValue(), policySettings);
+        if (activeFailed && !decision.switchRequired()
+                && snapshots.stream().noneMatch(CrossEntryFailoverPolicy.Member::healthy)) {
+            Long activeMemberId = active == null ? null : nullableLong(active.get("id"));
+            List<CrossEntryFailoverPolicy.Member> emergencySnapshots = members.stream()
+                    .map(member -> policyMember(group, member, useQualityDecision, useDetailedLatency, now,
+                            !Objects.equals(nullableLong(member.get("id")), activeMemberId)))
+                    .collect(Collectors.toList());
+            CrossEntryFailoverPolicy.Decision emergency = CrossEntryFailoverPolicy.select(
+                    emergencySnapshots, active == null ? null : number(active.get("id")).longValue(), policySettings);
+            if (emergency.switchRequired()) {
+                decision = new CrossEntryFailoverPolicy.Decision(emergency.targetId(), true,
+                        emergency.reason() + "；紧急使用恢复观察中的入口");
+            }
+        }
         Map<String, Object> target = decision.switchRequired() ? memberById(members, decision.targetId()) : null;
 
         if (target != null) {
@@ -1624,13 +1722,177 @@ public class CrossEntryFailoverService {
             long healthy = members.stream()
                     .filter(member -> bool(member.get("enabled")) && "healthy".equals(member.get("status")))
                     .count();
-            String state = activeFailed ? (healthy > 0 ? "degraded" : "offline")
-                    : (activeQualityDegraded || healthy != enabledCount ? "degraded" : "healthy");
-            String error = activeFailed && healthy == 0 ? "所有入口均不可用"
-                    : (activeQualityDegraded ? decision.reason() : null);
+            boolean activeRecovering = active != null && bool(active.get("enabled"))
+                    && "recovering".equals(active.get("status"));
+            GroupHealth health = groupHealth(activeFailed, activeRecovering, activeQualityDegraded,
+                    healthy, enabledCount, decision.reason());
+            String state = health.state();
+            String error = health.error();
+            String addressWarning = members.stream().map(member -> Objects.toString(member.get("addressRefreshError"), ""))
+                    .filter(StringUtils::isNotBlank).findFirst().orElse(null);
+            if (addressWarning != null && error == null) {
+                state = "healthy".equals(state) ? "degraded" : state;
+                error = addressWarning;
+            }
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
                     state, error, now, now, groupId);
         }
+    }
+
+    record GroupHealth(String state, String error) { }
+
+    static GroupHealth groupHealth(boolean activeFailed, boolean activeRecovering, boolean qualityDegraded,
+                                   long healthy, long enabledCount, String reason) {
+        String state = activeFailed ? (healthy > 0 || activeRecovering ? "degraded" : "offline")
+                : (qualityDegraded || healthy != enabledCount ? "degraded" : "healthy");
+        String error = activeFailed && healthy == 0
+                ? (activeRecovering ? "当前入口已恢复连接，正在连续观察稳定性" : "所有入口均不可用")
+                : (qualityDegraded ? reason : null);
+        return new GroupHealth(state, error);
+    }
+
+    /** Resolves upstream entry domains occasionally; failures retain the last confirmed IP. */
+    private boolean refreshMemberAddresses(Map<String, Object> group, List<Map<String, Object>> members, long now) {
+        long groupId = number(group.get("id")).longValue();
+        Long previous = lastEntryDnsRefresh.get(groupId);
+        if (previous != null && now - previous < ENTRY_DNS_REFRESH_MS) return false;
+        lastEntryDnsRefresh.put(groupId, now);
+        String type = Objects.toString(group.get("recordType"), "A");
+        String serviceDomain = StringUtils.removeEnd(Objects.toString(group.get("domain"), ""), ".");
+        for (Map<String, Object> member : members) {
+            if (!bool(member.get("enabled"))) continue;
+            String host = StringUtils.trimToEmpty(Objects.toString(member.get("entryHost"), ""));
+            if (host.isEmpty() || IpLiteralUtil.isLiteral(host)) continue;
+            if (StringUtils.removeEnd(host, ".").equalsIgnoreCase(serviceDomain)) {
+                setAddressRefreshError(member, "入口域名与容灾业务域名相同，已停止自动解析以避免循环", now);
+                continue;
+            }
+            try {
+                String oldAddress = Objects.toString(member.get("entryAddress"), "");
+                List<String> resolved = resolveAddresses(host, type);
+                if (resolved.stream().anyMatch(candidate -> dnsAddressMatches(candidate, oldAddress))) {
+                    clearAddressRefreshError(member, now);
+                    continue;
+                }
+                String address = resolved.get(0);
+                boolean duplicate = members.stream().anyMatch(other -> other != member
+                        && dnsAddressMatches(address, Objects.toString(other.get("entryAddress"), "")));
+                if (duplicate) throw new IllegalStateException("新 IP 与其他入口重复");
+                if (hasAuthorizedAddressLoop(groupId, address)) {
+                    throw new IllegalStateException("新 IP 与客户授权的落地地址相同，可能产生循环转发");
+                }
+                Map<String, Object> candidate = new LinkedHashMap<>(member);
+                candidate.put("entryAddress", address);
+                ProbeResult probe = probe(candidate, number(group.get("connectTimeoutMs")).intValue());
+                if (!probe.healthy()) throw new IllegalStateException("新 IP 尚未通过入口 TCP 检测：" + probe.error());
+                if (!resolveAddresses(host, type).stream().anyMatch(current -> dnsAddressMatches(address, current))) {
+                    throw new IllegalStateException("域名解析已再次变化，等待下一轮确认");
+                }
+                boolean current = Objects.equals(nullableLong(group.get("activeMemberId")), nullableLong(member.get("id")));
+                if (current && !"active_active".equals(group.get("routingMode"))) {
+                    updateActiveEntryAddress(group, member, address, now);
+                    return true;
+                }
+                jdbcTemplate.update("UPDATE cross_entry_failover_member SET entry_address=?,address_refresh_error=NULL,updated_time=? WHERE id=? AND entry_address=?",
+                        address, now, member.get("id"), oldAddress);
+                member.put("entryAddress", address);
+                member.put("addressRefreshError", null);
+                addEvent(groupId, nullableLong(member.get("id")), nullableLong(member.get("id")), "入口域名地址变化", "success",
+                        "已验证新地址 " + address + "，旧地址 " + oldAddress);
+            } catch (RuntimeException error) {
+                setAddressRefreshError(member, "入口域名 " + host + " 更新失败，保留旧地址：" + error.getMessage(), now);
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAuthorizedAddressLoop(long groupId, String address) {
+        List<Map<String, Object>> targets = jdbcTemplate.queryForList("SELECT p.target_host AS targetHost FROM authorized_entry_port p "
+                + "JOIN authorized_entry_grant g ON g.id=p.grant_id JOIN authorized_entry_template t ON t.id=g.template_id "
+                + "WHERE t.source_group_id=? AND g.state<>'deleted' AND p.state<>'deleted'", groupId);
+        return targets.stream().map(row -> Objects.toString(row.get("targetHost"), ""))
+                .anyMatch(target -> dnsAddressMatches(target, address));
+    }
+
+    List<String> resolveAddresses(String host, String recordType) {
+        Future<InetAddress[]> lookup;
+        try {
+            lookup = entryDnsExecutor.submit(() -> lookupEntryHost(host));
+        } catch (RejectedExecutionException e) {
+            throw new IllegalArgumentException("入口域名解析繁忙，请稍后重试：" + host);
+        }
+        try {
+            List<String> addresses = new ArrayList<>();
+            for (InetAddress address : lookup.get(4, TimeUnit.SECONDS)) {
+                if (("A".equals(recordType) && address instanceof Inet4Address)
+                        || ("AAAA".equals(recordType) && address instanceof Inet6Address)) {
+                    addresses.add(address.getHostAddress());
+                }
+            }
+            if (!addresses.isEmpty()) return addresses;
+        } catch (TimeoutException e) {
+            lookup.cancel(true);
+            throw new IllegalArgumentException("入口域名解析超时：" + host);
+        } catch (InterruptedException e) {
+            lookup.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("入口域名解析被中断", e);
+        } catch (ExecutionException ignored) {
+        }
+        throw new IllegalArgumentException("入口地址无法解析为 " + recordType + " 记录：" + host);
+    }
+
+    InetAddress[] lookupEntryHost(String host) throws UnknownHostException {
+        return InetAddress.getAllByName(host);
+    }
+
+    private void setAddressRefreshError(Map<String, Object> member, String error, long now) {
+        String detail = shorten(error, 500);
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET address_refresh_error=?,updated_time=? WHERE id=?",
+                detail, now, member.get("id"));
+        member.put("addressRefreshError", detail);
+    }
+
+    private void clearAddressRefreshError(Map<String, Object> member, long now) {
+        if (StringUtils.isBlank(Objects.toString(member.get("addressRefreshError"), ""))) return;
+        jdbcTemplate.update("UPDATE cross_entry_failover_member SET address_refresh_error=NULL,updated_time=? WHERE id=?", now, member.get("id"));
+        member.put("addressRefreshError", null);
+    }
+
+    private void updateActiveEntryAddress(Map<String, Object> group, Map<String, Object> member, String address, long now) {
+        long groupId = number(group.get("id")).longValue();
+        Long memberId = nullableLong(member.get("id"));
+        String oldAddress = Objects.toString(member.get("entryAddress"), "");
+        jdbcTemplate.update("INSERT INTO cross_entry_switch_pending "
+                        + "(group_id,from_member_id,to_member_id,from_address,to_address,reason,phase,created_time,updated_time) "
+                        + "VALUES (?,?,?,?,?,?,'applying',?,?)",
+                groupId, memberId, memberId, oldAddress, address, "入口域名地址变化", now, now);
+        try {
+            Map<String, Object> replacement = new LinkedHashMap<>(member);
+            replacement.put("entryAddress", address);
+            requireExpectedDnsBeforeSwitch(group, oldAddress, groupId);
+            updateCloudflareDns(group, replacement);
+            if (!dnsAddressMatches(address, readProviderRecordContent(group))) {
+                throw new IllegalStateException("服务商记录尚未确认新地址");
+            }
+            confirmActiveEntryAddress(groupId, member, address, now);
+        } catch (RuntimeException error) {
+            String detail = shorten("入口域名变更的 DNS 结果待核对：" + error.getMessage(), 500);
+            jdbcTemplate.update("UPDATE cross_entry_switch_pending SET last_error=?,updated_time=? WHERE group_id=?", detail, now, groupId);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    detail, now, now, groupId);
+        }
+    }
+
+    private void confirmActiveEntryAddress(long groupId, Map<String, Object> member, String address, long now) {
+        String old = Objects.toString(member.get("entryAddress"), "");
+        if (!dnsAddressMatches(old, address)) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET entry_address=?,address_refresh_error=NULL,updated_time=? WHERE id=? AND entry_address=?",
+                    address, now, member.get("id"), old);
+            addEvent(groupId, nullableLong(member.get("id")), nullableLong(member.get("id")), "入口域名地址变化", "success",
+                    "DNS 已确认指向 " + address + "，原地址 " + old);
+        }
+        jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
     }
 
     private boolean updateTcpLatencyMeasurements(Map<String, Object> group, List<Map<String, Object>> members,
@@ -1941,7 +2203,7 @@ public class CrossEntryFailoverService {
                 now, now, group.get("id"));
     }
 
-    private ProbeResult probe(Map<String, Object> member, int timeoutMs) {
+    ProbeResult probe(Map<String, Object> member, int timeoutMs) {
         long started = System.nanoTime();
         long nodeId = number(member.get("entryNodeId")).longValue();
         if (!WebSocketServer.isNodeOnline(nodeId)) {
@@ -1984,17 +2246,20 @@ public class CrossEntryFailoverService {
                 count, member.get("id"));
     }
 
-    private void updateMemberHealth(ProbeResult result, int failureThreshold, long now) {
+    private void updateMemberHealth(ProbeResult result, int failureThreshold, int recoveryThreshold, long now) {
         int oldFails = number(result.member().get("failCount")).intValue();
         int oldSuccess = number(result.member().get("successCount")).intValue();
         String oldStatus = Objects.toString(result.member().get("status"), "unknown");
         if (result.healthy()) {
-            jdbcTemplate.update("UPDATE cross_entry_failover_member SET status='healthy',fail_count=0,success_count=?,latency_ms=?,"
+            String status = ("unhealthy".equals(oldStatus) || "recovering".equals(oldStatus))
+                    && oldSuccess + 1 < Math.max(1, recoveryThreshold) ? "recovering" : "healthy";
+            jdbcTemplate.update("UPDATE cross_entry_failover_member SET status=?,fail_count=0,success_count=?,latency_ms=?,"
                             + "last_error=NULL,last_checked_at=?,last_healthy_at=?,updated_time=? WHERE id=?",
-                    oldSuccess + 1, result.latencyMs(), now, now, now, result.member().get("id"));
+                    status, oldSuccess + 1, result.latencyMs(), now, now, now, result.member().get("id"));
         } else {
             int failures = oldFails + 1;
-            String status = failures >= failureThreshold ? "unhealthy" : Objects.toString(result.member().get("status"), "unknown");
+            String status = failures >= failureThreshold || "recovering".equals(oldStatus)
+                    ? "unhealthy" : oldStatus;
             boolean newConnectFault = "unhealthy".equals(status) && !"unhealthy".equals(oldStatus);
             boolean qualityFaultActive = isQualityDegraded(result.member());
             boolean connectCauseAlreadyCounted = qualityFaultActive
@@ -2014,17 +2279,28 @@ public class CrossEntryFailoverService {
 
     private void switchEntry(Map<String, Object> group, Map<String, Object> from, Map<String, Object> to, String reason, long now) {
         long groupId = number(group.get("id")).longValue();
-        boolean dnsChanged = false;
+        boolean pendingRecorded = false;
+        boolean targetRejected = false;
         try {
+            jdbcTemplate.update("INSERT INTO cross_entry_switch_pending "
+                            + "(group_id,from_member_id,to_member_id,from_address,to_address,reason,phase,created_time,updated_time) "
+                            + "VALUES (?,?,?,?,?,?,'applying',?,?)",
+                    groupId, from == null ? null : nullableLong(from.get("id")), to.get("id"),
+                    from == null ? null : from.get("entryAddress"), to.get("entryAddress"), shorten(reason, 255), now, now);
+            pendingRecorded = true;
             jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='switching',updated_time=? WHERE id=?", now, groupId);
             if (from != null && ("unhealthy".equals(from.get("status")) || isQualityDegraded(from))) {
                 recordSwitchTrigger(from, reason, now);
             }
+            if (from == null) throw new IllegalStateException("原入口不存在，无法确认 DNS 切换前状态");
+            requireExpectedDnsBeforeSwitch(group, Objects.toString(from.get("entryAddress"), ""), groupId);
             updateCloudflareDns(group, to);
-            dnsChanged = true;
             if (bool(group.get("postSwitchVerifyEnabled"))) {
                 ProbeResult targetProbe = probe(to, number(group.get("connectTimeoutMs")).intValue());
                 if (!targetProbe.healthy()) {
+                    targetRejected = true;
+                    jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='rejected',updated_time=? WHERE group_id=?",
+                            System.currentTimeMillis(), groupId);
                     markPostSwitchRejected(group, to, targetProbe.error(), now);
                     throw new IllegalStateException("切换后目标入口验证失败：" + targetProbe.error());
                 }
@@ -2039,36 +2315,235 @@ public class CrossEntryFailoverService {
                     dnsDetail = "；" + dnsVerification.message();
                 }
             }
-            settleActiveUsage(groupId, from == null ? null : nullableLong(from.get("id")),
-                    nullableLong(group.get("activeSinceAt")), now);
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state='healthy',last_error=NULL,"
-                            + "last_checked_at=?,last_switch_at=?,active_since_at=?,updated_time=? WHERE id=?",
-                    to.get("id"), now, now, now, now, groupId);
-            addEvent(groupId, from == null ? null : nullableLong(from.get("id")), nullableLong(to.get("id")), reason,
-                    "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress") + dnsDetail);
-            telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
-                    Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), reason, true, now);
+            completePendingSwitch(group, from, to, reason, dnsDetail, now);
         } catch (RuntimeException e) {
             String detail = shorten(e.getMessage(), 500);
-            if (dnsChanged && from != null) {
+            if (pendingRecorded && targetRejected) {
                 try {
-                    updateCloudflareDns(group, from);
-                    detail = shorten(detail + "；DNS 已回滚原入口", 500);
-                } catch (RuntimeException rollbackError) {
-                    detail = shorten(detail + "；DNS 回滚失败，请立即人工检查", 500);
+                    jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='rejected',last_error=?,updated_time=? WHERE group_id=?",
+                            detail, System.currentTimeMillis(), groupId);
+                } catch (DataAccessException databaseError) {
+                    log.error("Unable to persist rejected cross-entry switch for group {}", groupId, databaseError);
                 }
             }
             try {
+                String message = pendingRecorded ? shorten(detail + "；DNS 结果待核对，将自动重试", 500) : detail;
                 jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
-                        detail, now, now, groupId);
+                        message, now, now, groupId);
                 addEvent(groupId, from == null ? null : nullableLong(from.get("id")), nullableLong(to.get("id")), reason,
-                        "failed", detail);
+                        "failed", message);
             } catch (DataAccessException databaseError) {
                 log.error("Unable to persist failed cross-entry switch for group {}", groupId, databaseError);
             }
-            telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
-                    Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), detail, false, now);
+            if (telegramNotificationService != null) {
+                telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
+                        Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), detail, false, now);
+            }
         }
+    }
+
+    private void requireExpectedDnsBeforeSwitch(Map<String, Object> group, String expected, long groupId) {
+        String actual = readProviderRecordContent(group);
+        if (StringUtils.isBlank(expected) || !dnsAddressMatches(expected, actual)) {
+            jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='conflict',updated_time=? WHERE group_id=?",
+                    System.currentTimeMillis(), groupId);
+            throw new IllegalStateException("DNS 当前记录与原入口不一致，已暂停自动覆盖：" + actual);
+        }
+    }
+
+    private void completePendingSwitch(Map<String, Object> group, Map<String, Object> from, Map<String, Object> to,
+                                       String reason, String dnsDetail, long now) {
+        long groupId = number(group.get("id")).longValue();
+        Long targetId = nullableLong(to.get("id"));
+        if (!Objects.equals(nullableLong(group.get("activeMemberId")), targetId)) {
+            settleActiveUsage(groupId, from == null ? null : nullableLong(from.get("id")),
+                    nullableLong(group.get("activeSinceAt")), now);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=?,"
+                            + "last_checked_at=?,last_switch_at=?,active_since_at=?,updated_time=? WHERE id=?",
+                    targetId, "recovering".equals(to.get("status")) ? "degraded" : "healthy",
+                    "recovering".equals(to.get("status")) ? "紧急使用恢复观察中的入口" : null,
+                    now, now, now, now, groupId);
+            group.put("activeMemberId", targetId);
+            group.put("activeSinceAt", now);
+            group.put("lastSwitchAt", now);
+            addEvent(groupId, from == null ? null : nullableLong(from.get("id")), targetId, reason,
+                    "success", "DNS 已切换至 " + to.get("nodeName") + " · " + to.get("entryAddress") + dnsDetail);
+            if (telegramNotificationService != null) {
+                telegramNotificationService.notifyCrossEntrySwitch(groupId, Objects.toString(group.get("name")),
+                        Objects.toString(group.get("domain")), entryLabel(from), entryLabel(to), reason, true, now);
+            }
+        }
+        jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+    }
+
+    /** Returns true while an uncertain switch needs exclusive reconciliation. */
+    private boolean reconcilePendingSwitch(Map<String, Object> group) {
+        long groupId = number(group.get("id")).longValue();
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT from_member_id AS fromMemberId,"
+                + "to_member_id AS toMemberId,from_address AS fromAddress,to_address AS toAddress,reason,phase,attempts,updated_time AS updatedTime "
+                + "FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+        if (rows.isEmpty()) return false;
+        Map<String, Object> pending = rows.get(0);
+        long now = System.currentTimeMillis();
+        int attempts = number(pending.get("attempts")).intValue();
+        Long updatedAt = nullableLong(pending.get("updatedTime"));
+        long retryDelay = attempts == 0 ? 0L : Math.min(60_000L, 2_000L << Math.min(5, attempts - 1));
+        if (updatedAt != null && now - updatedAt < retryDelay) {
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET last_checked_at=?,updated_time=? WHERE id=?", now, now, groupId);
+            return true;
+        }
+        try {
+            List<Map<String, Object>> members = loadMembers(groupId);
+            Map<String, Object> from = memberById(members, nullableLong(pending.get("fromMemberId")));
+            Map<String, Object> to = memberById(members, nullableLong(pending.get("toMemberId")));
+            String actual = readProviderRecordContent(group);
+            String oldAddress = Objects.toString(pending.get("fromAddress"), "");
+            String newAddress = Objects.toString(pending.get("toAddress"), "");
+            boolean atOld = StringUtils.isNotBlank(oldAddress) && dnsAddressMatches(oldAddress, actual);
+            boolean atNew = dnsAddressMatches(newAddress, actual);
+            if ("conflict".equals(pending.get("phase"))) {
+                if (!atOld) throw new IllegalStateException("DNS 记录曾被外部修改，请恢复切换前记录后重试核对");
+                restoreRecordedOldEntry(group, from, oldAddress, now);
+                return false;
+            }
+            if (atOld && !atNew) {
+                restoreRecordedOldEntry(group, from, oldAddress, now);
+                return false;
+            }
+            if (!atNew) {
+                jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='conflict',updated_time=? WHERE group_id=?", now, groupId);
+                throw new IllegalStateException("DNS 当前记录与切换前后均不同，已暂停自动覆盖：" + actual);
+            }
+            boolean addressUpdate = Objects.equals(nullableLong(pending.get("fromMemberId")), nullableLong(pending.get("toMemberId")))
+                    && !dnsAddressMatches(oldAddress, newAddress);
+            if (addressUpdate) {
+                if (to == null) {
+                    return redirectDeletedTarget(group, members, newAddress, now);
+                }
+                if (!dnsAddressMatches(oldAddress, Objects.toString(to.get("entryAddress"), ""))) {
+                    if (to != null && dnsAddressMatches(newAddress, Objects.toString(to.get("entryAddress"), ""))) {
+                        confirmActiveEntryAddress(groupId, to, newAddress, now);
+                        return false;
+                    }
+                    throw new IllegalStateException("入口地址已被修改，无法自动确认 DNS");
+                }
+                String host = Objects.toString(to.get("entryHost"), "");
+                boolean stillResolved = !"rejected".equals(pending.get("phase"))
+                        && resolveAddresses(host, Objects.toString(group.get("recordType"), "A"))
+                        .stream().anyMatch(address -> dnsAddressMatches(newAddress, address));
+                boolean duplicate = members.stream().anyMatch(other -> !Objects.equals(other.get("id"), to.get("id"))
+                        && dnsAddressMatches(newAddress, Objects.toString(other.get("entryAddress"), "")));
+                if (!bool(to.get("enabled")) || !stillResolved || duplicate || hasAuthorizedAddressLoop(groupId, newAddress)) {
+                    jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='rejected',updated_time=? WHERE group_id=?", now, groupId);
+                    if (probe(to, number(group.get("connectTimeoutMs")).intValue()).healthy()) {
+                        updateCloudflareDns(group, to);
+                        if (dnsAddressMatches(oldAddress, readProviderRecordContent(group))) {
+                            restoreRecordedOldEntry(group, from, oldAddress, now);
+                            setAddressRefreshError(to, "新地址已失效或存在冲突，已恢复原入口地址", now);
+                            return false;
+                        }
+                    }
+                    throw new IllegalStateException("新地址已失效或存在冲突，原入口不可用或 DNS 回退未确认");
+                }
+                Map<String, Object> candidate = new LinkedHashMap<>(to);
+                candidate.put("entryAddress", newAddress);
+                ProbeResult addressProbe = probe(candidate, number(group.get("connectTimeoutMs")).intValue());
+                if (!addressProbe.healthy()) throw new IllegalStateException("新入口地址暂不可用，等待重新确认");
+                confirmActiveEntryAddress(groupId, to, newAddress, now);
+                return false;
+            }
+            if (to == null) {
+                return redirectDeletedTarget(group, members, newAddress, now);
+            }
+            if (!dnsAddressMatches(newAddress, Objects.toString(to.get("entryAddress"), ""))) {
+                throw new IllegalStateException("目标入口已变化或删除，无法自动确认 DNS");
+            }
+            boolean rejected = "rejected".equals(pending.get("phase")) || isSwitchRejected(to, now);
+            ProbeResult targetProbe = rejected ? null : probe(to, number(group.get("connectTimeoutMs")).intValue());
+            if (!rejected && targetProbe.healthy()) {
+                completePendingSwitch(group, from, to, Objects.toString(pending.get("reason"), "入口切换"),
+                        "；DNS 超时后已核对服务商记录", now);
+                return false;
+            }
+            if (!rejected) {
+                jdbcTemplate.update("UPDATE cross_entry_switch_pending SET phase='rejected',updated_time=? WHERE group_id=?", now, groupId);
+                markPostSwitchRejected(group, to, targetProbe.error(), now);
+            }
+            Map<String, Object> alternative = members.stream()
+                    .filter(member -> bool(member.get("enabled")) && "healthy".equals(member.get("status")))
+                    .filter(member -> !Objects.equals(member.get("id"), to.get("id")))
+                    .filter(member -> !isSwitchRejected(member, now))
+                    .filter(member -> !Objects.equals(member.get("id"), from == null ? null : from.get("id")))
+                    .filter(member -> probe(member, number(group.get("connectTimeoutMs")).intValue()).healthy())
+                    .findFirst().orElse(null);
+            if (alternative != null) {
+                jdbcTemplate.update("UPDATE cross_entry_switch_pending SET from_member_id=?,from_address=?,to_member_id=?,to_address=?,"
+                                + "reason=?,phase='applying',attempts=0,last_error=NULL,updated_time=? WHERE group_id=?",
+                        to.get("id"), newAddress, alternative.get("id"), alternative.get("entryAddress"),
+                        "原目标验证失败，尝试其他健康入口", now, groupId);
+                updateCloudflareDns(group, alternative);
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='switching',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                        "原目标不可用，已尝试其他健康入口，等待 DNS 核对", now, now, groupId);
+                return true;
+            }
+            if (from == null || !bool(from.get("enabled"))
+                    || !dnsAddressMatches(oldAddress, Objects.toString(from.get("entryAddress"), ""))) {
+                throw new IllegalStateException("目标入口验证失败，原入口不存在或已变化；DNS 保持当前记录");
+            }
+            ProbeResult originalProbe = probe(from, number(group.get("connectTimeoutMs")).intValue());
+            if (!originalProbe.healthy()) {
+                throw new IllegalStateException("切换目标和原入口均不可用；DNS 保持当前记录并继续重试");
+            }
+            updateCloudflareDns(group, from);
+            if (!dnsAddressMatches(oldAddress, readProviderRecordContent(group))) {
+                throw new IllegalStateException("原入口 DNS 回退后尚未确认，将继续核对");
+            }
+            restoreRecordedOldEntry(group, from, oldAddress, now);
+            addEvent(groupId, nullableLong(from.get("id")), nullableLong(to.get("id")), "切换后验证失败",
+                    "failed", "已确认原入口可用并恢复 DNS；目标暂时不参与切换");
+            return false;
+        } catch (RuntimeException error) {
+            String detail = shorten("DNS 切换结果待核对：" + error.getMessage(), 500);
+            jdbcTemplate.update("UPDATE cross_entry_switch_pending SET attempts=attempts+1,last_error=?,updated_time=? WHERE group_id=?",
+                    detail, now, groupId);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='error',last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    detail, now, now, groupId);
+            return true;
+        }
+    }
+
+    private void restoreRecordedOldEntry(Map<String, Object> group, Map<String, Object> from, String oldAddress, long now) {
+        long groupId = number(group.get("id")).longValue();
+        if (from == null || !dnsAddressMatches(oldAddress, Objects.toString(from.get("entryAddress"), ""))) {
+            throw new IllegalStateException("DNS 已指向原入口，但面板中的原入口不存在或地址已改变，请人工核对");
+        }
+        Long fromId = nullableLong(from.get("id"));
+        Long activeId = nullableLong(group.get("activeMemberId"));
+        if (!Objects.equals(activeId, fromId)) {
+            settleActiveUsage(groupId, activeId, nullableLong(group.get("activeSinceAt")), now);
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,active_since_at=?,state='degraded',"
+                            + "last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    fromId, now, "已按 DNS 记录恢复原入口，等待重新检测", now, now, groupId);
+            group.put("activeMemberId", fromId);
+            group.put("activeSinceAt", now);
+            addEvent(groupId, activeId, fromId, "DNS 状态核对", "success", "已按服务商记录恢复面板当前入口");
+        }
+        jdbcTemplate.update("DELETE FROM cross_entry_switch_pending WHERE group_id=?", groupId);
+    }
+
+    private boolean redirectDeletedTarget(Map<String, Object> group, List<Map<String, Object>> members, String currentAddress, long now) {
+        Map<String, Object> alternative = members.stream()
+                .filter(member -> bool(member.get("enabled")) && "healthy".equals(member.get("status")))
+                .filter(member -> !isSwitchRejected(member, now))
+                .filter(member -> probe(member, number(group.get("connectTimeoutMs")).intValue()).healthy())
+                .findFirst().orElse(null);
+        if (alternative == null) throw new IllegalStateException("原切换目标已删除，等待其他健康入口");
+        long groupId = number(group.get("id")).longValue();
+        jdbcTemplate.update("UPDATE cross_entry_switch_pending SET from_member_id=NULL,from_address=?,to_member_id=?,to_address=?,"
+                        + "reason=?,phase='applying',attempts=0,last_error=NULL,updated_time=? WHERE group_id=?",
+                currentAddress, alternative.get("id"), alternative.get("entryAddress"), "原目标已删除，尝试健康入口", now, groupId);
+        updateCloudflareDns(group, alternative);
+        return true;
     }
 
     private void markPostSwitchRejected(Map<String, Object> group, Map<String, Object> member, String error, long now) {
@@ -2098,18 +2573,30 @@ public class CrossEntryFailoverService {
                 .collect(Collectors.toList());
         long groupId = number(group.get("id")).longValue();
         Map<String, Object> previous = memberById(members, nullableLong(group.get("activeMemberId")));
+        boolean emergency = false;
         if (healthy.isEmpty()) {
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='offline',last_error='所有入口均不可用，DNS 保持上一次可用记录',last_checked_at=?,updated_time=? WHERE id=?",
-                    now, now, groupId);
-            return;
+            healthy = members.stream()
+                    .filter(member -> bool(member.get("enabled")) && "recovering".equals(member.get("status")))
+                    .filter(member -> !isSwitchRejected(member, now))
+                    .limit(1).collect(Collectors.toList());
+            if (healthy.isEmpty()) {
+                jdbcTemplate.update("UPDATE cross_entry_failover_group SET state='offline',last_error='所有入口均不可用，DNS 保持上一次可用记录',last_checked_at=?,updated_time=? WHERE id=?",
+                        now, now, groupId);
+                return;
+            }
+            emergency = true;
         }
         Map<String, Object> representative = healthy.get(0);
         try {
             DnsProviderService.DnsPoolSyncResult result = syncActiveEntries(group, healthy, null);
             long enabledCount = members.stream().filter(member -> bool(member.get("enabled"))).count();
-            String state = healthy.size() == enabledCount ? "healthy" : "degraded";
-            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=NULL,last_checked_at=?,updated_time=? WHERE id=?",
-                    representative.get("id"), state, now, now, groupId);
+            String state = !emergency && healthy.size() == enabledCount ? "healthy" : "degraded";
+            String error = emergency ? "没有稳定入口，暂时使用恢复观察中的入口" : members.stream()
+                    .map(member -> Objects.toString(member.get("addressRefreshError"), ""))
+                    .filter(StringUtils::isNotBlank).findFirst().orElse(null);
+            if (error != null && "healthy".equals(state)) state = "degraded";
+            jdbcTemplate.update("UPDATE cross_entry_failover_group SET active_member_id=?,state=?,last_error=?,last_checked_at=?,updated_time=? WHERE id=?",
+                    representative.get("id"), state, error, now, now, groupId);
             if (result.created() > 0 || result.removed() > 0) {
                 addEvent(groupId, previous == null ? null : nullableLong(previous.get("id")), nullableLong(representative.get("id")),
                         "入口成员已更新", "success", "健康入口 " + result.active() + " 条；新增 " + result.created() + " 条 DNS 记录，移除 " + result.removed() + " 条");
@@ -2132,7 +2619,8 @@ public class CrossEntryFailoverService {
         return dnsProviderService.syncCrossEntryActiveRecords(nullableLong(group.get("dnsZoneId")),
                 Objects.toString(group.get("recordId")), Objects.toString(group.get("domain")),
                 Objects.toString(group.get("recordType")), number(group.get("ttl")).intValue(),
-                number(group.get("id")).longValue(), targets);
+                number(group.get("id")).longValue(), targets,
+                "客户入口迁移回滚".equals(ignoredReason));
     }
 
     private void updateCloudflareDns(Map<String, Object> group, Map<String, Object> member) {
@@ -2177,7 +2665,7 @@ public class CrossEntryFailoverService {
         return new DnsVerification(true, true, "DNS 已确认生效");
     }
 
-    private String readProviderRecordContent(Map<String, Object> group) {
+    String readProviderRecordContent(Map<String, Object> group) {
         Long dnsZoneId = nullableLong(group.get("dnsZoneId"));
         String zoneId;
         String token;
@@ -2196,7 +2684,13 @@ public class CrossEntryFailoverService {
             JSONObject json = JSON.parseObject(response.getBody());
             if (json == null || !json.getBooleanValue("success")) throw new IllegalStateException(cloudflareError(json));
             JSONObject result = json.getJSONObject("result");
-            return result == null ? "" : StringUtils.trimToEmpty(result.getString("content"));
+            if (result == null || !StringUtils.equalsIgnoreCase(StringUtils.removeEnd(Objects.toString(group.get("domain")), "."),
+                    StringUtils.removeEnd(result.getString("name"), "."))
+                    || !StringUtils.equalsIgnoreCase(Objects.toString(group.get("recordType")), result.getString("type"))
+                    || result.getBooleanValue("proxied")) {
+                throw new IllegalStateException("DNS 记录的域名、类型或代理状态已变化，已暂停自动覆盖");
+            }
+            return StringUtils.trimToEmpty(result.getString("content"));
         } catch (RestClientException e) {
             throw new IllegalStateException("Cloudflare DNS 记录确认失败");
         }
@@ -2851,15 +3345,8 @@ public class CrossEntryFailoverService {
         return ordered;
     }
 
-    private String resolveAddress(String host, String recordType) {
-        try {
-            for (InetAddress address : InetAddress.getAllByName(host)) {
-                if (("A".equals(recordType) && address instanceof Inet4Address)
-                        || ("AAAA".equals(recordType) && address instanceof Inet6Address)) return address.getHostAddress();
-            }
-        } catch (Exception ignored) {
-        }
-        throw new IllegalArgumentException("入口地址无法解析为 " + recordType + " 记录：" + host);
+    String resolveAddress(String host, String recordType) {
+        return resolveAddresses(host, recordType).get(0);
     }
 
     private void normalizeAndValidate(CrossEntryFailoverSaveDto dto, boolean existingManaged) {
@@ -3253,7 +3740,7 @@ public class CrossEntryFailoverService {
 
     private List<Map<String, Object>> loadMembers(long groupId) {
         List<Map<String, Object>> members = jdbcTemplate.queryForList("SELECT id,group_id AS groupId,forward_id AS forwardId,priority,weight,enabled,entry_node_id AS entryNodeId,"
-                + "entry_host AS entryHost,entry_address AS entryAddress,topology_signature AS topologySignature,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
+                + "entry_host AS entryHost,entry_address AS entryAddress,address_refresh_error AS addressRefreshError,topology_signature AS topologySignature,entry_port AS entryPort,forward_name AS forwardName,node_name AS nodeName,"
                 + "status,fail_count AS failCount,success_count AS successCount,latency_ms AS latencyMs,quality_latency_ms AS qualityLatencyMs,"
                 + "quality_p95_ms AS qualityP95Ms,quality_jitter_ms AS qualityJitterMs,"
                 + "quality_loss_percent AS qualityLossPercent,quality_baseline_ms AS qualityBaselineMs,quality_preheated AS qualityPreheated,quality_state AS qualityState,"
@@ -3331,12 +3818,19 @@ public class CrossEntryFailoverService {
     private CrossEntryFailoverPolicy.Member policyMember(Map<String, Object> group, Map<String, Object> member,
                                                         boolean useQualityDecision, boolean useDetailedLatency,
                                                         long now) {
+        return policyMember(group, member, useQualityDecision, useDetailedLatency, now, false);
+    }
+
+    private CrossEntryFailoverPolicy.Member policyMember(Map<String, Object> group, Map<String, Object> member,
+                                                        boolean useQualityDecision, boolean useDetailedLatency,
+                                                        long now, boolean allowRecovering) {
         Integer qualityLatency = nullableInt(member.get("qualityLatencyMs"));
         Integer regularLatency = nullableInt(member.get("latencyMs"));
         return new CrossEntryFailoverPolicy.Member(
                 number(member.get("id")).longValue(),
                 number(member.get("priority")).intValue(),
-                bool(member.get("enabled")) && "healthy".equals(member.get("status")) && !isSwitchRejected(member, now),
+                bool(member.get("enabled")) && ("healthy".equals(member.get("status"))
+                        || (allowRecovering && "recovering".equals(member.get("status")))) && !isSwitchRejected(member, now),
                 number(member.get("successCount")).intValue(),
                 useQualityDecision && isQualityDegraded(member),
                 !useQualityDecision || acceptableForQualitySwitch(group, member),
@@ -3637,9 +4131,10 @@ public class CrossEntryFailoverService {
     public void shutdown() {
         groupExecutor.shutdownNow();
         probeExecutor.shutdownNow();
+        entryDnsExecutor.shutdownNow();
     }
 
-    private record ProbeResult(Map<String, Object> member, boolean healthy, Integer latencyMs, String error) {}
+    record ProbeResult(Map<String, Object> member, boolean healthy, Integer latencyMs, String error) {}
 
     private record QualityProbeResult(Map<String, Object> member, boolean success, Integer latencyMs,
                                       Integer p95Ms, Integer jitterMs, Double lossPercent, String error) {}

@@ -2392,10 +2392,11 @@ export interface CrossEntryMember {
   entryNodeId: number;
   entryHost: string;
   entryAddress: string;
+  addressRefreshError?: string | null;
   entryPort: number;
   forwardName: string;
   nodeName: string;
-  status: "unknown" | "healthy" | "unhealthy";
+  status: "unknown" | "healthy" | "unhealthy" | "recovering";
   failCount: number;
   successCount: number;
   latencyMs?: number;
@@ -2541,6 +2542,9 @@ export interface CrossEntryGroup {
   trafficQuotaExhaustedAt?: number;
   trafficQuotaLastError?: string;
   migrationPending?: boolean | number;
+  switchPending?: boolean | number;
+  poolCreatePending?: boolean | number;
+  poolCreateTag?: string | null;
   enabled: boolean | number;
   state:
     | "unknown"
@@ -2651,6 +2655,12 @@ export const checkCrossEntryGroup = (id: number) =>
   Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
     "/cross-entry-failover/check",
     { id },
+    ["/cross-entry-failover/list"],
+  );
+export const confirmCrossEntryPoolCreate = (id: number, tag: string) =>
+  Network.mutate<{ groups: CrossEntryGroup[]; summary: CrossEntrySummary }>(
+    "/cross-entry-failover/pool-create-confirm",
+    { id, tag, confirmed: true },
     ["/cross-entry-failover/list"],
   );
 export const setCrossEntryGroupEnabled = (id: number, enabled: boolean) =>

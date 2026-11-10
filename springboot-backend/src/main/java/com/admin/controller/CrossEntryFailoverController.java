@@ -63,6 +63,14 @@ public class CrossEntryFailoverController {
     }
 
     @LogAnnotation
+    @PostMapping("/pool-create-confirm")
+    @RequireRole
+    public R confirmPoolCreate(@RequestBody Map<String, Object> params) {
+        return service.resolvePendingPoolCreate(Long.valueOf(params.get("id").toString()),
+                String.valueOf(params.getOrDefault("tag", "")), Boolean.TRUE.equals(params.get("confirmed")));
+    }
+
+    @LogAnnotation
     @PostMapping("/group-enabled")
     @RequireRole
     public R groupEnabled(@RequestBody Map<String, Object> params) {

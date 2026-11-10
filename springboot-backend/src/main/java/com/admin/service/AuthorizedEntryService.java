@@ -265,6 +265,9 @@ public class AuthorizedEntryService {
             }
             String forbiddenReason = forbiddenTargetReason(target, template, source.memberNodeIds());
             if (forbiddenReason != null) return R.err(forbiddenReason);
+            if (pendingEntryAddressMatches(template.getSourceGroupId(), target)) {
+                return R.err("落地地址与入口正在切换的新地址相同，请等待入口 DNS 核对完成");
+            }
             if (portMapper.selectCount(new QueryWrapper<AuthorizedEntryPort>().eq("grant_id", grantId).ne("state", "deleted")) >= grant.getMaxPorts()) {
                 return R.err("已达到该授权的端口数量上限");
             }
@@ -366,6 +369,9 @@ public class AuthorizedEntryService {
         }
         String forbiddenReason = forbiddenTargetReason(target, template, source.memberNodeIds());
         if (forbiddenReason != null) return R.err(forbiddenReason);
+        if (pendingEntryAddressMatches(template.getSourceGroupId(), target)) {
+            return R.err("落地地址与入口正在切换的新地址相同，请等待入口 DNS 核对完成");
+        }
         String previous = toTarget(port.getTargetHost(), port.getTargetPort());
         List<AuthorizedEntryForward> bindings = forwardMapper.selectList(new QueryWrapper<AuthorizedEntryForward>().eq("port_id", port.getId()));
         if (bindings.isEmpty()) return R.err("授权端口缺少托管转发，请联系管理员修复");
@@ -682,6 +688,12 @@ public class AuthorizedEntryService {
             }
         }
         return null;
+    }
+
+    private boolean pendingEntryAddressMatches(Long groupId, String target) {
+        String host = stripPort(target).replace("[", "").replace("]", "");
+        return jdbcTemplate.queryForList("SELECT to_address AS address FROM cross_entry_switch_pending WHERE group_id=?", groupId)
+                .stream().anyMatch(row -> sameAddress(host, stringValue(row.get("address"))));
     }
 
     private String entryNodeAddressName(String target, List<Long> sourceMemberNodeIds) {

@@ -136,6 +136,7 @@ public class CrossEntryFailoverSchemaInitializer {
             ensureColumn("cross_entry_failover_member", "quality_preheated", "tinyint NOT NULL DEFAULT 0 AFTER quality_baseline_ms");
             ensureColumn("cross_entry_failover_member", "quality_state", "varchar(24) NOT NULL DEFAULT 'unknown' AFTER quality_baseline_ms");
             ensureColumn("cross_entry_failover_member", "topology_signature", "varchar(500) DEFAULT NULL AFTER entry_address");
+            ensureColumn("cross_entry_failover_member", "address_refresh_error", "varchar(500) DEFAULT NULL AFTER entry_address");
             ensureColumn("cross_entry_failover_member", "quality_bad_count", "int NOT NULL DEFAULT 0 AFTER quality_state");
             ensureColumn("cross_entry_failover_member", "quality_good_count", "int NOT NULL DEFAULT 0 AFTER quality_bad_count");
             ensureColumn("cross_entry_failover_member", "quality_flap_count", "int NOT NULL DEFAULT 0 AFTER quality_good_count");
@@ -207,6 +208,18 @@ public class CrossEntryFailoverSchemaInitializer {
                     + "last_error varchar(500) DEFAULT NULL,attempts int NOT NULL DEFAULT 0,"
                     + "created_time bigint NOT NULL,updated_time bigint NOT NULL,PRIMARY KEY (group_id)"
                     + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_switch_pending ("
+                    + "group_id bigint NOT NULL,from_member_id bigint DEFAULT NULL,to_member_id bigint NOT NULL,"
+                    + "from_address varchar(128) DEFAULT NULL,to_address varchar(128) NOT NULL,reason varchar(255) NOT NULL,"
+                    + "phase varchar(24) NOT NULL DEFAULT 'applying',last_error varchar(500) DEFAULT NULL,"
+                    + "attempts int NOT NULL DEFAULT 0,created_time bigint NOT NULL,updated_time bigint NOT NULL,"
+                    + "PRIMARY KEY (group_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_pool_sync_state ("
+                    + "group_id bigint NOT NULL,desired_signature text NOT NULL,last_verified_at bigint NOT NULL,"
+                    + "PRIMARY KEY (group_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_pool_create_pending ("
+                    + "group_id bigint NOT NULL,member_id bigint NOT NULL,content varchar(255) NOT NULL,"
+                    + "tag varchar(128) NOT NULL,started_at bigint NOT NULL,PRIMARY KEY (group_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             jdbcTemplate.execute("CREATE TABLE IF NOT EXISTS cross_entry_managed_resource ("
                     + "id bigint unsigned NOT NULL AUTO_INCREMENT,group_id bigint NOT NULL,forward_id bigint NOT NULL,"
                     + "tunnel_id bigint NOT NULL,entry_node_id bigint NOT NULL,target_address varchar(255) NOT NULL,"
